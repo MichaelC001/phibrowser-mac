@@ -24,6 +24,18 @@ public struct URLProcessor {
             return "https://www.google.com/search?q=\(trimmedText)"
         }
     }
+
+    /// Compares URLs for bookmark and pinned-tab origin navigation.
+    /// HTTP(S) `www.` variants and an optional root slash are equivalent;
+    /// scheme, port, non-root path, query, and fragment differences remain significant.
+    static func areEquivalentForOriginNavigation(_ lhs: String, _ rhs: String) -> Bool {
+        guard let normalizedLHS = normalizedForOriginNavigation(lhs),
+              let normalizedRHS = normalizedForOriginNavigation(rhs) else {
+            return lhs == rhs
+        }
+
+        return normalizedLHS == normalizedRHS
+    }
     
     /// Returns whether the text looks like a URL.
     public static func isURL(_ text: String) -> Bool {
@@ -62,5 +74,24 @@ public struct URLProcessor {
         guard string.hasPrefix("chrome://") else { return string }
         let startIndex = string.index(string.startIndex, offsetBy: "chrome://".count)
         return "phi://" + string[startIndex...]
+    }
+
+    private static func normalizedForOriginNavigation(_ rawURL: String) -> String? {
+        guard var components = URLComponents(string: rawURL),
+              let scheme = components.scheme?.lowercased() else {
+            return nil
+        }
+
+        components.scheme = scheme
+        if let host = components.host?.lowercased() {
+            let stripsWWW = (scheme == "http" || scheme == "https") &&
+                host.hasPrefix("www.") && host.count > 4
+            components.host = stripsWWW ? String(host.dropFirst(4)) : host
+        }
+        if components.path == "/" {
+            components.path = ""
+        }
+
+        return components.string
     }
 }

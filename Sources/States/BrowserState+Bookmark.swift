@@ -323,7 +323,7 @@ extension BrowserState {
               !originalURL.isEmpty,
               let currentURL = tab.url,
               !currentURL.isEmpty,
-              currentURL != originalURL,
+              !URLProcessor.areEquivalentForOriginNavigation(currentURL, originalURL),
               let wrapper = tab.webContentWrapper else {
             return nil
         }

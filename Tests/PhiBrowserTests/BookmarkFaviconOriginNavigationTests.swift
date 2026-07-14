@@ -81,6 +81,36 @@ final class BookmarkFaviconOriginNavigationTests: XCTestCase {
         XCTAssertTrue(state.createTabRequests.isEmpty)
     }
 
+    func testDoesNotNavigateForEquivalentWWWBookmarkURL() throws {
+        let state = try makeState()
+        let bookmark = try createBookmark(
+            in: state,
+            guid: "bookmark-equivalent-origin",
+            url: "https://www.bookmark.example/"
+        )
+        let wrapper = BookmarkOriginTestWebContentWrapper(
+            urlString: "https://bookmark.example"
+        )
+        let tab = Tab(
+            guid: 104,
+            url: "https://bookmark.example",
+            isActive: true,
+            index: 0,
+            webContentView: wrapper,
+            customGuid: bookmark.guid
+        )
+        state.tabs = [tab]
+        state.handleBookmarkTabOpened(tab)
+
+        state.navigateBookmarkTabToOriginalURL(tab, bookmark: bookmark)
+        state.separateBookmarkTabFromCurrentURL(tab, bookmark: bookmark)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+
+        XCTAssertTrue(wrapper.navigatedURLs.isEmpty)
+        XCTAssertTrue(wrapper.customValues.isEmpty)
+        XCTAssertTrue(state.createTabRequests.isEmpty)
+    }
+
     func testSeparatesCurrentURLInBackgroundBeforeReturningBookmarkToStoredURL() throws {
         let state = try makeState()
         let bookmark = try createBookmark(

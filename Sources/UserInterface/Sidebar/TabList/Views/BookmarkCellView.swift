@@ -837,7 +837,7 @@ private struct BookmarkFaviconView: View {
               !currentURL.isEmpty else {
             return false
         }
-        return currentURL != originalURL
+        return !URLProcessor.areEquivalentForOriginNavigation(currentURL, originalURL)
     }
 
     private var hoverAction: BookmarkFaviconHoverAction {

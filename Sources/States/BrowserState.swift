@@ -918,7 +918,7 @@ class BrowserState {
               !currentURL.isEmpty,
               let originalURL = realTab.pinnedUrl,
               !originalURL.isEmpty,
-              currentURL != originalURL else {
+              !URLProcessor.areEquivalentForOriginNavigation(currentURL, originalURL) else {
             return nil
         }
 

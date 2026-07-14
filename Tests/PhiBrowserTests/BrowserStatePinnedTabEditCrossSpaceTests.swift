@@ -122,6 +122,23 @@ final class BrowserStatePinnedTabEditCrossSpaceTests: XCTestCase {
         XCTAssertTrue(wrapper.customValues.isEmpty)
     }
 
+    func testPinnedTabOriginNavigationDoesNothingForEquivalentWWWURL() throws {
+        let store = try makeStore()
+        try seedPinnedTab(in: store, guid: "pinned-guid", url: "https://www.google.com/")
+
+        let state = BrowserState(windowId: 1, localStore: store,
+                                 profileId: "Default", spaceId: "space-a")
+        let pinnedTab = try XCTUnwrap(state.pinnedTabs.first)
+        let wrapper = PinnedEditWebContentWrapperSpy(urlString: "https://google.com")
+        pinnedTab.isOpenned = true
+        pinnedTab.setWebContentsWrapper(wrapper: wrapper)
+
+        state.navigatePinnedTabToOriginalURL(pinnedTab)
+
+        XCTAssertTrue(wrapper.navigatedURLs.isEmpty)
+        XCTAssertTrue(wrapper.customValues.isEmpty)
+    }
+
     func testPinnedTabSeparationOpensCurrentURLInBackgroundBeforeReturningToOrigin() throws {
         let store = try makeStore()
         try seedPinnedTab(in: store, guid: "pinned-guid", url: "https://www.google.com/")
