@@ -254,6 +254,7 @@ extension MainBrowserWindowController {
             secondaryTitleString: initialSecondaryTitle,
             modelContainer: state.localStore.container,
             profileId: state.profileId,
+            spaceId: state.spaceId,
             initialFolderGuid: originalParentGuid,
             from: window,
             onRemove: {

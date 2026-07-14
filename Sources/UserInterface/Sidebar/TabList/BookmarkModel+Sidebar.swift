@@ -338,13 +338,14 @@ extension Bookmark: ContextMenuRepresentable {
             secondaryTitleString: initialSecondaryTitle,
             modelContainer: state.localStore.container,
             profileId: state.profileId,
+            spaceId: state.spaceId,
             initialFolderGuid: originalParentGuid,
             from: windowController.window,
             onCreateFolder: { folderName in
                 let guid = UUID().uuidString
                 state.localStore.createDirectory(
                     title: folderName, profileId: state.profileId,
-                    parentId: nil, guid: guid
+                    parentId: nil, guid: guid, spaceId: state.spaceId
                 )
                 return guid
             }

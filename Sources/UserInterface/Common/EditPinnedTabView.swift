@@ -159,6 +159,7 @@ enum EditPinnedTabPresenter {
         secondaryTitleString: String? = nil,
         modelContainer: ModelContainer? = nil,
         profileId: String = "",
+        spaceId: String = LocalStore.defaultSpaceId,
         initialFolderGuid: String? = nil,
         from parentWindow: NSWindow?,
         onCancel: (() -> Void)? = nil,
@@ -175,6 +176,7 @@ enum EditPinnedTabPresenter {
             secondaryUrlString: secondaryUrlString,
             secondaryTitleString: secondaryTitleString,
             profileId: profileId,
+            spaceId: spaceId,
             initialFolderGuid: initialFolderGuid,
             dismissesOnAction: false,
             onCancel: { [weak coordinator] in
@@ -300,6 +302,7 @@ struct EditPinnedTabView: View {
 
     private let mode: EditPinnedTabMode
     private let profileId: String
+    private let spaceId: String
     private let faviconURLString: String
     private let secondaryFaviconURLString: String?
     private let isSplitBookmark: Bool
@@ -333,6 +336,7 @@ struct EditPinnedTabView: View {
         secondaryUrlString: String? = nil,
         secondaryTitleString: String? = nil,
         profileId: String = "",
+        spaceId: String = LocalStore.defaultSpaceId,
         initialFolderGuid: String? = nil,
         dismissesOnAction: Bool = true,
         onCancel: (() -> Void)? = nil,
@@ -342,6 +346,7 @@ struct EditPinnedTabView: View {
     ) {
         self.mode = mode
         self.profileId = profileId
+        self.spaceId = spaceId
         self.faviconURLString = urlString
         self.secondaryFaviconURLString = secondaryUrlString
         self.isSplitBookmark = (secondaryUrlString?.isEmpty == false)
@@ -602,6 +607,7 @@ struct EditPinnedTabView: View {
 
                     BookmarkFolderPicker(
                         profileId: profileId,
+                        spaceId: spaceId,
                         selectedFolderGuid: $selectedFolderGuid,
                         onNewFolder: {
                             newFolderName = ""
@@ -846,13 +852,20 @@ struct EditPinnedTabView: View {
 
 private struct BookmarkFolderPicker: View {
     let profileId: String
+    let spaceId: String
     @Binding var selectedFolderGuid: String?
     var onNewFolder: (() -> Void)?
 
     @Query private var folderModels: [TabDataModel]
 
-    init(profileId: String, selectedFolderGuid: Binding<String?>, onNewFolder: (() -> Void)? = nil) {
+    init(
+        profileId: String,
+        spaceId: String,
+        selectedFolderGuid: Binding<String?>,
+        onNewFolder: (() -> Void)? = nil
+    ) {
         self.profileId = profileId
+        self.spaceId = spaceId
         self._selectedFolderGuid = selectedFolderGuid
         self.onNewFolder = onNewFolder
         let folderRaw = TabDataType.bookmarkFolder.rawValue
@@ -863,15 +876,11 @@ private struct BookmarkFolderPicker: View {
     }
 
     private var rootFolder: TabDataModel? {
-        // Identify the Space's hidden top-level folder structurally
-        // (parent == nil within the profile). The picker is invoked from the
-        // default Space today; when EditPinnedTabView is threaded with a
-        // spaceId by the Space-switcher UI, swap the secondary filter to
-        // `$0.spaceId == spaceId`.
+        // Identify this Space's hidden top-level folder structurally.
         folderModels.first {
             $0.parent == nil &&
             $0.profileId == profileId &&
-            $0.spaceId == LocalStore.defaultSpaceId
+            $0.spaceId == spaceId
         }
     }
 
