@@ -956,6 +956,7 @@ struct SpacesStripView: View {
             iconStoredValue: space.iconName,
             spaceName: space.name,
             iconColor: iconColor(for: space),
+            accentColor: hoverCardAccentColor(for: space),
             shortcutTokens: spaceShortcut(for: space)?.keycapTokens ?? []
         )
     }
@@ -1075,18 +1076,30 @@ struct SpacesStripView: View {
         profileManager.profile(for: profileId)?.displayName ?? profileId
     }
 
+    /// A Space's effective theme: its pinned theme, or the global theme when
+    /// no override is set.
+    private func theme(for space: SpaceModel) -> Theme {
+        if let pinnedId = manager.themeId(forSpaceId: space.spaceId),
+           let pinned = ThemeManager.shared.registeredThemes[pinnedId] {
+            return pinned
+        }
+        return ThemeManager.shared.currentTheme
+    }
+
     /// Each Space's accent comes from its pinned theme (or the global theme
     /// when no override is set), so the active-Space icon previews what the
     /// window currently looks like.
     fileprivate func iconColor(for space: SpaceModel) -> Color {
-        let theme: Theme
-        if let pinnedId = manager.themeId(forSpaceId: space.spaceId),
-           let pinned = ThemeManager.shared.registeredThemes[pinnedId] {
-            theme = pinned
-        } else {
-            theme = ThemeManager.shared.currentTheme
-        }
-        return Color(nsColor: theme.color(for: .textPrimary, appearance: windowAppearance))
+        Color(nsColor: theme(for: space).color(for: .textPrimary, appearance: windowAppearance))
+    }
+
+    /// The hover card's keycap accent: the same per-Space theme as
+    /// `iconColor(for:)` resolved through the `.themeColor` role, matching the
+    /// address bar's shortcut tooltip. Resolved here (not in the card) because
+    /// the card is hosted in a standalone panel outside the window's theme
+    /// environment.
+    private func hoverCardAccentColor(for space: SpaceModel) -> Color {
+        Color(nsColor: theme(for: space).color(for: .themeColor, appearance: windowAppearance))
     }
 
     private func promptRename(for space: SpaceModel) {
@@ -1643,6 +1656,9 @@ struct SpaceHoverCard: View {
     let iconStoredValue: String?
     let spaceName: String
     let iconColor: Color
+    /// The keycaps' theme tint, pre-resolved by the strip — the panel hosting
+    /// this card sits outside the window's theme environment.
+    let accentColor: Color
     /// Per-keycap tokens (modifiers then key), or empty for Spaces without a
     /// ⌃-number binding.
     let shortcutTokens: [String]
@@ -1701,19 +1717,20 @@ struct SpaceHoverCard: View {
             .foregroundStyle(Color.secondary.opacity(0.45))
     }
 
-    /// A single keycap badge (one modifier symbol or the character).
+    /// A single keycap badge (one modifier symbol or the character), tinted
+    /// like the address bar tooltip's keycaps.
     private func keycap(_ text: String) -> some View {
         Text(text)
             .font(.system(size: 11, weight: .medium))
-            .foregroundStyle(Color.secondary)
+            .foregroundStyle(accentColor)
             .frame(minWidth: 18, minHeight: 18)
             .background(
                 RoundedRectangle(cornerRadius: 4, style: .continuous)
-                    .fill(Color.primary.opacity(0.08))
+                    .fill(accentColor.opacity(0.14))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 4, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(0.12))
+                    .strokeBorder(accentColor.opacity(0.55))
             )
     }
 }
