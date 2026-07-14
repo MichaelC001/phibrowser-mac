@@ -251,7 +251,7 @@ extension PhiPreferences {
         /// PhiBrowserSkillFeatureEnabled -bool false`. The Settings window
         /// re-reads it on every open; the menu item applies on relaunch.
         static var skillFeatureEnabled: Bool {
-            UserDefaults.standard.bool(forKey: skillFeatureKey, default: true)
+            UserDefaults.standard.bool(forKey: skillFeatureKey, default: false)
         }
 
         /// Settings ▸ Developer ▸ Agent permissions: whether agent tooling may
