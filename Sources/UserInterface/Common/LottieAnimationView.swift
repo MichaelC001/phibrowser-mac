@@ -52,6 +52,8 @@ struct LottieAnimationViewConfig {
     var themedTintColor: ThemedColor?
     /// Animation speed multiplier
     var animationSpeed: Double?
+    /// Playback behavior for the forward animation
+    var loopMode: LottieLoopMode
     /// Whether to enable hover scale effect
     var enableHoverScale: Bool
     /// Scale factor when hovered
@@ -74,6 +76,7 @@ struct LottieAnimationViewConfig {
         animationTrigger: LottieAnimationTrigger = .onHoverEnter,
         themedTintColor: ThemedColor? = nil,
         animationSpeed: Double? = nil,
+        loopMode: LottieLoopMode = .playOnce,
         enableHoverScale: Bool = false,
         hoverScale: CGFloat = 1.05,
         reverseOnHoverExit: Bool = false,
@@ -91,6 +94,7 @@ struct LottieAnimationViewConfig {
         self.animationTrigger = animationTrigger
         self.themedTintColor = themedTintColor
         self.animationSpeed = animationSpeed
+        self.loopMode = loopMode
         self.enableHoverScale = enableHoverScale
         self.hoverScale = hoverScale
         self.reverseOnHoverExit = reverseOnHoverExit
@@ -106,6 +110,8 @@ class LottieAnimationViewState: ObservableObject {
     @Published var playCount: Int = 0
     /// Increment this to trigger reverse animation when using .manual trigger mode
     @Published var reversePlayCount: Int = 0
+    /// Increment this to stop playback and reset the animation to its first frame
+    @Published var stopCount: Int = 0
     
     init(isEnabled: Bool = true) {
         self.isEnabled = isEnabled
@@ -119,6 +125,10 @@ class LottieAnimationViewState: ObservableObject {
     /// Trigger reverse animation playback (only works with .manual trigger mode)
     func triggerReverseAnimation() {
         reversePlayCount += 1
+    }
+
+    func stopAnimation() {
+        stopCount += 1
     }
 }
 
@@ -193,6 +203,9 @@ struct LottieAnimationView: View {
             if config.animationTrigger == .manual {
                 playReverseAnimation()
             }
+        }
+        .onChange(of: state.stopCount) { _, _ in
+            stopAnimation()
         }
         .allowsHitTesting(state.isEnabled && config.allowsHitTesting)
     }
@@ -301,7 +314,15 @@ struct LottieAnimationView: View {
         isAtEndFrame = false
         isPlayingReverse = false
         isUsingReverseFile = false
-        playbackMode = .playing(.fromProgress(0, toProgress: 1, loopMode: .playOnce))
+        playbackMode = .playing(.fromProgress(0, toProgress: 1, loopMode: config.loopMode))
+    }
+
+    private func stopAnimation() {
+        isAtEndFrame = false
+        isPlayingReverse = false
+        isUsingReverseFile = false
+        playbackMode = .paused(at: .progress(0))
+        reversePlaybackMode = .paused(at: .progress(0))
     }
     
     private func playReverseAnimation() {
@@ -477,6 +498,11 @@ class LottieAnimationNSView: NSView {
     /// Trigger reverse animation playback (only works with .manual trigger mode)
     @objc func triggerReverseAnimation() {
         viewState.triggerReverseAnimation()
+    }
+
+    /// Stop playback and reset the animation to its first frame.
+    @objc func stopAnimation() {
+        viewState.stopAnimation()
     }
 }
 

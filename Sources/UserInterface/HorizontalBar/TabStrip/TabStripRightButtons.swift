@@ -81,21 +81,29 @@ struct TabStripRightButtons: View {
 
 /// "Organize tabs with AI" (Farringdon) button for the horizontal tab strip,
 /// shown next to the search button. Triggers the same focused-window organize run
-/// as the sidebar broom and sweeps while a run is in progress (driven by the
-/// shared `.farringdonOrganizeDidStart` / `.farringdonOrganizeDidFinish` events).
+/// as the sidebar broom and loops its Lottie animation while a run is in progress
+/// (driven by the shared `.farringdonOrganizeDidStart` /
+/// `.farringdonOrganizeDidFinish` events).
 private struct TabStripFarringdonButton: View {
     let eligibleTabCount: Int
 
-    @State private var isHovering = false
+    @StateObject private var lottieState = LottieAnimationViewState()
     @State private var isOrganizing = false
-    @State private var sweepAngle: Double = 0
+    @State private var organizeStartedAt: Date?
     @State private var anchorView: NSView?
 
     private let buttonSize: CGFloat = 24
-    private let iconSize: CGFloat = 22
-    private let cornerRadius: CGFloat = 6
-    private let sweepAmplitude: Double = 16
     private static let safetyTimeout: TimeInterval = 8.0
+
+    private let animationConfig = LottieAnimationViewConfig(
+        animationName: "broom",
+        size: CGSize(width: 24, height: 24),
+        hoverBackgroundColor: Color.sidebarTabHovered,
+        cornerRadius: 6,
+        animationTrigger: .manual,
+        themedTintColor: .custom(light: .black, dark: .white),
+        loopMode: .loop
+    )
 
     private var label: String {
         NSLocalizedString(
@@ -104,65 +112,51 @@ private struct TabStripFarringdonButton: View {
     }
 
     var body: some View {
-        Button {
+        LottieAnimationView(config: animationConfig, state: lottieState) {
             guard !isOrganizing else { return }
             FarringdonOrganizer.organizeFocusedWindow(eligibleTabCount: eligibleTabCount)
-        } label: {
-            Image("farringdon-broom")
-                .renderingMode(.template)
-                .resizable()
-                .scaledToFit()
-                .frame(width: iconSize, height: iconSize)
-                .foregroundStyle(Color.primary)
-                .rotationEffect(.degrees(sweepAngle))
-                .frame(width: buttonSize, height: buttonSize)
-                .background(
-                    RoundedRectangle(cornerRadius: cornerRadius)
-                        .fill(isHovering ? Color.sidebarTabHovered : Color.clear)
-                )
-                .background(
-                    TabStripAnchorReader { view in
-                        self.anchorView = view
-                    }
-                )
         }
-        .buttonStyle(.plain)
         .frame(width: buttonSize, height: buttonSize)
-        .help(label)
-        .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.15)) {
-                isHovering = hovering
+        .background(
+            TabStripAnchorReader { view in
+                self.anchorView = view
             }
-        }
+        )
+        .help(label)
         .accessibilityLabel(Text(label))
         .onReceive(NotificationCenter.default.publisher(for: .farringdonOrganizeDidStart)) { _ in
             // Only the window that triggered the run (the key window) animates.
             guard anchorView?.window?.isKeyWindow == true else { return }
-            startSweep()
+            startAnimation()
         }
         .onReceive(NotificationCenter.default.publisher(for: .farringdonOrganizeDidFinish)) { _ in
-            stopSweep()
+            stopAnimation()
         }
     }
 
-    private func startSweep() {
+    private func startAnimation() {
         guard !isOrganizing else { return }
         isOrganizing = true
-        sweepAngle = -sweepAmplitude
-        withAnimation(.easeInOut(duration: 0.4).repeatForever(autoreverses: true)) {
-            sweepAngle = sweepAmplitude
-        }
+        organizeStartedAt = Date()
+        lottieState.triggerAnimation()
         // Stop even if the completion signal never arrives.
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.safetyTimeout) {
-            stopSweep()
+            stopAnimation()
         }
     }
 
-    private func stopSweep() {
+    private func stopAnimation() {
         guard isOrganizing else { return }
-        isOrganizing = false
-        withAnimation(.easeInOut(duration: 0.2)) {
-            sweepAngle = 0
+
+        // Complete at least one full playback even when the organize run finishes immediately.
+        let elapsed = organizeStartedAt.map { Date().timeIntervalSince($0) }
+            ?? BroomAnimation.minimumPlaybackDuration
+        let remaining = max(0, BroomAnimation.minimumPlaybackDuration - elapsed)
+        DispatchQueue.main.asyncAfter(deadline: .now() + remaining) {
+            guard isOrganizing else { return }
+            isOrganizing = false
+            organizeStartedAt = nil
+            lottieState.stopAnimation()
         }
     }
 }

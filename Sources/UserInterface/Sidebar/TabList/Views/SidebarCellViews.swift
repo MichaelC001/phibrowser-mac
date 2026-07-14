@@ -5,6 +5,7 @@
 
 import Cocoa
 import Combine
+import Lottie
 import SnapKit
 import SwiftUI
 
@@ -1106,11 +1107,20 @@ enum FarringdonOrganizer {
     }
 }
 
+enum BroomAnimation {
+    static let minimumPlaybackDuration =
+        LottieAnimation.named(
+            "broom",
+            bundle: .main,
+            subdirectory: "LottieFiles"
+        )?.duration ?? 1.5
+}
+
 // MARK: - Broom Button
 
 /// The "organize tabs with AI" (Farringdon) button shown at the trailing edge of
 /// the New Tab row. Owns its own hover feedback (tint + subtle fill) and a
-/// sweeping animation that plays while a run is in progress.
+/// looping Lottie animation that plays while a run is in progress.
 final class BroomButton: NSButton {
     private var trackingArea: NSTrackingArea?
     private var isHovering = false { didSet { updateAppearance() } }
@@ -1118,14 +1128,23 @@ final class BroomButton: NSButton {
     private var organizeStartedAt: Date?
     private var safetyTimer: Timer?
 
+    // Matches the 24x24 frame used by `UnifiedTabCloseButton` in `SideTabView`.
     static let buttonSize: CGFloat = 24
 
-    private static let iconSize: CGFloat = 22
-    private static let cornerRadius: CGFloat = 6
-    private static let sweepKey = "farringdonSweep"
-    private static let sweepAmplitude: CGFloat = 10 * .pi / 180
-    private static let minVisibleDuration: TimeInterval = 0.6
+    private static let cornerRadius: CGFloat = 4
     private static let safetyTimeout: TimeInterval = 8.0
+
+    private lazy var animationView: LottieAnimationNSView = {
+        let config = LottieAnimationViewConfig(
+            animationName: "broom",
+            size: CGSize(width: Self.buttonSize, height: Self.buttonSize),
+            animationTrigger: .manual,
+            themedTintColor: .custom(light: .black, dark: .white),
+            loopMode: .loop,
+            allowsHitTesting: false
+        )
+        return LottieAnimationNSView(config: config)
+    }()
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -1148,16 +1167,14 @@ final class BroomButton: NSButton {
         title = ""
         attributedTitle = NSAttributedString(string: "")
         alternateTitle = ""
-        imagePosition = .imageOnly
-        imageScaling = .scaleProportionallyUpOrDown
         setButtonType(.momentaryChange)
         wantsLayer = true
         layer?.cornerRadius = Self.cornerRadius
         layer?.cornerCurve = .continuous
-        let broom = NSImage(named: NSImage.Name("farringdon-broom"))?.copy() as? NSImage
-        broom?.isTemplate = true
-        broom?.size = NSSize(width: Self.iconSize, height: Self.iconSize)
-        image = broom
+        addSubview(animationView)
+        animationView.snp.makeConstraints { make in
+            make.edges.equalToSuperview()
+        }
         toolTip = NSLocalizedString(
             "Organize tabs with AI",
             comment: "side bar new tab row - organize tabs button tooltip")
@@ -1206,7 +1223,6 @@ final class BroomButton: NSButton {
     }
 
     private func updateAppearance() {
-        phi.setContentTintColor(.textPrimary)
         layer?.backgroundColor = isHovering
             ? NSColor(resource: .sidebarTabHovered).cgColor
             : NSColor.clear.cgColor
@@ -1218,14 +1234,7 @@ final class BroomButton: NSButton {
         guard !isOrganizing else { return }
         isOrganizing = true
         organizeStartedAt = Date()
-
-        let sweep = CAKeyframeAnimation(keyPath: "transform.rotation.z")
-        sweep.values = [0, -Self.sweepAmplitude, 0, Self.sweepAmplitude, 0]
-        sweep.keyTimes = [0, 0.25, 0.5, 0.75, 1]
-        sweep.duration = 0.8
-        sweep.repeatCount = .infinity
-        sweep.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        layer?.add(sweep, forKey: Self.sweepKey)
+        animationView.triggerAnimation()
 
         // Stop even if the completion signal never arrives.
         safetyTimer?.invalidate()
@@ -1241,14 +1250,15 @@ final class BroomButton: NSButton {
         safetyTimer?.invalidate()
         safetyTimer = nil
 
-        // Keep the sweep visible for a beat so a sub-100ms run still registers.
-        let elapsed = organizeStartedAt.map { Date().timeIntervalSince($0) } ?? Self.minVisibleDuration
-        let remaining = max(0, Self.minVisibleDuration - elapsed)
+        // Complete at least one full playback even when the organize run finishes immediately.
+        let elapsed = organizeStartedAt.map { Date().timeIntervalSince($0) }
+            ?? BroomAnimation.minimumPlaybackDuration
+        let remaining = max(0, BroomAnimation.minimumPlaybackDuration - elapsed)
         DispatchQueue.main.asyncAfter(deadline: .now() + remaining) { [weak self] in
             guard let self, self.isOrganizing else { return }
             self.isOrganizing = false
             self.organizeStartedAt = nil
-            self.layer?.removeAnimation(forKey: Self.sweepKey)
+            self.animationView.stopAnimation()
         }
     }
 
