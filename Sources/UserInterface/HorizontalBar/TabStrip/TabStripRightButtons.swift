@@ -168,6 +168,7 @@ private struct TabStripSearchTabsButton: View {
     @State private var anchorView: NSView?
 
     private let buttonSize: CGFloat = 24
+    private let iconSize: CGFloat = 16
     private let cornerRadius: CGFloat = 6
     private var searchTabsLabel: String {
         NSLocalizedString("Search Tabs", comment: "Search Tabs - Button tooltip and accessibility label")
@@ -177,9 +178,12 @@ private struct TabStripSearchTabsButton: View {
         Button {
             action(anchorView)
         } label: {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 15, weight: .regular))
+            Image(.leftSidebarSearchTab)
+                .renderingMode(.template)
+                .resizable()
+                .scaledToFit()
                 .foregroundStyle(Color.primary)
+                .frame(width: iconSize, height: iconSize)
                 .frame(width: buttonSize, height: buttonSize)
                 .background(
                     RoundedRectangle(cornerRadius: cornerRadius)
