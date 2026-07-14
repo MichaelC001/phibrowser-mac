@@ -36,6 +36,29 @@ enum LayoutMode: String, CaseIterable, Identifiable {
     var showsNavigationAtTop: Bool { self != .performance }
 }
 
+/// Three-state auto picture-in-picture behavior. Stored as a single enum so
+/// the illegal "off but parked" combination cannot be represented; Chromium
+/// reads it through two bridge getters derived from the mode. Manual
+/// picture-in-picture is unaffected in every mode.
+enum AutoPictureInPictureMode: String, CaseIterable, Identifiable {
+    case off     // never pop out automatically
+    case normal  // pop out and stay where it appears (default)
+    case parked  // pop out, then park at the screen edge until clicked
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .off:
+            return NSLocalizedString("Off", comment: "Auto picture-in-picture option - never pop out automatically; manual picture-in-picture is unaffected")
+        case .normal:
+            return NSLocalizedString("Normal", comment: "Auto picture-in-picture option - pop out and stay in place")
+        case .parked:
+            return NSLocalizedString("Park at edge", comment: "Auto picture-in-picture option - pop out, then park at the screen edge until clicked")
+        }
+    }
+}
+
 enum PhiPreferences: String {
     case phiMainDebugMenuEnabled
     case phiLoginPhase
@@ -82,6 +105,25 @@ extension PhiPreferences {
 
         func loadValue() -> Bool {
             UserDefaults.standard.bool(forKey: rawValue, default: defaultValue)
+        }
+
+        static let autoPictureInPictureModeKey = "autoPictureInPictureMode"
+
+        static func loadAutoPictureInPictureMode(
+            from defaults: UserDefaults = .standard
+        ) -> AutoPictureInPictureMode {
+            if let rawValue = defaults.string(forKey: Self.autoPictureInPictureModeKey),
+               let mode = AutoPictureInPictureMode(rawValue: rawValue) {
+                return mode
+            }
+            return .normal
+        }
+
+        static func saveAutoPictureInPictureMode(
+            _ mode: AutoPictureInPictureMode,
+            to defaults: UserDefaults = .standard
+        ) {
+            defaults.set(mode.rawValue, forKey: Self.autoPictureInPictureModeKey)
         }
 
         static let layoutModeKey = "layoutMode"

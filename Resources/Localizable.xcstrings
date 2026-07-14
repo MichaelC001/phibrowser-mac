@@ -329,6 +329,9 @@
     "Attach files" : {
       "comment" : "Feedback form - Label for file attachment section"
     },
+    "Auto picture-in-picture" : {
+      "comment" : "General settings - Row title for the three-state auto picture-in-picture mode"
+    },
     "Automatically add current tab as context to new conversation" : {
       "comment" : "AI settings - Toggle to auto-add current tab as context when starting new AI conversation"
     },
@@ -1154,6 +1157,9 @@
     "Name is too long (maximum 100 characters)" : {
       "comment" : "Set name page - Error message when user name exceeds 100 characters"
     },
+    "Never pop out automatically; manual picture-in-picture still works" : {
+      "comment" : "General settings - Hint for the Off auto picture-in-picture mode"
+    },
     "New Conversation" : {
       "comment" : "View menu - Menu item to start a new AI conversation in the sidebar"
     },
@@ -1259,6 +1265,9 @@
     "No share actions available" : {
       "comment" : "Address bar menu - Empty share submenu item"
     },
+    "Normal" : {
+      "comment" : "Auto picture-in-picture option - pop out and stay in place"
+    },
     "Not configured" : {
       "comment" : "Phi Link - Custom bot not configured status"
     },
@@ -1273,6 +1282,9 @@
     },
     "Notifications" : {
       "comment" : "Profiles settings - data link to notification settings"
+    },
+    "Off" : {
+      "comment" : "Auto picture-in-picture option - never pop out automatically; manual picture-in-picture is unaffected"
     },
     "Official Phi Link Telegram bot" : {
       "comment" : "Phi Link - Official Bot title"
@@ -1318,6 +1330,9 @@
     },
     "Organize tabs with AI" : {
       "comment" : "Organize Tabs - Button tooltip and accessibility label\nside bar new tab row - organize tabs button tooltip"
+    },
+    "Park at edge" : {
+      "comment" : "Auto picture-in-picture option - pop out, then park at the screen edge until clicked"
     },
     "Passwords Manager" : {
       "comment" : "Onboarding password manager - Page title"
@@ -1393,6 +1408,12 @@
     },
     "Please reauthenticate to restore account features." : {
       "comment" : "Account settings - Tooltip explaining why reauthentication is needed"
+    },
+    "Pop out playing video when you switch tabs or apps" : {
+      "comment" : "General settings - Hint for the Normal auto picture-in-picture mode"
+    },
+    "Pop out playing video, parked at the screen edge until you click it" : {
+      "comment" : "General settings - Hint for the Park at edge auto picture-in-picture mode"
     },
     "Pop up" : {
       "comment" : "Notification menu option - Enable auto popup for notification cards"

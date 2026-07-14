@@ -278,10 +278,26 @@ private struct BrowsingSectionView: View {
     @AppStorage(PhiPreferences.AISettings.phiAIEnabled.rawValue)
     private var phiAIEnabled: Bool = PhiPreferences.AISettings.phiAIEnabled.defaultValue
 
+    @AppStorage(PhiPreferences.GeneralSettings.autoPictureInPictureModeKey)
+    private var autoPictureInPictureModeRawValue: String = PhiPreferences.GeneralSettings.loadAutoPictureInPictureMode().rawValue
+
     private var selectedBehavior: Binding<NewTabBehaviour> {
         Binding(
             get: { openNewTabPageOnCmdT ? .newTabPage : .omnibox },
             set: { openNewTabPageOnCmdT = ($0 == .newTabPage) }
+        )
+    }
+
+    private var selectedAutoPipMode: Binding<AutoPictureInPictureMode> {
+        Binding(
+            get: {
+                AutoPictureInPictureMode(rawValue: autoPictureInPictureModeRawValue)
+                    ?? PhiPreferences.GeneralSettings.loadAutoPictureInPictureMode()
+            },
+            set: { mode in
+                autoPictureInPictureModeRawValue = mode.rawValue
+                PhiPreferences.GeneralSettings.saveAutoPictureInPictureMode(mode)
+            }
         )
     }
 
@@ -328,7 +344,31 @@ private struct BrowsingSectionView: View {
                             .controlSize(.mini)
                             .themedTint(.themeColor)
                     }
-                    
+
+                    Divider()
+
+                    HStack(alignment: .center, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(NSLocalizedString("Auto picture-in-picture", comment: "General settings - Row title for the three-state auto picture-in-picture mode"))
+                                .font(.system(size: 13))
+                                .themedForeground(.textPrimary)
+                            Text(autoPipModeHint(for: selectedAutoPipMode.wrappedValue))
+                                .font(.system(size: 11))
+                                .themedForeground(.textTertiary)
+                        }
+                        Spacer(minLength: 12)
+                        Picker("", selection: selectedAutoPipMode) {
+                            ForEach(AutoPictureInPictureMode.allCases) { mode in
+                                Text(mode.displayName).tag(mode)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        .fixedSize()
+                    }
+                    .padding(.vertical, 12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
                     Divider()
                     
                     Button(action: handleAdditionalBrowserSettingsTap) {
@@ -352,6 +392,17 @@ private struct BrowsingSectionView: View {
             return "newtab-ntp"
         case .omnibox:
             return "newtab-omibar"
+        }
+    }
+
+    private func autoPipModeHint(for mode: AutoPictureInPictureMode) -> String {
+        switch mode {
+        case .off:
+            return NSLocalizedString("Never pop out automatically; manual picture-in-picture still works", comment: "General settings - Hint for the Off auto picture-in-picture mode")
+        case .normal:
+            return NSLocalizedString("Pop out playing video when you switch tabs or apps", comment: "General settings - Hint for the Normal auto picture-in-picture mode")
+        case .parked:
+            return NSLocalizedString("Pop out playing video, parked at the screen edge until you click it", comment: "General settings - Hint for the Park at edge auto picture-in-picture mode")
         }
     }
 

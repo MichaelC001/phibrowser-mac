@@ -244,6 +244,16 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
 /// source of truth). Read by the Chromium-side preinstall flow. Called
 /// synchronously — must not block.
 - (BOOL)shouldAutoInstallICloudPasswords;
+/// Whether auto picture-in-picture (pop out playing video when the user
+/// switches tabs or apps) is allowed. The Mac preference is the source of
+/// truth. Called synchronously — must not block.
+- (BOOL)isAutoPictureInPictureEnabled;
+/// Whether auto picture-in-picture windows should additionally park (tuck)
+/// at the screen edge after they appear. Derived from the Mac-side
+/// three-state auto picture-in-picture setting; only meaningful when
+/// isAutoPictureInPictureEnabled is YES. The Mac preference is the source of
+/// truth. Called synchronously — must not block.
+- (BOOL)isAutoPipParkEnabled;
 - (BOOL)handleDeeplinkWithUrlString:(NSString *)urlString windowId:(int64_t)windowId;
 - (void)toggleChatSidebar:(NSNumber * _Nullable)show;
 - (void)showFeedbackDialog;

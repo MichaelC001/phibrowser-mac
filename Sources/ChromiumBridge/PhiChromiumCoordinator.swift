@@ -37,6 +37,14 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
     func shouldAutoInstallICloudPasswords() -> Bool {
         PhiPreferences.PasswordManagerSettings.autoInstallICloudPasswords.loadValue()
     }
+
+    func isAutoPictureInPictureEnabled() -> Bool {
+        PhiPreferences.GeneralSettings.loadAutoPictureInPictureMode() != .off
+    }
+
+    func isAutoPipParkEnabled() -> Bool {
+        PhiPreferences.GeneralSettings.loadAutoPictureInPictureMode() == .parked
+    }
     
     func handleExtensionMessage(_ type: String, payload: String, requestId: String, senderId: String) -> String? {
         return ExtensionMessageRouter.shared.handle(type: type, payload: payload, requestId: requestId, senderId: senderId)
