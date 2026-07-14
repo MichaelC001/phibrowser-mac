@@ -376,6 +376,22 @@ final class PhiAlertTests: XCTestCase {
         XCTAssertEqual(response, expectedResponse)
     }
 
+    func testCommandQConfirmsQuitAlert() {
+        let expectedResponse = NSApplication.ModalResponse.alertFirstButtonReturn
+        let response = runKeyboardShortcutAlert(
+            characters: "q",
+            modifierFlags: .command,
+            keyCode: 12,
+            runAlert: { sourceWindow in
+                PhiAlert.runQuitAlert(relativeTo: sourceWindow)
+                    ? .alertFirstButtonReturn
+                    : .cancel
+            }
+        )
+
+        XCTAssertEqual(response, expectedResponse)
+    }
+
     private func makeHostingController(
         message: String,
         maximumHeight: CGFloat
@@ -392,7 +408,9 @@ final class PhiAlertTests: XCTestCase {
 
     private func runKeyboardShortcutAlert(
         characters: String,
-        keyCode: UInt16
+        modifierFlags: NSEvent.ModifierFlags = [],
+        keyCode: UInt16,
+        runAlert: ((NSWindow) -> NSApplication.ModalResponse)? = nil
     ) -> NSApplication.ModalResponse {
         let sourceWindow = NSWindow(
             contentRect: CGRect(x: 100, y: 100, width: 800, height: 600),
@@ -422,7 +440,7 @@ final class PhiAlertTests: XCTestCase {
             guard let event = NSEvent.keyEvent(
                 with: .keyDown,
                 location: .zero,
-                modifierFlags: [],
+                modifierFlags: modifierFlags,
                 timestamp: ProcessInfo.processInfo.systemUptime,
                 windowNumber: sheet.windowNumber,
                 context: nil,
@@ -441,10 +459,11 @@ final class PhiAlertTests: XCTestCase {
             sourceWindow.endSheet(sheet, returnCode: .cancel)
         }
 
-        return NSApp.runPhiAlert(
-            configuration,
-            relativeTo: sourceWindow
-        )
+        if let runAlert {
+            return runAlert(sourceWindow)
+        }
+
+        return NSApp.runPhiAlert(configuration, relativeTo: sourceWindow)
     }
 
     private var testIcon: some View {

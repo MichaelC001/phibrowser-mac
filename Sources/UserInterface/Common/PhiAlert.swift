@@ -571,6 +571,11 @@ private final class PhiAlertWindow: NSWindow {
     override var canBecomeKey: Bool { true }
 }
 
+@MainActor
+private final class PhiAlertQuitConfirmationAction {
+    var handler: (() -> Void)?
+}
+
 /// Presents a SwiftUI `PhiAlert` through AppKit as a window-attached sheet.
 /// Both asynchronous and synchronous entry points share the same window
 /// construction, theme subscription, and dismissal path.
@@ -846,10 +851,57 @@ extension PhiAlert where Icon == EmptyView, AlertContent == EmptyView, Actions =
             )
         )
 
-        return NSApp.runPhiAlert(
-            configuration,
-            relativeTo: sourceWindow
-        ) == .alertFirstButtonReturn
+        let confirmationAction = PhiAlertQuitConfirmationAction()
+        let commandQMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: .keyDown
+        ) { event in
+            guard isCommandQ(event) else { return event }
+            confirmationAction.handler?()
+            return nil
+        }
+        defer {
+            if let commandQMonitor {
+                NSEvent.removeMonitor(commandQMonitor)
+            }
+        }
+
+        let response = NSApp.runPhiAlert(relativeTo: sourceWindow) { dismiss in
+            makeQuitAlertContent(
+                configuration: configuration,
+                dismiss: dismiss,
+                confirmationAction: confirmationAction
+            )
+        }
+
+        return response == .alertFirstButtonReturn
+    }
+
+    private static func isCommandQ(_ event: NSEvent) -> Bool {
+        let modifiers = event.modifierFlags.intersection(
+            .deviceIndependentFlagsMask
+        )
+        let unsupportedModifiers: NSEvent.ModifierFlags = [
+            .control,
+            .option,
+            .shift,
+        ]
+        return modifiers.contains(.command)
+            && modifiers.intersection(unsupportedModifiers).isEmpty
+            && event.charactersIgnoringModifiers?.lowercased() == "q"
+    }
+
+    private static func makeQuitAlertContent(
+        configuration: PhiAlertAppKitConfiguration,
+        dismiss: PhiAlertDismissAction,
+        confirmationAction: PhiAlertQuitConfirmationAction
+    ) -> some View {
+        confirmationAction.handler = {
+            dismiss(.alertFirstButtonReturn)
+        }
+        return PhiAlertAppKitContent(
+            configuration: configuration,
+            dismiss: dismiss
+        )
     }
 }
 
