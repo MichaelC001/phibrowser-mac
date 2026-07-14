@@ -78,9 +78,13 @@ import PostHog
         SentryService.setup()
         
         MemoryUsageMonitor.shared.start()
-        
+
         DefaultExtensionManifestWriter.start()
         FeedbackOutboxUploader.shared.start()
+
+        // Start the agent CDP socket listener when the user has enabled agent
+        // browser control (Settings ▸ Developer ▸ Remote debugging).
+        AgentCDPListener.shared.startIfEnabled()
         
         NotificationCenter.default.addObserver(self,
                                                selector: #selector(phiWillTryToTerminateApplicationNotification(_:)),
@@ -159,6 +163,7 @@ import PostHog
         coldOpenURLForwardWorkItem = nil
         AppLogInfo("-------applicationWillTerminate----")
         MemoryUsageMonitor.shared.stop()
+        AgentCDPListener.shared.stop()
         if let chromiumBridge {
             chromiumBridge.applicationWillTerminate(notification)
         } else {

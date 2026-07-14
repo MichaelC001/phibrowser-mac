@@ -1,8 +1,9 @@
 // Copyright 2026 Phinomenon Inc.
 //
-// Helper surface preloaded into phi-browser heredoc scripts. All browser
-// control rides CDP; agent-Space lifecycle rides the PhiAgentSpace domain
-// (a tunnel to the Mac client's agentSpace.* message router).
+// Helper surface preloaded into phi-browser heredoc scripts. Page automation
+// rides stock CDP to Chromium; the agentSpace.* surface (management + task
+// lifecycle) goes through state.cdp.phi — direct to the Mac client over the
+// app socket, or the Chromium PhiAgentSpace tunnel under the TCP dev override.
 
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -58,16 +59,14 @@ const INTER_ROUND_KEEPALIVE_SECONDS = 30 * 60
 async function cdpClient() {
   if (state.cdp) return state.cdp
   state.cdp = await connectBrowser()
-  await state.cdp.send('PhiAgentSpace.enable')
-  state.cdp.on('PhiAgentSpace.appMessage', ({ type, payloadJson }) => {
-    if (type !== 'agentSpace.ownershipChanged') return
-    try {
-      const { taskId, owner } = JSON.parse(payloadJson)
-      if (state.task && state.task.taskId === taskId) {
-        state.task.ownership = owner
-        state.ownerCheckedAt = Date.now()
-      }
-    } catch {}
+  // `state.cdp.phi` is the agentSpace.* channel — direct to Swift over the
+  // app socket, or the Chromium tunnel under the TCP dev override. Either way
+  // the ownership push lands here.
+  state.cdp.phi.onEvent('agentSpace.ownershipChanged', ({ taskId, owner }) => {
+    if (state.task && state.task.taskId === taskId) {
+      state.task.ownership = owner
+      state.ownerCheckedAt = Date.now()
+    }
   })
   return state.cdp
 }
@@ -83,14 +82,7 @@ export async function cdp(method, params = {}) {
 
 async function phiSend(type, payload) {
   const client = await cdpClient()
-  const { responseJson } = await client.send('PhiAgentSpace.sendMessage', {
-    type,
-    payloadJson: JSON.stringify(payload),
-  })
-  let parsed
-  try { parsed = JSON.parse(responseJson) } catch {
-    throw new Error(`${type}: unparseable app response: ${responseJson}`)
-  }
+  const parsed = await client.phi.send(type, payload ?? {})
   if (parsed && parsed.ok === false) {
     throw new Error(`${type}: ${parsed.error || 'failed'}`)
   }
@@ -150,7 +142,10 @@ export async function listAgentSpaces() {
 }
 
 /** Browser profiles available for ensureAgentSpace's {profile} option, as
- *  [{profileId, displayName}]. */
+ *  [{profileId, displayName, agentSpacesAllowed}]. `agentSpacesAllowed: false`
+ *  means the user has blocked agent Spaces in that profile (Settings ▸
+ *  Developer ▸ Agent permissions) — ensureAgentSpace on it is refused; pick a
+ *  profile where the flag is true. */
 export async function listProfiles() {
   const { profiles } = await phiSend('agentSpace.listProfiles', {})
   return profiles
@@ -3394,6 +3389,592 @@ export async function importCookies(source, { url } = {}) {
     try { return new URL(c.url).hostname } catch { return c.url }
   }))]
   return { imported: cookies.length, domains }
+}
+
+// ---------------------------------------------------------------------------
+// Browser management
+//
+// The management slice of the app-message surface: Spaces, profiles, URL
+// rules, pinned tabs and bookmarks are APP-LEVEL — they operate the user's
+// real browser data immediately and need no agent Space (callable before
+// ensureAgentSpace). Tab groups and split view are TASK-SCOPED: they arrange
+// tabs inside the current agent Space's window and follow the same
+// control-ownership rules as every other mutation.
+
+/** Management writes commit on a background queue in the app; this polls
+ *  `check` until it returns a truthy value (the settled read) or the timeout
+ *  lapses (best effort: returns the last value, no throw), so every mutation
+ *  helper reads its own write before returning. */
+async function settle(check, { timeout = 4, poll = 0.15 } = {}) {
+  const deadline = Date.now() + timeout * 1000
+  let last
+  for (;;) {
+    last = await check()
+    if (last || Date.now() >= deadline) return last
+    await wait(poll)
+  }
+}
+
+/** Depth-first search of a bookmark tree for a guid. */
+function findBookmarkNode(nodes, guid) {
+  for (const node of nodes ?? []) {
+    if (node.guid === guid) return node
+    if (node.children) {
+      const hit = findBookmarkNode(node.children, guid)
+      if (hit) return hit
+    }
+  }
+  return null
+}
+
+/** Resolves a Space reference (spaceId or name, case-insensitive) to its
+ *  spaceId. 'incognito' names the special URL-rule target. */
+async function resolveSpaceId(ref) {
+  if (!ref) throw new Error('space is required (spaceId or name)')
+  if (ref === 'incognito' || ref === 'space.incognito') return 'space.incognito'
+  const spaces = await listSpaces()
+  const direct = spaces.find((s) => s.spaceId === ref)
+  if (direct) return direct.spaceId
+  const named = spaces.filter(
+    (s) => s.name.toLowerCase() === String(ref).toLowerCase())
+  if (named.length === 1) return named[0].spaceId
+  if (named.length > 1) {
+    throw new Error(`space name '${ref}' is ambiguous — use a spaceId from listSpaces()`)
+  }
+  throw new Error(`unknown space '${ref}' — see listSpaces()`)
+}
+
+/** The user's normal Spaces, as [{spaceId, name, colorHex, iconName,
+ *  profileId, sortOrder, isDefault, isActive}]. Agent and Incognito Spaces
+ *  are not included. */
+export async function listSpaces() {
+  const { spaces } = await phiSend('agentSpace.spaces.list', {})
+  return spaces
+}
+
+/** Creates a normal user Space. Options: {profile} (profileId or display
+ *  name; defaults to the active Space's profile), {colorHex}, {iconName}
+ *  ("phi:phi-icon-N" or "emoji:<hex codepoint>"), {activate: true} to also
+ *  surface it in the user's focused window (default false — don't yank the
+ *  user's window). Returns {spaceId, profileId}. */
+export async function createSpace(name, { profile = '', colorHex, iconName,
+                                          activate = false } = {}) {
+  if (!name || typeof name !== 'string') {
+    throw new Error('createSpace(name): name is required')
+  }
+  const created = await phiSend('agentSpace.spaces.create', {
+    name,
+    ...(profile ? { profileId: profile } : {}),
+    ...(colorHex ? { colorHex } : {}),
+    ...(iconName ? { iconName } : {}),
+    ...(activate ? { activate: true } : {}),
+  })
+  return { spaceId: created.spaceId, profileId: created.profileId }
+}
+
+/** Renames / recolors / re-icons a Space. `space` is a spaceId or name;
+ *  fields in the options object are each optional. */
+export async function updateSpace(space, { name, colorHex, iconName } = {}) {
+  const spaceId = await resolveSpaceId(space)
+  await phiSend('agentSpace.spaces.update', {
+    spaceId,
+    ...(name ? { name } : {}),
+    ...(colorHex ? { colorHex } : {}),
+    ...(iconName ? { iconName } : {}),
+  })
+  await settle(async () => {
+    const s = (await listSpaces()).find((x) => x.spaceId === spaceId)
+    return s && (!name || s.name === name) &&
+           (!colorHex || s.colorHex === colorHex) &&
+           (!iconName || s.iconName === iconName)
+  })
+  return { spaceId }
+}
+
+/** Deletes a Space: closes its windows and cascade-deletes its bookmarks and
+ *  URL rules. Refused for the default Space and agent Spaces. DESTRUCTIVE —
+ *  only on the user's explicit ask. */
+export async function deleteSpace(space) {
+  const spaceId = await resolveSpaceId(space)
+  await phiSend('agentSpace.spaces.delete', { spaceId })
+  await settle(async () =>
+    !(await listSpaces()).some((s) => s.spaceId === spaceId))
+  return { spaceId, deleted: true }
+}
+
+/** Creates a browser profile (its own cookies/logins). Returns {profileId}.
+ *  Fails on an empty or duplicate display name. */
+export async function createProfile(displayName) {
+  const { profileId } = await phiSend('agentSpace.profiles.create', { displayName })
+  return { profileId }
+}
+
+/** Renames a profile's display name (profileId from listProfiles()). */
+export async function renameProfile(profileId, displayName) {
+  await phiSend('agentSpace.profiles.rename', { profileId, displayName })
+  return { profileId, displayName }
+}
+
+/** Every Space's URL routing rules, as [{id, spaceId, host, pathPrefix, ask,
+ *  sortOrder}]. Rule ids are stable only until the next rule write — always
+ *  list right before updateUrlRule/deleteUrlRule. */
+export async function listUrlRules() {
+  const { rules } = await phiSend('agentSpace.urlRules.list', {})
+  return rules
+}
+
+/** Adds a URL routing rule: navigations matching `host` (+ optional
+ *  `pathPrefix`) open in `space`. Host forms: exact ("github.com"),
+ *  subdomain wildcard ("*.figma.com"), contains ("*git*"). `space` may be
+ *  'incognito' to route into an Incognito Space. {ask: true} prompts the
+ *  user instead of auto-routing. */
+export async function addUrlRule({ space, host, pathPrefix, ask = false } = {}) {
+  if (!host) throw new Error('addUrlRule: host is required')
+  const spaceId = await resolveSpaceId(space)
+  const before = new Set((await listUrlRules()).map((r) => r.id))
+  await phiSend('agentSpace.urlRules.add', {
+    spaceId, host,
+    ...(pathPrefix ? { pathPrefix } : {}),
+    ...(ask ? { ask: true } : {}),
+  })
+  // Rule ids regenerate on every write, so the settled read is "a rule with
+  // this host exists in this Space under a fresh id" — return that row so
+  // callers get a usable id without a second list.
+  const added = await settle(async () =>
+    (await listUrlRules()).find((r) =>
+      r.spaceId === spaceId && r.host === host.toLowerCase() && !before.has(r.id)))
+  return added ?? { spaceId, host }
+}
+
+/** Edits one rule by id (from a FRESH listUrlRules()). Optional fields:
+ *  {host, pathPrefix (null/'' clears), ask, space (moves the rule)}. */
+export async function updateUrlRule(id, { host, pathPrefix, ask, space } = {}) {
+  const payload = { id }
+  if (host !== undefined) payload.host = host
+  if (pathPrefix !== undefined) payload.pathPrefix = pathPrefix
+  if (ask !== undefined) payload.ask = !!ask
+  if (space !== undefined) payload.spaceId = await resolveSpaceId(space)
+  await phiSend('agentSpace.urlRules.update', payload)
+  await settle(async () =>
+    !(await listUrlRules()).some((r) => r.id === id))
+  return { id }
+}
+
+/** Deletes one rule by id (from a FRESH listUrlRules()). */
+export async function deleteUrlRule(id) {
+  await phiSend('agentSpace.urlRules.delete', { id })
+  await settle(async () =>
+    !(await listUrlRules()).some((r) => r.id === id))
+  return { id, deleted: true }
+}
+
+/** The profile's pinned tabs (pinned tabs are per-profile, shared by all of
+ *  its Spaces), as [{guid, url, title, index, profileId}]. {profile}
+ *  defaults to the active Space's profile. */
+export async function listPinnedTabs({ profile = '' } = {}) {
+  const { pinnedTabs } = await phiSend('agentSpace.pinnedTabs.list',
+    profile ? { profileId: profile } : {})
+  return pinnedTabs
+}
+
+/** Pins a URL: creates a pinned-tab record that appears in the sidebar of
+ *  every window of the profile (opens on click). Options: {title, profile,
+ *  index}. Returns {guid}. */
+export async function addPinnedTab(url, { title, profile = '', index } = {}) {
+  if (!url) throw new Error('addPinnedTab(url): url is required')
+  const created = await phiSend('agentSpace.pinnedTabs.add', {
+    url,
+    ...(title ? { title } : {}),
+    ...(profile ? { profileId: profile } : {}),
+    ...(Number.isInteger(index) ? { index } : {}),
+  })
+  await settle(async () =>
+    (await listPinnedTabs({ profile: created.profileId }))
+      .some((p) => p.guid === created.guid))
+  return { guid: created.guid, profileId: created.profileId }
+}
+
+/** Edits a pinned tab's {url, title} by guid (from listPinnedTabs()). */
+export async function updatePinnedTab(guid, { url, title } = {}) {
+  await phiSend('agentSpace.pinnedTabs.update', {
+    guid,
+    ...(url !== undefined ? { url } : {}),
+    ...(title !== undefined ? { title } : {}),
+  })
+  await settle(async () => {
+    const p = (await listPinnedTabs()).find((x) => x.guid === guid)
+    return p && (url === undefined || p.url === url) &&
+           (title === undefined || p.title === title)
+  })
+  return { guid }
+}
+
+/** Unpins (deletes the pinned record) by guid. */
+export async function removePinnedTab(guid) {
+  await phiSend('agentSpace.pinnedTabs.remove', { guid })
+  await settle(async () =>
+    !(await listPinnedTabs()).some((p) => p.guid === guid))
+  return { guid, deleted: true }
+}
+
+/** The Space's bookmark tree (bookmarks are per-Space). Folders carry
+ *  `children`, leaves carry `url`. {space} defaults to the default Space. */
+export async function listBookmarks({ space } = {}) {
+  const payload = {}
+  if (space) payload.spaceId = await resolveSpaceId(space)
+  const { bookmarks, spaceId } = await phiSend('agentSpace.bookmarks.list', payload)
+  return { spaceId, bookmarks }
+}
+
+/** Adds a bookmark. Options: {title, space, folder (parent folder guid;
+ *  omit for the Space's root), index}. Returns {guid}. */
+export async function addBookmark(url, { title, space, folder, index } = {}) {
+  if (!url) throw new Error('addBookmark(url): url is required')
+  const payload = { url }
+  if (title) payload.title = title
+  if (space) payload.spaceId = await resolveSpaceId(space)
+  if (folder) payload.parentGuid = folder
+  if (Number.isInteger(index)) payload.index = index
+  const created = await phiSend('agentSpace.bookmarks.add', payload)
+  await settle(async () => {
+    const tree = await phiSend('agentSpace.bookmarks.list',
+      payload.spaceId ? { spaceId: payload.spaceId } : {})
+    return findBookmarkNode(tree.bookmarks, created.guid)
+  })
+  return { guid: created.guid }
+}
+
+/** Creates a bookmark folder. Options: {space, parent (folder guid), index}.
+ *  Returns {guid}. */
+export async function addBookmarkFolder(title, { space, parent, index } = {}) {
+  if (!title) throw new Error('addBookmarkFolder(title): title is required')
+  const payload = { title }
+  if (space) payload.spaceId = await resolveSpaceId(space)
+  if (parent) payload.parentGuid = parent
+  if (Number.isInteger(index)) payload.index = index
+  const created = await phiSend('agentSpace.bookmarks.addFolder', payload)
+  await settle(async () => {
+    const tree = await phiSend('agentSpace.bookmarks.list',
+      payload.spaceId ? { spaceId: payload.spaceId } : {})
+    return findBookmarkNode(tree.bookmarks, created.guid)
+  })
+  return { guid: created.guid }
+}
+
+/** Edits a bookmark's {title, url} by guid; folders take title only. */
+export async function updateBookmark(guid, { title, url } = {}) {
+  const res = await phiSend('agentSpace.bookmarks.update', {
+    guid,
+    ...(title !== undefined ? { title } : {}),
+    ...(url !== undefined ? { url } : {}),
+  })
+  await settle(async () => {
+    const tree = await phiSend('agentSpace.bookmarks.list', { spaceId: res.spaceId })
+    const node = findBookmarkNode(tree.bookmarks, guid)
+    return node && (title === undefined || node.title === title)
+    // URL is normalized by the app (scheme, trailing slash), so it is not
+    // string-compared here; the title check settles the same write.
+  })
+  return { guid }
+}
+
+/** Moves a bookmark/folder. Options: {folder: parent folder guid (omit for
+ *  the Space's root), index (omitted appends)}. */
+export async function moveBookmark(guid, { folder, index } = {}) {
+  const res = await phiSend('agentSpace.bookmarks.move', {
+    guid,
+    ...(folder ? { parentGuid: folder } : {}),
+    ...(Number.isInteger(index) ? { index } : {}),
+  })
+  await settle(async () => {
+    const tree = await phiSend('agentSpace.bookmarks.list', { spaceId: res.spaceId })
+    if (!folder) return findBookmarkNode(tree.bookmarks, guid) // at root or anywhere: moved
+    const parent = findBookmarkNode(tree.bookmarks, folder)
+    return parent && findBookmarkNode(parent.children ?? [], guid)
+  })
+  return { guid }
+}
+
+/** Deletes a bookmark — or a folder with everything in it. DESTRUCTIVE for
+ *  folders: only on the user's explicit ask. */
+export async function removeBookmark(guid) {
+  const res = await phiSend('agentSpace.bookmarks.remove', { guid })
+  await settle(async () => {
+    const tree = await phiSend('agentSpace.bookmarks.list', { spaceId: res.spaceId })
+    return !findBookmarkNode(tree.bookmarks, guid)
+  })
+  return { guid, deleted: true }
+}
+
+// --- Tab groups & split view -------------------------------------------------
+//
+// Default target: the current agent Space's window (task required, mutations
+// ownership-guarded). Every helper also takes a {space} option (Space name or
+// id) to target a USER Space's open window instead — app-level like the rest
+// of browser management: no agent Space and no control ownership involved.
+// Tab references are CDP targetIds, or the integer tabIds listSpaceTabs()
+// returns (a user Space's tabs may have no CDP target to name them by).
+
+/** Maps tab references to Phi's stable tab ids: integers pass through (they
+ *  are already tab ids, from listSpaceTabs), strings resolve as CDP target
+ *  ids via the PhiAgentSpace.resolveTabIds command. strict (default) throws
+ *  on any unresolvable target. */
+async function resolveTabIds(targets, { strict = true } = {}) {
+  const list = Array.isArray(targets) ? targets : [targets]
+  if (list.length === 0) throw new Error('no tabs given')
+  const targetIds = list.filter((t) => !Number.isInteger(t)).map(String)
+  let resolved = []
+  if (targetIds.length > 0) {
+    const client = await cdpClient()
+    ;({ tabIds: resolved } = await client.send('PhiAgentSpace.resolveTabIds',
+                                               { targetIds }))
+  }
+  let next = 0
+  const tabIds = list.map((t) => (Number.isInteger(t) ? t : resolved[next++]))
+  if (strict) {
+    list.forEach((t, i) => {
+      if (!Number.isInteger(tabIds[i]) || tabIds[i] < 0) {
+        throw new Error(`cannot resolve a tab id for target ${t} — is it a live tab?`)
+      }
+    })
+  }
+  return tabIds
+}
+
+/** tabId -> targetId over every live page target (all windows), for
+ *  annotating layout listings with actionable CDP ids. */
+async function targetIdsByTabId() {
+  const client = await cdpClient()
+  const { targetInfos } = await client.send('Target.getTargets', {})
+  const pages = targetInfos.filter((t) => t.type === 'page')
+  if (pages.length === 0) return new Map()
+  const { tabIds } = await client.send('PhiAgentSpace.resolveTabIds',
+                                       { targetIds: pages.map((t) => t.targetId) })
+  const byTabId = new Map()
+  pages.forEach((t, i) => { if (tabIds[i] >= 0) byTabId.set(tabIds[i], t.targetId) })
+  return byTabId
+}
+
+/** The routing half of a layout payload: {spaceId} for a user Space's open
+ *  window (app-level), or {taskId} for the agent window (ownership-guarded
+ *  when mutating). */
+async function layoutScope(space, { mutating = true } = {}) {
+  if (space) return { spaceId: await resolveSpaceId(space) }
+  if (mutating) await guardAgentControl()
+  return { taskId: requireTask().taskId }
+}
+
+/** A user Space's open tabs (its window's tab strip), as [{tabId, targetId,
+ *  url, title, active}]. tabId works directly as a tab reference in the
+ *  layout helpers below; targetId is null when the tab has no live CDP
+ *  target. Needs the Space to have an open window. */
+export async function listSpaceTabs(space) {
+  const spaceId = await resolveSpaceId(space)
+  const { tabs } = await phiSend('agentSpace.spaces.listTabs', { spaceId })
+  const byTabId = await targetIdsByTabId()
+  return tabs.map((t) => ({ ...t, targetId: byTabId.get(t.tabId) ?? null }))
+}
+
+/** The target window's tab groups, as [{token, title, color, collapsed,
+ *  tabs: [{tabId, targetId}]}]. */
+export async function listTabGroups({ space } = {}) {
+  const scope = await layoutScope(space, { mutating: false })
+  const { groups } = await phiSend('agentSpace.tabGroups.list', scope)
+  const byTabId = await targetIdsByTabId()
+  return groups.map((g) => ({
+    ...g,
+    tabs: g.tabIds.map((id) => ({ tabId: id, targetId: byTabId.get(id) ?? null })),
+  }))
+}
+
+/** Groups tabs (targetIds or tabIds) into a new tab group. Options: {title,
+ *  color, space} — color is a Chromium wire string: grey, blue, red, yellow,
+ *  green, pink, purple, cyan, orange. Returns {token}. */
+export async function createTabGroup(targets, { title, color, space } = {}) {
+  const scope = await layoutScope(space)
+  const tabIds = await resolveTabIds(targets)
+  const created = await phiSend('agentSpace.tabGroups.create', {
+    ...scope, tabIds,
+    ...(title ? { title } : {}),
+    ...(color ? { color } : {}),
+  })
+  // Group state flows back from the browser asynchronously — settle until
+  // the new group is listable so follow-up ops (update, addTabs) can trust it.
+  await settle(async () => {
+    const { groups } = await phiSend('agentSpace.tabGroups.list', scope)
+    return groups.some((g) => g.token === created.token)
+  })
+  return { token: created.token }
+}
+
+/** Edits a group's {title, color, collapsed}, each optional. */
+export async function updateTabGroup(token, { title, color, collapsed, space } = {}) {
+  const scope = await layoutScope(space)
+  await phiSend('agentSpace.tabGroups.update', {
+    ...scope, token,
+    ...(title !== undefined ? { title } : {}),
+    ...(color !== undefined ? { color } : {}),
+    ...(collapsed !== undefined ? { collapsed: !!collapsed } : {}),
+  })
+  return { token }
+}
+
+/** Adds tabs (targetIds or tabIds) to an existing group. */
+export async function addTabsToGroup(token, targets, { space } = {}) {
+  const scope = await layoutScope(space)
+  const tabIds = await resolveTabIds(targets)
+  await phiSend('agentSpace.tabGroups.addTabs', { ...scope, token, tabIds })
+  return { token, added: tabIds.length }
+}
+
+/** Removes tabs (targetIds or tabIds) from whichever group holds them; a
+ *  group whose last member leaves closes itself. */
+export async function removeTabsFromGroup(targets, { space } = {}) {
+  const scope = await layoutScope(space)
+  const tabIds = await resolveTabIds(targets)
+  await phiSend('agentSpace.tabGroups.removeTabs', { ...scope, tabIds })
+  return { removed: tabIds.length }
+}
+
+/** Dissolves a group, keeping its tabs open and ungrouped. */
+export async function ungroupTabGroup(token, { space } = {}) {
+  const scope = await layoutScope(space)
+  await phiSend('agentSpace.tabGroups.ungroup', { ...scope, token })
+  await settle(async () => {
+    const { groups } = await phiSend('agentSpace.tabGroups.list', scope)
+    return !groups.some((g) => g.token === token)
+  })
+  return { token, ungrouped: true }
+}
+
+/** Closes a group AND every tab in it. */
+export async function closeTabGroup(token, { space } = {}) {
+  const scope = await layoutScope(space)
+  await phiSend('agentSpace.tabGroups.close', { ...scope, token })
+  await settle(async () => {
+    const { groups } = await phiSend('agentSpace.tabGroups.list', scope)
+    return !groups.some((g) => g.token === token)
+  })
+  return { token, closed: true }
+}
+
+/** The target window's splits, as [{splitId, layout, ratio,
+ *  primary: {tabId, targetId}, secondary: {tabId, targetId}}]. */
+export async function listSplitViews({ space } = {}) {
+  const scope = await layoutScope(space, { mutating: false })
+  const { splits } = await phiSend('agentSpace.splitView.list', scope)
+  const byTabId = await targetIdsByTabId()
+  return splits.map((s) => ({
+    splitId: s.splitId, layout: s.layout, ratio: s.ratio,
+    primary: { tabId: s.primaryTabId, targetId: byTabId.get(s.primaryTabId) ?? null },
+    secondary: { tabId: s.secondaryTabId, targetId: byTabId.get(s.secondaryTabId) ?? null },
+  }))
+}
+
+/** Shows two tabs (targetIds or tabIds) side by side. {layout: 'vertical'}
+ *  (default, side-by-side) or 'horizontal' (stacked). Returns {splitId}. */
+export async function createSplitView(primaryTarget, secondaryTarget,
+                                      { layout = 'vertical', space } = {}) {
+  const scope = await layoutScope(space)
+  const [primaryTabId, secondaryTabId] =
+    await resolveTabIds([primaryTarget, secondaryTarget])
+  const created = await phiSend('agentSpace.splitView.create', {
+    ...scope, primaryTabId, secondaryTabId, layout,
+  })
+  await settle(async () => {
+    const { splits } = await phiSend('agentSpace.splitView.list', scope)
+    return splits.some((s) => s.splitId === created.splitId)
+  })
+  return { splitId: created.splitId }
+}
+
+/** Adjusts a split: {ratio} (0–1, the primary pane's share) and/or {layout}. */
+export async function updateSplitView(splitId, { ratio, layout, space } = {}) {
+  const scope = await layoutScope(space)
+  await phiSend('agentSpace.splitView.update', {
+    ...scope, splitId,
+    ...(ratio !== undefined ? { ratio } : {}),
+    ...(layout !== undefined ? { layout } : {}),
+  })
+  return { splitId }
+}
+
+/** Swaps the two panes of a split. */
+export async function swapSplitView(splitId, { space } = {}) {
+  const scope = await layoutScope(space)
+  await phiSend('agentSpace.splitView.swap', { ...scope, splitId })
+  return { splitId, swapped: true }
+}
+
+/** Ends a split; both tabs stay open as normal tabs. */
+export async function removeSplitView(splitId, { space } = {}) {
+  const scope = await layoutScope(space)
+  await phiSend('agentSpace.splitView.remove', { ...scope, splitId })
+  await settle(async () => {
+    const { splits } = await phiSend('agentSpace.splitView.list', scope)
+    return !splits.some((s) => s.splitId === splitId)
+  })
+  return { splitId, removed: true }
+}
+
+// ---------------------------------------------------------------------------
+// Downloads
+//
+// Downloads are per-profile: they belong to the profile of the target window,
+// not to a single tab. Default target is the current agent Space's window (so
+// a file the agent just triggered shows up here); {space} targets a USER
+// Space's open window instead (app-level, gated by the "operate your Spaces"
+// setting). The agent can only observe and control downloads — it cannot open
+// files or reveal them in Finder.
+
+/** Downloads visible in the target window's profile, newest first, as
+ *  [{guid, url, filename, mimeType, state, paused, done, canResume, totalBytes,
+ *  receivedBytes, percentComplete, currentSpeed, startTime, endTime,
+ *  targetPath, currentPath, dangerous, insecure}]. `state` is one of
+ *  in_progress | complete | cancelled | interrupted; times are ms-epoch
+ *  (endTime 0 until finished); percentComplete is -1 when the size is unknown.
+ *  {space} targets a user Space's window instead of the agent's. */
+export async function listDownloads({ space } = {}) {
+  const scope = await layoutScope(space, { mutating: false })
+  const { downloads } = await phiSend('agentSpace.downloads.list', scope)
+  return downloads
+}
+
+/** A single download by guid (same shape as listDownloads rows), or throws if
+ *  no such download exists in the target window's profile. */
+export async function getDownload(guid, { space } = {}) {
+  const scope = await layoutScope(space, { mutating: false })
+  const { download } = await phiSend('agentSpace.downloads.get', { ...scope, guid })
+  return download
+}
+
+/** Pauses an in-progress download. The control is asynchronous — re-read with
+ *  getDownload(guid) to observe the new state. */
+export async function pauseDownload(guid, { space } = {}) {
+  const scope = await layoutScope(space)
+  await phiSend('agentSpace.downloads.pause', { ...scope, guid })
+  return { guid, paused: true }
+}
+
+/** Resumes a paused or interrupted download (see canResume). */
+export async function resumeDownload(guid, { space } = {}) {
+  const scope = await layoutScope(space)
+  await phiSend('agentSpace.downloads.resume', { ...scope, guid })
+  return { guid, resumed: true }
+}
+
+/** Cancels an in-progress download. */
+export async function cancelDownload(guid, { space } = {}) {
+  const scope = await layoutScope(space)
+  await phiSend('agentSpace.downloads.cancel', { ...scope, guid })
+  return { guid, cancelled: true }
+}
+
+/** Drops a download from the list. Does NOT delete the file on disk. */
+export async function removeDownload(guid, { space } = {}) {
+  const scope = await layoutScope(space)
+  await phiSend('agentSpace.downloads.remove', { ...scope, guid })
+  return { guid, removed: true }
 }
 
 // ---------------------------------------------------------------------------

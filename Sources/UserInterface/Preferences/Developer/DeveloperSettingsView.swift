@@ -7,16 +7,18 @@ import AppKit
 import SwiftUI
 
 /// Settings pane content for developer tooling, moved out of the General pane
-/// into its own tab: the remote-debugging (CDP) toggle and the phi-browser
-/// skill installer. Sections use the shared `SettingsDetailCard` chrome so the
-/// pane reads like General's cards. The localized strings keep their original
-/// keys from the General pane so existing translations carry over.
+/// into its own tab: the remote-debugging (CDP) toggle, the phi-browser skill
+/// installer, and the agent user-space permissions toggle. Sections use the
+/// shared `SettingsDetailCard` chrome so the pane reads like General's cards.
+/// The localized strings keep their original keys from the General pane so
+/// existing translations carry over.
 struct DeveloperSettingsView: View {
     var body: some View {
         ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 24) {
                 RemoteDebuggingSectionView()
                 SkillInstallSectionView()
+                AgentPermissionsSectionView()
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, 36)
@@ -46,66 +48,216 @@ private struct DeveloperSectionView<Content: View>: View {
 // MARK: - Remote debugging (CDP)
 
 private struct RemoteDebuggingSectionView: View {
-    // Reflects whether the CDP endpoint pref is set. Written through the app's
-    // own UserDefaults so the value the launcher reads next start is the one we
-    // wrote here (a `defaults write` from another process can lag via cfprefsd).
-    @State private var remoteDebuggingEnabled: Bool =
-        PhiPreferences.AgentSpaces.remoteDebuggingPort != nil
+    // Live master switch for agent CDP access over the app-owned Unix socket.
+    // Flipping it starts/stops the listener immediately — no relaunch.
+    @State private var agentAccessEnabled: Bool =
+        PhiPreferences.AgentSpaces.cdpAgentAccessEnabled
+    // Agents currently allowed to connect (persisted "Always Allow" plus this
+    // session's "Allow Once"). Read live from the listener on appear.
+    @State private var allowedGrants: [AgentGrant] =
+        AgentCDPListener.shared.allowedGrants()
 
     var body: some View {
         DeveloperSectionView(title: NSLocalizedString("Remote debugging", comment: "Developer settings - Remote debugging section title")) {
-            SettingsDetailCard {
-                HStack(alignment: .top, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(NSLocalizedString("Enable remote debugging (CDP)", comment: "Developer settings - Toggle title for the Chrome DevTools Protocol endpoint"))
-                            .font(.system(size: 13))
-                            .themedForeground(.textPrimary)
-                        Text(NSLocalizedString("Lets local tools drive Phi over the DevTools Protocol on 127.0.0.1. Any local process can control the browser while this is on — leave it off when you’re not using it. Takes effect after a relaunch.", comment: "Developer settings - Security note for the remote debugging toggle"))
-                            .font(.system(size: 11))
-                            .themedForeground(.textTertiary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    Spacer(minLength: 12)
-                    Toggle("", isOn: Binding(
-                        get: { remoteDebuggingEnabled },
-                        set: { newValue in
-                            remoteDebuggingEnabled = newValue
-                            // 0 = ephemeral port written to DevToolsActivePort.
-                            PhiPreferences.AgentSpaces.remoteDebuggingPort = newValue ? 0 : nil
-                            // Flush now so the relaunched process reads the new
-                            // value (the whole point of an in-app toggle over a
-                            // cross-process `defaults write`).
-                            UserDefaults.standard.synchronize()
-                            promptRelaunch(enabling: newValue)
-                        }
-                    ))
-                    .labelsHidden()
-                    .toggleStyle(.switch)
-                    .controlSize(.mini)
-                    .themedTint(.themeColor)
+            VStack(alignment: .leading, spacing: 16) {
+                enableCard
+                if agentAccessEnabled || !allowedGrants.isEmpty {
+                    grantsCard
                 }
-                .padding(.vertical, 12)
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
+        }
+        .onAppear { allowedGrants = AgentCDPListener.shared.allowedGrants() }
+    }
+
+    private var enableCard: some View {
+        SettingsDetailCard {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(NSLocalizedString("Allow agents to control Phi (CDP)", comment: "Developer settings - Toggle title for the Chrome DevTools Protocol endpoint"))
+                        .font(.system(size: 13))
+                        .themedForeground(.textPrimary)
+                    Text(NSLocalizedString("Lets agent tools (Claude Code, Codex) drive Phi over the DevTools Protocol through a private socket only this Mac’s processes can reach. Each agent asks for your approval the first time it connects. Applies immediately.", comment: "Developer settings - Security note for the agent CDP toggle"))
+                        .font(.system(size: 11))
+                        .themedForeground(.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 12)
+                Toggle("", isOn: Binding(
+                    get: { agentAccessEnabled },
+                    set: { newValue in
+                        agentAccessEnabled = newValue
+                        AgentCDPListener.shared.setEnabled(newValue)
+                        // Turning off clears the session grants; reflect it.
+                        allowedGrants = AgentCDPListener.shared.allowedGrants()
+                    }
+                ))
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+                .themedTint(.themeColor)
+            }
+            .padding(.vertical, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
-    private func promptRelaunch(enabling: Bool) {
-        let alert = NSAlert()
-        alert.messageText = NSLocalizedString("Relaunch to apply?", comment: "Developer settings - Relaunch prompt title after toggling remote debugging")
-        alert.informativeText = enabling
-            ? NSLocalizedString("Remote debugging starts after Phi Browser restarts.", comment: "Developer settings - Relaunch prompt body when enabling remote debugging")
-            : NSLocalizedString("Remote debugging stops after Phi Browser restarts.", comment: "Developer settings - Relaunch prompt body when disabling remote debugging")
-        alert.addButton(withTitle: NSLocalizedString("Relaunch Now", comment: "Developer settings - Relaunch prompt confirm button"))
-        alert.addButton(withTitle: NSLocalizedString("Later", comment: "Developer settings - Relaunch prompt dismiss button"))
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
+    private var grantsCard: some View {
+        SettingsDetailCard {
+            VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(NSLocalizedString("Allowed agents", comment: "Developer settings - Title for the allowed CDP agent list"))
+                        .font(.system(size: 13))
+                        .themedForeground(.textPrimary)
+                    Text(NSLocalizedString("Processes you’ve approved to control Phi. Removing one makes it ask again next time it connects.", comment: "Developer settings - Explanation for the allowed CDP agent list"))
+                        .font(.system(size: 11))
+                        .themedForeground(.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if allowedGrants.isEmpty {
+                    Text(NSLocalizedString("No agents approved yet. The first time one connects, Phi asks for your approval.", comment: "Developer settings - Empty state for the allowed CDP agent list"))
+                        .font(.system(size: 11))
+                        .themedForeground(.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    ForEach(allowedGrants) { grant in
+                        HStack(spacing: 12) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(grant.displayName)
+                                    .font(.system(size: 13))
+                                    .themedForeground(.textPrimary)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                Text(Self.subtitle(for: grant))
+                                    .font(.system(size: 11))
+                                    .themedForeground(.textTertiary)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                            }
+                            Spacer(minLength: 12)
+                            Button(NSLocalizedString("Remove", comment: "Developer settings - Revoke an allowed CDP agent")) {
+                                AgentCDPListener.shared.forgetGrant(key: grant.key)
+                                allowedGrants = AgentCDPListener.shared.allowedGrants()
+                            }
+                            .controlSize(.small)
+                        }
+                    }
+                }
+            }
+            .padding(.vertical, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
 
-        let quoted = "'" + Bundle.main.bundleURL.path.replacingOccurrences(of: "'", with: "'\\''") + "'"
-        let relaunch = Process()
-        relaunch.executableURL = URL(fileURLWithPath: "/bin/sh")
-        relaunch.arguments = ["-c", "( sleep 0.5; /usr/bin/open -n \(quoted) ) &"]
-        try? relaunch.run()
-        DispatchQueue.main.async { NSApp.terminate(nil) }
+    /// Second line: how the grant was given, and its team when known.
+    private static func subtitle(for grant: AgentGrant) -> String {
+        let scope = grant.remembered
+            ? NSLocalizedString("Always allowed", comment: "Developer settings - persisted CDP grant")
+            : NSLocalizedString("Allowed this session", comment: "Developer settings - session-only CDP grant")
+        if let teamId = grant.teamId, !teamId.isEmpty {
+            return String(format: NSLocalizedString("%@ · Team %@", comment: "Developer settings - CDP grant scope and team"), scope, teamId)
+        }
+        return scope
+    }
+}
+
+// MARK: - Agent permissions
+
+private struct AgentPermissionsSectionView: View {
+    @State private var userSpaceOperationsEnabled: Bool =
+        PhiPreferences.AgentSpaces.userSpaceOperationsEnabled
+    @ObservedObject private var profileManager = ProfileManager.shared
+    // Profiles the agent may NOT create Spaces in (blocklist mirror; empty =
+    // all allowed). Kept in @State for toggle reactivity, written through to
+    // the pref on each change.
+    @State private var disallowedProfileIds: Set<String> =
+        PhiPreferences.AgentSpaces.disallowedAgentProfileIds
+
+    var body: some View {
+        DeveloperSectionView(title: NSLocalizedString("Agent permissions", comment: "Developer settings - Agent permissions section title")) {
+            VStack(alignment: .leading, spacing: 16) {
+                operateSpacesCard
+                agentProfilesCard
+            }
+        }
+        .onAppear { profileManager.refresh() }
+    }
+
+    private var operateSpacesCard: some View {
+        SettingsDetailCard {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(NSLocalizedString("Allow agents to operate your Spaces", comment: "Developer settings - Toggle title for agent user-space operations"))
+                        .font(.system(size: 13))
+                        .themedForeground(.textPrimary)
+                    Text(NSLocalizedString("Lets agent tooling manage your own browsing data — Spaces, profiles, URL rules, pinned tabs, bookmarks, and the tab layout of your windows. When off, agents can only work inside their own agent Spaces. Applies immediately.", comment: "Developer settings - Explanation for the agent user-space operations toggle"))
+                        .font(.system(size: 11))
+                        .themedForeground(.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 12)
+                Toggle("", isOn: Binding(
+                    get: { userSpaceOperationsEnabled },
+                    set: { newValue in
+                        userSpaceOperationsEnabled = newValue
+                        PhiPreferences.AgentSpaces.userSpaceOperationsEnabled = newValue
+                    }
+                ))
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+                .themedTint(.themeColor)
+            }
+            .padding(.vertical, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var agentProfilesCard: some View {
+        SettingsDetailCard {
+            VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(NSLocalizedString("Profiles agents can use", comment: "Developer settings - Title for the per-profile agent-Space allowlist"))
+                        .font(.system(size: 13))
+                        .themedForeground(.textPrimary)
+                    Text(NSLocalizedString("Choose which profiles agents may create their own Spaces in. Turning a profile off stops agents from opening any new Space bound to it; existing Spaces are unaffected.", comment: "Developer settings - Explanation for the per-profile agent-Space allowlist"))
+                        .font(.system(size: 11))
+                        .themedForeground(.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if profileManager.profiles.isEmpty {
+                    Text(NSLocalizedString("No profiles found.", comment: "Developer settings - Empty state when no browser profiles exist"))
+                        .font(.system(size: 11))
+                        .themedForeground(.textTertiary)
+                } else {
+                    ForEach(profileManager.profiles) { profile in
+                        HStack(spacing: 12) {
+                            Text(profile.displayName)
+                                .font(.system(size: 13))
+                                .themedForeground(.textPrimary)
+                            Spacer(minLength: 12)
+                            Toggle("", isOn: Binding(
+                                get: { !disallowedProfileIds.contains(profile.profileId) },
+                                set: { allowed in
+                                    if allowed {
+                                        disallowedProfileIds.remove(profile.profileId)
+                                    } else {
+                                        disallowedProfileIds.insert(profile.profileId)
+                                    }
+                                    PhiPreferences.AgentSpaces.disallowedAgentProfileIds =
+                                        disallowedProfileIds
+                                }
+                            ))
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                            .controlSize(.mini)
+                            .themedTint(.themeColor)
+                        }
+                    }
+                }
+            }
+            .padding(.vertical, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 }
 

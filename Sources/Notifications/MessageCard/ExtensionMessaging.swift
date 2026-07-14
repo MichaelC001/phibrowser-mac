@@ -30,22 +30,35 @@ final class ExtensionMessaging: @MainActor ExtensionMessagingProtocol {
     @MainActor
     func sendResponse(_ response: String, requestId: String) {
         DispatchQueue.main.async {
+            // A direct /phi-agent request never left the app: reply on its own
+            // socket instead of routing back through Chromium.
+            if AgentDirectChannelRegistry.shared.deliverResponse(
+                requestId: requestId, response: response) {
+                return
+            }
             ChromiumLauncher.sharedInstance().bridge?
                 .sendResponse(forExtensionRequest: requestId, response: response)
         }
     }
-    
+
     @MainActor
     func sendError(_ error: String, requestId: String) {
         DispatchQueue.main.async {
+            if AgentDirectChannelRegistry.shared.deliverError(
+                requestId: requestId, error: error) {
+                return
+            }
             ChromiumLauncher.sharedInstance().bridge?
                 .sendError(forExtensionRequest: requestId, error: error)
         }
     }
-    
+
     @MainActor
     func broadcast(type: String, payload: String) {
         DispatchQueue.main.async {
+            // Fan out to app-served direct channels as well as extensions
+            // (which receive it via Chromium's PhiAgentSpace.appMessage).
+            AgentDirectChannelRegistry.shared.broadcast(type: type, payloadJson: payload)
             _ = ChromiumLauncher.sharedInstance().bridge?
                 .broadcastMessageToExtensions(withType: type, payload: payload)
         }

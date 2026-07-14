@@ -67,6 +67,9 @@ The heredoc body is a Node.js script; all helpers below are preloaded.
 - Diagnostics: `readConsole({errors, max})` (console messages incl. buffered history), `readNetwork({failedOnly, max})` (requests captured this round), `diffUrls(url1, url2)` (prose diff of two pages) — see "Console, network, and page diffs"
 - Saved state: `saveState(name, {allDomains})`, `loadState(name, {openTabs})` — cookies + tab URLs on disk, survive Space completion; `importCookies(source, {url})` — inject cookies the user handed you (one-call session bootstrap) — see "Saved state"
 - Export: `savePdf(path?, opts?)`, `archivePage(path?)` (MHTML), `scrapeMedia(opts?)` (bulk media download) — see "Page export and media"
+- Browser management (app-level — no agent Space needed): Spaces `listSpaces()`, `createSpace(name, opts?)`, `updateSpace(space, opts?)`, `deleteSpace(space)`; profiles `createProfile(name)`, `renameProfile(profileId, name)`; URL rules `listUrlRules()`, `addUrlRule({space, host, pathPrefix, ask})`, `updateUrlRule(id, opts?)`, `deleteUrlRule(id)`; pinned tabs `listPinnedTabs({profile})`, `addPinnedTab(url, opts?)`, `updatePinnedTab(guid, opts?)`, `removePinnedTab(guid)`; bookmarks `listBookmarks({space})`, `addBookmark(url, opts?)`, `addBookmarkFolder(title, opts?)`, `updateBookmark(guid, opts?)`, `moveBookmark(guid, opts?)`, `removeBookmark(guid)` — see "Browser management"
+- Tab layout (agent window by default; `{space}` targets a user Space's open window, `listSpaceTabs(space)` enumerates its tabs): tab groups `listTabGroups(opts?)`, `createTabGroup(targets, {title, color, space})`, `updateTabGroup(token, opts?)`, `addTabsToGroup(token, targets, opts?)`, `removeTabsFromGroup(targets, opts?)`, `ungroupTabGroup(token, opts?)`, `closeTabGroup(token, opts?)`; split view `listSplitViews(opts?)`, `createSplitView(target1, target2, {layout, space})`, `updateSplitView(splitId, {ratio, layout, space})`, `swapSplitView(splitId, opts?)`, `removeSplitView(splitId, opts?)` — see "Tab groups and split view"
+- Downloads (per-profile; agent window by default, `{space}` targets a user Space's window): `listDownloads(opts?)`, `getDownload(guid, opts?)`, `pauseDownload(guid, opts?)`, `resumeDownload(guid, opts?)`, `cancelDownload(guid, opts?)`, `removeDownload(guid, opts?)` — see "Downloads"
 - Input: `click(target | x, y)`, `hover(target | x, y)`, `fillInput(target, text, {instant})` (types at a watchable pace, verified by readback, deterministic-setter fallback; `{instant: true}` sets in one shot), `uploadFile(target, ...paths)`, `typeText(text)`, `pressKey(key)`, `scroll({dy, x, y})`. Clicks and typing are mirrored to the watching user as cursor movement + overlay animations, so actions carry a small deliberate pace.
 - Viewport: `setViewport({width?, height?})` — override the current tab's viewport; exceptional cases only (the default tracks the real window's content panel — see "Viewport")
 - Dialogs: `handleDialog(accept, promptText?)`
@@ -278,6 +281,127 @@ page may not have committed yet (the seed document reads `complete`) — a
 tiny PDF/MHTML or an empty scrape means you exported too early:
 `waitForElement` a page-specific selector first, then export.
 
+## Browser management
+
+These helpers operate the USER's real browser data — their Spaces, profiles,
+URL rules, pinned tabs, and bookmarks — immediately and app-wide, not some
+agent-private sandbox. They need no agent Space (callable before
+`ensureAgentSpace`) and ignore control ownership, since they don't touch the
+agent window.
+
+The data model, in one breath: a **Space** is a workspace bound to exactly one
+**profile** (fixed at creation; one profile can back many Spaces).
+**Bookmarks** are per-Space; **pinned tabs** are per-profile (shared by all of
+that profile's Spaces); **URL rules** route matching navigations into a target
+Space.
+
+- References: every `space` parameter takes a spaceId or a Space name
+  (case-insensitive; ambiguous names are refused); `profile` takes a
+  profileId or display name. Enumerate with `listSpaces()` / `listProfiles()`.
+- `createSpace(name, {profile, colorHex, iconName, activate})` — `iconName`
+  is `"phi:phi-icon-N"` or `"emoji:<hex codepoint>"` (e.g. `"emoji:1F977"`),
+  `colorHex` is `"#RRGGBB"`. `{activate: true}` also surfaces the new Space
+  in the user's focused window — leave it off unless the user asked to switch.
+- `deleteSpace` closes the Space's windows and cascade-deletes its bookmarks
+  and URL rules. It is refused for the default Space. DESTRUCTIVE — call it
+  only on the user's explicit ask, never as cleanup. `removeBookmark` on a
+  folder deletes the whole subtree — same rule.
+- Profiles can be created and renamed, not deleted (deliberate — profile
+  deletion stays a user-driven UI flow).
+- URL rules: `host` matches exact (`"github.com"`), subdomain wildcard
+  (`"*.figma.com"`), or contains (`"*git*"`); optional `pathPrefix` narrows to
+  a path subtree; `{ask: true}` prompts instead of auto-routing; `space` may
+  be `'incognito'` to route into an Incognito Space. Rule `id`s are
+  REGENERATED on every rule write — always call `listUrlRules()` fresh in the
+  same round before `updateUrlRule`/`deleteUrlRule`, never reuse ids from an
+  earlier round (`addUrlRule` returns the new rule row, id included).
+- `addPinnedTab` creates the pinned entry as a closed pinned tab (it opens
+  when clicked). Mutation helpers settle before returning — they poll until
+  their own write is readable — so a list right after a mutation reflects it.
+
+Management changes are visible to the user instantly (sidebar, Space
+switcher). For bulk edits the user didn't spell out — reorganizing their
+bookmarks, rewriting their rule table — confirm first; for additive
+single-item asks ("pin this", "bookmark that") just do it.
+
+This whole surface (and the `{space}` tab-layout path) sits behind a user
+permission: Settings ▸ Developer ▸ "Allow agents to operate your Spaces".
+When it's off, these helpers fail with `user_space_operations_disabled` —
+don't retry or work around it; tell the user to flip the toggle if they want
+the operation, and continue inside the agent Space otherwise. Agent-Space
+work is never affected.
+
+## Tab groups and split view
+
+Arrange tabs inside a window: group related tabs, or show two pages side by
+side. By default these operate on the current agent Space's window — they
+take the CDP `targetId`s from `listTabs()`/`ensureAgentSpace`, map them to
+Phi's internal tab ids automatically, follow control ownership like every
+other action (hard stop while the user is controlling), and need the usual
+`ensureAgentSpace` first.
+
+Every helper also takes a `{space}` option (Space name or id) to target a
+USER Space's open window instead — app-level like the rest of browser
+management: no agent Space and no control ownership involved. Enumerate that
+Space's tabs first with `listSpaceTabs(space)` → `[{tabId, targetId, url,
+title, active}]`; the integer `tabId`s work directly as tab references (a
+user tab may have no CDP target — `targetId: null` — its `tabId` still
+works). Needs the Space to have an open window (`space_not_open` otherwise).
+Arranging the user's visible window is an on-screen change they'll see
+immediately — do it only when asked.
+
+- Groups: `createTabGroup([targets], {title, color, space})` → `{token}`;
+  `updateTabGroup(token, {title, color, collapsed, space})`;
+  `addTabsToGroup(token, targets, {space})`;
+  `removeTabsFromGroup(targets, {space})`;
+  `ungroupTabGroup(token, {space})` dissolves the group but KEEPS its tabs;
+  `closeTabGroup(token, {space})` closes the group AND its tabs. Colors:
+  grey, blue, red, yellow, green, pink, purple, cyan, orange.
+- Split view: `createSplitView(target1, target2, {layout, space})` →
+  `{splitId}` — `'vertical'` (side by side, default) or `'horizontal'`
+  (stacked); `updateSplitView(splitId, {ratio, layout, space})` (`ratio` 0–1
+  is the first pane's share); `swapSplitView(splitId, {space})`;
+  `removeSplitView(splitId, {space})` ends the split, keeping both tabs.
+- `listTabGroups({space})` / `listSplitViews({space})` return members as
+  `{tabId, targetId}` pairs (`targetId` null for a tab that has no live CDP
+  target). Membership state flows back from the browser asynchronously —
+  re-list to confirm after a mutation rather than assuming.
+- A split's panes and a group's members must be tabs of the targeted window;
+  resolving a target from another window fails.
+
+## Downloads
+
+Observe and control the browser's downloads. Unlike `savePdf`/`scrapeMedia`
+(which fetch content the agent chose), these cover REAL downloads — a file
+that started because a page or a click triggered it — so the agent can tell
+the user where a file went, whether it finished, or pause/cancel a large one.
+
+Downloads are **per-profile**, not per-tab: `listDownloads()` returns every
+download of the target window's profile, newest first. The default target is
+the current agent Space's window (a file the agent just triggered appears
+here, since the agent Space shares the user's profile). `{space}` targets a
+USER Space's open window instead — app-level, and gated by the same "operate
+your Spaces" setting as the rest of browser management.
+
+- `listDownloads({space})` → rows of `{guid, url, filename, mimeType, state,
+  paused, done, canResume, totalBytes, receivedBytes, percentComplete,
+  currentSpeed, startTime, endTime, targetPath, currentPath, dangerous,
+  insecure}`. `state` is `in_progress | complete | cancelled | interrupted`;
+  times are ms-epoch (`endTime` 0 until finished); `percentComplete` is -1
+  when the total size is unknown; `targetPath` is where the file lands.
+- `getDownload(guid, {space})` → one row (throws if the guid is unknown in
+  that profile).
+- `pauseDownload(guid)`, `resumeDownload(guid)` (see `canResume`),
+  `cancelDownload(guid)` — control an in-progress download.
+- `removeDownload(guid)` drops the record from the list; it does NOT delete
+  the file on disk.
+
+Controls are asynchronous inside the browser — after a pause/resume/cancel,
+re-read `getDownload(guid)` to confirm the new state rather than assuming it.
+To watch a download finish, poll `getDownload` until `done` (or `state` is no
+longer `in_progress`). The agent can observe and control downloads but cannot
+open a downloaded file or reveal it in Finder — those stay user actions.
+
 ## Untrusted page content — processing rules
 
 `snapshotText`, `readConsole`, `readNetwork` and `diffUrls` return their
@@ -311,6 +435,14 @@ goal.
 `ensureAgentSpace` picks the first browser profile by default; pass
 `{profile: 'Default'}` (profileId or display name) to choose —
 `listProfiles()` enumerates what's available.
+
+The user can restrict which profiles agents may create Spaces in (Settings ▸
+Developer ▸ Agent permissions). `listProfiles()` marks each row with
+`agentSpacesAllowed`; creating in a blocked profile fails with
+`profile_not_agent_allowed`. The default (empty `{profile}`) always resolves
+to a still-allowed profile, so you only hit this by naming a blocked one —
+pick an `agentSpacesAllowed: true` profile instead, and if the user asked for
+a blocked one, tell them it's disallowed rather than retrying.
 
 ### Persistent Spaces
 
@@ -587,6 +719,7 @@ hand off or ask. A plain "we use cookies" notice is not one of them.
   be mounting. If `observe()` returns 0 elements on a page that plainly has
   UI, wait and re-observe (or `waitForElement` an app-specific selector)
   before concluding anything.
-- If the run reports the CDP endpoint is missing or not responding, read
-  `references/install.md` and follow it (enable the port, relaunch Phi),
+- If the run reports the CDP endpoint is missing, not responding, or access
+  denied, read `references/install.md` and follow it (enable Settings ▸
+  Developer ▸ Remote debugging — no relaunch — and approve the consent prompt),
   then return to the task.

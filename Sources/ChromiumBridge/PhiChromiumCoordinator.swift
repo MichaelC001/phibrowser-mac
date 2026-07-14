@@ -32,6 +32,13 @@ import SwiftUI
 extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
     func shouldEnablePhiExtensions() -> Bool { PhiPreferences.AISettings.phiAIEnabled.loadValue() }
 
+    /// Source of truth for the browser-process DevTools gate that blocks
+    /// remote-debugging clients from the user's own Spaces. Read live per gated
+    /// command, so the Settings toggle applies without a relaunch.
+    func agentUserSpaceOperationsEnabled() -> Bool {
+        PhiPreferences.AgentSpaces.userSpaceOperationsEnabled
+    }
+
     func isBackupImporting() -> Bool { isBackupImportInProgress }
 
     func shouldAutoInstallICloudPasswords() -> Bool {

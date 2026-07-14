@@ -22,6 +22,9 @@
     "“%@” already exists and isn’t a link created by Phi Browser. Replace it with a link to this app’s bundled skill?" : {
       "comment" : "Developer settings - Skill overwrite prompt body"
     },
+    "“%@” wants to control Phi Browser" : {
+      "comment" : "CDP consent - title"
+    },
     "@%@" : {
 
     },
@@ -129,6 +132,17 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "%1$@ · %2$d tabs"
+          }
+        }
+      }
+    },
+    "%@ · Team %@" : {
+      "comment" : "Developer settings - CDP grant scope and team",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ · Team %2$@"
           }
         }
       }
@@ -269,6 +283,9 @@
     "Agent Autoview" : {
       "comment" : "View menu - Toggle that automatically switches to the Space of an operating agent"
     },
+    "Agent permissions" : {
+      "comment" : "Developer settings - Agent permissions section title"
+    },
     "Agent skill" : {
       "comment" : "Developer settings - phi-browser skill section title"
     },
@@ -290,6 +307,27 @@
     "All Downloads" : {
       "comment" : "Downloads list - Button to open full downloads page"
     },
+    "Allow agents to control Phi (CDP)" : {
+      "comment" : "Developer settings - Toggle title for the Chrome DevTools Protocol endpoint"
+    },
+    "Allow agents to operate your Spaces" : {
+      "comment" : "Developer settings - Toggle title for agent user-space operations"
+    },
+    "Allow Once" : {
+      "comment" : "CDP consent - allow for this session"
+    },
+    "Allowed agents" : {
+      "comment" : "Developer settings - Title for the allowed CDP agent list"
+    },
+    "Allowed this session" : {
+      "comment" : "Developer settings - session-only CDP grant"
+    },
+    "Always Allow" : {
+      "comment" : "CDP consent - allow and remember"
+    },
+    "Always allowed" : {
+      "comment" : "Developer settings - persisted CDP grant"
+    },
     "Always Show Bookmark Bar" : {
       "comment" : "View menu - Menu item to always show the bookmark bar"
     },
@@ -301,6 +339,9 @@
     },
     "Amber" : {
       "comment" : "Amber theme color name"
+    },
+    "An agent is asking to drive Phi Browser over the DevTools Protocol — opening pages, reading content, and acting on your behalf. Only allow agents you trust." : {
+      "comment" : "CDP consent - body"
     },
     "An import is still adding bookmarks to this Space. Wait for it to finish, then try again." : {
       "comment" : "Body shown when a Space action is blocked by an in-progress import\nBody shown when deleting a Space is blocked by an in-progress import"
@@ -472,6 +513,9 @@
     },
     "Choose Files" : {
       "comment" : "Feedback form - Button to open file picker for attachments"
+    },
+    "Choose which profiles agents may create their own Spaces in. Turning a profile off stops agents from opening any new Space bound to it; existing Spaces are unaffected." : {
+      "comment" : "Developer settings - Explanation for the per-profile agent-Space allowlist"
     },
     "Choose…" : {
       "comment" : "Profiles settings - download location not set"
@@ -707,6 +751,9 @@
     "Deleted" : {
       "comment" : "Download item row - Status label when downloaded file was deleted"
     },
+    "Deny" : {
+      "comment" : "CDP consent - deny"
+    },
     "Describe the issue in detail" : {
       "comment" : "Feedback form - Section header prompting user to describe the issue"
     },
@@ -817,9 +864,6 @@
     },
     "Enable External Data Connectors" : {
       "comment" : "AI settings - Toggle to enable external data connectors"
-    },
-    "Enable remote debugging (CDP)" : {
-      "comment" : "Developer settings - Toggle title for the Chrome DevTools Protocol endpoint"
     },
     "Enter a name for the new folder." : {
       "comment" : "Bookmark editor - Inline new folder creation subtitle"
@@ -1050,7 +1094,7 @@
       "comment" : "Download item row - Tooltip for keep button on safety warning\nTooltip for keep button on safety warning in living downloads toast"
     },
     "Later" : {
-      "comment" : "Agent handoff prompt - dismiss\nDeveloper settings - Relaunch prompt dismiss button"
+      "comment" : "Agent handoff prompt - dismiss"
     },
     "Launch Phi Sentinel automatically at login" : {
       "comment" : "AI settings - Toggle to auto-launch Phi Sentinel at system login"
@@ -1073,8 +1117,11 @@
     "Left URL" : {
       "comment" : "Bookmark editor - Label for the left (primary) URL input field on a split-view bookmark"
     },
-    "Lets local tools drive Phi over the DevTools Protocol on 127.0.0.1. Any local process can control the browser while this is on — leave it off when you’re not using it. Takes effect after a relaunch." : {
-      "comment" : "Developer settings - Security note for the remote debugging toggle"
+    "Lets agent tooling manage your own browsing data — Spaces, profiles, URL rules, pinned tabs, bookmarks, and the tab layout of your windows. When off, agents can only work inside their own agent Spaces. Applies immediately." : {
+      "comment" : "Developer settings - Explanation for the agent user-space operations toggle"
+    },
+    "Lets agent tools (Claude Code, Codex) drive Phi over the DevTools Protocol through a private socket only this Mac’s processes can reach. Each agent asks for your approval the first time it connects. Applies immediately." : {
+      "comment" : "Developer settings - Security note for the agent CDP toggle"
     },
     "Light" : {
       "comment" : "Appearance choice: always light mode"
@@ -1226,6 +1273,9 @@
     "Next Space" : {
       "comment" : "Spaces menu - Activate the next Space in the strip"
     },
+    "No agents approved yet. The first time one connects, Phi asks for your approval." : {
+      "comment" : "Developer settings - Empty state for the allowed CDP agent list"
+    },
     "No Backups Available" : {
       "comment" : "Help menu - Time Machine submenu placeholder when no completed backups exist"
     },
@@ -1249,6 +1299,9 @@
     },
     "No Phi User Data to Back Up" : {
       "comment" : "Debug clear data - Alert title when the Phi data folder is missing before backup"
+    },
+    "No profiles found." : {
+      "comment" : "Developer settings - Empty state when no browser profiles exist"
     },
     "No Profiles to Delete" : {
       "comment" : "Spaces menu - Delete Profile submenu empty state"
@@ -1445,6 +1498,9 @@
     "Private AI" : {
       "comment" : "AI settings - Row that opens Phi Sentinel's Private AI page"
     },
+    "Processes you’ve approved to control Phi. Removing one makes it ask again next time it connects." : {
+      "comment" : "Developer settings - Explanation for the allowed CDP agent list"
+    },
     "Profile" : {
       "comment" : "Label for the profile picker in the create-Space panel"
     },
@@ -1453,6 +1509,9 @@
     },
     "Profiles" : {
       "comment" : "Settings - Tab title for profiles management"
+    },
+    "Profiles agents can use" : {
+      "comment" : "Developer settings - Title for the per-profile agent-Space allowlist"
     },
     "Pure" : {
       "comment" : "Pure theme name"
@@ -1487,12 +1546,6 @@
     "Refresh connector status" : {
       "comment" : "AI settings - Tooltip for refreshing connector status"
     },
-    "Relaunch Now" : {
-      "comment" : "Developer settings - Relaunch prompt confirm button"
-    },
-    "Relaunch to apply?" : {
-      "comment" : "Developer settings - Relaunch prompt title after toggling remote debugging"
-    },
     "Relink" : {
       "comment" : "Phi Link - Official bot relink action"
     },
@@ -1502,14 +1555,8 @@
     "Remote debugging" : {
       "comment" : "Developer settings - Remote debugging section title"
     },
-    "Remote debugging starts after Phi Browser restarts." : {
-      "comment" : "Developer settings - Relaunch prompt body when enabling remote debugging"
-    },
-    "Remote debugging stops after Phi Browser restarts." : {
-      "comment" : "Developer settings - Relaunch prompt body when disabling remote debugging"
-    },
     "Remove" : {
-      "comment" : "Bookmark editor - Remove bookmark button title (CMD+D toggle)\nDownload item row - Tooltip for remove download button\nIM Channels - Custom bot remove action"
+      "comment" : "Bookmark editor - Remove bookmark button title (CMD+D toggle)\nDeveloper settings - Revoke an allowed CDP agent\nDownload item row - Tooltip for remove download button\nIM Channels - Custom bot remove action"
     },
     "Remove attachment" : {
       "comment" : "Feedback form - Tooltip for removing an attachment"
@@ -1751,6 +1798,17 @@
     "Target Space unavailable" : {
       "comment" : "URL rule target whose Space no longer exists"
     },
+    "Team %@ · %@" : {
+      "comment" : "CDP consent - team and trust",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Team %1$@ · %2$@"
+          }
+        }
+      }
+    },
     "Telegram" : {
       "comment" : "Phi Link - Section title"
     },
@@ -1862,6 +1920,9 @@
     "Unpin Split" : {
       "comment" : "Tab context menu - Remove the pin from the split that contains this tab"
     },
+    "unsigned" : {
+      "comment" : "CDP consent - no valid signature"
+    },
     "Unsupported image format" : {
       "comment" : "Image preview error"
     },
@@ -1906,6 +1967,9 @@
     },
     "Verification failed. Please check the token and try again." : {
       "comment" : "IM Channels - Custom bot verify failure"
+    },
+    "verified" : {
+      "comment" : "CDP consent - signature verified"
     },
     "Verify" : {
       "comment" : "IM Channels - Custom bot verify action\nIM Channels - Custom bot verify button"

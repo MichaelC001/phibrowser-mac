@@ -23,6 +23,22 @@ final class ExtensionMessageRouter {
     private var handlers: [String: ExtensionMessageHandler] = [:]
     private var configured = false
 
+    /// Registers a management type that operates the USER's browsing data
+    /// (Spaces, profiles, URL rules, pinned tabs, bookmarks). The Developer
+    /// settings "Agent permissions" toggle gates them as one unit. Tab-layout
+    /// types register plainly: only their spaceId path is user-space, gated
+    /// inside `AgentSpaceRouter.withLayoutWindow` so the agent-window path
+    /// keeps working with the toggle off.
+    private func registerUserSpaceManaged(type: String,
+                                          handler: @escaping ExtensionMessageHandler) {
+        register(type: type) { context in
+            if let denied = AgentSpaceRouter.userSpaceOperationsRefusal() {
+                return denied
+            }
+            return handler(context)
+        }
+    }
+
     func register(type: String, handler: @escaping ExtensionMessageHandler) {
         handlers[type] = handler
     }
@@ -113,6 +129,133 @@ final class ExtensionMessageRouter {
         }
         register(type: "agentSpace.openTab") { context in
             return AgentSpaceRouter.handleOpenTab(context: context)
+        }
+
+        // Management surface (AgentSpaceRouter+Management.swift): browser
+        // features operated over the same tunnel — Spaces, profiles, URL
+        // rules, tab groups, split view, pinned tabs, bookmarks. User-data
+        // types register through the "Agent permissions" gate.
+        registerUserSpaceManaged(type: "agentSpace.spaces.list") { context in
+            return AgentSpaceRouter.handleSpacesList(context: context)
+        }
+        registerUserSpaceManaged(type: "agentSpace.spaces.create") { context in
+            return AgentSpaceRouter.handleSpacesCreate(context: context)
+        }
+        registerUserSpaceManaged(type: "agentSpace.spaces.update") { context in
+            return AgentSpaceRouter.handleSpacesUpdate(context: context)
+        }
+        registerUserSpaceManaged(type: "agentSpace.spaces.delete") { context in
+            return AgentSpaceRouter.handleSpacesDelete(context: context)
+        }
+        registerUserSpaceManaged(type: "agentSpace.spaces.listTabs") { context in
+            return AgentSpaceRouter.handleSpacesListTabs(context: context)
+        }
+        registerUserSpaceManaged(type: "agentSpace.profiles.create") { context in
+            AgentSpaceRouter.handleProfilesCreate(context: context)
+            return nil  // async reply via ExtensionMessaging
+        }
+        registerUserSpaceManaged(type: "agentSpace.profiles.rename") { context in
+            AgentSpaceRouter.handleProfilesRename(context: context)
+            return nil  // async reply via ExtensionMessaging
+        }
+        registerUserSpaceManaged(type: "agentSpace.urlRules.list") { context in
+            return AgentSpaceRouter.handleUrlRulesList(context: context)
+        }
+        registerUserSpaceManaged(type: "agentSpace.urlRules.add") { context in
+            return AgentSpaceRouter.handleUrlRulesAdd(context: context)
+        }
+        registerUserSpaceManaged(type: "agentSpace.urlRules.update") { context in
+            return AgentSpaceRouter.handleUrlRulesUpdate(context: context)
+        }
+        registerUserSpaceManaged(type: "agentSpace.urlRules.delete") { context in
+            return AgentSpaceRouter.handleUrlRulesDelete(context: context)
+        }
+        register(type: "agentSpace.tabGroups.list") { context in
+            return AgentSpaceRouter.handleTabGroupsList(context: context)
+        }
+        register(type: "agentSpace.tabGroups.create") { context in
+            return AgentSpaceRouter.handleTabGroupsCreate(context: context)
+        }
+        register(type: "agentSpace.tabGroups.update") { context in
+            return AgentSpaceRouter.handleTabGroupsUpdate(context: context)
+        }
+        register(type: "agentSpace.tabGroups.addTabs") { context in
+            return AgentSpaceRouter.handleTabGroupsAddTabs(context: context)
+        }
+        register(type: "agentSpace.tabGroups.removeTabs") { context in
+            return AgentSpaceRouter.handleTabGroupsRemoveTabs(context: context)
+        }
+        register(type: "agentSpace.tabGroups.ungroup") { context in
+            return AgentSpaceRouter.handleTabGroupsUngroup(context: context)
+        }
+        register(type: "agentSpace.tabGroups.close") { context in
+            return AgentSpaceRouter.handleTabGroupsClose(context: context)
+        }
+        register(type: "agentSpace.splitView.list") { context in
+            return AgentSpaceRouter.handleSplitViewList(context: context)
+        }
+        register(type: "agentSpace.splitView.create") { context in
+            return AgentSpaceRouter.handleSplitViewCreate(context: context)
+        }
+        register(type: "agentSpace.splitView.update") { context in
+            return AgentSpaceRouter.handleSplitViewUpdate(context: context)
+        }
+        register(type: "agentSpace.splitView.swap") { context in
+            return AgentSpaceRouter.handleSplitViewSwap(context: context)
+        }
+        register(type: "agentSpace.splitView.remove") { context in
+            return AgentSpaceRouter.handleSplitViewRemove(context: context)
+        }
+        // Downloads are per-profile; the target window (agent task or a user
+        // Space via {spaceId}) selects the profile. Gating lives inside
+        // withLayoutWindow, so these register plain like the tab-layout ops.
+        register(type: "agentSpace.downloads.list") { context in
+            return AgentSpaceRouter.handleDownloadsList(context: context)
+        }
+        register(type: "agentSpace.downloads.get") { context in
+            return AgentSpaceRouter.handleDownloadsGet(context: context)
+        }
+        register(type: "agentSpace.downloads.pause") { context in
+            return AgentSpaceRouter.handleDownloadsPause(context: context)
+        }
+        register(type: "agentSpace.downloads.resume") { context in
+            return AgentSpaceRouter.handleDownloadsResume(context: context)
+        }
+        register(type: "agentSpace.downloads.cancel") { context in
+            return AgentSpaceRouter.handleDownloadsCancel(context: context)
+        }
+        register(type: "agentSpace.downloads.remove") { context in
+            return AgentSpaceRouter.handleDownloadsRemove(context: context)
+        }
+        registerUserSpaceManaged(type: "agentSpace.pinnedTabs.list") { context in
+            return AgentSpaceRouter.handlePinnedTabsList(context: context)
+        }
+        registerUserSpaceManaged(type: "agentSpace.pinnedTabs.add") { context in
+            return AgentSpaceRouter.handlePinnedTabsAdd(context: context)
+        }
+        registerUserSpaceManaged(type: "agentSpace.pinnedTabs.update") { context in
+            return AgentSpaceRouter.handlePinnedTabsUpdate(context: context)
+        }
+        registerUserSpaceManaged(type: "agentSpace.pinnedTabs.remove") { context in
+            return AgentSpaceRouter.handlePinnedTabsRemove(context: context)
+        }
+        registerUserSpaceManaged(type: "agentSpace.bookmarks.list") { context in
+            return AgentSpaceRouter.handleBookmarksList(context: context)
+        }
+        registerUserSpaceManaged(type: "agentSpace.bookmarks.add") { context in
+            return AgentSpaceRouter.handleBookmarksAdd(context: context)
+        }
+        registerUserSpaceManaged(type: "agentSpace.bookmarks.addFolder") { context in
+            return AgentSpaceRouter.handleBookmarksAddFolder(context: context)
+        }
+        registerUserSpaceManaged(type: "agentSpace.bookmarks.update") { context in
+            return AgentSpaceRouter.handleBookmarksUpdate(context: context)
+        }
+        registerUserSpaceManaged(type: "agentSpace.bookmarks.move") { context in
+            return AgentSpaceRouter.handleBookmarksMove(context: context)
+        }
+        registerUserSpaceManaged(type: "agentSpace.bookmarks.remove") { context in
+            return AgentSpaceRouter.handleBookmarksRemove(context: context)
         }
 
         register(type: "farringdon.organizeDidFinish") { _ in

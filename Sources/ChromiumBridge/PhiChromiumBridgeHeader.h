@@ -236,6 +236,13 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
 /// Returns whether Phi extensions should be kept enabled (Mac is source of truth).
 /// Called synchronously by the policy provider — must not block.
 - (BOOL)shouldEnablePhiExtensions;
+/// Whether agent tooling may operate the user's own Spaces (the Settings ▸
+/// Developer ▸ "Allow agents to operate your Spaces" toggle; Mac is the source
+/// of truth). When NO, the DevTools session gate blocks remote-debugging (CDP)
+/// clients from inspecting or driving tabs that live in the user's Spaces —
+/// their own agent-Space tabs and the user's local DevTools stay allowed.
+/// Called synchronously on the UI thread per gated command — must not block.
+- (BOOL)agentUserSpaceOperationsEnabled;
 /// Whether a backup import is in progress; preinstalled apps reads it to defer
 /// extension preinstall. Called synchronously — must not block.
 - (BOOL)isBackupImporting;
@@ -1061,6 +1068,26 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
 - (void)openProfileDataPage:(NSString *)profileId
                        page:(NSString *)page
                  completion:(void (^)(BOOL success, NSString * _Nullable error))completion;
+
+// ==========================================================================
+// DevTools agent transport (Mac → Chromium)
+// ==========================================================================
+
+/// Hands a connected, app-authenticated socket fd to the DevTools server,
+/// which adopts it as one CDP client connection (the FD-injection transport
+/// behind agent access — the browser listens on nothing; the Mac client owns
+/// the Unix-domain listener and vets every peer before it gets here).
+/// Callable from any thread. The browser ALWAYS takes ownership of `fd`:
+/// returns YES when the connection was handed to the DevTools server, NO when
+/// the injection transport is not running (e.g. a --remote-debugging-port
+/// development override) — `fd` is closed either way, never by the caller.
+- (BOOL)attachDevToolsConnectionWithFD:(int)fd;
+
+/// Severs every injected CDP connection immediately (the user revoked agent
+/// access). Closing the app-side listener stops NEW connections; this cleans
+/// up the ones already attached, which then unwind through the DevTools
+/// server's normal EOF path. Callable from any thread.
+- (void)closeAllDevToolsConnections;
 
 @end
 

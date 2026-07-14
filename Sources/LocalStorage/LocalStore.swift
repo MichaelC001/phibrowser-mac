@@ -612,6 +612,63 @@ extension LocalStore {
         }
     }
     
+    /// Creates a pinned-tab record directly from a URL — the headless
+    /// counterpart of `moveOrCreatePinnedTab`, which needs a live `Tab`.
+    /// The record lands at `index` (clamped; appended when nil) among the
+    /// profile's pinned tabs and reaches every open window of that profile
+    /// via `pinnedTabsPublisher`, where it shows as a closed pinned tab.
+    func createPinnedTab(guid: String,
+                         url: String,
+                         title: String,
+                         profileId: String,
+                         index: Int? = nil) {
+        guard let parsedURL = URL(string: url.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+            AppLogWarn("[LocalStore] createPinnedTab: invalid URL \(url)")
+            return
+        }
+        performBackgroundWrite { context in
+            do {
+                guard let profile = try self.profile(with: profileId, in: context, createIfNeeded: true) else {
+                    AppLogError("[LocalStore] Missing profile for pinned tab write: \(profileId)")
+                    return
+                }
+                let pinnedRaw = TabDataType.pinnedTab.rawValue
+                let pinnedPredicate = #Predicate<TabDataModel> {
+                    $0.type == pinnedRaw &&
+                    $0.profile?.profileId == profileId
+                }
+                let descriptor = FetchDescriptor<TabDataModel>(
+                    predicate: pinnedPredicate,
+                    sortBy: [SortDescriptor(\.index)]
+                )
+                var pinnedTabs = try context.fetch(descriptor)
+                let now = Date()
+                let model = TabDataModel(
+                    title: title,
+                    guid: guid,
+                    index: 0,
+                    url: parsedURL,
+                    favicon: nil,
+                    createdDate: now,
+                    updatedDate: now
+                )
+                model.dataType = .pinnedTab
+                model.isCreatedByChromium = false
+                model.profile = profile
+                model.profileId = profileId
+                context.insert(model)
+                let insertIndex = min(max(index ?? pinnedTabs.count, 0), pinnedTabs.count)
+                pinnedTabs.insert(model, at: insertIndex)
+                for (position, tabModel) in pinnedTabs.enumerated() {
+                    tabModel.index = position
+                    tabModel.updatedDate = now
+                }
+            } catch {
+                AppLogError("[LocalStore] Failed to create pinned tab: \(error)")
+            }
+        }
+    }
+
     func moveOrCreatePinnedTab(_ tab: Tab,
                                after afterGuid: String?,
                                profileId: String,

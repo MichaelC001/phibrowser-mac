@@ -266,8 +266,12 @@
 		AE00FFFE0000000000000002 /* PhiAgentEndpointResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE00FFFE0000000000000001 /* PhiAgentEndpointResolver.swift */; };
 		AE5ACE000000000000000011 /* AgentSpaceManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE5ACE000000000000000001 /* AgentSpaceManager.swift */; };
 		AE5ACE000000000000000012 /* AgentSpaceRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE5ACE000000000000000002 /* AgentSpaceRouter.swift */; };
+		AE5ACE000000000000000014 /* AgentSpaceRouter+Management.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE5ACE000000000000000004 /* AgentSpaceRouter+Management.swift */; };
 		AE5ACE000000000000000013 /* AgentSpaceOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE5ACE000000000000000003 /* AgentSpaceOverlayView.swift */; };
 		B001795A2E49CF84007B4635 /* PhiChromiumCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00179592E49CF84007B4635 /* PhiChromiumCoordinator.swift */; };
+		ACDC00000000000000000B01 /* AgentCDPListener.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACDC00000000000000000A01 /* AgentCDPListener.swift */; };
+		ACDC00000000000000000B02 /* AgentPeerIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACDC00000000000000000A02 /* AgentPeerIdentity.swift */; };
+		ACDC00000000000000000B03 /* AgentDirectChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACDC00000000000000000A03 /* AgentDirectChannel.swift */; };
 		B02586F52E42FD97001B08FC /* ChromiumLauncher.m in Sources */ = {isa = PBXBuildFile; fileRef = B02586EE2E42FD97001B08FC /* ChromiumLauncher.m */; };
 		B02586F62E42FD97001B08FC /* AppController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B02586F02E42FD97001B08FC /* AppController.swift */; };
 		B02586F72E42FD97001B08FC /* MainBrowserWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B02586F12E42FD97001B08FC /* MainBrowserWindowController.swift */; };
@@ -767,8 +771,12 @@
 		AE00FFFE0000000000000001 /* PhiAgentEndpointResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhiAgentEndpointResolver.swift; sourceTree = "<group>"; };
 		AE5ACE000000000000000001 /* AgentSpaceManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentSpaceManager.swift; sourceTree = "<group>"; };
 		AE5ACE000000000000000002 /* AgentSpaceRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentSpaceRouter.swift; sourceTree = "<group>"; };
+		AE5ACE000000000000000004 /* AgentSpaceRouter+Management.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AgentSpaceRouter+Management.swift"; sourceTree = "<group>"; };
 		AE5ACE000000000000000003 /* AgentSpaceOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentSpaceOverlayView.swift; sourceTree = "<group>"; };
 		B00179592E49CF84007B4635 /* PhiChromiumCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhiChromiumCoordinator.swift; sourceTree = "<group>"; };
+		ACDC00000000000000000A01 /* AgentCDPListener.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentCDPListener.swift; sourceTree = "<group>"; };
+		ACDC00000000000000000A02 /* AgentPeerIdentity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentPeerIdentity.swift; sourceTree = "<group>"; };
+		ACDC00000000000000000A03 /* AgentDirectChannel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentDirectChannel.swift; sourceTree = "<group>"; };
 		B02586EC2E42FD97001B08FC /* PhiBrowser-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "PhiBrowser-Bridging-Header.h"; sourceTree = "<group>"; };
 		B02586ED2E42FD97001B08FC /* ChromiumLauncher.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = ChromiumLauncher.h; sourceTree = "<group>"; };
 		B02586EE2E42FD97001B08FC /* ChromiumLauncher.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = ChromiumLauncher.m; sourceTree = "<group>"; };
@@ -1552,6 +1560,7 @@
 			children = (
 				AE5ACE000000000000000001 /* AgentSpaceManager.swift */,
 				AE5ACE000000000000000002 /* AgentSpaceRouter.swift */,
+				AE5ACE000000000000000004 /* AgentSpaceRouter+Management.swift */,
 			);
 			path = AgentSpace;
 			sourceTree = "<group>";
@@ -1579,12 +1588,23 @@
 		B02586F92E42FDA9001B08FC /* ChromiumBridge */ = {
 			isa = PBXGroup;
 			children = (
+				ACDC00000000000000000C01 /* AgentCDP */,
 				B00179592E49CF84007B4635 /* PhiChromiumCoordinator.swift */,
 				CC288AA82E55824A004A6C1C /* PhiChromiumBridgeHeader.h */,
 				B02586ED2E42FD97001B08FC /* ChromiumLauncher.h */,
 				B02586EE2E42FD97001B08FC /* ChromiumLauncher.m */,
 			);
 			path = ChromiumBridge;
+			sourceTree = "<group>";
+		};
+		ACDC00000000000000000C01 /* AgentCDP */ = {
+			isa = PBXGroup;
+			children = (
+				ACDC00000000000000000A01 /* AgentCDPListener.swift */,
+				ACDC00000000000000000A02 /* AgentPeerIdentity.swift */,
+				ACDC00000000000000000A03 /* AgentDirectChannel.swift */,
+			);
+			path = AgentCDP;
 			sourceTree = "<group>";
 		};
 		B0691CB22E3B639000934AEE /* Frameworks */ = {
@@ -2448,6 +2468,9 @@
 				CC24EF082E89251D00CE9DD7 /* AuthManager.swift in Sources */,
 				8EC70E162F0BBF3D009FE2CD /* BookmarkItemView.swift in Sources */,
 				B001795A2E49CF84007B4635 /* PhiChromiumCoordinator.swift in Sources */,
+				ACDC00000000000000000B01 /* AgentCDPListener.swift in Sources */,
+				ACDC00000000000000000B02 /* AgentPeerIdentity.swift in Sources */,
+				ACDC00000000000000000B03 /* AgentDirectChannel.swift in Sources */,
 				CC450AE42EA74AD5004EE144 /* CommandDispatcher.swift in Sources */,
 				CCBF0FA02ECEC1AE005E729B /* AppController+Deeplink.swift in Sources */,
 				CCBF8F442E653F3400B9A99E /* SidebarItem.swift in Sources */,
@@ -2718,6 +2741,7 @@
 				B0F370B92E430CA5000B51F9 /* WebContentViewController.swift in Sources */,
 				AE5ACE000000000000000011 /* AgentSpaceManager.swift in Sources */,
 				AE5ACE000000000000000012 /* AgentSpaceRouter.swift in Sources */,
+				AE5ACE000000000000000014 /* AgentSpaceRouter+Management.swift in Sources */,
 				AE5ACE000000000000000013 /* AgentSpaceOverlayView.swift in Sources */,
 				CC6336052E4EE55300A176DA /* FileSystemUtils.swift in Sources */,
 				A1B2C3D4E5F60718293A4B56 /* SharedAuthTokenStore.swift in Sources */,

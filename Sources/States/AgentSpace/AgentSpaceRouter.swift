@@ -12,14 +12,17 @@ import Foundation
 /// Kensington extension and — with senderId "cdp" — from remote-debugging
 /// clients through the PhiAgentSpace CDP domain.
 enum AgentSpaceRouter {
-    private static func json(_ payload: String) -> [String: Any]? {
+    // These helpers are shared with the management handlers in
+    // AgentSpaceRouter+Management.swift (internal, not private, for that
+    // reason only — they are not meant as general-purpose API).
+    static func json(_ payload: String) -> [String: Any]? {
         guard let data = payload.data(using: .utf8),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return nil }
         return obj
     }
 
-    private static func origin(for context: ExtensionMessageContext) -> AgentTaskOrigin {
+    static func origin(for context: ExtensionMessageContext) -> AgentTaskOrigin {
         context.senderId == "cdp" ? .cdp : .phiAgent
     }
 
@@ -33,7 +36,7 @@ enum AgentSpaceRouter {
     /// owning driver passes through here, so an authorized caller refreshes the
     /// task's expiry as a side effect — the driver is evidently alive. Explicit
     /// TTL control stays with `agentSpace.ping`.
-    private static func callerMayControl(
+    static func callerMayControl(
         taskId: String, context: ExtensionMessageContext
     ) -> Bool {
         MainActor.assumeIsolated {
@@ -79,9 +82,29 @@ enum AgentSpaceRouter {
                 ?? (obj["profileName"] as? String)
                 ?? ""
             let persistent = obj["persistent"] as? Bool ?? false
+            // Per-profile agent-Space permission (Settings ▸ Developer ▸ Agent
+            // permissions): refuse creation in a profile the user disallows.
+            // An empty request resolves to the first allowed profile, so the
+            // agent's default never lands on a blocked one; an explicit request
+            // for a blocked profile is refused. The resolved profileId is
+            // passed on so create binds exactly what the permission approved.
+            let resolvedProfileName: String
+            switch AgentSpaceManager.shared.resolveAgentCreateProfile(profileName: profileName) {
+            case .allowed(let profile):
+                resolvedProfileName = profile.profileId
+            case .blocked:
+                ExtensionMessaging.shared.sendResponse(
+                    "{\"ok\":false,\"error\":\"profile_not_agent_allowed\"}",
+                    requestId: requestId)
+                return
+            case .noMatch:
+                // Unknown profile — let createAgentSpace surface its own failure
+                // (persistent re-bind may still match by taskId).
+                resolvedProfileName = profileName
+            }
             AgentSpaceManager.shared.createAgentSpace(
                 taskId: taskId,
-                profileName: profileName,
+                profileName: resolvedProfileName,
                 origin: taskOrigin,
                 persistent: persistent
             ) { spaceId, windowId in
@@ -111,7 +134,15 @@ enum AgentSpaceRouter {
             // call can't rely on profile UI having populated the cache.
             ProfileManager.shared.refresh()
             return ProfileManager.shared.profiles.map {
-                ["profileId": $0.profileId, "displayName": $0.displayName]
+                [
+                    "profileId": $0.profileId,
+                    "displayName": $0.displayName,
+                    // Whether the agent may create a Space in this profile
+                    // (Settings ▸ Developer ▸ Agent permissions). A create
+                    // targeting a profile with false is refused.
+                    "agentSpacesAllowed":
+                        PhiPreferences.AgentSpaces.isProfileAgentSpaceAllowed($0.profileId),
+                ]
             }
         }
         guard let data = try? JSONSerialization.data(withJSONObject: ["profiles": profiles]),
@@ -346,7 +377,7 @@ enum AgentSpaceRouter {
         return ok()
     }
 
-    private static func ok() -> String { "{\"ok\":true}" }
-    private static func invalid() -> String { "{\"ok\":false,\"error\":\"invalid_payload\"}" }
-    private static func unknownTask() -> String { "{\"ok\":false,\"error\":\"unknown_task\"}" }
+    static func ok() -> String { "{\"ok\":true}" }
+    static func invalid() -> String { "{\"ok\":false,\"error\":\"invalid_payload\"}" }
+    static func unknownTask() -> String { "{\"ok\":false,\"error\":\"unknown_task\"}" }
 }

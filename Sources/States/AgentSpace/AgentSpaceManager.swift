@@ -276,6 +276,43 @@ final class AgentSpaceManager: ObservableObject {
     /// surviving relaunches. When a Space for this taskId already exists on
     /// disk, the task re-binds to it instead of creating a duplicate (the
     /// profile argument is then ignored: the Space keeps its bound profile).
+    /// Outcome of resolving a create request's requested profile against the
+    /// user's per-profile agent-Space permission (Settings ▸ Developer ▸ Agent
+    /// permissions). `.allowed` carries the concrete profile to create in.
+    enum AgentCreateProfileResolution {
+        case allowed(PhiBrowserProfile)
+        case blocked        // resolved to a profile the user disallows for agents
+        case noMatch        // the requested profile name/id doesn't exist
+    }
+
+    /// Resolves a create request's profile the same way `createAgentSpace`
+    /// does, then applies the permission: an explicit request for a disallowed
+    /// profile is `.blocked`; an empty request picks the first profile the user
+    /// still allows (so the agent's default never lands on a blocked profile),
+    /// or `.blocked` when every profile is disallowed.
+    @MainActor
+    func resolveAgentCreateProfile(profileName: String) -> AgentCreateProfileResolution {
+        ProfileManager.shared.refresh()
+        let profiles = ProfileManager.shared.profiles
+        if profileName.isEmpty {
+            if let allowed = profiles.first(where: {
+                PhiPreferences.AgentSpaces.isProfileAgentSpaceAllowed($0.profileId)
+            }) {
+                return .allowed(allowed)
+            }
+            return profiles.isEmpty ? .noMatch : .blocked
+        }
+        let byId = profiles.first(where: { $0.profileId == profileName })
+        let byName = profiles.first(where: { $0.displayName == profileName })
+        guard let profile = byId ?? byName else {
+            return .noMatch
+        }
+        if PhiPreferences.AgentSpaces.isProfileAgentSpaceAllowed(profile.profileId) {
+            return .allowed(profile)
+        }
+        return .blocked
+    }
+
     func createAgentSpace(
         taskId: String,
         profileName: String,
@@ -314,6 +351,14 @@ final class AgentSpaceManager: ObservableObject {
                Self.isPersistentAgentSpaceModel(iconName: $0.iconName, colorHex: $0.colorHex)
                    && $0.name == taskId
            }) {
+            // Re-binding resumes the agent in the survivor's own profile,
+            // bypassing the requested one — so honor the permission here too: a
+            // profile the user has since disallowed can't be re-entered.
+            guard PhiPreferences.AgentSpaces.isProfileAgentSpaceAllowed(survivor.profileId) else {
+                AppLogWarn("[AgentSpace] createAgentSpace: rebind refused, profile disallowed for agents")
+                completion(nil, nil)
+                return
+            }
             rebindPersistentSpace(taskId: taskId, spaceId: survivor.spaceId,
                                   profileId: survivor.profileId, origin: origin,
                                   completion: completion)

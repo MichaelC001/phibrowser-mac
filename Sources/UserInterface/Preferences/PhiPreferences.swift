@@ -236,17 +236,54 @@ extension PhiPreferences {
     enum AgentSpaces {
         private static let autoCloseKey = "PhiAgentSpaceAutoCloseOnSuccess"
         private static let remoteDebuggingPortKey = "PhiRemoteDebuggingPort"
+        private static let cdpAgentAccessKey = "PhiCDPAgentAccessEnabled"
+        private static let rememberedAgentGrantsKey = "PhiCDPRememberedAgentGrants"
         private static let autoViewKey = "PhiAgentSpaceAutoView"
         private static let skillFeatureKey = "PhiBrowserSkillFeatureEnabled"
+        private static let userSpaceOperationsKey = "PhiAgentUserSpaceOperationsEnabled"
+        private static let disallowedAgentProfilesKey = "PhiAgentDisallowedProfileIds"
 
         /// Master gate for the phi-browser skill's UI surfaces — the Developer
         /// settings tab and View ▸ Agent Autoview (same pattern as
         /// `GeneralSettings.spacesFeatureEnabled`). Defaults on, no user-facing
         /// toggle: flip with `defaults write <bundle id>
+        /// 
         /// PhiBrowserSkillFeatureEnabled -bool false`. The Settings window
         /// re-reads it on every open; the menu item applies on relaunch.
         static var skillFeatureEnabled: Bool {
             UserDefaults.standard.bool(forKey: skillFeatureKey, default: true)
+        }
+
+        /// Settings ▸ Developer ▸ Agent permissions: whether agent tooling may
+        /// operate the user's own browsing data and windows over the
+        /// management surface — Spaces, profiles, URL rules, pinned tabs,
+        /// bookmarks, and the tab layout of user windows. When off, agents can
+        /// only work inside their own agent Spaces. Read live by the message
+        /// router, so changes apply without a relaunch. Default on.
+        static var userSpaceOperationsEnabled: Bool {
+            get { UserDefaults.standard.bool(forKey: userSpaceOperationsKey, default: true) }
+            set { UserDefaults.standard.set(newValue, forKey: userSpaceOperationsKey) }
+        }
+
+        /// Settings ▸ Developer ▸ Agent permissions: profiles the agent may NOT
+        /// create agent Spaces in, by profileId. Stored as a blocklist so the
+        /// default (empty) preserves "any profile allowed"; the UI presents it
+        /// as a per-profile "allow" toggle. Keyed by profileId (stable across
+        /// renames). Enforced at `agentSpace.create`.
+        static var disallowedAgentProfileIds: Set<String> {
+            get { Set(UserDefaults.standard.stringArray(forKey: disallowedAgentProfilesKey) ?? []) }
+            set {
+                if newValue.isEmpty {
+                    UserDefaults.standard.removeObject(forKey: disallowedAgentProfilesKey)
+                } else {
+                    UserDefaults.standard.set(Array(newValue), forKey: disallowedAgentProfilesKey)
+                }
+            }
+        }
+
+        /// Whether the agent may create agent Spaces bound to `profileId`.
+        static func isProfileAgentSpaceAllowed(_ profileId: String) -> Bool {
+            !disallowedAgentProfileIds.contains(profileId)
         }
 
         /// When `true`, a successfully completed agent Space that the user never
@@ -267,10 +304,40 @@ extension PhiPreferences {
             set { UserDefaults.standard.set(newValue, forKey: autoViewKey) }
         }
 
-        /// Opt-in CDP endpoint for agent tooling, consumed by ChromiumLauncher
-        /// at process launch (a relaunch is required for changes to apply).
-        /// nil (key absent) = disabled; 0 = ephemeral port written to
-        /// `<user data dir>/DevToolsActivePort`; >0 = fixed port.
+        /// Settings ▸ Developer ▸ Remote debugging: master switch for agent CDP
+        /// access over the app-owned Unix-domain socket (see
+        /// `AgentCDPListener`). Read live — flipping it starts or stops the
+        /// listener immediately, no relaunch. Default off: while on, an
+        /// approved agent process can drive the browser. Distinct from
+        /// `remoteDebuggingPort`, which is the developer TCP override.
+        static var cdpAgentAccessEnabled: Bool {
+            get { UserDefaults.standard.bool(forKey: cdpAgentAccessKey) }
+            set { UserDefaults.standard.set(newValue, forKey: cdpAgentAccessKey) }
+        }
+
+        /// Agent code-signing identities the user chose to remember (Allow &
+        /// Remember in the CDP consent prompt), so a returning agent connects
+        /// without re-prompting. Each entry is an `AgentIdentity.key`
+        /// ("teamId:signingId", or "unsigned:path" for an unsigned peer).
+        /// Empty by default; removing an entry here is how the Settings list
+        /// revokes a remembered agent.
+        static var rememberedAgentGrants: Set<String> {
+            get { Set(UserDefaults.standard.stringArray(forKey: rememberedAgentGrantsKey) ?? []) }
+            set {
+                if newValue.isEmpty {
+                    UserDefaults.standard.removeObject(forKey: rememberedAgentGrantsKey)
+                } else {
+                    UserDefaults.standard.set(Array(newValue), forKey: rememberedAgentGrantsKey)
+                }
+            }
+        }
+
+        /// Developer TCP override for the CDP endpoint, consumed by
+        /// ChromiumLauncher at process launch (a relaunch is required for
+        /// changes to apply). Mutually exclusive with the injection transport
+        /// behind `cdpAgentAccessEnabled`: when this is set Chromium listens on
+        /// the port instead. nil (key absent) = unset; 0 = ephemeral port
+        /// written to `<user data dir>/DevToolsActivePort`; >0 = fixed port.
         static var remoteDebuggingPort: Int? {
             get {
                 guard UserDefaults.standard.object(forKey: remoteDebuggingPortKey) != nil else {

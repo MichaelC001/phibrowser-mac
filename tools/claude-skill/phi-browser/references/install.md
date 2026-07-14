@@ -14,41 +14,47 @@ Or link it by hand from a source checkout (swap the destination for your agent):
 ln -sfn /Users/jixiang/Phi/phibrowser-mac/tools/claude-skill/phi-browser ~/.claude/skills/phi-browser
 ```
 
-Requires Node >= 22 (global WebSocket). No npm dependencies.
+Requires Node >= 22. No npm dependencies.
 
-## 2. Enable Phi Browser's CDP endpoint (one-time, per machine)
+## 2. Enable agent CDP access (one-time, in Settings)
 
-The endpoint is OFF by default. Enable it with a user default, then relaunch
-Phi Browser:
+The endpoint is OFF by default. Turn it on in **Settings ▸ Developer ▸ Remote
+debugging ▸ "Allow agents to control Phi (CDP)"**. It applies immediately —
+**no relaunch** — because the Phi app itself owns the socket and starts or
+stops it live with the toggle.
 
-```bash
-# Canary builds (scheme PhiBrowser-canary):
-defaults write com.phibrowser.canary.Mac PhiRemoteDebuggingPort -int 0
-# Release builds:
-defaults write com.phibrowser.Mac PhiRemoteDebuggingPort -int 0
-```
+How it works, and why it's safe:
 
-`0` = ephemeral port (recommended). A fixed port (e.g. `9333`) also works.
-Alternatively launch the binary directly with `--remote-debugging-port=0`
-(process args are forwarded to the embedded Chromium).
+- Phi opens a **Unix-domain socket** (not a TCP port), so nothing on the
+  network — and no other user's processes — can reach it.
+- The first time a given agent connects, Phi identifies the connecting process
+  (peer credentials + code signature) and shows a **consent prompt**: *Allow
+  Once*, *Always Allow*, or *Deny*. Only after you allow does the connection
+  reach the browser.
+- *Always Allow* is remembered per agent under **Settings ▸ Developer ▸ Remote
+  debugging ▸ Remembered agents**; **Remove** there makes that agent ask again.
+- Turning the toggle off stops new connections and severs any live ones at
+  once.
 
-To disable again: `defaults delete <bundle id> PhiRemoteDebuggingPort`.
-
-Security note: the endpoint listens on 127.0.0.1 only, but ANY local process
-can control the browser through it while enabled. Leave it off when not in
-use.
+Developer TCP override: launching the binary with `--remote-debugging-port=0`
+(or `defaults write <bundle id> PhiRemoteDebuggingPort -int 0`, then relaunch)
+still exposes a plain localhost CDP port with no per-agent consent — for raw
+CDP debugging tools (chrome://inspect, Puppeteer). It has no authenticated
+agent-Space surface, so the phi-browser skill does NOT use it: the skill always
+requires the app socket above. Enabling the port does not enable the skill.
 
 ## 3. Verify
 
-After relaunching Phi Browser:
+After enabling the toggle (no relaunch needed):
 
 ```bash
-cat ~/Library/Application\ Support/com.phibrowser.canary.Mac/DevToolsActivePort
-# line 1: port, line 2: /devtools/browser/<uuid>
-curl -s http://127.0.0.1:$(head -1 ~/Library/Application\ Support/com.phibrowser.canary.Mac/DevToolsActivePort)/json/version
+# The app writes the socket's path here; only this Mac's processes can reach it.
+SOCK=$(head -1 ~/Library/Application\ Support/com.phibrowser.canary.Mac/CDPAgentSocket)
+curl -s --unix-socket "$SOCK" http://localhost/json/version
 ```
 
-Then a smoke round:
+The first request triggers the consent prompt — approve it in Phi, then the
+JSON version blob prints. Then a smoke round:
 
 ```bash
 node ~/.claude/skills/phi-browser/scripts/runner.mjs <<'EOF'
@@ -71,11 +77,16 @@ node ~/.claude/skills/phi-browser/scripts/selftest.mjs
 
 ## Troubleshooting
 
-- **DevToolsActivePort not found**: the default isn't set for the bundle id
-  actually running (canary vs release), or the browser wasn't relaunched.
-  Set `PHI_USER_DATA_DIR` to override the user-data-dir candidates.
-- **Endpoint not responding**: stale DevToolsActivePort after a crash —
-  relaunch Phi Browser.
+- **CDP endpoint not found**: the toggle isn't on for the bundle id actually
+  running (canary vs release), so no `CDPAgentSocket` pointer file exists. Turn
+  on Settings ▸ Developer ▸ Remote debugging (no relaunch). Set
+  `PHI_USER_DATA_DIR` to override the user-data-dir candidates.
+- **Access denied**: you (or a stale *Always Allow*) denied this agent. Approve
+  the next prompt, or remove the agent under Settings ▸ Developer ▸ Remote
+  debugging ▸ Remembered agents and reconnect to be asked again.
+- **Endpoint not responding / first call hangs**: the first connection waits on
+  the consent prompt — approve it in Phi. If it's genuinely stuck, toggle
+  Remote debugging off and on to restart the listener.
 - **"No Phi app connection available"**: the CDP endpoint is up but the Mac
   client's message router has no registered connection to the framework (the
   `PhiAgentSpace` domain tunnels every `agentSpace.*` call through it). Seen

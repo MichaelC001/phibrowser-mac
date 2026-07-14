@@ -8,13 +8,13 @@
 //   cliLog(await snapshotText())
 //   EOF
 
-// The CDP client rides Node's global WebSocket (stable since Node 22). Fail
-// with the actual requirement instead of a ReferenceError from deep inside
-// the first connect.
-if (typeof WebSocket === 'undefined') {
+// The CDP client speaks WebSocket over the app's Unix socket with a
+// hand-rolled frame codec (no global WebSocket needed), but still uses modern
+// Node APIs throughout. Fail with the actual requirement instead of an obscure
+// error from deep inside the first connect.
+if (Number(process.versions.node.split('.')[0]) < 22) {
   console.error(
-    `phi-browser: Node >= 22 required (global WebSocket missing; ` +
-    `running ${process.version})`)
+    `phi-browser: Node >= 22 required (running ${process.version})`)
   process.exit(2)
 }
 
