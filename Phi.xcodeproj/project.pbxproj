@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A71E00000000000000000002 /* PhiAlert.swift in Sources */ = {isa = PBXBuildFile; fileRef = A71E00000000000000000001 /* PhiAlert.swift */; };
 		C70000000000000000000011 /* CustomTooltipController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C70000000000000000000001 /* CustomTooltipController.swift */; };
 		C70000000000000000000012 /* CustomTooltip+Hosting.swift in Sources */ = {isa = PBXBuildFile; fileRef = C70000000000000000000002 /* CustomTooltip+Hosting.swift */; };
 		C70000000000000000000013 /* CommandShortcutTooltipContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = C70000000000000000000003 /* CommandShortcutTooltipContent.swift */; };
@@ -506,6 +507,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		A71E00000000000000000001 /* PhiAlert.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhiAlert.swift; sourceTree = "<group>"; };
 		C70000000000000000000001 /* CustomTooltipController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CustomTooltipController.swift; sourceTree = "<group>"; };
 		C70000000000000000000002 /* CustomTooltip+Hosting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "CustomTooltip+Hosting.swift"; sourceTree = "<group>"; };
 		C70000000000000000000003 /* CommandShortcutTooltipContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandShortcutTooltipContent.swift; sourceTree = "<group>"; };
@@ -2012,6 +2014,7 @@
 		CCBF8F362E653A4200B9A99E /* Common */ = {
 			isa = PBXGroup;
 			children = (
+				A71E00000000000000000001 /* PhiAlert.swift */,
 				C70000000000000000000020 /* Tooltip */,
 				CD1100050000000000000001 /* IconPicker */,
 				8EF36C022F4E9E7000FCC91E /* Tabs */,
@@ -2383,6 +2386,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A71E00000000000000000002 /* PhiAlert.swift in Sources */,
 				C70000000000000000000011 /* CustomTooltipController.swift in Sources */,
 				C70000000000000000000012 /* CustomTooltip+Hosting.swift in Sources */,
 				C70000000000000000000013 /* CommandShortcutTooltipContent.swift in Sources */,

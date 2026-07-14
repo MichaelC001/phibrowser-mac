@@ -159,7 +159,7 @@ enum TabMultiSelectionMenu {
             let deleteItem = NSMenuItem(
                 title: deleteBookmarksTitle(for: bookmarkDeletion),
                 action: #selector(TabMultiSelectionMenuController.deleteSelectedBookmarks),
-                keyEquivalent: "d")
+                keyEquivalent: "")
             deleteItem.keyEquivalentModifierMask = [.command]
             items.append(deleteItem)
         }
@@ -412,13 +412,25 @@ final class TabMultiSelectionMenuController: NSObject {
     }
 
     private func confirmBookmarkDeletion(_ context: BrowserState.MultiSelectionBookmarkDeletionContext) -> Bool {
-        let alert = NSAlert()
-        alert.messageText = deleteAlertTitle(for: context)
-        alert.informativeText = deleteAlertMessage(for: context)
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: NSLocalizedString("Delete", comment: "Destructive button"))
-        alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Cancel button"))
-        return alert.runModal() == .alertFirstButtonReturn
+        let configuration = PhiAlertAppKitConfiguration(
+            title: deleteAlertTitle(for: context),
+            message: deleteAlertMessage(for: context),
+            style: .critical,
+            secondaryAction: PhiAlertAppKitAction(
+                NSLocalizedString("Cancel", comment: "Cancel button"),
+                response: .alertSecondButtonReturn
+            ),
+            primaryAction: PhiAlertAppKitAction(
+                NSLocalizedString("Delete", comment: "Destructive button"),
+                role: .primary,
+                response: .alertFirstButtonReturn
+            )
+        )
+
+        return NSApp.runPhiAlert(
+            configuration,
+            relativeTo: browserState?.windowController?.window
+        ) == .alertFirstButtonReturn
     }
 
     private func deleteAlertTitle(for context: BrowserState.MultiSelectionBookmarkDeletionContext) -> String {

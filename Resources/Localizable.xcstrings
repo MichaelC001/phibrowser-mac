@@ -305,6 +305,9 @@
     "An import is still adding bookmarks to this Space. Wait for it to finish, then try again." : {
       "comment" : "Body shown when a Space action is blocked by an in-progress import\nBody shown when deleting a Space is blocked by an in-progress import"
     },
+    "Any unsaved changes may be lost." : {
+      "comment" : "Quit confirmation message"
+    },
     "Appearance" : {
       "comment" : "General settings - Appearance section title"
     },
@@ -316,6 +319,9 @@
     },
     "Aqua" : {
       "comment" : "Aqua theme color name"
+    },
+    "Are you sure you want to quit Phi?" : {
+      "comment" : "Quit confirmation title"
     },
     "Ask every time" : {
       "comment" : "Special target in the URL rule Space picker: prompt for a Space on each match"
@@ -1438,9 +1444,6 @@
     },
     "Quit" : {
       "comment" : "Quit"
-    },
-    "Quit Phi?" : {
-      "comment" : "Quit Phi?"
     },
     "Reauthenticate" : {
       "comment" : "Auth reauthentication - Primary action to start Auth0 web authentication"

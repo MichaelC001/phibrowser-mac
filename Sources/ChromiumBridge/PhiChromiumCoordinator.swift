@@ -737,13 +737,9 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
         controller.startObservingMainMenu()
     }
     
+    @MainActor
     func runQuitConfirmAlert() -> Bool {
-        let alert = NSAlert()
-        alert.messageText = NSLocalizedString("Quit Phi?", comment: "Quit Phi?")
-        alert.addButton(withTitle: NSLocalizedString("Quit", comment: "Quit"))
-        alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Cancel"))
-        let response = alert.runModal()
-        return response == .alertFirstButtonReturn
+        PhiAlert.runQuitAlert()
     }
     
     func activeTabChanged(_ tabId: Int64, index: Int32, windowId: Int64) {
