@@ -283,6 +283,8 @@ final class AgentSpaceManager: ObservableObject {
         case allowed(PhiBrowserProfile)
         case blocked        // resolved to a profile the user disallows for agents
         case noMatch        // the requested profile name/id doesn't exist
+        case needsTemporary // a default request, but the user left no usable
+                            // profile (all disallowed, or none exist) — create one
     }
 
     /// Resolves a create request's profile the same way `createAgentSpace`
@@ -300,7 +302,9 @@ final class AgentSpaceManager: ObservableObject {
             }) {
                 return .allowed(allowed)
             }
-            return profiles.isEmpty ? .noMatch : .blocked
+            // Nothing the agent may use — neither refuse nor fail; a dedicated
+            // agent profile is created on demand (ensureAgentFallbackProfile).
+            return .needsTemporary
         }
         let byId = profiles.first(where: { $0.profileId == profileName })
         let byName = profiles.first(where: { $0.displayName == profileName })
@@ -311,6 +315,32 @@ final class AgentSpaceManager: ObservableObject {
             return .allowed(profile)
         }
         return .blocked
+    }
+
+    /// Resolves the agent's fallback profile for a `.needsTemporary` create,
+    /// yielding its profileId. Reuses the existing fallback (matched by its
+    /// reserved name or recorded id, so it isn't recreated each time),
+    /// otherwise creates it under the reserved name. Deliberately not gated by
+    /// the per-profile permission: this profile exists precisely because the
+    /// user left the agent none it could otherwise use.
+    @MainActor
+    func ensureAgentFallbackProfile(completion: @escaping (String?) -> Void) {
+        ProfileManager.shared.refresh()
+        let reservedName = PhiPreferences.AgentSpaces.agentFallbackProfileName
+        if let existing = ProfileManager.shared.profiles.first(where: {
+            PhiPreferences.AgentSpaces.isAgentFallbackProfile(
+                profileId: $0.profileId, displayName: $0.displayName)
+        }) {
+            PhiPreferences.AgentSpaces.agentFallbackProfileId = existing.profileId
+            completion(existing.profileId)
+            return
+        }
+        ProfileManager.shared.createProfile(displayName: reservedName) { newId in
+            if let newId {
+                PhiPreferences.AgentSpaces.agentFallbackProfileId = newId
+            }
+            completion(newId)
+        }
     }
 
     func createAgentSpace(

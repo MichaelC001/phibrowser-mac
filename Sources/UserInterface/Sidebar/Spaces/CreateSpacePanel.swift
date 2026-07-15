@@ -203,7 +203,7 @@ struct CreateSpacePanel: View {
 
     private var profilePill: some View {
         Menu {
-            ForEach(profileManager.profiles, id: \.profileId) { profile in
+            ForEach(profileManager.userAssignableProfiles, id: \.profileId) { profile in
                 Button(profile.displayName) { selectedProfileId = profile.profileId }
             }
             Divider()
@@ -443,10 +443,10 @@ struct CreateSpacePanel: View {
 
     private var resolvedInitialProfileId: String {
         if let id = initialProfileId,
-           profileManager.profiles.contains(where: { $0.profileId == id }) {
+           profileManager.userAssignableProfiles.contains(where: { $0.profileId == id }) {
             return id
         }
-        return profileManager.profiles.first?.profileId ?? LocalStore.defaultProfileId
+        return profileManager.userAssignableProfiles.first?.profileId ?? LocalStore.defaultProfileId
     }
 
     private var selectedProfileName: String {

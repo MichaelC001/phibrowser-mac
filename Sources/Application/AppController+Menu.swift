@@ -1391,7 +1391,9 @@ extension AppController {
 
     private func makeSpacesProfileSubmenu(for space: SpaceModel?) -> NSMenu {
         let menu = NSMenu(title: NSLocalizedString("Change Profile", comment: "Spaces menu - Submenu to re-bind the active Space to another profile"))
-        for profile in ProfileManager.shared.profiles {
+        // The agent's fallback profile belongs to the agent — the user can't
+        // re-bind a normal Space to it (matches the create-Space pickers).
+        for profile in ProfileManager.shared.userAssignableProfiles {
             let item = NSMenuItem(
                 title: profile.displayName,
                 action: #selector(selectSpaceProfile(_:)),

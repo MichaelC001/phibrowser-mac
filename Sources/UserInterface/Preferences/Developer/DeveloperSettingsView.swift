@@ -224,12 +224,12 @@ private struct AgentPermissionsSectionView: View {
                         .themedForeground(.textTertiary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                if profileManager.profiles.isEmpty {
+                if profileManager.userAssignableProfiles.isEmpty {
                     Text(NSLocalizedString("No profiles found.", comment: "Developer settings - Empty state when no browser profiles exist"))
                         .font(.system(size: 11))
                         .themedForeground(.textTertiary)
                 } else {
-                    ForEach(profileManager.profiles) { profile in
+                    ForEach(profileManager.userAssignableProfiles) { profile in
                         HStack(spacing: 12) {
                             Text(profile.displayName)
                                 .font(.system(size: 13))

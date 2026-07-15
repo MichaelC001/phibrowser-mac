@@ -242,6 +242,7 @@ extension PhiPreferences {
         private static let skillFeatureKey = "PhiBrowserSkillFeatureEnabled"
         private static let userSpaceOperationsKey = "PhiAgentUserSpaceOperationsEnabled"
         private static let disallowedAgentProfilesKey = "PhiAgentDisallowedProfileIds"
+        private static let agentFallbackProfileKey = "PhiAgentFallbackProfileId"
 
         /// Master gate for the phi-browser skill's UI surfaces — the Developer
         /// settings tab and View ▸ Agent Autoview (same pattern as
@@ -284,6 +285,35 @@ extension PhiPreferences {
         /// Whether the agent may create agent Spaces bound to `profileId`.
         static func isProfileAgentSpaceAllowed(_ profileId: String) -> Bool {
             !disallowedAgentProfileIds.contains(profileId)
+        }
+
+        /// Reserved display name of the agent's fallback profile. Deliberately
+        /// one a user would not normally pick, so identifying the profile by
+        /// name never hides a user's own profile.
+        static let agentFallbackProfileName = "Phi Agent (reserved)"
+
+        /// Profile the app auto-created as the agent's fallback (see
+        /// `AgentSpaceManager.ensureAgentFallbackProfile`), recorded so it can
+        /// still be identified after a rename — that profile belongs to the
+        /// agent. nil when no fallback has been created.
+        static var agentFallbackProfileId: String? {
+            get { UserDefaults.standard.string(forKey: agentFallbackProfileKey) }
+            set {
+                if let newValue, !newValue.isEmpty {
+                    UserDefaults.standard.set(newValue, forKey: agentFallbackProfileKey)
+                } else {
+                    UserDefaults.standard.removeObject(forKey: agentFallbackProfileKey)
+                }
+            }
+        }
+
+        /// THE single source of truth for "is this the agent's fallback
+        /// profile" — by reserved name or recorded id. Everything that lists
+        /// profiles for the user to choose from filters on this so the agent
+        /// profile never appears in a user picker.
+        static func isAgentFallbackProfile(profileId: String, displayName: String) -> Bool {
+            displayName == agentFallbackProfileName
+                || (!profileId.isEmpty && profileId == agentFallbackProfileId)
         }
 
         /// When `true`, a successfully completed agent Space that the user never

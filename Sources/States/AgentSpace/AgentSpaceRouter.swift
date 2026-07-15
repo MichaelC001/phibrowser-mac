@@ -88,38 +88,53 @@ enum AgentSpaceRouter {
             // agent's default never lands on a blocked one; an explicit request
             // for a blocked profile is refused. The resolved profileId is
             // passed on so create binds exactly what the permission approved.
-            let resolvedProfileName: String
+            let proceedCreate: @MainActor (String) -> Void = { resolvedProfileName in
+                AgentSpaceManager.shared.createAgentSpace(
+                    taskId: taskId,
+                    profileName: resolvedProfileName,
+                    origin: taskOrigin,
+                    persistent: persistent
+                ) { spaceId, windowId in
+                    var replyObject: [String: Any]?
+                    if let spaceId, let windowId {
+                        replyObject = ["ok": true, "spaceId": spaceId, "windowId": windowId]
+                    }
+                    if let replyObject,
+                       let data = try? JSONSerialization.data(withJSONObject: replyObject),
+                       let reply = String(data: data, encoding: .utf8) {
+                        ExtensionMessaging.shared.sendResponse(reply, requestId: requestId)
+                    } else {
+                        ExtensionMessaging.shared.sendResponse(
+                            "{\"ok\":false,\"error\":\"create_failed\"}",
+                            requestId: requestId)
+                    }
+                }
+            }
+
             switch AgentSpaceManager.shared.resolveAgentCreateProfile(profileName: profileName) {
             case .allowed(let profile):
-                resolvedProfileName = profile.profileId
+                proceedCreate(profile.profileId)
             case .blocked:
                 ExtensionMessaging.shared.sendResponse(
                     "{\"ok\":false,\"error\":\"profile_not_agent_allowed\"}",
                     requestId: requestId)
-                return
             case .noMatch:
                 // Unknown profile — let createAgentSpace surface its own failure
                 // (persistent re-bind may still match by taskId).
-                resolvedProfileName = profileName
-            }
-            AgentSpaceManager.shared.createAgentSpace(
-                taskId: taskId,
-                profileName: resolvedProfileName,
-                origin: taskOrigin,
-                persistent: persistent
-            ) { spaceId, windowId in
-                var replyObject: [String: Any]?
-                if let spaceId, let windowId {
-                    replyObject = ["ok": true, "spaceId": spaceId, "windowId": windowId]
-                }
-                if let replyObject,
-                   let data = try? JSONSerialization.data(withJSONObject: replyObject),
-                   let reply = String(data: data, encoding: .utf8) {
-                    ExtensionMessaging.shared.sendResponse(reply, requestId: requestId)
-                } else {
-                    ExtensionMessaging.shared.sendResponse(
-                        "{\"ok\":false,\"error\":\"create_failed\"}",
-                        requestId: requestId)
+                proceedCreate(profileName)
+            case .needsTemporary:
+                // The user left the agent no usable profile — create/reuse a
+                // dedicated one and bind the Space to it.
+                AgentSpaceManager.shared.ensureAgentFallbackProfile { profileId in
+                    MainActor.assumeIsolated {
+                        guard let profileId else {
+                            ExtensionMessaging.shared.sendResponse(
+                                "{\"ok\":false,\"error\":\"create_failed\"}",
+                                requestId: requestId)
+                            return
+                        }
+                        proceedCreate(profileId)
+                    }
                 }
             }
         }

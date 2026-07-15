@@ -160,7 +160,7 @@ struct SpacesSettingsView: View {
             }
             .buttonStyle(.plain)
             Picker("", selection: profileBinding(space.spaceId)) {
-                ForEach(profileManager.profiles, id: \.profileId) { profile in
+                ForEach(profileManager.userAssignableProfiles, id: \.profileId) { profile in
                     Text(profile.displayName).tag(profile.profileId)
                 }
             }

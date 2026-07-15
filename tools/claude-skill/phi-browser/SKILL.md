@@ -440,9 +440,12 @@ The user can restrict which profiles agents may create Spaces in (Settings ▸
 Developer ▸ Agent permissions). `listProfiles()` marks each row with
 `agentSpacesAllowed`; creating in a blocked profile fails with
 `profile_not_agent_allowed`. The default (empty `{profile}`) always resolves
-to a still-allowed profile, so you only hit this by naming a blocked one —
-pick an `agentSpacesAllowed: true` profile instead, and if the user asked for
-a blocked one, tell them it's disallowed rather than retrying.
+to a usable profile — a still-allowed one if any exists, otherwise the app
+auto-creates a dedicated "Agent" profile for you (so a default create never
+fails for lack of a profile). You only hit `profile_not_agent_allowed` by
+EXPLICITLY naming a blocked profile — pick an `agentSpacesAllowed: true`
+profile instead, and if the user asked for a blocked one, tell them it's
+disallowed rather than retrying.
 
 ### Persistent Spaces
 
