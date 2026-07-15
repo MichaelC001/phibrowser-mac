@@ -4200,6 +4200,68 @@ class BrowserState {
         normalTabRelativeOrderTabSyncMoves(tabIds: tabIds)
     }
 
+    /// Builds a post-membership move whose anchor stays inside the target group.
+    /// A Chromium tab hidden from `normalTabOrder` can otherwise turn an
+    /// external visible anchor into a move that removes the tab from the group.
+    func normalTabRelativeOrderSyncMove(
+        tabId: Int,
+        withinGroupToken groupToken: String
+    ) -> NormalTabRelativeOrderMove? {
+        guard let movedIndex = normalTabOrder.firstIndex(of: tabId),
+              tabs.first(where: { $0.guid == tabId })?.groupToken == groupToken else {
+            return nil
+        }
+
+        if movedIndex + 1 < normalTabOrder.count {
+            let rightTabId = normalTabOrder[movedIndex + 1]
+            if tabs.first(where: { $0.guid == rightTabId })?.groupToken == groupToken {
+                let anchorTabId = splitSafeBeforeAnchorTabId(rightTabId)
+                if tabs.first(where: { $0.guid == anchorTabId })?.groupToken == groupToken {
+                    return NormalTabRelativeOrderMove(
+                        tabId: tabId,
+                        anchor: .before(anchorTabId)
+                    )
+                }
+            }
+        }
+
+        if movedIndex > 0 {
+            let leftTabId = normalTabOrder[movedIndex - 1]
+            if tabs.first(where: { $0.guid == leftTabId })?.groupToken == groupToken {
+                let anchorTabId = splitSafeAfterAnchorTabId(leftTabId)
+                if tabs.first(where: { $0.guid == anchorTabId })?.groupToken == groupToken {
+                    return NormalTabRelativeOrderMove(
+                        tabId: tabId,
+                        anchor: .after(anchorTabId)
+                    )
+                }
+            }
+        }
+
+        return nil
+    }
+
+    func syncNormalTabRelativeOrderToChromium(
+        tabId: Int,
+        withinGroupToken groupToken: String
+    ) {
+        guard let bridge = ChromiumLauncher.sharedInstance().bridge else {
+            return
+        }
+        guard let move = normalTabRelativeOrderSyncMove(
+            tabId: tabId,
+            withinGroupToken: groupToken
+        ) else {
+            AppLogWarn(
+                "[TAB_GROUPS][SIDEBAR_DRAG] group-relative Chromium sync skipped " +
+                "windowId=\(windowId) tabId=\(tabId) token=\(groupToken) " +
+                "order=\(normalTabOrder)"
+            )
+            return
+        }
+        syncNormalTabRelativeOrderToChromium(move, bridge: bridge)
+    }
+
     private func normalTabRelativeOrderTabSyncMoves(tabIds: [Int]) -> [NormalTabRelativeOrderMove] {
         let movingIds = normalTabRelativeOrderMovingIds(tabIds: tabIds)
         guard !movingIds.isEmpty else { return [] }

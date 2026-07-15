@@ -2527,8 +2527,14 @@ extension SidebarTabListViewController: NSOutlineViewDataSource {
                     browserState.applyOptimisticGroupMembership(
                         updates: updates)
                     if shouldDeferChromiumOrderSync {
-                        browserState.syncNormalTabsRelativeOrderToChromium(
-                            tabIds: memberTabIds)
+                        if let newToken {
+                            browserState.syncNormalTabRelativeOrderToChromium(
+                                tabId: draggedTab.guid,
+                                withinGroupToken: newToken)
+                        } else {
+                            browserState.syncNormalTabsRelativeOrderToChromium(
+                                tabIds: memberTabIds)
+                        }
                     }
                 }
 
@@ -4794,8 +4800,9 @@ extension SidebarTabListViewController: TabGroupCellViewDelegate {
             browserState.applyOptimisticGroupMembership(
                 updates: updates)
             if shouldDeferChromiumOrderSync {
-                browserState.syncNormalTabsRelativeOrderToChromium(
-                    tabIds: memberTabIds)
+                browserState.syncNormalTabRelativeOrderToChromium(
+                    tabId: tab.guid,
+                    withinGroupToken: token)
             }
         }
         setDropFeedback(.none)

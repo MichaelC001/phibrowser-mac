@@ -227,6 +227,197 @@ final class BrowserStateTabGroupBlockTests: XCTestCase {
         XCTAssertEqual(state.normalTabs.map(\.groupToken), ["A", "B", "B", "B"])
     }
 
+    // MARK: - group-relative order sync
+
+    func testGroupRelativeOrderSync_beforeOptimisticMembershipReturnsNil() throws {
+        let state = try makeBrowserState()
+        let tabs = seed(state: state, tabs: [
+            (guid: 100, url: "https://joining.example", token: nil),
+            (guid: 200, url: "https://g1.example", token: "A"),
+        ])
+
+        XCTAssertNil(
+            state.normalTabRelativeOrderSyncMove(
+                tabId: tabs[0].guid,
+                withinGroupToken: "A"
+            )
+        )
+    }
+
+    func testGroupRelativeOrderSync_noVisibleGroupMemberDoesNotUseExternalAnchor() throws {
+        let defaults = UserDefaults.standard
+        let layoutKey = PhiPreferences.GeneralSettings.layoutModeKey
+        let originalLayout = defaults.string(forKey: layoutKey)
+        PhiPreferences.GeneralSettings.saveLayoutMode(.performance)
+        defer {
+            if let originalLayout {
+                defaults.set(originalLayout, forKey: layoutKey)
+            } else {
+                defaults.removeObject(forKey: layoutKey)
+            }
+        }
+
+        let state = try makeBrowserState()
+        let hiddenBookmark = Bookmark(
+            guid: "hidden-group-member",
+            title: "Hidden Group Member",
+            url: "https://hidden-member.example"
+        )
+        hiddenBookmark.isOpened = true
+        state.bookmarkManager.rootFolder.addChild(hiddenBookmark)
+
+        let hiddenMember = Tab(guid: 200,
+                               url: "https://hidden-member.example",
+                               isActive: false,
+                               index: 0,
+                               customGuid: hiddenBookmark.guid)
+        let joining = Tab(guid: 100,
+                          url: "https://joining.example",
+                          isActive: false,
+                          index: 1)
+        let external = Tab(guid: 101,
+                           url: "https://external.example",
+                           isActive: false,
+                           index: 2)
+
+        state.tabs = [hiddenMember, joining, external]
+        state.updateNormalTabs()
+        state.handleTabGroupCreated(token: "A",
+                                    title: "",
+                                    color: .blue,
+                                    isCollapsed: false,
+                                    initialTabIds: [hiddenMember.guid])
+        state.applyOptimisticGroupMembership(tabId: joining.guid,
+                                             newToken: "A")
+
+        XCTAssertEqual(state.normalTabs.map(\.guid), [joining.guid, external.guid])
+        XCTAssertEqual(joining.groupToken, "A")
+        XCTAssertNil(
+            state.normalTabRelativeOrderSyncMove(
+                tabId: joining.guid,
+                withinGroupToken: "A"
+            )
+        )
+    }
+
+    func testGroupRelativeOrderSync_frontJoinAnchorsBeforeFirstMember() throws {
+        let state = try makeBrowserState()
+        let tabs = seed(state: state, tabs: [
+            (guid: 100, url: "https://joining.example", token: nil),
+            (guid: 200, url: "https://g1.example", token: "A"),
+            (guid: 201, url: "https://g2.example", token: "A"),
+            (guid: 101, url: "https://external.example", token: nil),
+        ])
+
+        state.applyOptimisticGroupMembership(tabId: tabs[0].guid,
+                                             newToken: "A")
+
+        XCTAssertEqual(
+            state.normalTabRelativeOrderSyncMove(
+                tabId: tabs[0].guid,
+                withinGroupToken: "A"
+            ),
+            BrowserState.NormalTabRelativeOrderMove(
+                tabId: tabs[0].guid,
+                anchor: .before(tabs[1].guid)
+            )
+        )
+    }
+
+    func testGroupRelativeOrderSync_middleJoinAnchorsBeforeRightMember() throws {
+        let state = try makeBrowserState()
+        let tabs = seed(state: state, tabs: [
+            (guid: 200, url: "https://g1.example", token: "A"),
+            (guid: 100, url: "https://joining.example", token: nil),
+            (guid: 201, url: "https://g2.example", token: "A"),
+            (guid: 101, url: "https://external.example", token: nil),
+        ])
+
+        state.applyOptimisticGroupMembership(tabId: tabs[1].guid,
+                                             newToken: "A")
+
+        XCTAssertEqual(
+            state.normalTabRelativeOrderSyncMove(
+                tabId: tabs[1].guid,
+                withinGroupToken: "A"
+            ),
+            BrowserState.NormalTabRelativeOrderMove(
+                tabId: tabs[1].guid,
+                anchor: .before(tabs[2].guid)
+            )
+        )
+    }
+
+    func testGroupRelativeOrderSync_tailJoinAnchorsToMemberAcrossHiddenBookmarkTab() throws {
+        let defaults = UserDefaults.standard
+        let layoutKey = PhiPreferences.GeneralSettings.layoutModeKey
+        let originalLayout = defaults.string(forKey: layoutKey)
+        PhiPreferences.GeneralSettings.saveLayoutMode(.performance)
+        defer {
+            if let originalLayout {
+                defaults.set(originalLayout, forKey: layoutKey)
+            } else {
+                defaults.removeObject(forKey: layoutKey)
+            }
+        }
+
+        let state = try makeBrowserState()
+        let hiddenBookmark = Bookmark(
+            guid: "hidden-bookmark",
+            title: "Hidden Bookmark",
+            url: "https://hidden.example"
+        )
+        hiddenBookmark.isOpened = true
+        state.bookmarkManager.rootFolder.addChild(hiddenBookmark)
+
+        let g1 = Tab(guid: 200,
+                     url: "https://g1.example",
+                     isActive: false,
+                     index: 0)
+        let g2 = Tab(guid: 201,
+                     url: "https://g2.example",
+                     isActive: false,
+                     index: 1)
+        let hidden = Tab(guid: 900,
+                         url: "https://hidden.example",
+                         isActive: false,
+                         index: 2,
+                         customGuid: hiddenBookmark.guid)
+        let joining = Tab(guid: 100,
+                          url: "https://joining.example",
+                          isActive: false,
+                          index: 3)
+        let external = Tab(guid: 101,
+                           url: "https://external.example",
+                           isActive: false,
+                           index: 4)
+
+        state.tabs = [g1, g2, hidden, joining, external]
+        state.updateNormalTabs()
+        state.handleTabGroupCreated(token: "A",
+                                    title: "",
+                                    color: .blue,
+                                    isCollapsed: false,
+                                    initialTabIds: [g1.guid, g2.guid])
+        state.applyOptimisticGroupMembership(tabId: joining.guid,
+                                             newToken: "A")
+
+        XCTAssertEqual(state.tabs.sorted { $0.index < $1.index }.map(\.guid),
+                       [200, 201, 900, 100, 101])
+        XCTAssertEqual(state.normalTabs.map(\.guid),
+                       [200, 201, 100, 101])
+        XCTAssertEqual(
+            state.normalTabRelativeOrderSyncMove(
+                tabId: joining.guid,
+                withinGroupToken: "A"
+            ),
+            BrowserState.NormalTabRelativeOrderMove(
+                tabId: joining.guid,
+                anchor: .after(g2.guid)
+            )
+        )
+    }
+
     // MARK: - convertGroupToBookmarks
 
     func testConvertGroupToBookmarks_createsFolderAndRewiresOpenTabsToChildBookmarks() throws {
