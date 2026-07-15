@@ -29,6 +29,7 @@ class PhiSparkleUpdateViewController: NSViewController, WKNavigationDelegate {
 
     private let headerIconView = NSImageView()
     private let releaseNotesContainer = NSView()
+    private let releaseNotesResourceSchemeHandler: PhiSparkleReleaseNotesResourceSchemeHandler
     private let releaseNotesWebView: WKWebView
     private let releaseNotesPlaceholder = NSTextField(labelWithString: "")
     private let automaticDownloadsCheckbox = NSButton()
@@ -48,6 +49,12 @@ class PhiSparkleUpdateViewController: NSViewController, WKNavigationDelegate {
         self.themeProvider = themeProvider
 
         let configuration = WKWebViewConfiguration()
+        let resourceSchemeHandler = PhiSparkleReleaseNotesResourceSchemeHandler(bundle: .main)
+        configuration.setURLSchemeHandler(
+            resourceSchemeHandler,
+            forURLScheme: PhiSparkleReleaseNotesResourceSchemeHandler.scheme
+        )
+        releaseNotesResourceSchemeHandler = resourceSchemeHandler
         let javaScriptEnabled = (Bundle.main.object(forInfoDictionaryKey: "SUEnableJavaScript") as? Bool) ?? false
         if #available(macOS 11.0, *) {
             configuration.defaultWebpagePreferences.allowsContentJavaScript = javaScriptEnabled
@@ -168,7 +175,7 @@ class PhiSparkleUpdateViewController: NSViewController, WKNavigationDelegate {
 
             automaticDownloadsCheckbox.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
             automaticDownloadsCheckbox.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor),
-            automaticDownloadsCheckbox.topAnchor.constraint(equalTo: releaseNotesContainer.bottomAnchor, constant: 8),
+            automaticDownloadsCheckbox.topAnchor.constraint(equalTo: releaseNotesContainer.bottomAnchor, constant: 10),
             automaticDownloadsCheckbox.heightAnchor.constraint(equalToConstant: 16),
 
             buttonStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
@@ -343,7 +350,15 @@ class PhiSparkleUpdateViewController: NSViewController, WKNavigationDelegate {
         }
 
         let encodedContentRuleList = """
-        [{"trigger": { "url-filter": ".*" }, "action": { "type": "block" } }]
+        [
+          {"trigger": { "url-filter": ".*" }, "action": { "type": "block" } },
+          {
+            "trigger": {
+              "url-filter": "\(PhiSparkleReleaseNotesResourceSchemeHandler.fontContentRuleURLFilter)"
+            },
+            "action": { "type": "ignore-previous-rules" }
+          }
+        ]
         """
 
         WKContentRuleListStore.default().compileContentRuleList(
@@ -516,6 +531,68 @@ class PhiSparkleUpdateViewController: NSViewController, WKNavigationDelegate {
 
         return Set(schemes.map { $0.lowercased() }.filter { $0 != "file" })
     }
+}
+
+@MainActor
+private final class PhiSparkleReleaseNotesResourceSchemeHandler: NSObject, WKURLSchemeHandler {
+    static let scheme = "phi-resources"
+    static let fontContentRuleURLFilter =
+        "^phi-resources://fonts/ivy-presto-display-semi-bold[.]otf$"
+
+    private static let fontHost = "fonts"
+    private static let fontPath = "/ivy-presto-display-semi-bold.otf"
+    private static let fontResourceName = "ivy-presto-display-semi-bold"
+    private static let fontResourceExtension = "otf"
+
+    private let bundle: Bundle
+
+    init(bundle: Bundle) {
+        self.bundle = bundle
+    }
+
+    func webView(_ webView: WKWebView, start urlSchemeTask: WKURLSchemeTask) {
+        guard let requestURL = urlSchemeTask.request.url,
+              requestURL.scheme?.caseInsensitiveCompare(Self.scheme) == .orderedSame,
+              requestURL.host?.lowercased() == Self.fontHost,
+              requestURL.path == Self.fontPath else {
+            urlSchemeTask.didFailWithError(URLError(.unsupportedURL))
+            return
+        }
+
+        guard let fontURL = bundle.url(
+            forResource: Self.fontResourceName,
+            withExtension: Self.fontResourceExtension,
+            subdirectory: "Fonts"
+        ) else {
+            urlSchemeTask.didFailWithError(URLError(.fileDoesNotExist))
+            return
+        }
+
+        do {
+            let fontData = try Data(contentsOf: fontURL, options: .mappedIfSafe)
+            guard let response = HTTPURLResponse(
+                url: requestURL,
+                statusCode: 200,
+                httpVersion: "HTTP/1.1",
+                headerFields: [
+                    "Access-Control-Allow-Origin": "*",
+                    "Content-Length": String(fontData.count),
+                    "Content-Type": "font/otf"
+                ]
+            ) else {
+                urlSchemeTask.didFailWithError(URLError(.badServerResponse))
+                return
+            }
+
+            urlSchemeTask.didReceive(response)
+            urlSchemeTask.didReceive(fontData)
+            urlSchemeTask.didFinish()
+        } catch {
+            urlSchemeTask.didFailWithError(error)
+        }
+    }
+
+    func webView(_ webView: WKWebView, stop urlSchemeTask: WKURLSchemeTask) {}
 }
 
 private final class PhiSparkleUpdateButton: NSButton {
