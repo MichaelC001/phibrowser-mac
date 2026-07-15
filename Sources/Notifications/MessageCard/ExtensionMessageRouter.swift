@@ -130,6 +130,9 @@ final class ExtensionMessageRouter {
         register(type: "agentSpace.openTab") { context in
             return AgentSpaceRouter.handleOpenTab(context: context)
         }
+        register(type: "agentSpace.captureWindow") { context in
+            return AgentSpaceRouter.handleCaptureWindow(context: context)
+        }
 
         // Management surface (AgentSpaceRouter+Management.swift): browser
         // features operated over the same tunnel — Spaces, profiles, URL

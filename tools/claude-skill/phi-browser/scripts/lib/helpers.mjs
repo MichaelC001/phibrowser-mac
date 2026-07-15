@@ -5,7 +5,7 @@
 // lifecycle) goes through state.cdp.phi — direct to the Mac client over the
 // app socket, or the Chromium PhiAgentSpace tunnel under the TCP dev override.
 
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { connectBrowser } from './cdp.mjs'
@@ -2326,6 +2326,42 @@ export async function screenshot(path) {
                                      { format: 'png' }, requireSession(), 30000)
   writeFileSync(file, Buffer.from(data, 'base64'))
   return file
+}
+
+/**
+ * Screenshots the ENTIRE browser window — the native chrome (sidebar, tab
+ * strip, address bar, split-view arrangement) plus the web content — unlike
+ * screenshot(), which captures only the web viewport. Returns the PNG path;
+ * Read it. The app renders the chrome and composites the page (captured over
+ * CDP, since the agent window is hidden) into the web area. In a split view
+ * only the active pane's page is filled in; the other pane shows its chrome.
+ */
+export async function screenshotBrowser(path) {
+  await maybeTrackWindowResize()
+  await maybePing()
+  const task = requireTask()
+  const client = await cdpClient()
+  const outFile = path || join(tmpdir(), `phi-browser-window-${Date.now()}.png`)
+
+  // The hidden window's chrome can't show its GPU web surface, so hand the app
+  // a CDP capture of the page to composite in. Best-effort: a window with no
+  // live page still yields a chrome-only shot.
+  const webFile = join(tmpdir(), `phi-web-${Date.now()}.png`)
+  let webPath
+  try {
+    const { data } = await client.send('Page.captureScreenshot',
+                                       { format: 'png' }, requireSession(), 30000)
+    writeFileSync(webFile, Buffer.from(data, 'base64'))
+    webPath = webFile
+  } catch { /* no page/session — chrome only */ }
+
+  try {
+    const res = await phiSend('agentSpace.captureWindow',
+                              { taskId: task.taskId, outPath: outFile, webPath })
+    return res.path || outFile
+  } finally {
+    if (webPath) { try { unlinkSync(webFile) } catch {} }
+  }
 }
 
 // Draws fixed-position boxes + @ref labels over the given rects; lives in one
