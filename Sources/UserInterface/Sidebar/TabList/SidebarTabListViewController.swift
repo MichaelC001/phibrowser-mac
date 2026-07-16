@@ -689,8 +689,7 @@ class SidebarTabListViewController: NSViewController {
     @objc private func outlineViewClicked(_ sender: NSOutlineView) {
         let clickedRow = sender.clickedRow
         guard clickedRow != -1 else {
-            cancelPendingBookmarkRenameClick()
-            endBookmarkEditing(except: nil)
+            handleSidebarBlankAreaClick()
             return
         }
 
@@ -722,6 +721,13 @@ class SidebarTabListViewController: NSViewController {
             }
             itemClicked(item)
         }
+    }
+
+    private func handleSidebarBlankAreaClick() {
+        cancelPendingBookmarkRenameClick()
+        endBookmarkEditing(except: nil)
+        multiSelectionRangeAnchor = nil
+        browserState.clearMultiSelection()
     }
 
     private func handleModifiedMultiSelectionClick(
@@ -4955,8 +4961,11 @@ extension SidebarTabListViewController: SideBarOutlineViewDelegate {
     }
 
     func outlineView(_ outlineView: SideBarOutlineView, didClickRow row: Int) {
-        guard row >= 0,
-              let item = outlineView.item(atRow: row) as? SidebarItem else {
+        guard row >= 0 else {
+            handleSidebarBlankAreaClick()
+            return
+        }
+        guard let item = outlineView.item(atRow: row) as? SidebarItem else {
             return
         }
         // In an agent Space the user may click tabs to look around while the

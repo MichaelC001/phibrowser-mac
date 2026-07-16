@@ -44,6 +44,7 @@ class MainBrowserWindowController: NSWindowController {
     
     private var originalContentView: NSView?
     lazy var cancellables = Set<AnyCancellable>()
+    private var multiSelectionEscapeMonitor: Any?
     private(set) var windowId = 0
     @Published private(set) var browserState: BrowserState
     var tabStripView: TabStrip? { mainSplitViewController.webContentContainerViewController.tabStripView }
@@ -78,6 +79,7 @@ class MainBrowserWindowController: NSWindowController {
         self.slot = slot
         browserState.windowController = self
         setupWindow()
+        installMultiSelectionEscapeMonitor()
         MainBrowserWindowControllersManager.shared.retainWindowControllerUntilWindowClosed(self)
         // Normal, Incognito Space, and agent-Space windows participate in the
         // Space mapping; standalone incognito and shadow windows are orthogonal
@@ -94,8 +96,47 @@ class MainBrowserWindowController: NSWindowController {
 
         NotificationCenter.default.post(name: .mainBrowserWindowCreated, object: window)
     }
+
+    deinit {
+        removeMultiSelectionEscapeMonitor()
+    }
     
     override var windowNibName: NSNib.Name? { "" }
+
+    private func installMultiSelectionEscapeMonitor() {
+        guard multiSelectionEscapeMonitor == nil else { return }
+        multiSelectionEscapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) {
+            [weak self] event in
+            guard let self, let window = self.window else { return event }
+            return Self.handleMultiSelectionEscape(
+                event,
+                in: window,
+                browserState: self.browserState
+            )
+        }
+    }
+
+    private func removeMultiSelectionEscapeMonitor() {
+        guard let multiSelectionEscapeMonitor else { return }
+        NSEvent.removeMonitor(multiSelectionEscapeMonitor)
+        self.multiSelectionEscapeMonitor = nil
+    }
+
+    @MainActor
+    static func handleMultiSelectionEscape(
+        _ event: NSEvent,
+        in window: NSWindow,
+        browserState: BrowserState
+    ) -> NSEvent? {
+        guard event.type == .keyDown,
+              event.keyCode == 53,
+              event.window === window,
+              browserState.multiSelection.isActive else {
+            return event
+        }
+        browserState.clearMultiSelection()
+        return nil
+    }
     
     private func setupWindow() {
         guard let window = self.window else { return }

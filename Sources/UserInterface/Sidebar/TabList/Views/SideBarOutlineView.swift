@@ -340,11 +340,20 @@ class SideBarOutlineView: DiffableOutlineView {
                 "[SIDEBAR_TAB_DRAG_THRESHOLD] super mouseDown returned row=\(index)"
             )
         } else if let window {
+            let mouseDownLocation = window.convertPoint(toScreen: event.locationInWindow)
             AppLogDebug("[SIDEBAR_TAB_DRAG_THRESHOLD] dragging window from empty area")
             window.performDrag(with: event)
+            if Self.isBlankAreaClick(from: mouseDownLocation, to: NSEvent.mouseLocation) {
+                phiOutlineDelegate?.outlineView(self, didClickRow: -1)
+            }
         } else {
             super.mouseDown(with: event)
         }
+    }
+
+    static func isBlankAreaClick(from mouseDownLocation: NSPoint, to mouseUpLocation: NSPoint) -> Bool {
+        abs(mouseUpLocation.x - mouseDownLocation.x) <= dragThreshold
+            && abs(mouseUpLocation.y - mouseDownLocation.y) <= dragThreshold
     }
 
     override func mouseDragged(with event: NSEvent) {
