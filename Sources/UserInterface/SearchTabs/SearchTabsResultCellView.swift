@@ -18,6 +18,7 @@ final class SearchTabsResultCellView: NSTableCellView {
     private var item: SearchTabsItem?
     private var trackingArea: NSTrackingArea?
     private var themeObserver = ThemeObserver.shared
+    private var themeObservation: AnyObject?
     private var faviconLoadHandle: ProfileScopedFaviconLoadHandle?
     private var faviconItemID: String?
     private var isSelected = false
@@ -33,7 +34,7 @@ final class SearchTabsResultCellView: NSTableCellView {
     private lazy var backgroundView: NSView = {
         let view = NSView()
         view.wantsLayer = true
-        view.layer?.cornerRadius = 7
+        view.layer?.cornerRadius = 8
         view.layer?.cornerCurve = .continuous
         return view
     }()
@@ -60,10 +61,10 @@ final class SearchTabsResultCellView: NSTableCellView {
         return label
     }()
 
-    private lazy var detailLabel: NSTextField = {
-        let label = SearchTabsResultCellView.makeLabel(font: .systemFont(ofSize: 12, weight: .regular))
-        label.textColor = .tertiaryLabelColor
-        label.lineBreakMode = .byTruncatingTail
+    private lazy var activeTimeLabel: NSTextField = {
+        let label = SearchTabsResultCellView.makeLabel(font: .systemFont(ofSize: 13, weight: .regular))
+        label.textColor = ThemedColor.textTertiary.resolve(in: self)
+        label.isHidden = true
         return label
     }()
 
@@ -77,7 +78,11 @@ final class SearchTabsResultCellView: NSTableCellView {
     }()
 
     private var titleTrailingToSuperviewConstraint: Constraint?
+    private var titleTrailingToActiveTimeConstraint: Constraint?
     private var titleTrailingToCloseButtonConstraint: Constraint?
+    private var titleText = ""
+    private var query = ""
+    private var closeButtonUsesSelectedColor = false
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -108,6 +113,13 @@ final class SearchTabsResultCellView: NSTableCellView {
         updateHoverStateFromCurrentMouseLocation()
     }
 
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard window != nil else { return }
+        themeObserver.rebind(to: themeStateProvider)
+        updateAppearance()
+    }
+
     override func mouseEntered(with event: NSEvent) {
         isHovered = true
         if let item, item.kind == .bookmarkRoot {
@@ -121,27 +133,10 @@ final class SearchTabsResultCellView: NSTableCellView {
 
     func configure(with item: SearchTabsItem, profileId: String?, selected: Bool, query: String) {
         self.item = item
+        self.titleText = Self.title(for: item)
+        self.query = query
+        activeTimeLabel.stringValue = Self.dateText(for: item)
         updateFavicon(for: item, profileId: profileId)
-        let title = Self.title(for: item)
-        let detail = Self.detailText(for: item)
-        let highlightColor = ThemedColor.themeColor
-            .resolve(in: self)
-            .withAlphaComponent(selected ? 0.45 : 0.32)
-        titleLabel.attributedStringValue = Self.highlightedString(
-            title,
-            query: query,
-            font: titleLabel.font ?? .systemFont(ofSize: 13, weight: .regular),
-            textColor: titleLabel.textColor ?? .labelColor,
-            highlightColor: highlightColor
-        )
-        detailLabel.attributedStringValue = Self.highlightedString(
-            detail,
-            query: query,
-            font: detailLabel.font ?? .systemFont(ofSize: 12, weight: .regular),
-            textColor: detailLabel.textColor ?? .secondaryLabelColor,
-            highlightColor: highlightColor
-        )
-        detailLabel.isHidden = detail.isEmpty
         updateSelected(selected)
     }
 
@@ -151,11 +146,12 @@ final class SearchTabsResultCellView: NSTableCellView {
     }
 
     private func setupViews() {
+        themeObserver = ThemeObserver(themeSource: themeStateProvider)
         wantsLayer = true
         addSubview(backgroundView)
         backgroundView.addSubview(iconView)
         backgroundView.addSubview(titleLabel)
-        backgroundView.addSubview(detailLabel)
+        backgroundView.addSubview(activeTimeLabel)
         backgroundView.addSubview(closeButtonHostingView)
 
         backgroundView.snp.makeConstraints { make in
@@ -164,19 +160,18 @@ final class SearchTabsResultCellView: NSTableCellView {
         iconView.snp.makeConstraints { make in
             make.leading.equalToSuperview().offset(12)
             make.centerY.equalToSuperview()
-            make.width.height.equalTo(18)
+            make.width.height.equalTo(16)
         }
         titleLabel.snp.makeConstraints { make in
-            make.leading.equalTo(iconView.snp.trailing).offset(12)
-            make.top.equalToSuperview().offset(7)
+            make.leading.equalTo(iconView.snp.trailing).offset(16)
+            make.centerY.equalToSuperview()
             self.titleTrailingToSuperviewConstraint = make.trailing.equalToSuperview().offset(-12).constraint
+            self.titleTrailingToActiveTimeConstraint = make.trailing.equalTo(activeTimeLabel.snp.leading).offset(-16).constraint
             self.titleTrailingToCloseButtonConstraint = make.trailing.equalTo(closeButtonHostingView.snp.leading).offset(-8).constraint
         }
-        detailLabel.snp.makeConstraints { make in
-            make.leading.equalTo(titleLabel)
-            make.top.equalTo(titleLabel.snp.bottom).offset(3)
-            make.trailing.equalTo(titleLabel)
-            make.bottom.equalToSuperview().offset(-7)
+        activeTimeLabel.snp.makeConstraints { make in
+            make.trailing.equalToSuperview().offset(-12)
+            make.centerY.equalToSuperview()
         }
         closeButtonHostingView.snp.makeConstraints { make in
             make.trailing.equalToSuperview().offset(-8)
@@ -185,12 +180,17 @@ final class SearchTabsResultCellView: NSTableCellView {
         }
 
         titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        detailLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         titleLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        detailLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        activeTimeLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        activeTimeLabel.setContentHuggingPriority(.required, for: .horizontal)
         closeButtonHostingView.setContentCompressionResistancePriority(.required, for: .horizontal)
         closeButtonHostingView.setContentHuggingPriority(.required, for: .horizontal)
+        titleTrailingToActiveTimeConstraint?.isActive = false
         titleTrailingToCloseButtonConstraint?.isActive = false
+
+        themeObservation = subscribe { [weak self] _, _ in
+            self?.updateAppearance()
+        }
     }
 
     private func updateAppearance() {
@@ -205,10 +205,49 @@ final class SearchTabsResultCellView: NSTableCellView {
         backgroundView.layer?.backgroundColor = backgroundColor.cgColor
 
         let shouldShowCloseButton = (isHovered || isSelected) && (item?.isClosableOpenTab ?? false)
+        let shouldShowActiveTime = !shouldShowCloseButton && !activeTimeLabel.stringValue.isEmpty
         closeButtonHostingView.isHidden = !shouldShowCloseButton
-        titleTrailingToSuperviewConstraint?.isActive = !shouldShowCloseButton
-        titleTrailingToCloseButtonConstraint?.isActive = shouldShowCloseButton
+        activeTimeLabel.isHidden = !shouldShowActiveTime
+
+        titleTrailingToSuperviewConstraint?.isActive = false
+        titleTrailingToActiveTimeConstraint?.isActive = false
+        titleTrailingToCloseButtonConstraint?.isActive = false
+        if shouldShowCloseButton {
+            titleTrailingToCloseButtonConstraint?.isActive = true
+        } else if shouldShowActiveTime {
+            titleTrailingToActiveTimeConstraint?.isActive = true
+        } else {
+            titleTrailingToSuperviewConstraint?.isActive = true
+        }
+
+        updateTextAppearance()
+        updateCloseButtonAppearance()
         backgroundView.layoutSubtreeIfNeeded()
+    }
+
+    private func updateTextAppearance() {
+        let textColor = isSelected ? NSColor.white : ThemedColor.textPrimary.resolve(in: self)
+        let highlightColor = ThemedColor.themeColor
+            .resolve(in: self)
+            .withAlphaComponent(isSelected ? 0.45 : 0.32)
+        titleLabel.attributedStringValue = Self.highlightedString(
+            titleText,
+            query: query,
+            font: titleLabel.font ?? .systemFont(ofSize: 13, weight: .regular),
+            textColor: textColor,
+            highlightColor: highlightColor
+        )
+        activeTimeLabel.textColor = isSelected
+            ? .white
+            : ThemedColor.textTertiary.resolve(in: self)
+    }
+
+    private func updateCloseButtonAppearance() {
+        guard closeButtonUsesSelectedColor != isSelected else {
+            return
+        }
+        closeButtonUsesSelectedColor = isSelected
+        closeButtonHostingView.rootView = makeCloseButtonRootView()
     }
 
     private func makeCloseButtonRootView() -> AnyView {
@@ -216,7 +255,7 @@ final class SearchTabsResultCellView: NSTableCellView {
             UnifiedTabCloseButton { [weak self] in
                 self?.closeButtonClicked()
             }
-            .foregroundColor(Color(nsColor: .labelColor))
+            .themedForeground(isSelected ? .white : .textPrimaryStrong)
             .phiThemeObserver(themeObserver)
         )
     }
@@ -284,29 +323,6 @@ final class SearchTabsResultCellView: NSTableCellView {
         return displayTitle(for: item.primary)
     }
 
-    private static func detail(for item: SearchTabsItem) -> String {
-        if let relation = item.splitRelation {
-            return NSLocalizedString(
-                "Split with",
-                comment: "Search Tabs - Prefix for the split partner shown in a result row"
-            ) + " \(relation.partnerTitle)"
-        }
-
-        if item.displayMode == .split, let secondary = item.secondary {
-            return [displayURLText(for: item.primary.url), displayURLText(for: secondary.url)]
-                .filter { !$0.isEmpty }
-                .joined(separator: "  •  ")
-        }
-
-        return displayURLText(for: item.primary.url)
-    }
-
-    private static func detailText(for item: SearchTabsItem) -> String {
-        [detail(for: item), dateText(for: item)]
-            .filter { !$0.isEmpty }
-            .joined(separator: " • ")
-    }
-
     private static func dateText(for item: SearchTabsItem) -> String {
         if item.state.isActive {
             return NSLocalizedString("Active", comment: "Search Tabs - Trailing label for the active tab result")
@@ -315,10 +331,17 @@ final class SearchTabsResultCellView: NSTableCellView {
     }
 
     private static func displayTitle(for pane: SearchTabsPane) -> String {
-        guard let rawURL = pane.url, rawURL.hasPrefix("chrome://") else {
-            return pane.title
+        let title: String
+        if let rawURL = pane.url, rawURL.hasPrefix("chrome://") {
+            title = URLProcessor.phiBrandEnsuredUrlString(pane.title)
+        } else {
+            title = pane.title
         }
-        return URLProcessor.phiBrandEnsuredUrlString(pane.title)
+
+        guard title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return title
+        }
+        return displayURLText(for: pane.url)
     }
 
     private static func displayURLText(for rawURL: String?) -> String {

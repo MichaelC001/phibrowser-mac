@@ -44,6 +44,7 @@ final class SearchTabsContainerViewController: NSViewController {
     private var focusingTabObserver: AnyCancellable?
     private var frameChangeObserver: AnyCancellable?
     private var windowResizeObserver: AnyCancellable?
+    private var windowDidResignKeyObserver: AnyCancellable?
     private var isAnchored = false
     private var observedContainerSize: NSSize?
 
@@ -89,6 +90,7 @@ final class SearchTabsContainerViewController: NSViewController {
         focusingTabObserver = nil
         frameChangeObserver = nil
         windowResizeObserver = nil
+        windowDidResignKeyObserver = nil
         hasShown = false
     }
 
@@ -107,12 +109,14 @@ final class SearchTabsContainerViewController: NSViewController {
         observeFocusingTabChange()
         observeFrameChange()
         observeWindowResize()
+        observeWindowDidResignKey()
     }
 
     func hideSearchTabs() {
         focusingTabObserver = nil
         frameChangeObserver = nil
         windowResizeObserver = nil
+        windowDidResignKeyObserver = nil
         anchorView = nil
         isAnchored = false
         hasShown = false
@@ -206,6 +210,20 @@ final class SearchTabsContainerViewController: NSViewController {
                 for: NSWindow.didResizeNotification,
                 object: window
             )
+        )
+        .sink { [weak self] _ in
+            self?.hideSearchTabs()
+        }
+    }
+
+    private func observeWindowDidResignKey() {
+        guard let window = view.window else {
+            return
+        }
+
+        windowDidResignKeyObserver = NotificationCenter.default.publisher(
+            for: NSWindow.didResignKeyNotification,
+            object: window
         )
         .sink { [weak self] _ in
             self?.hideSearchTabs()
