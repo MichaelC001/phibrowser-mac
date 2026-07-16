@@ -367,6 +367,13 @@ final class SpaceManager: ObservableObject {
     /// memory). Updated only on the main thread via the publisher sink.
     private var cachedURLRules: [SpaceURLRule] = []
 
+    /// True once the initial URL-rule snapshot from `urlRulesPublisher` has
+    /// arrived (even if empty). External URL opens are held on this in
+    /// `AppController.scheduleForwardOpenURLsToChromium`: forwarding earlier
+    /// on a cold launch would resolve the URL against a routing table pushed
+    /// without the persisted rules and silently bypass Space URL routing.
+    private(set) var hasLoadedURLRules = false
+
     /// Loaded once per bind from `AccountUserDefaults.slotsRestoreSnapshot`.
     /// Each entry describes one user-perceived slot at the moment of the
     /// previous session's last `registerWindow`: the spaceId per Chromium
@@ -2339,6 +2346,7 @@ final class SpaceManager: ObservableObject {
         rulesCancellable?.cancel()
         rulesCancellable = nil
         cachedURLRules = []
+        hasLoadedURLRules = false
         spaces = []
         // Tear down each slot's NotificationCenter registrations before
         // dropping the registry — controllers may keep the slots alive past
@@ -2363,6 +2371,7 @@ final class SpaceManager: ObservableObject {
 
     private func handleURLRulesUpdate(_ rules: [SpaceURLRule]) {
         cachedURLRules = rules
+        hasLoadedURLRules = true
         pushRoutingTableToChromium()
     }
 
