@@ -83,7 +83,7 @@ class TabSectionController: NSObject {
     init(state: BrowserState? = nil) {
         self.browserState = state
         super.init()
-        refreshTabItems([], trigger: "initial")
+        refreshTabItems([])
     }
 
     private func setupBindings() {
@@ -120,7 +120,7 @@ class TabSectionController: NSObject {
             .dropFirst()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] tabs in
-                self?.refreshTabItems(tabs, trigger: "normal-tabs")
+                self?.refreshTabItems(tabs)
             }
             .store(in: &cancellables)
 
@@ -135,7 +135,7 @@ class TabSectionController: NSObject {
             .sink { [weak self] _ in
                 guard let self else { return }
                 self.subscribeToGroupContents()
-                self.refreshTabItems(self.browserState?.normalTabs ?? [], trigger: "groups")
+                self.refreshTabItems(self.browserState?.normalTabs ?? [])
             }
             .store(in: &cancellables)
 
@@ -146,13 +146,6 @@ class TabSectionController: NSObject {
         browserState.$focusingTab
             .dropFirst()
             .sink { [weak self] focusingTab in
-#if DEBUG
-                AppLogDebug(
-                    "[PHI_DEBUG][PIN_CLICK][BM][SIDEBAR_REFRESH] " +
-                    "windowId=\(self?.browserState?.windowId ?? -1) stage=focus-publisher " +
-                    "tabId=\(focusingTab?.guid ?? -1) directTabSectionRefresh=false"
-                )
-#endif
                 self?.delegate?.focusingTabChanged(focusingTab)
             }
             .store(in: &cancellables)
@@ -166,7 +159,7 @@ class TabSectionController: NSObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 guard let self else { return }
-                self.refreshTabItems(self.browserState?.normalTabs ?? [], trigger: "splits")
+                self.refreshTabItems(self.browserState?.normalTabs ?? [])
             }
             .store(in: &cancellables)
     }
@@ -181,15 +174,12 @@ class TabSectionController: NSObject {
         groupContentsCancellables.forEach { $0.cancel() }
         groupContentsCancellables.removeAll()
         guard let browserState else { return }
-        for (token, info) in browserState.groups {
+        for info in browserState.groups.values {
             info.objectWillChange
                 .receive(on: DispatchQueue.main)
                 .sink { [weak self] in
                     guard let self else { return }
-                    self.refreshTabItems(
-                        self.browserState?.normalTabs ?? [],
-                        trigger: "group-contents:\(token)"
-                    )
+                    self.refreshTabItems(self.browserState?.normalTabs ?? [])
                 }
                 .store(in: &groupContentsCancellables)
         }
@@ -304,25 +294,12 @@ class TabSectionController: NSObject {
         return items
     }
 
-    private func refreshTabItems(_ tabs: [Tab], trigger: String) {
+    private func refreshTabItems(_ tabs: [Tab]) {
         let previousItems = tabItems
-#if DEBUG
-        let refreshStart = CFAbsoluteTimeGetCurrent()
-        let windowID = browserState?.windowId ?? -1
-        let previousItemIDs = previousItems.map(\.id)
-        let previousItemIdentities = previousItems.map(ObjectIdentifier.init)
-#endif
         guard let browserState else {
             tabItems = []
             previousGroupMembers = [:]
             previousSplitMembers = [:]
-#if DEBUG
-            AppLogDebug(
-                "[PHI_DEBUG][PIN_CLICK][BM][SIDEBAR_REFRESH] " +
-                "windowId=\(windowID) stage=tab-section trigger=\(trigger) state=missing " +
-                "totalMs=\(String(format: "%.3f", (CFAbsoluteTimeGetCurrent() - refreshStart) * 1000))"
-            )
-#endif
             delegate?.tabSectionDidUpdate(with: TabSectionChange(
                 rootItemsChanged: !previousItems.isEmpty,
                 affectedGroupTokens: [],
@@ -331,14 +308,7 @@ class TabSectionController: NSObject {
             return
         }
         let groups = browserState.groups
-#if DEBUG
-        let buildStart = CFAbsoluteTimeGetCurrent()
-#endif
         let items = buildItems(from: tabs, groups: groups, state: browserState)
-#if DEBUG
-        let buildMs = (CFAbsoluteTimeGetCurrent() - buildStart) * 1000
-        let diffStart = CFAbsoluteTimeGetCurrent()
-#endif
         let newGroupMembers = Self.computeGroupMembers(tabs: tabs)
         let affectedTokens = Self.affectedGroupTokens(old: previousGroupMembers,
                                                       new: newGroupMembers)
@@ -351,23 +321,6 @@ class TabSectionController: NSObject {
         self.previousGroupMembers = newGroupMembers
         self.previousSplitMembers = newSplitMembers
 
-#if DEBUG
-        let memberDiffMs = (CFAbsoluteTimeGetCurrent() - diffStart) * 1000
-        let itemIDsChanged = previousItemIDs != items.map(\.id)
-        let itemIdentitiesChanged = previousItemIdentities
-            != items.map(ObjectIdentifier.init)
-        let totalMs = (CFAbsoluteTimeGetCurrent() - refreshStart) * 1000
-        AppLogDebug(
-            "[PHI_DEBUG][PIN_CLICK][BM][SIDEBAR_REFRESH] " +
-            "windowId=\(windowID) stage=tab-section trigger=\(trigger) " +
-            "tabs=\(tabs.count) items=\(items.count) " +
-            "itemIDsChanged=\(itemIDsChanged) itemIdentitiesChanged=\(itemIdentitiesChanged) " +
-            "affectedGroups=\(affectedTokens.count) " +
-            "affectedSplits=\(affectedSplits.count) buildMs=\(String(format: "%.3f", buildMs)) " +
-            "memberDiffMs=\(String(format: "%.3f", memberDiffMs)) " +
-            "totalMs=\(String(format: "%.3f", totalMs))"
-        )
-#endif
         delegate?.tabSectionDidUpdate(with: TabSectionChange(
             rootItemsChanged: rootItemsChanged,
             affectedGroupTokens: affectedTokens,

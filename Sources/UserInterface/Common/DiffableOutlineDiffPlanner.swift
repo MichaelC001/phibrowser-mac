@@ -25,51 +25,13 @@ struct DiffableOutlinePlan<ItemID: Hashable> {
 enum DiffableOutlineDiffPlanner {
     static func plan<ItemID: Hashable>(
         from old: DiffableOutlineSnapshot<ItemID>,
-        to new: DiffableOutlineSnapshot<ItemID>,
-        debugLabel: String? = nil
+        to new: DiffableOutlineSnapshot<ItemID>
     ) -> DiffableOutlinePlan<ItemID> {
-        let totalStart = performanceTimestamp()
-        let oldValidationStart = performanceTimestamp()
-        let oldValidationError = old.validationError
-        let oldValidationMs = elapsedMilliseconds(since: oldValidationStart)
-        guard oldValidationError == nil else {
-#if DEBUG
-            logPerformance(
-                debugLabel,
-                "stage=planner mode=invalid-old oldNodes=\(old.nodes.count) newNodes=\(new.nodes.count) " +
-                "validationMode=checked " +
-                "oldValidationMs=\(formatMilliseconds(oldValidationMs)) " +
-                "totalMs=\(formatMilliseconds(elapsedMilliseconds(since: totalStart)))"
-            )
-#endif
-            return .unsafe
-        }
-        let newValidationStart = performanceTimestamp()
-        let newValidationError = new.validationError
-        let newValidationMs = elapsedMilliseconds(since: newValidationStart)
-        guard newValidationError == nil else {
-#if DEBUG
-            logPerformance(
-                debugLabel,
-                "stage=planner mode=invalid-new oldNodes=\(old.nodes.count) newNodes=\(new.nodes.count) " +
-                "validationMode=checked " +
-                "oldValidationMs=\(formatMilliseconds(oldValidationMs)) " +
-                "newValidationMs=\(formatMilliseconds(newValidationMs)) " +
-                "totalMs=\(formatMilliseconds(elapsedMilliseconds(since: totalStart)))"
-            )
-#endif
+        guard old.validationError == nil, new.validationError == nil else {
             return .unsafe
         }
 
-        return makePlan(
-            from: old,
-            to: new,
-            debugLabel: debugLabel,
-            validationMode: "checked",
-            oldValidationMs: oldValidationMs,
-            newValidationMs: newValidationMs,
-            totalStart: totalStart
-        )
+        return makePlan(from: old, to: new)
     }
 
     /// Plans without validating either snapshot. Callers must only use this
@@ -77,31 +39,15 @@ enum DiffableOutlineDiffPlanner {
     /// came from a previously accepted, validated transaction.
     static func planValidated<ItemID: Hashable>(
         from old: DiffableOutlineSnapshot<ItemID>,
-        to new: DiffableOutlineSnapshot<ItemID>,
-        debugLabel: String? = nil
+        to new: DiffableOutlineSnapshot<ItemID>
     ) -> DiffableOutlinePlan<ItemID> {
-        makePlan(
-            from: old,
-            to: new,
-            debugLabel: debugLabel,
-            validationMode: "prevalidated",
-            oldValidationMs: 0,
-            newValidationMs: 0,
-            totalStart: performanceTimestamp()
-        )
+        makePlan(from: old, to: new)
     }
 
     private static func makePlan<ItemID: Hashable>(
         from old: DiffableOutlineSnapshot<ItemID>,
-        to new: DiffableOutlineSnapshot<ItemID>,
-        debugLabel: String?,
-        validationMode: String,
-        oldValidationMs: Double,
-        newValidationMs: Double,
-        totalStart: CFAbsoluteTime
+        to new: DiffableOutlineSnapshot<ItemID>
     ) -> DiffableOutlinePlan<ItemID> {
-        let diffCoreStart = performanceTimestamp()
-
         let oldIDs = Set(old.nodes.keys)
         let newIDs = Set(new.nodes.keys)
         let removedIDs = oldIDs.subtracting(newIDs)
@@ -173,50 +119,11 @@ enum DiffableOutlineDiffPlanner {
         let replacements = replacementOperations(highestReplaced, in: new)
         let reloads = reloads(in: new)
 
-        let plan = DiffableOutlinePlan(
+        return DiffableOutlinePlan(
             operations: structuralChanges.removes + moves + structuralChanges.inserts + replacements + reloads,
             isSafe: true
         )
-#if DEBUG
-        logPerformance(
-            debugLabel,
-            "stage=planner mode=complete oldNodes=\(old.nodes.count) newNodes=\(new.nodes.count) " +
-            "operations=\(plan.operations.count) oldValidationMs=\(formatMilliseconds(oldValidationMs)) " +
-            "newValidationMs=\(formatMilliseconds(newValidationMs)) " +
-            "validationMode=\(validationMode) " +
-            "diffCoreMs=\(formatMilliseconds(elapsedMilliseconds(since: diffCoreStart))) " +
-            "totalMs=\(formatMilliseconds(elapsedMilliseconds(since: totalStart)))"
-        )
-#endif
-        return plan
     }
-
-    private static func performanceTimestamp() -> CFAbsoluteTime {
-#if DEBUG
-        CFAbsoluteTimeGetCurrent()
-#else
-        0
-#endif
-    }
-
-    private static func elapsedMilliseconds(since start: CFAbsoluteTime) -> Double {
-#if DEBUG
-        (CFAbsoluteTimeGetCurrent() - start) * 1000
-#else
-        0
-#endif
-    }
-
-#if DEBUG
-    private static func logPerformance(_ debugLabel: String?, _ details: String) {
-        guard let debugLabel else { return }
-        AppLogDebug("[PHI_DEBUG][PIN_CLICK][BM][SIDEBAR_REFRESH] \(debugLabel) \(details)")
-    }
-
-    private static func formatMilliseconds(_ value: Double) -> String {
-        String(format: "%.3f", value)
-    }
-#endif
 
     private static func structuralOperations<ItemID: Hashable>(
         old: DiffableOutlineSnapshot<ItemID>,

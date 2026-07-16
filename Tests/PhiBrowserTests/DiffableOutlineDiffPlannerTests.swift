@@ -244,6 +244,52 @@ final class DiffableOutlineDiffPlannerTests: XCTestCase {
         XCTAssertEqual(plan.operations, [.replace(id: "folder", parentID: nil, index: 0)])
     }
 
+    func testNestedReplacementWithAncestorInsertionRemainsIncremental() {
+        let folder = item("folder")
+        let oldGroup = item("old-group")
+        let newGroup = item("new-group")
+        let stable = item("stable")
+        let inserted = item("inserted")
+        let a = item("a")
+        let b = item("b")
+        let old = snapshot(["folder"], [
+            "folder": (nil, ["group", "stable"]),
+            "group": ("folder", ["a", "b"]),
+            "stable": ("folder", []),
+            "a": ("group", []),
+            "b": ("group", []),
+        ], items: [
+            "folder": folder,
+            "group": oldGroup,
+            "stable": stable,
+            "a": a,
+            "b": b,
+        ])
+        let new = snapshot(["folder"], [
+            "folder": (nil, ["group", "stable", "inserted"]),
+            "group": ("folder", ["b", "a"]),
+            "stable": ("folder", []),
+            "inserted": ("folder", []),
+            "a": ("group", []),
+            "b": ("group", []),
+        ], items: [
+            "folder": folder,
+            "group": newGroup,
+            "stable": stable,
+            "inserted": inserted,
+            "a": a,
+            "b": b,
+        ])
+
+        let plan = DiffableOutlineDiffPlanner.plan(from: old, to: new)
+
+        XCTAssertTrue(plan.isSafe)
+        XCTAssertEqual(plan.operations, [
+            .insert(id: "inserted", parentID: "folder", index: 2),
+            .replace(id: "group", parentID: "folder", index: 0),
+        ])
+    }
+
     func testReplacementSiblingWithSameParentMoveIsUnsafe() {
         let oldProxy = item("old-proxy")
         let newProxy = item("new-proxy")
