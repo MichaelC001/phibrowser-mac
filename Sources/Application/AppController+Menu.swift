@@ -27,6 +27,7 @@ extension AppController {
     static let spacesDeleteProfileParentItemTag = 500016
     static let viewMenuPhiSectionSeparatorTag = 500023
     static let agentAutoViewItemTag = 500024
+    static let agentTranscriptItemTag = 500036
     static let spacesProfileSeparatorTag = 500020
     static let deleteProfileSubmenuIdentifier = NSUserInterfaceItemIdentifier("phi.spaces.deleteProfile")
     static let spacesMenuItemTag = 500018
@@ -81,7 +82,8 @@ extension AppController {
                     item.tag == AppController.layoutModeNavigationAtTopItemTag ||
                     item.tag == AppController.layoutModeTraditionalItemTag ||
                     item.tag == AppController.layoutModeTitleItemTag ||
-                    item.tag == AppController.agentAutoViewItemTag
+                    item.tag == AppController.agentAutoViewItemTag ||
+                    item.tag == AppController.agentTranscriptItemTag
                 }
 
                 if submenu.items.last?.isSeparatorItem == false {
@@ -173,6 +175,13 @@ extension AppController {
                     agentAutoViewItem.tag = AppController.agentAutoViewItemTag
                     agentAutoViewItem.target = self
                     submenu.addItem(agentAutoViewItem)
+
+                    let agentTranscriptItem = NSMenuItem(title: NSLocalizedString("Agent Transcript", comment: "View menu - Toggle for the floating console mirroring the driving agent's session"),
+                                                         action: #selector(toggleAgentTranscript(_:)),
+                                                         keyEquivalent: "")
+                    agentTranscriptItem.tag = AppController.agentTranscriptItemTag
+                    agentTranscriptItem.target = self
+                    submenu.addItem(agentTranscriptItem)
                 }
             } else
             
@@ -616,6 +625,14 @@ extension AppController {
             MainActor.assumeIsolated {
                 AgentSpaceManager.shared.autoViewReevaluate()
             }
+        }
+    }
+
+    /// View ▸ Agent Transcript — the floating console mirroring the driving
+    /// code agent's session (live transcript + command prompt).
+    @objc func toggleAgentTranscript(_ sender: Any?) {
+        MainActor.assumeIsolated {
+            AgentTranscriptPanelController.shared.toggle()
         }
     }
 
@@ -1783,6 +1800,15 @@ extension AppController {
         if item.action == #selector(toggleAgentAutoView(_:)) {
             if let menuItem = item as? NSMenuItem {
                 menuItem.state = PhiPreferences.AgentSpaces.autoViewEnabled ? .on : .off
+                return LoginController.shared.isLoggedin()
+            }
+        }
+
+        if item.action == #selector(toggleAgentTranscript(_:)) {
+            if let menuItem = item as? NSMenuItem {
+                menuItem.state = MainActor.assumeIsolated {
+                    AgentTranscriptPanelController.shared.isVisible
+                } ? .on : .off
                 return LoginController.shared.isLoggedin()
             }
         }

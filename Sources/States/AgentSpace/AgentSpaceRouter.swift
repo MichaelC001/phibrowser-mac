@@ -35,15 +35,21 @@ enum AgentSpaceRouter {
     /// Doubles as the keep-alive heartbeat: every task-scoped message from the
     /// owning driver passes through here, so an authorized caller refreshes the
     /// task's expiry as a side effect — the driver is evidently alive. Explicit
-    /// TTL control stays with `agentSpace.ping`.
+    /// TTL control stays with `agentSpace.ping`. `touchKeepAlive: false` keeps
+    /// the origin gate but skips the refresh, for traffic that proves the
+    /// SESSION is alive without proving anyone is still driving (the session
+    /// mirror's prose) — such traffic must not extend an idle Space's life.
     static func callerMayControl(
-        taskId: String, context: ExtensionMessageContext
+        taskId: String, context: ExtensionMessageContext,
+        touchKeepAlive: Bool = true
     ) -> Bool {
         MainActor.assumeIsolated {
             guard AgentSpaceManager.shared.origin(forTaskId: taskId) == origin(for: context) else {
                 return false
             }
-            AgentSpaceManager.shared.touchKeepAlive(taskId: taskId)
+            if touchKeepAlive {
+                AgentSpaceManager.shared.touchKeepAlive(taskId: taskId)
+            }
             return true
         }
     }
@@ -88,12 +94,14 @@ enum AgentSpaceRouter {
             // agent's default never lands on a blocked one; an explicit request
             // for a blocked profile is refused. The resolved profileId is
             // passed on so create binds exactly what the permission approved.
+            let agentName = context.agentName
             let proceedCreate: @MainActor (String) -> Void = { resolvedProfileName in
                 AgentSpaceManager.shared.createAgentSpace(
                     taskId: taskId,
                     profileName: resolvedProfileName,
                     origin: taskOrigin,
-                    persistent: persistent
+                    persistent: persistent,
+                    agentName: agentName
                 ) { spaceId, windowId in
                     var replyObject: [String: Any]?
                     if let spaceId, let windowId {
@@ -204,6 +212,12 @@ enum AgentSpaceRouter {
                     "caption": task.statusCaption,
                     "keepAliveRemainingSeconds": keepAliveRemaining,
                     "persistent": task.persistent,
+                    // Undrained console commands (see `agentSpace.readUserMessages`)
+                    // so passive status reads surface pending user input for free.
+                    "pendingUserMessages":
+                        AgentSpaceManager.shared.pendingUserMessageCount(taskId: task.taskId),
+                    // The resolved driving-agent identity that badges the Space.
+                    "agentName": task.agentName,
                 ]
             }
         }
@@ -275,6 +289,87 @@ enum AgentSpaceRouter {
                 taskId: taskId, kind: kind, point: point, size: size, dy: dy)
         }
         return ok()
+    }
+
+    /// `agentSpace.log` — lines for the task's live transcript console, one
+    /// at top level (`text`) or batched (`entries`, oldest first — the session
+    /// forwarder flushes each batch as ONE call so delivery is all-or-nothing
+    /// and a mid-batch failure can't duplicate an already-delivered prefix).
+    /// Fire-and-forget from the driver, like `agentSpace.effect`: cosmetic,
+    /// never load-bearing for the primitive that emitted it. The origin gate
+    /// also means one driver cannot spoof lines into another's console.
+    /// `touch: false` marks mirror traffic that must not refresh keep-alive
+    /// (see `callerMayControl`).
+    static func handleLog(context: ExtensionMessageContext) -> String? {
+        guard let obj = json(context.payload),
+              let taskId = obj["taskId"] as? String else { return invalid() }
+        let items: [[String: Any]]
+        if let batch = obj["entries"] as? [[String: Any]] {
+            items = Array(batch.prefix(Self.maxLogBatchEntries))
+        } else if obj["text"] is String {
+            items = [obj]
+        } else {
+            return invalid()
+        }
+        let touch = obj["touch"] as? Bool ?? true
+        guard callerMayControl(taskId: taskId, context: context,
+                               touchKeepAlive: touch) else { return unknownTask() }
+        MainActor.assumeIsolated {
+            for item in items {
+                guard let text = item["text"] as? String else { continue }
+                var kind = AgentTranscriptEntry.Kind(rawValue: item["kind"] as? String ?? "")
+                    ?? .action
+                // `status` and `round` are app lifecycle lines (ownership
+                // flips, round edges) — reserved so a driver cannot forge
+                // "You took control"-style entries in its console.
+                if kind == .status || kind == .round { kind = .action }
+                AgentSpaceManager.shared.appendTranscript(
+                    taskId: taskId, kind: kind, text: text,
+                    detail: item["detail"] as? String,
+                    timestamp: Self.clampedLogTimestamp(item["ts"] as? Double))
+            }
+        }
+        return ok()
+    }
+
+    /// Ceiling well above the forwarder's per-run cap; a runaway batch is
+    /// truncated, not rejected (the console is cosmetic).
+    private static let maxLogBatchEntries = 200
+
+    /// Optional source timestamp (epoch ms), so a mirrored session line
+    /// forwarded after the fact sorts by when it was really authored. Trusted
+    /// for ORDER, not range: an absurd epoch would pin the line to the top or
+    /// bottom of the time-sorted feed forever, so clamp to a sane window
+    /// (a day of backfill behind, a couple of minutes of clock skew ahead).
+    private static func clampedLogTimestamp(_ epochMs: Double?) -> Date {
+        guard let epochMs else { return Date() }
+        let now = Date()
+        let ts = Date(timeIntervalSince1970: epochMs / 1000)
+        return min(max(ts, now.addingTimeInterval(-86400)), now.addingTimeInterval(120))
+    }
+
+    /// `agentSpace.readUserMessages` — hand the driver the commands the user
+    /// typed into the console since the last drain, emptying the queue. The
+    /// skill drains at round boundaries; `agentSpace.userMessage` broadcasts
+    /// wake a live round, but this queue is what guarantees delivery.
+    static func handleReadUserMessages(context: ExtensionMessageContext) -> String? {
+        guard let obj = json(context.payload),
+              let taskId = obj["taskId"] as? String else { return invalid() }
+        guard callerMayControl(taskId: taskId, context: context) else { return unknownTask() }
+        let messages = MainActor.assumeIsolated {
+            AgentSpaceManager.shared.drainUserMessages(taskId: taskId).map {
+                [
+                    "id": $0.id.uuidString,
+                    "text": $0.text,
+                    "ts": Int($0.ts.timeIntervalSince1970 * 1000),
+                ] as [String: Any]
+            }
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: ["messages": messages]),
+              let reply = String(data: data, encoding: .utf8) else {
+            return "{\"messages\":[]}"
+        }
+        return reply
     }
 
     static func handleMarkError(context: ExtensionMessageContext) -> String? {

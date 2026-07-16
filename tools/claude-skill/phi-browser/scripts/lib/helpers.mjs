@@ -5,10 +5,18 @@
 // lifecycle) goes through state.cdp.phi — direct to the Mac client over the
 // app socket, or the Chromium PhiAgentSpace tunnel under the TCP dev override.
 
-import { mkdirSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import {
+  mkdirSync, readFileSync, writeFileSync, unlinkSync, readdirSync, existsSync,
+} from 'node:fs'
+import { spawn } from 'node:child_process'
+import { tmpdir, homedir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { connectBrowser } from './cdp.mjs'
+import {
+  readDaemonControl, writeDaemonControl, clearDaemonControl,
+  pidAlive, agentRootPid,
+} from './mirror-core.mjs'
 
 // Default viewport for the hidden agent window: both dimensions follow the
 // REAL window's web-content panel — window minus sidebar/header, reported by
@@ -74,6 +82,7 @@ async function cdpClient() {
 /** Raw escape hatch: send any CDP command on the current page session. */
 export async function cdp(method, params = {}) {
   const client = await cdpClient()
+  logAction(`cdp ${method}`)
   const browserLevel = method.startsWith('Target.') ||
     method.startsWith('Browser.') || method.startsWith('PhiAgentSpace.') ||
     method.startsWith('SystemInfo.')
@@ -187,6 +196,10 @@ export async function ensureAgentSpace(name, { profile = '', persistent = false 
     await wait(1.6)
   }
   state.task = task
+  // Start (or re-target) the session mirror: the driving session's prompts
+  // and prose flow into this Space's console, and console commands flow
+  // back into the session (see scripts/mirror-tailer.mjs).
+  spawnSessionMirror(task.taskId)
   // `task.ownership` here is authoritative (fresh from list, or 'agent' by
   // construction on create), so seed the staleness clock and avoid a redundant
   // getOwnership on the first guarded action.
@@ -241,6 +254,10 @@ export async function ensureAgentSpace(name, { profile = '', persistent = false 
   return { taskId: task.taskId, spaceId: task.spaceId, windowId: task.windowId,
            ownership: task.ownership,
            persistent: task.persistent ?? false,
+           // Commands the user typed into the console while no round was
+           // live. Non-zero → drain with readUserMessages() FIRST, before
+           // any planned work: they are user instructions.
+           pendingUserMessages: task.pendingUserMessages ?? 0,
            // The tab inventory was in hand anyway (listed above to pick the
            // attach target); returning it gives every round its Space
            // situational awareness for free. `current` is stamped after the
@@ -290,6 +307,9 @@ export async function spaceStatus({ shots = false } = {}) {
     status: t.status,
     caption: t.caption || '',
     persistent: t.persistent ?? false,
+    // Commands typed into the console since the last drain — non-zero means
+    // call readUserMessages() before continuing.
+    pendingUserMessages: t.pendingUserMessages ?? 0,
     keepAliveRemainingSeconds: t.keepAliveRemainingSeconds ?? null,
     viewportOverride: (state.targetId &&
       state.viewportByTarget.get(state.targetId)?.request) || null,
@@ -549,6 +569,59 @@ function writeLastTargetId(taskId, targetId) {
   } catch {}
 }
 
+// The tailer daemon (scripts/mirror-tailer.mjs): the session mirror. When
+// the driving CLI exports its session id (Claude Code does), the heredoc can
+// locate the session's own transcript, so it writes the daemon control file
+// and spawns a detached tailer — the binding is exact because we TELL the
+// daemon its transcript, task, and agent process. A live daemon is
+// re-targeted through the control file instead of respawned; complete()
+// deletes the file, which is also the daemon's exit signal.
+// PHI_NO_SESSION_MIRROR=1 opts out entirely.
+
+function claudeTranscript() {
+  const sessionId = process.env.CLAUDE_CODE_SESSION_ID
+  if (!sessionId) return null
+  try {
+    // Locate by session id across project dirs rather than deriving the
+    // munged cwd folder name — immune to the munging rules changing.
+    const projects = join(homedir(), '.claude', 'projects')
+    for (const dir of readdirSync(projects)) {
+      const path = join(projects, dir, `${sessionId}.jsonl`)
+      if (existsSync(path)) return { sessionId, path }
+    }
+  } catch {}
+  return null
+}
+
+function spawnSessionMirror(taskId) {
+  if (process.env.PHI_NO_SESSION_MIRROR) return
+  const transcript = claudeTranscript()
+  if (!transcript) return  // not Claude Code (or an old CLI): hook/say() remain
+  try {
+    const prev = readDaemonControl(transcript.sessionId)
+    const livePid = prev && prev.pid && pidAlive(prev.pid) ? prev.pid : null
+    writeDaemonControl(transcript.sessionId, {
+      taskId, transcriptPath: transcript.path, ts: Date.now(),
+      // The driving agent process: the daemon uses it to find the session's
+      // terminal for console-command injection and to notice the session
+      // closing. TERM_PROGRAM (inherited from that terminal) orders the
+      // injection probe.
+      agentPid: agentRootPid(),
+      termProgram: process.env.TERM_PROGRAM || '',
+      ...(livePid ? { pid: livePid } : {}),
+    })
+    if (livePid) return  // the live tailer follows the control-file update
+    const tailer = fileURLToPath(new URL('../mirror-tailer.mjs', import.meta.url))
+    spawn(process.execPath, [tailer, transcript.sessionId],
+          { detached: true, stdio: 'ignore' }).unref()
+  } catch {}
+}
+
+function stopSessionMirror() {
+  const sessionId = process.env.CLAUDE_CODE_SESSION_ID
+  if (sessionId) clearDaemonControl(sessionId)
+}
+
 // Serializes the attach sequence. Concurrent work in one round is legitimate
 // (Promise.all(openTab × N)), but interleaved attachTab bodies race: the
 // "detach the previous session" step below then lands on ANOTHER call's
@@ -686,7 +759,9 @@ async function attachTabNow(targetId) {
 export async function switchTab(targetId) {
   await guardAgentControl()
   await attachTab(targetId)  // attachTab already activates the target
-  return pageInfo()
+  const info = await pageInfo()
+  logAction('switch tab', info && info.url ? shortUrl(info.url) : undefined)
+  return info
 }
 
 /** All page target ids in the browser (one round trip, no window resolution). */
@@ -766,6 +841,7 @@ export async function openTab(url, { acceptCookies = true, reuseBlank = true } =
   await guardAgentControl()
   const task = requireTask()
   const client = await cdpClient()
+  logAction(`open ${shortUrl(url)}`)
   if (reuseBlank) {
     const blank = (await listTabs()).find(
       (t) => BLANK_TAB_URLS.has(t.url) && !claimedTabs.has(t.targetId))
@@ -808,6 +884,7 @@ export async function closeTab(targetId = state.targetId) {
   await guardAgentControl()
   const client = await cdpClient()
   if (!targetId) throw new Error('closeTab: no target')
+  logAction('close tab')
   await client.send('Target.closeTarget', { targetId })
   state.viewportByTarget.delete(targetId)
   if (targetId === state.targetId) {
@@ -829,6 +906,7 @@ export async function closeTab(targetId = state.targetId) {
 export async function goto(url, { timeout = 25, acceptCookies = true } = {}) {
   await guardAgentControl()
   const client = await cdpClient()
+  logAction(`goto ${shortUrl(url)}`)
   const deadline = Date.now() + timeout * 1000
   // Page.navigate answers at commit — normally fast, but budget it inside
   // {timeout} (capped at the 40s send default) instead of always allowing 40s.
@@ -913,6 +991,7 @@ export async function waitForElement(target, { timeout = 15, visible = true,
   if (minCount > 1 && spec.kind === 'ref') {
     throw new Error('waitForElement: minCount needs a selector target — a ref identifies one node')
   }
+  logAction(`wait for ${describeTarget(target)}`)
   const deadline = Date.now() + timeout * 1000
   while (Date.now() < deadline) {
     if (state.openDialog) return { dialog: state.openDialog }
@@ -963,6 +1042,7 @@ export async function waitForElement(target, { timeout = 15, visible = true,
  */
 export async function waitForFunction(expression, { timeout = 15, poll = 0.25 } = {}) {
   const expr = String(expression)
+  logAction('wait for condition', expr.slice(0, 120))
   const deadline = Date.now() + timeout * 1000
   let lastErr = null
   for (;;) {
@@ -990,6 +1070,7 @@ export async function waitForFunction(expression, { timeout = 15, poll = 0.25 } 
  * millisecond args aside, `timeout` here is seconds.
  */
 export async function waitForNetworkIdle({ timeout = 30, idleMs = 500, maxInflight = 0 } = {}) {
+  logAction('wait for network idle')
   const client = await cdpClient()
   const sid = requireSession()
   await client.send('Network.enable', {}, sid).catch(() => {})
@@ -1085,6 +1166,7 @@ export async function js(expression) {
   if (state.openDialog) {
     throw new Error('a JavaScript dialog is open — call handleDialog(accept) first')
   }
+  logAction('run js', String(expression).slice(0, 120))
   return evalInPage(String(expression))
 }
 
@@ -1828,6 +1910,7 @@ async function scanBackendIds(count) {
 export async function observe({ maxElements = 500, within = null,
                                 showHidden = false, diff = false } = {}) {
   if (state.openDialog) return { dialog: state.openDialog }
+  logAction('scan page elements')
   await maybeTrackWindowResize()
   await maybePing()
   const { data, prev } = await pageScanCached({ within, showHidden })
@@ -1866,6 +1949,7 @@ export async function snapshotText({ maxChars = 60000, within = null,
   if (state.openDialog) {
     return wrapUntrusted(`[dialog open: ${JSON.stringify(state.openDialog)}]`)
   }
+  logAction('read page text')
   await maybeTrackWindowResize()
   await maybePing()
   const { data, prev } = await pageScanCached({ within, showHidden })
@@ -2320,6 +2404,7 @@ async function locateObjectId(target) {
 export async function screenshot(path) {
   await maybeTrackWindowResize()
   await maybePing()
+  logAction('screenshot')
   const client = await cdpClient()
   const file = path || join(tmpdir(), `phi-browser-${Date.now()}.png`)
   const { data } = await client.send('Page.captureScreenshot',
@@ -2339,6 +2424,7 @@ export async function screenshot(path) {
 export async function screenshotBrowser(path) {
   await maybeTrackWindowResize()
   await maybePing()
+  logAction('screenshot browser window')
   const task = requireTask()
   const client = await cdpClient()
   const outFile = path || join(tmpdir(), `phi-browser-window-${Date.now()}.png`)
@@ -2402,6 +2488,7 @@ const PHI_OVERLAY_FN = `function (boxes) {
  */
 export async function annotatedScreenshot(path, { maxBoxes = 150 } = {}) {
   await guardAgentControl()
+  logAction('screenshot (annotated)')
   const data = await pageScan({ withRects: true })
   // A full-page scan just happened — keep the diff baseline current.
   writeScanBaseline(scanScopeKey({}), data)
@@ -2455,6 +2542,7 @@ export async function savePdf(path, {
   tagged = false, outline = false, toc = false,
 } = {}) {
   const client = await cdpClient()
+  logAction('save pdf')
   const sid = requireSession()
   if (toc) await waitForPagedJs()
   const params = { landscape, printBackground, preferCSSPageSize,
@@ -2530,6 +2618,7 @@ async function readIoStream(client, sid, res) {
  *  Page.captureSnapshot. Returns {file, bytes}. */
 export async function archivePage(path) {
   const client = await cdpClient()
+  logAction('archive page')
   const { data } = await client.send('Page.captureSnapshot',
                                      { format: 'mhtml' }, requireSession(), 60000)
   const file = path || join(tmpdir(), `phi-browser-${Date.now()}.mhtml`)
@@ -2684,6 +2773,7 @@ export async function scrapeMedia({ types = ['image'], within = null, dir,
   if (bad.length) {
     throw new Error(`scrapeMedia: unknown types ${bad.join(',')} — use image|video|audio`)
   }
+  logAction(`scrape media (${types.join(',')})`)
   let found
   if (within == null) {
     found = await evalInPage(`(${MEDIA_COLLECT_FN}).call(document, ${JSON.stringify(types)})`)
@@ -2785,6 +2875,29 @@ function mirrorEffect(kind, props = {}) {
   phiSend('agentSpace.effect', { taskId: task.taskId, kind, ...props }).catch(() => {})
 }
 
+// Fire-and-forget transcript line for the live session console (View ▸ Agent
+// Transcript in Phi). Cosmetic like the input mirrors: never block or fail a
+// primitive because logging failed; drop silently before a task exists or
+// when the channel is down. Narration, rounds, and errors need no calls here
+// — the app folds setStatus/run-state/markError into the console itself.
+function logAction(text, detail) {
+  const task = state.task
+  if (!task) return
+  phiSend('agentSpace.log', {
+    taskId: task.taskId,
+    kind: 'action',
+    text: String(text).slice(0, 300),
+    ...(detail ? { detail: String(detail).slice(0, 500) } : {}),
+  }).catch(() => {})
+}
+
+// Console-width URL: scheme stripped, capped — the console is a narrow
+// terminal, not an address bar.
+function shortUrl(url) {
+  const s = String(url).replace(/^https?:\/\//, '')
+  return s.length > 80 ? s.slice(0, 77) + '…' : s
+}
+
 // Locates the focused editable's viewport rect (walking same-origin iframe
 // focus chains) and mirrors a typing pulse there; falls back to a pulse at
 // the overlay cursor when focus is nowhere useful (e.g. body in canvas apps).
@@ -2883,6 +2996,8 @@ export async function click(target, arg2, arg3) {
     opts = (arg2 && typeof arg2 === 'object' && !Array.isArray(arg2)) ? arg2 : {}
   }
   const { button = 'left', clickCount = 1 } = opts
+  logAction(typeof target === 'number'
+    ? `click (${target}, ${arg2})` : `click ${describeTarget(target)}`)
   // CSS -> widget coords under a zoom scale (see inputScale).
   const s = inputScale()
   let ix = Math.round(x * s), iy = Math.round(y * s)
@@ -2926,6 +3041,8 @@ export async function click(target, arg2, arg3) {
 export async function hover(target, maybeY) {
   await guardAgentControl()
   const client = await cdpClient()
+  logAction(typeof target === 'number'
+    ? `hover (${target}, ${maybeY})` : `hover ${describeTarget(target)}`)
   const { x, y } = typeof target === 'number'
     ? { x: target, y: maybeY }
     : await locateRect(target)
@@ -2955,6 +3072,7 @@ export async function fillInput(target, text, { instant = false } = {}) {
     throw new Error('fillInput needs an element target (selector/@ref/loc), not coordinates')
   }
   const str = String(text)
+  logAction(`fill ${describeTarget(target)}`, `${str.length} chars`)
 
   // One pass: scroll into view, focus, select-all (so typed text REPLACES the
   // current value), classify, and measure for the overlay's typing pulse.
@@ -3053,6 +3171,7 @@ export async function fillInput(target, text, { instant = false } = {}) {
 export async function uploadFile(target, ...files) {
   await guardAgentControl()
   if (!files.length) throw new Error('uploadFile: at least one file path is required')
+  logAction(`upload ${files.length} file(s) into ${describeTarget(target)}`)
   const objectId = await locateObjectId(target)
   const client = await cdpClient()
   const sid = requireSession()
@@ -3065,6 +3184,7 @@ export async function uploadFile(target, ...files) {
 export async function typeText(text) {
   await guardAgentControl()
   const client = await cdpClient()
+  logAction(`type ${String(text).length} chars`)
   // Pulse first so the watcher sees where the text is about to land, then
   // type at a watchable pace.
   const pulse = await mirrorTypingEffect(client)
@@ -3091,6 +3211,7 @@ export async function pressKey(key, { modifiers = 0 } = {}) {
   await guardAgentControl()
   const def = KEY_DEFS[key]
   if (!def) throw new Error(`pressKey: unsupported key '${key}' — use typeText for characters`)
+  logAction(`press ${key}`)
   const client = await cdpClient()
   const common = {
     key: def.key, code: def.code, modifiers,
@@ -3110,6 +3231,7 @@ export async function pressKey(key, { modifiers = 0 } = {}) {
 export async function scroll({ dy = 600, dx = 0, x = 400, y = 300 } = {}) {
   await guardAgentControl()
   const client = await cdpClient()
+  logAction(`scroll ${dy >= 0 ? 'down' : 'up'} ${Math.abs(dy)}px`)
   // Anchor point is CSS -> widget scaled; deltas pass through untransformed.
   const s = inputScale()
   await client.send('Input.dispatchMouseEvent', {
@@ -3121,6 +3243,7 @@ export async function scroll({ dy = 600, dx = 0, x = 400, y = 300 } = {}) {
 
 export async function handleDialog(accept = true, promptText = undefined) {
   const client = await cdpClient()
+  logAction(accept ? 'accept dialog' : 'dismiss dialog')
   const params = { accept }
   if (promptText !== undefined) params.promptText = promptText
   await client.send('Page.handleJavaScriptDialog', params, requireSession())
@@ -3133,6 +3256,76 @@ export async function handleDialog(accept = true, promptText = undefined) {
 export async function setStatus(caption) {
   const task = requireTask()
   await phiSend('agentSpace.setState', { taskId: task.taskId, caption: String(caption) })
+}
+
+/** Alias of setStatus, named for the console: the caption shows on the
+ *  overlay pill AND lands in the live transcript as narration — one wire
+ *  message, so the two can never disagree. Narrate what you are about to do,
+ *  never secrets (both surfaces are displayed and buffered). */
+export const narrate = setStatus
+
+/**
+ * Mirrors a line of your own conversation into the transcript console —
+ * `role: 'assistant'` (default) for your reply text, `role: 'user'` to echo
+ * something the user said. Use this to reflect your session into the browser
+ * when the Claude Code hook forwarder isn't installed (or under Codex); with
+ * hooks installed this is redundant. Unlike `narrate`, it does NOT touch the
+ * overlay pill — it is pure transcript. Never mirror secrets. */
+export async function say(text, { role = 'assistant' } = {}) {
+  const task = requireTask()
+  await phiSend('agentSpace.log', {
+    taskId: task.taskId,
+    kind: role === 'user' ? 'user' : 'assistant',
+    text: String(text).slice(0, 4000),
+  })
+}
+
+/**
+ * Drains the commands the user typed into Phi's Agent Transcript console
+ * since the last drain. Returns [{id, text, ts}] (oldest first; empty when
+ * none). Call at every round start and before complete() — treat the text as
+ * user instructions with the same authority as chat, and acknowledge via
+ * narrate(...).
+ */
+export async function readUserMessages() {
+  const task = requireTask()
+  const { messages } = await phiSend('agentSpace.readUserMessages', { taskId: task.taskId })
+  return messages || []
+}
+
+/**
+ * Blocks until the user types a command into the console (or `timeout`
+ * seconds pass — then it throws). Resolves with the drained [{id, text, ts}]
+ * batch. Wakes instantly on the app's push broadcast; the poll underneath is
+ * the delivery guarantee (a message queued between rounds is caught on the
+ * first drain). Read-only besides the drain — safe while co-working.
+ */
+export async function waitForUserMessage({ timeout = 300 } = {}) {
+  const task = requireTask()
+  const client = await cdpClient()
+  const deadline = Date.now() + timeout * 1000
+  let wake = null
+  const offEvent = client.phi.onEvent
+    ? client.phi.onEvent('agentSpace.userMessage', ({ taskId }) => {
+        if (taskId === task.taskId && wake) wake()
+      })
+    : null
+  try {
+    for (;;) {
+      const messages = await readUserMessages()
+      if (messages.length) return messages
+      const remaining = deadline - Date.now()
+      if (remaining <= 0) throw new Error('waitForUserMessage: timed out')
+      // Poll every 2s as the guarantee; the broadcast short-circuits the wait.
+      await new Promise((resolve) => {
+        wake = resolve
+        setTimeout(resolve, Math.min(2000, remaining))
+      })
+      wake = null
+    }
+  } finally {
+    if (typeof offEvent === 'function') offEvent()
+  }
 }
 
 /**
@@ -3276,6 +3469,9 @@ export async function complete({ success = true, message = undefined } = {}) {
     status: success ? 'success' : 'failure',
     ...(message ? { message } : {}),
   })
+  // The task is over: stop the session mirror — deleting the daemon control
+  // file is the tailer's exit signal.
+  stopSessionMirror()
   state.task = null
   state.sessionId = null
   state.targetId = null
@@ -3308,6 +3504,7 @@ function stateFile(name) {
  *  different domain). Returns {name, cookies, urls}. */
 export async function saveState(name, { allDomains = false } = {}) {
   const client = await cdpClient()
+  logAction(`save state '${name}'`)
   const file = stateFile(name)
   // Storage.getCookies on the PAGE session reads the tab's own storage
   // partition — i.e. the profile the Space is bound to. (The browser-session
@@ -3341,6 +3538,7 @@ export async function saveState(name, { allDomains = false } = {}) {
  *  {openTabs: true} also reopens the saved URLs as tabs in the Space. */
 export async function loadState(name, { openTabs = false } = {}) {
   await guardAgentControl()
+  logAction(`load state '${name}'`)
   const client = await cdpClient()
   let saved
   try {

@@ -4,6 +4,9 @@
     "" : {
 
     },
+    " · ended" : {
+      "comment" : "Agent console - filter label suffix for a finished task"
+    },
     " Telegram bot creation and customization process, follow the on-screen instructions and paste the Bot Token below" : {
       "comment" : "Phi Link - Custom bot guide suffix"
     },
@@ -24,6 +27,9 @@
     },
     "“%@” wants to control Phi Browser" : {
       "comment" : "CDP consent - title"
+    },
+    "❯" : {
+
     },
     "@%@" : {
 
@@ -112,16 +118,6 @@
     "/**/Window Background" : {
       "comment" : "[EXAMPLE] Theme example: window background label"
     },
-    "%@  %@" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "%1$@  %2$@"
-          }
-        }
-      }
-    },
     "%@ — in use by a Space" : {
       "comment" : "Spaces menu - Delete Profile row label for a profile bound to a Space"
     },
@@ -204,6 +200,17 @@
     "%d hour ago" : {
       "comment" : "Download item row - Relative time showing hours since download completed"
     },
+    "%d live · %d running" : {
+      "comment" : "Agent console - live vs actively running agent task counts",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$d live · %2$d running"
+          }
+        }
+      }
+    },
     "%d min ago" : {
       "comment" : "Download item row - Relative time showing minutes since download completed"
     },
@@ -283,11 +290,17 @@
     "Agent Autoview" : {
       "comment" : "View menu - Toggle that automatically switches to the Space of an operating agent"
     },
+    "agent idle — commands are queued until its next round" : {
+      "comment" : "Agent console - hint that a command waits for the next agent round"
+    },
     "Agent permissions" : {
       "comment" : "Developer settings - Agent permissions section title"
     },
     "Agent skill" : {
       "comment" : "Developer settings - phi-browser skill section title"
+    },
+    "Agent Transcript" : {
+      "comment" : "Agent console panel - window title\nView menu - Toggle for the floating console mirroring the driving agent's session"
     },
     "AI conversations will be closed and all connected Connectors will be disconnected." : {
       "comment" : "AI settings - Alert message explaining consequences of disabling AI features"
@@ -306,6 +319,9 @@
     },
     "All Downloads" : {
       "comment" : "Downloads list - Button to open full downloads page"
+    },
+    "All tasks" : {
+      "comment" : "Agent console - feed filter: every task"
     },
     "Allow agents to control Phi (CDP)" : {
       "comment" : "Developer settings - Toggle title for the Chrome DevTools Protocol endpoint"
@@ -522,6 +538,9 @@
     },
     "Chromium Engine Version %@" : {
       "comment" : "About window - Chromium engine version label"
+    },
+    "Clear" : {
+      "comment" : "Agent console - clear the feed"
     },
     "Clear Browsing Data" : {
       "comment" : "Profiles settings - data link to clear browsing data"
@@ -1090,6 +1109,9 @@
     "Item 2" : {
 
     },
+    "Jump to latest" : {
+      "comment" : "Agent console - scroll to newest line"
+    },
     "Just now" : {
       "comment" : "Download item row - Relative time when download completed less than a minute ago"
     },
@@ -1164,6 +1186,9 @@
     },
     "Manage User Data" : {
       "comment" : "Help menu - Parent menu item for exporting and importing Phi user data backup"
+    },
+    "Message the agent (→ %@)" : {
+      "comment" : "Agent console - prompt placeholder naming the target task's Space"
     },
     "Mint" : {
       "comment" : "Mint theme color name"
@@ -1276,6 +1301,12 @@
     "Next Space" : {
       "comment" : "Spaces menu - Activate the next Space in the strip"
     },
+    "No active agent task" : {
+      "comment" : "Agent console - prompt disabled placeholder"
+    },
+    "no active tasks" : {
+      "comment" : "Agent console - footer with no live agent task"
+    },
     "No agents approved yet. The first time one connects, Phi asks for your approval." : {
       "comment" : "Developer settings - Empty state for the allowed CDP agent list"
     },
@@ -1338,6 +1369,9 @@
     },
     "Not used" : {
       "comment" : "Profiles settings - tag for a profile with no Spaces"
+    },
+    "Nothing yet — agent activity appears here live." : {
+      "comment" : "Agent console - empty feed placeholder"
     },
     "Notifications" : {
       "comment" : "Profiles settings - data link to notification settings"
@@ -1743,6 +1777,9 @@
     },
     "Show proactive suggestions on the new tab page" : {
       "comment" : "AI settings - Toggle to show proactive suggestions on the new tab page"
+    },
+    "Show Transcript" : {
+      "comment" : "Agent pip context menu - open the agent console for this task"
     },
     "Sign in again to continue" : {
       "comment" : "Auth reauthentication - Alert title when the access token can no longer be renewed"

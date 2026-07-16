@@ -22,6 +22,17 @@ final class AgentSpaceOverlayView: NSView {
     /// The current typing-pulse outline, replaced (not stacked) on rapid fills.
     private weak var typingPulseLayer: CALayer?
     private let pill = NSVisualEffectView()
+    /// Badge for the driving code agent: an SF Symbol glyph plus a short name
+    /// ("Claude Code", "Codex", …), so a watching user sees who controls this
+    /// Space, not just that "an agent" does.
+    private let agentIcon = NSImageView()
+    /// Sized per icon source in `update`: brand assets pad their ink (see
+    /// `AgentDriverBadge.assetInkRatio`) and get a wider slot so the visible
+    /// glyph matches the 14pt the SF Symbol fallback occupies.
+    private var agentIconWidth: NSLayoutConstraint?
+    private var agentIconHeight: NSLayoutConstraint?
+    private let agentLabel = NSTextField(labelWithString: "")
+    private let agentDivider = NSBox()
     private let captionLabel = NSTextField(labelWithString: "")
     private let primaryButton = NSButton()
     private let secondaryButton = NSButton()
@@ -54,6 +65,24 @@ final class AgentSpaceOverlayView: NSView {
         pill.translatesAutoresizingMaskIntoConstraints = false
         addSubview(pill)
 
+        agentIcon.symbolConfiguration = .init(pointSize: 12, weight: .semibold)
+        agentIcon.contentTintColor = .labelColor
+        agentIcon.imageScaling = .scaleProportionallyUpOrDown
+        agentIcon.translatesAutoresizingMaskIntoConstraints = false
+        agentIcon.setContentHuggingPriority(.required, for: .horizontal)
+        agentIconWidth = agentIcon.widthAnchor.constraint(equalToConstant: 14)
+        agentIconHeight = agentIcon.heightAnchor.constraint(equalToConstant: 14)
+        NSLayoutConstraint.activate([agentIconWidth!, agentIconHeight!])
+
+        agentLabel.font = .systemFont(ofSize: 12, weight: .semibold)
+        agentLabel.textColor = .labelColor
+        agentLabel.lineBreakMode = .byTruncatingTail
+        agentLabel.translatesAutoresizingMaskIntoConstraints = false
+        agentLabel.setContentHuggingPriority(.required, for: .horizontal)
+
+        agentDivider.boxType = .separator
+        agentDivider.translatesAutoresizingMaskIntoConstraints = false
+
         captionLabel.font = .systemFont(ofSize: 12, weight: .medium)
         captionLabel.textColor = .labelColor
         captionLabel.lineBreakMode = .byTruncatingTail
@@ -62,12 +91,20 @@ final class AgentSpaceOverlayView: NSView {
         configureButton(primaryButton, action: #selector(primaryTapped))
         configureButton(secondaryButton, action: #selector(secondaryTapped))
 
-        let stack = NSStackView(views: [captionLabel, primaryButton, secondaryButton])
+        let stack = NSStackView(views: [
+            agentIcon, agentLabel, agentDivider, captionLabel,
+            primaryButton, secondaryButton])
         stack.orientation = .horizontal
-        stack.spacing = 10
+        stack.spacing = 8
         stack.alignment = .centerY
+        stack.setCustomSpacing(6, after: agentIcon)
+        stack.setCustomSpacing(10, after: agentDivider)
         stack.translatesAutoresizingMaskIntoConstraints = false
         pill.addSubview(stack)
+
+        NSLayoutConstraint.activate([
+            agentDivider.heightAnchor.constraint(equalToConstant: 18),
+        ])
 
         NSLayoutConstraint.activate([
             pill.centerXAnchor.constraint(equalTo: centerXAnchor),
@@ -92,6 +129,22 @@ final class AgentSpaceOverlayView: NSView {
     func update(with task: AgentTask?) {
         guard let task else { return }
         ownership = task.ownership
+
+        let badge = AgentDriverBadge.make(agentName: task.agentName, origin: task.origin)
+        if let assetName = badge.assetName, let image = NSImage(named: assetName) {
+            image.isTemplate = true  // tint with contentTintColor
+            agentIcon.image = image
+            agentIconWidth?.constant = 14 / AgentDriverBadge.assetInkRatio
+            agentIconHeight?.constant = 14 / AgentDriverBadge.assetInkRatio
+        } else {
+            agentIcon.image = NSImage(systemSymbolName: badge.symbol,
+                                      accessibilityDescription: badge.label)
+            agentIconWidth?.constant = 14
+            agentIconHeight?.constant = 14
+        }
+        agentLabel.stringValue = badge.label
+        agentIcon.toolTip = badge.label
+        agentLabel.toolTip = badge.label
 
         switch task.status {
         case .failed(let message):

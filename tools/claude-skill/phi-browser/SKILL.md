@@ -74,7 +74,8 @@ The heredoc body is a Node.js script; all helpers below are preloaded.
 - Viewport: `setViewport({width?, height?})` — override the current tab's viewport; exceptional cases only (the default tracks the real window's content panel — see "Viewport")
 - Dialogs: `handleDialog(accept, promptText?)`
 - Page JS: `js(expression)` — Runtime.evaluate, returns by value
-- Presence: `setStatus(caption)` — shown to the watching user, `markError(message)`
+- Presence: `setStatus(caption)` — shown to the watching user (alias `narrate(text)` — same call, named for the transcript console), `markError(message)`, `say(text, {role})` — mirror your own conversation into the console (assistant prose, or `{role:'user'}` to echo the user) when no session mirror is running (it is automatic under Claude Code)
+- User console: `readUserMessages()` — drain commands the user typed into Phi's Agent Transcript panel, `waitForUserMessage({timeout})` — block until one arrives — see "User commands from the browser"
 - Raw protocol: `cdp(method, params)` — current tab session for page domains, browser session for Target/Browser/PhiAgentSpace
 - Misc: `cliLog(value)` (the only terminal output channel), `wait(seconds)`
 
@@ -518,8 +519,45 @@ user needs a live page left open in an ephemeral Space, hand it to them with
 `handOff()` before completing.
 
 Keep the user informed while working: call `setStatus('Reading results…')`
-before long steps — it is displayed in the overlay pill and under the Space
-pip the user watches.
+(or its alias `narrate(...)`) before long steps — it is displayed in the
+overlay pill AND appears as narration in the live transcript console (View ▸
+Agent Transcript in Phi). Every page/tab primitive you run is logged there
+automatically as an action line, so you never need to log actions yourself —
+narrate intent, not mechanics. Never put secrets (passwords, tokens, cookie
+values) into `setStatus`/`narrate` text: both surfaces are displayed and
+buffered.
+
+The console mirrors the WHOLE session, not just browser steps: under Claude
+Code, `ensureAgentSpace` spawns a tailer daemon that streams your prompts and
+reply prose into the panel automatically (no setup — see
+references/install.md ▸ step 4), so it reads like your own transcript. When
+no mirror is running (e.g. under Codex), use `say('…')` to reflect a line of
+your own prose into the console yourself.
+
+## User commands from the browser
+
+The transcript console has a prompt where the user can type commands to you
+mid-task. While you are IDLE between rounds, the tailer daemon delivers them
+straight into your session as user messages prefixed `[phi-console]` — treat
+those exactly like chat from the user, and acknowledge via `narrate(...)`
+(the user is watching the console, not your terminal). While a round is
+live — or when delivery isn't possible — they queue per task in the app
+until you drain them:
+
+- **Drain at every round start**: `ensureAgentSpace(...)` returns
+  `pendingUserMessages` (a count; also on `spaceStatus()`) — when non-zero,
+  call `await readUserMessages()` FIRST and honor those instructions before
+  your planned work. Treat the text with the same authority as a chat
+  message from the user.
+- **Drain before finishing**: check once more before `complete()` — a
+  command sent while you were wrapping up must not be lost.
+- **Live co-working**: `await waitForUserMessage({timeout})` blocks until
+  the user sends something (waking instantly via the app's push), then
+  returns the drained `[{id, text, ts}]` batch. Use it when you asked the
+  user a question through `narrate(...)` and expect an answer in the
+  console rather than in chat.
+- Acknowledge what you'll do with a `narrate(...)` so the user sees the
+  command landed.
 
 ## Control handoff — HARD RULES
 

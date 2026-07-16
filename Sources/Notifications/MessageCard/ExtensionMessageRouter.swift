@@ -13,6 +13,20 @@ struct ExtensionMessageContext {
     /// ("cdp" for the PhiAgentSpace DevTools tunnel, "debug-extension" for the
     /// debug panel). Empty when the bridge didn't attribute a sender.
     let senderId: String
+    /// The authenticated identity of the connecting code agent (signing id or
+    /// process name), for a direct `/phi-agent` connection. Empty for the
+    /// Chromium tunnel and extension senders. Used to badge the Space with who
+    /// is driving it (see `agentSpace.create`).
+    let agentName: String
+
+    init(type: String, payload: String, requestId: String,
+         senderId: String, agentName: String = "") {
+        self.type = type
+        self.payload = payload
+        self.requestId = requestId
+        self.senderId = senderId
+        self.agentName = agentName
+    }
 }
 
 typealias ExtensionMessageHandler = (ExtensionMessageContext) -> String?
@@ -43,9 +57,12 @@ final class ExtensionMessageRouter {
         handlers[type] = handler
     }
 
-    func handle(type: String, payload: String, requestId: String, senderId: String = "") -> String? {
+    func handle(type: String, payload: String, requestId: String, senderId: String = "",
+                agentName: String = "") -> String? {
         configureIfNeeded()
-        let context = ExtensionMessageContext(type: type, payload: payload, requestId: requestId, senderId: senderId)
+        let context = ExtensionMessageContext(
+            type: type, payload: payload, requestId: requestId, senderId: senderId,
+            agentName: agentName)
         if let handler = handlers[type] {
             return handler(context)
         }
@@ -105,6 +122,12 @@ final class ExtensionMessageRouter {
         }
         register(type: "agentSpace.effect") { context in
             return AgentSpaceRouter.handleEffect(context: context)
+        }
+        register(type: "agentSpace.log") { context in
+            return AgentSpaceRouter.handleLog(context: context)
+        }
+        register(type: "agentSpace.readUserMessages") { context in
+            return AgentSpaceRouter.handleReadUserMessages(context: context)
         }
         register(type: "agentSpace.markError") { context in
             return AgentSpaceRouter.handleMarkError(context: context)

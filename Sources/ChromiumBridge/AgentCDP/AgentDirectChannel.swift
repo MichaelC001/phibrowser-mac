@@ -131,6 +131,9 @@ final class AgentDirectConnection {
     let id = UUID().uuidString
 
     private let fd: Int32
+    /// The authenticated identity of the connecting code agent, forwarded to
+    /// `agentSpace.create` so the Space it opens is badged with who drives it.
+    private let agentName: String
     private let queue: DispatchQueue
     private var readSource: DispatchSourceRead?
     private var buffer = Data()
@@ -142,8 +145,9 @@ final class AgentDirectConnection {
     private static let wsGUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
     private static let maxFrameBytes = 8 * 1024 * 1024
 
-    init(fd: Int32) {
+    init(fd: Int32, agentName: String = "") {
         self.fd = fd
+        self.agentName = agentName
         self.queue = DispatchQueue(label: "com.phibrowser.cdp.direct.\(fd)")
     }
 
@@ -290,7 +294,8 @@ final class AgentDirectConnection {
         AgentDirectChannelRegistry.shared.registerPending(
             requestId: requestId, connectionId: id, clientId: clientId)
         let sync = ExtensionMessageRouter.shared.handle(
-            type: type, payload: payloadJson, requestId: requestId, senderId: "cdp")
+            type: type, payload: payloadJson, requestId: requestId, senderId: "cdp",
+            agentName: agentName)
         if let sync {
             AgentDirectChannelRegistry.shared.deliverResponse(
                 requestId: requestId, response: sync)

@@ -270,6 +270,8 @@ private struct SkillInstallSectionView: View {
     private struct SkillTarget: Identifiable {
         let id: String
         let name: String
+        /// Bundled brand icon (template imageset under Assets ▸ agents).
+        let iconAsset: String
         let skillsDirectory: URL
 
         var linkURL: URL {
@@ -280,12 +282,15 @@ private struct SkillInstallSectionView: View {
     private static let skillTargets: [SkillTarget] = {
         let home = FileManager.default.homeDirectoryForCurrentUser
         return [
-            SkillTarget(id: "claude", name: "Claude Code",
+            SkillTarget(id: "claude", name: "Claude Code", iconAsset: "agent-claude",
                         skillsDirectory: home.appendingPathComponent(".claude/skills", isDirectory: true)),
-            SkillTarget(id: "codex", name: "Codex",
+            SkillTarget(id: "codex", name: "Codex", iconAsset: "agent-openai",
                         skillsDirectory: home.appendingPathComponent(".codex/skills", isDirectory: true)),
-            SkillTarget(id: "openclaw", name: "OpenClaw",
+            SkillTarget(id: "openclaw", name: "OpenClaw", iconAsset: "agent-openclaw",
                         skillsDirectory: home.appendingPathComponent(".openclaw/skills", isDirectory: true)),
+            // Pi uses the shared ~/.agents/skills standard folder.
+            SkillTarget(id: "pi", name: "Pi", iconAsset: "agent-pi",
+                        skillsDirectory: home.appendingPathComponent(".agents/skills", isDirectory: true)),
         ]
     }()
 
@@ -321,14 +326,19 @@ private struct SkillInstallSectionView: View {
                             Button {
                                 installSkill(for: target)
                             } label: {
-                                // The checkmark marks agents whose skills folder
-                                // already links to THIS app's bundle; picking one
-                                // again reinstalls (refreshes the link).
-                                if installedTargets.contains(target.id) {
-                                    Label("\(target.name)  \(Self.displayPath(target.skillsDirectory))",
-                                          systemImage: "checkmark")
-                                } else {
-                                    Text("\(target.name)  \(Self.displayPath(target.skillsDirectory))")
+                                // The agent's brand icon leads each row; a
+                                // trailing ✓ marks agents whose skills folder
+                                // already links to THIS app's bundle (picking
+                                // one again reinstalls / refreshes the link).
+                                Label {
+                                    Text("\(target.name)  \(Self.displayPath(target.skillsDirectory))"
+                                         + (installedTargets.contains(target.id) ? "  ✓" : ""))
+                                } icon: {
+                                    Image(target.iconAsset)
+                                        .renderingMode(.template)
+                                        .resizable()
+                                        .scaledToFit()
+                                        .frame(width: 15, height: 15)
                                 }
                             }
                         }

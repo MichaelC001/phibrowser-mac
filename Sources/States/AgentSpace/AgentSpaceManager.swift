@@ -69,6 +69,88 @@ struct AgentTask {
     /// (`isPersistentAgentSpaceModel` + name == taskId) so a later task with
     /// the same taskId re-binds to it instead of creating a duplicate.
     var persistent: Bool = false
+    /// The code agent driving this Space, as resolved from the CDP
+    /// connection's authenticated identity (the signing identifier or process
+    /// name — e.g. "Claude Code", "Codex", or the terminal that launched it).
+    /// Empty for phi-agent tasks and when the identity couldn't be resolved.
+    /// Surfaced as a badge on the control pill and the transcript filter.
+    var agentName: String = ""
+}
+
+/// Presentation for "which code agent drives this Space": an icon plus a short
+/// label, derived from the task's resolved driver identity. `assetName` is a
+/// bundled brand icon (template imageset under Assets ▸ agents) when the agent
+/// is recognized; otherwise `symbol` is an SF Symbol fallback. Kept
+/// framework-neutral so both the AppKit control pill and the SwiftUI transcript
+/// panel render it. Best-effort — the ancestry-based identity often resolves to
+/// the launching terminal, so unknown drivers fall back to a generic glyph.
+struct AgentDriverBadge {
+    /// A bundled template imageset name, or nil to use `symbol`.
+    let assetName: String?
+    /// SF Symbol fallback, used when `assetName` is nil.
+    let symbol: String
+    let label: String
+
+    /// The agent imagesets are normalized so every glyph's ink spans 42px of
+    /// the 54px canvas (equal optical size across brands). A view that fits
+    /// the CANVAS to a slot therefore renders the ink at 78% of it — visibly
+    /// smaller than an SF Symbol in the same slot. Views mixing both divide
+    /// their slot size by this ratio for the asset case, so the ink — not the
+    /// canvas — matches the neighbors.
+    static let assetInkRatio: CGFloat = 42.0 / 54.0
+
+    static func make(agentName: String, origin: AgentTaskOrigin) -> AgentDriverBadge {
+        if origin == .phiAgent {
+            return AgentDriverBadge(assetName: nil, symbol: "sparkles", label: "Phi")
+        }
+        let lower = agentName.lowercased()
+        if lower.contains("claude") {
+            return AgentDriverBadge(assetName: "agent-claude",
+                                    symbol: "chevron.left.forwardslash.chevron.right",
+                                    label: "Claude Code")
+        }
+        if lower.contains("codex") || lower.contains("openai") {
+            return AgentDriverBadge(assetName: "agent-openai",
+                                    symbol: "chevron.left.forwardslash.chevron.right",
+                                    label: "Codex")
+        }
+        if lower.contains("openclaw") {
+            return AgentDriverBadge(assetName: "agent-openclaw",
+                                    symbol: "chevron.left.forwardslash.chevron.right",
+                                    label: "OpenClaw")
+        }
+        if lower.contains("cursor") {
+            return AgentDriverBadge(assetName: "agent-cursor",
+                                    symbol: "chevron.left.forwardslash.chevron.right",
+                                    label: "Cursor")
+        }
+        // "pi" is a short token — match it precisely so it doesn't collide with
+        // unrelated identities (api, raspberry, …).
+        if lower == "pi" || lower.hasPrefix("pi.") || lower.hasPrefix("pi-")
+            || lower.contains("pi.dev") || lower.contains(".pi.") {
+            return AgentDriverBadge(assetName: "agent-pi",
+                                    symbol: "chevron.left.forwardslash.chevron.right",
+                                    label: "Pi")
+        }
+        // A recognizable terminal is still useful context (that's who launched
+        // the agent); otherwise show whatever name resolved, or a generic tag.
+        let friendly = Self.friendlyName(agentName)
+        return AgentDriverBadge(
+            assetName: nil,
+            symbol: "terminal",
+            label: friendly.isEmpty ? "Code agent" : friendly)
+    }
+
+    /// Reduces a signing identifier / bundle id to a readable label —
+    /// "com.apple.Terminal" → "Terminal", "com.googlecode.iterm2" → "iterm2".
+    private static func friendlyName(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty, trimmed != "Unknown process" else { return "" }
+        if let last = trimmed.split(separator: ".").last, trimmed.contains(".") {
+            return String(last)
+        }
+        return trimmed
+    }
 }
 
 /// A transient visual mirror of one agent input action (a click, typing into
@@ -93,6 +175,17 @@ struct AgentEffect {
     let size: CGSize?
     /// For `.scroll`: the wheel's deltaY — the sign gives the direction hint.
     let dy: CGFloat?
+}
+
+/// A command the user typed into the agent console, waiting for the driving
+/// agent to pick it up. Queued per task (the driver drains at its round
+/// boundaries via `agentSpace.readUserMessages`); a broadcast wakes a live
+/// round immediately, but the queue stays authoritative so a message sent
+/// between rounds is never lost.
+struct PendingUserMessage {
+    let id: UUID
+    let text: String
+    let ts: Date
 }
 
 /// App-scoped owner of agent-task state. Window lifecycle stays in
@@ -157,6 +250,13 @@ final class AgentSpaceManager: ObservableObject {
     let effectRequested = PassthroughSubject<AgentEffect, Never>()
 
     private var spaceIdByTaskId: [String: String] = [:]
+
+    /// User commands typed into the agent console, per task, until the driver
+    /// drains them (`drainUserMessages`). Bounded so an unread console can't
+    /// grow without limit; dropped with the task.
+    private var pendingUserMessagesByTaskId: [String: [PendingUserMessage]] = [:]
+    static let maxPendingUserMessages = 50
+    static let maxUserMessageChars = 2000
 
     // MARK: - Keep-alive timeout
 
@@ -348,6 +448,7 @@ final class AgentSpaceManager: ObservableObject {
         profileName: String,
         origin: AgentTaskOrigin = .phiAgent,
         persistent: Bool = false,
+        agentName: String = "",
         completion: @escaping (_ spaceId: String?, _ windowId: Int?) -> Void
     ) {
         if let existingSpaceId = spaceIdByTaskId[taskId] {
@@ -391,7 +492,7 @@ final class AgentSpaceManager: ObservableObject {
             }
             rebindPersistentSpace(taskId: taskId, spaceId: survivor.spaceId,
                                   profileId: survivor.profileId, origin: origin,
-                                  completion: completion)
+                                  agentName: agentName, completion: completion)
             return
         }
         // The cached profile list is empty when ProfileManager's init ran
@@ -444,17 +545,22 @@ final class AgentSpaceManager: ObservableObject {
             keepAliveDeadline: (origin == .cdp && !persistent)
                 ? Date().addingTimeInterval(Self.defaultKeepAliveTTL)
                 : .distantFuture,
-            persistent: persistent
+            persistent: persistent,
+            agentName: agentName
         )
         spaceIdByTaskId[taskId] = spaceId
         ensureKeepAliveSweep()
+        beginTranscript(taskId: taskId, spaceName: Self.agentSpaceName(number))
 
         guard let slot = SpaceManager.shared.keySlot ?? SpaceManager.shared.slots.first else {
             // No window open at all — the persisted-active Space hasn't been
             // surfaced. v1: fail cleanly; the caller retries once a window is up.
             AppLogWarn("[AgentSpace] createAgentSpace: no slot available to spawn into")
+            appendTranscript(taskId: taskId, kind: .error,
+                             text: "Task failed to start — no window to spawn into")
             tasksBySpaceId[spaceId] = nil
             spaceIdByTaskId[taskId] = nil
+            tearDownTranscript(taskId: taskId)
             SpaceManager.shared.deleteSpace(spaceId: spaceId)
             completion(nil, nil)
             return
@@ -463,8 +569,11 @@ final class AgentSpaceManager: ObservableObject {
         slot.spawnHiddenWindow(forSpaceId: spaceId) { [weak self] windowId in
             guard let self else { completion(nil, nil); return }
             guard let windowId else {
+                self.appendTranscript(taskId: taskId, kind: .error,
+                                      text: "Task failed to start — window spawn failed")
                 self.tasksBySpaceId[spaceId] = nil
                 self.spaceIdByTaskId[taskId] = nil
+                self.tearDownTranscript(taskId: taskId)
                 SpaceManager.shared.deleteSpace(spaceId: spaceId)
                 completion(nil, nil)
                 return
@@ -493,6 +602,7 @@ final class AgentSpaceManager: ObservableObject {
         spaceId: String,
         profileId: String,
         origin: AgentTaskOrigin,
+        agentName: String = "",
         completion: @escaping (_ spaceId: String?, _ windowId: Int?) -> Void
     ) {
         func record(windowId: Int, status: AgentTaskStatus) {
@@ -510,10 +620,12 @@ final class AgentSpaceManager: ObservableObject {
                 cursorTabId: nil,
                 hasUnseenError: false,
                 keepAliveDeadline: .distantFuture,
-                persistent: true
+                persistent: true,
+                agentName: agentName
             )
             spaceIdByTaskId[taskId] = spaceId
             ensureKeepAliveSweep()
+            beginTranscript(taskId: taskId, spaceName: taskId)
         }
 
         for slot in SpaceManager.shared.slots {
@@ -540,16 +652,22 @@ final class AgentSpaceManager: ObservableObject {
         record(windowId: 0, status: .starting)
         guard let slot = SpaceManager.shared.keySlot ?? SpaceManager.shared.slots.first else {
             AppLogWarn("[AgentSpace] rebind \(taskId): no slot available to spawn into")
+            appendTranscript(taskId: taskId, kind: .error,
+                             text: "Task failed to start — no window to spawn into")
             tasksBySpaceId[spaceId] = nil
             spaceIdByTaskId[taskId] = nil
+            tearDownTranscript(taskId: taskId)
             completion(nil, nil)
             return
         }
         slot.spawnHiddenWindow(forSpaceId: spaceId) { [weak self] windowId in
             guard let self else { completion(nil, nil); return }
             guard let windowId else {
+                self.appendTranscript(taskId: taskId, kind: .error,
+                                      text: "Task failed to start — window spawn failed")
                 self.tasksBySpaceId[spaceId] = nil
                 self.spaceIdByTaskId[taskId] = nil
+                self.tearDownTranscript(taskId: taskId)
                 completion(nil, nil)
                 return
             }
@@ -599,10 +717,15 @@ final class AgentSpaceManager: ObservableObject {
     /// extension broadcast → phi-agent HTTP (`.phiAgent` tasks only). Local
     /// state stays `.user` even if the HTTP call fails (local enforcement
     /// already holds).
-    func takeControl(spaceId: String) {
+    func takeControl(spaceId: String, initiatedByAgent: Bool = false) {
         guard var task = tasksBySpaceId[spaceId] else { return }
         task.ownership = .user
         tasksBySpaceId[spaceId] = task
+        // Agent-initiated handoffs log their own richer line (with the
+        // agent's message) in `interruptByAgentRequest`.
+        if !initiatedByAgent {
+            appendTranscript(taskId: task.taskId, kind: .status, text: "You took control")
+        }
         // The user is driving now — drop the operating mask.
         refreshOperatingMask(forSpaceId: spaceId,
                              activeTabId: currentActiveTabId(forSpaceId: spaceId))
@@ -625,7 +748,9 @@ final class AgentSpaceManager: ObservableObject {
     func interruptByAgentRequest(taskId: String, message: String? = nil) -> Bool {
         guard let spaceId = spaceIdByTaskId[taskId] else { return false }
         AppLogInfo("[AgentSpace] agent handed control to user: task=\(taskId) spaceId=\(spaceId)")
-        takeControl(spaceId: spaceId)
+        appendTranscript(taskId: taskId, kind: .status,
+                         text: "Agent handed control to you", detail: message)
+        takeControl(spaceId: spaceId, initiatedByAgent: true)
         presentHandoffPrompt(spaceId: spaceId, message: message)
         return true
     }
@@ -721,6 +846,8 @@ final class AgentSpaceManager: ObservableObject {
             var t = task
             t.ownership = .agent
             tasksBySpaceId[spaceId] = t
+            appendTranscript(taskId: taskId, kind: .status,
+                             text: "You handed control back to the agent")
             refreshOperatingMask(forSpaceId: spaceId,
                                  activeTabId: currentActiveTabId(forSpaceId: spaceId))
             ChromiumLauncher.sharedInstance().bridge?
@@ -747,6 +874,8 @@ final class AgentSpaceManager: ObservableObject {
                 guard let self, var t = self.tasksBySpaceId[spaceId] else { return }
                 t.ownership = .agent
                 self.tasksBySpaceId[spaceId] = t
+                self.appendTranscript(taskId: taskId, kind: .status,
+                                      text: "You handed control back to the agent")
                 self.refreshOperatingMask(forSpaceId: spaceId,
                                           activeTabId: self.currentActiveTabId(forSpaceId: spaceId))
                 ChromiumLauncher.sharedInstance().bridge?
@@ -766,6 +895,7 @@ final class AgentSpaceManager: ObservableObject {
         guard task.ownership == .user else { return true }
         task.ownership = .agent
         tasksBySpaceId[spaceId] = task
+        appendTranscript(taskId: taskId, kind: .status, text: "Agent resumed control")
         refreshOperatingMask(forSpaceId: spaceId,
                              activeTabId: currentActiveTabId(forSpaceId: spaceId))
         ChromiumLauncher.sharedInstance().bridge?
@@ -814,10 +944,98 @@ final class AgentSpaceManager: ObservableObject {
         SpaceManager.shared.activateInFocusedWindow(spaceId: next.spaceId)
     }
 
+    // MARK: - Transcript / user console
+
+    /// Appends one line to the task's live transcript (the console mirror of
+    /// the driving code agent's session). Drops silently for unknown tasks —
+    /// a late line from a dying round must not resurrect state. `timestamp`
+    /// defaults to now; a mirrored session line passes the source event's real
+    /// time so backfilled prose sorts into its true place.
+    func appendTranscript(taskId: String, kind: AgentTranscriptEntry.Kind,
+                          text: String, detail: String? = nil,
+                          timestamp: Date = Date()) {
+        guard let spaceId = spaceIdByTaskId[taskId],
+              let task = tasksBySpaceId[spaceId] else { return }
+        AgentTranscriptStore.shared.append(
+            taskId: taskId, kind: kind, text: text, detail: detail,
+            taskNumber: task.number, timestamp: timestamp)
+    }
+
+    /// A command the user typed into the agent console: echo it into the
+    /// transcript, queue it for the driver's next drain, and broadcast so a
+    /// round that is live RIGHT NOW (`waitForUserMessage`) wakes without
+    /// polling. The queue stays authoritative — the broadcast is advisory.
+    func sendUserMessage(taskId: String, text: String) {
+        guard let spaceId = spaceIdByTaskId[taskId],
+              tasksBySpaceId[spaceId] != nil else { return }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let capped = String(trimmed.prefix(Self.maxUserMessageChars))
+        let message = PendingUserMessage(id: UUID(), text: capped, ts: Date())
+        var queue = pendingUserMessagesByTaskId[taskId] ?? []
+        queue.append(message)
+        if queue.count > Self.maxPendingUserMessages {
+            queue.removeFirst(queue.count - Self.maxPendingUserMessages)
+        }
+        pendingUserMessagesByTaskId[taskId] = queue
+        appendTranscript(taskId: taskId, kind: .user, text: capped)
+        // Same rule as broadcastOwnership: user text is freeform — serialize,
+        // never interpolate into JSON.
+        guard let data = try? JSONSerialization.data(withJSONObject: [
+                "taskId": taskId, "id": message.id.uuidString, "text": capped]),
+              let payload = String(data: data, encoding: .utf8) else { return }
+        ExtensionMessaging.shared.broadcast(type: "agentSpace.userMessage", payload: payload)
+    }
+
+    /// Hands the queued user commands to the driver and empties the queue.
+    func drainUserMessages(taskId: String) -> [PendingUserMessage] {
+        let messages = pendingUserMessagesByTaskId[taskId] ?? []
+        pendingUserMessagesByTaskId[taskId] = nil
+        return messages
+    }
+
+    /// Undrained command count, surfaced in `agentSpace.list` rows so the
+    /// skill's passive reads (`spaceStatus`) see pending input for free.
+    func pendingUserMessageCount(taskId: String) -> Int {
+        pendingUserMessagesByTaskId[taskId]?.count ?? 0
+    }
+
+    /// Console setup at task (re)start: a reused persistent Space must not
+    /// tail last week's transcript, so clear first, then the opening line.
+    /// Auto-opens the console when Agent Autoview is on — same preference,
+    /// same intent: the user wants to watch the agent work.
+    private func beginTranscript(taskId: String, spaceName: String) {
+        AgentTranscriptStore.shared.clear(taskId: taskId)
+        appendTranscript(taskId: taskId, kind: .status,
+                         text: "Task started — Space \(spaceName)")
+        if PhiPreferences.AgentSpaces.autoViewEnabled {
+            AgentTranscriptPanelController.shared.show(focusTaskId: taskId)
+        } else {
+            // Panel already open: keep its feed pointed at something real if
+            // its filter was left on a task that has since ended.
+            AgentTranscriptPanelController.shared.refocusIfStale(onto: taskId)
+        }
+    }
+
+    /// Buffer/queue teardown when a task record goes away. Retention: an OPEN
+    /// console keeps the transcript so the user can read how the task ended
+    /// (reaped when the panel closes); otherwise it is freed immediately.
+    private func tearDownTranscript(taskId: String) {
+        pendingUserMessagesByTaskId[taskId] = nil
+        if !AgentTranscriptPanelController.shared.isVisible {
+            AgentTranscriptStore.shared.clear(taskId: taskId)
+        }
+    }
+
     // MARK: - State / completion (inbound from the agent)
 
     func setStatusCaption(taskId: String, caption: String) {
         guard let spaceId = spaceIdByTaskId[taskId], var task = tasksBySpaceId[spaceId] else { return }
+        // The caption doubles as the console's narration stream; only a real
+        // change becomes a line (drivers re-assert captions freely).
+        if !caption.isEmpty, caption != task.statusCaption {
+            appendTranscript(taskId: taskId, kind: .narration, text: caption)
+        }
         task.statusCaption = caption
         tasksBySpaceId[spaceId] = task
     }
@@ -831,6 +1049,14 @@ final class AgentSpaceManager: ObservableObject {
         case .completed, .failed:
             return
         case .starting, .running, .idle:
+            // Console round separators, on real edges only — drivers re-assert
+            // their run state freely (round start after a fresh spawn, control
+            // guards), and a re-assertion is not a new round.
+            let wasRunning = task.status == .running
+            if wasRunning != running {
+                appendTranscript(taskId: taskId, kind: .round,
+                                 text: running ? "round started" : "round ended")
+            }
             task.status = running ? .running : .idle
             if running && task.origin == .cdp && !task.persistent {
                 // A round is starting to drive: reset the deadline to the short
@@ -864,6 +1090,7 @@ final class AgentSpaceManager: ObservableObject {
 
     func markError(taskId: String, message: String) {
         guard let spaceId = spaceIdByTaskId[taskId], var task = tasksBySpaceId[spaceId] else { return }
+        appendTranscript(taskId: taskId, kind: .error, text: message)
         task.status = .failed(message: message)
         task.hasUnseenError = true
         tasksBySpaceId[spaceId] = task
@@ -890,8 +1117,12 @@ final class AgentSpaceManager: ObservableObject {
         }
         ChromiumLauncher.sharedInstance().bridge?
             .setAgentMode(false, windowId: Int64(task.windowId))
+        appendTranscript(taskId: taskId, kind: success ? .status : .error,
+                         text: success ? "Task completed" : "Task failed",
+                         detail: message)
         tasksBySpaceId[spaceId] = nil
         spaceIdByTaskId[taskId] = nil
+        tearDownTranscript(taskId: taskId)
         dismissHandoffPrompt(forSpaceId: spaceId)
         if task.persistent {
             SpaceManager.shared.closeSpaceWindows(spaceId: spaceId)
@@ -916,8 +1147,11 @@ final class AgentSpaceManager: ObservableObject {
         if let masked = task.maskedTabId {
             AgentAnimationManager.shared.setActive(false, for: masked)
         }
+        appendTranscript(taskId: task.taskId, kind: .status,
+                         text: "Space deleted by the user — task ended")
         tasksBySpaceId[spaceId] = nil
         spaceIdByTaskId[task.taskId] = nil
+        tearDownTranscript(taskId: task.taskId)
         dismissHandoffPrompt(forSpaceId: spaceId)
         stopKeepAliveSweepIfIdle()
         autoViewReevaluate(delay: 0.8)

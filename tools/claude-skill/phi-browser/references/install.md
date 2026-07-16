@@ -75,12 +75,48 @@ it drives a throwaway hidden Space against a local HTTP server, ~60s:
 node ~/.claude/skills/phi-browser/scripts/selftest.mjs
 ```
 
+## 4. Session mirror (automatic, two-way)
+
+The Agent Transcript panel (View ▸ Agent Transcript) always shows the browser
+action steps, narration, rounds, and lifecycle. Under Claude Code the driving
+session is ALSO mirrored automatically, in both directions, with no setup:
+`ensureAgentSpace` locates the session's own transcript (via
+`CLAUDE_CODE_SESSION_ID`) and spawns a small tailer daemon
+(`scripts/mirror-tailer.mjs`) that
+
+- forwards your prompts and the assistant's reply prose into the Space's
+  console while the task is live, and
+- delivers commands you type into the console back INTO the idle session, by
+  typing them into the terminal tab running it (prefixed `[phi-console]`).
+  The first delivery asks for macOS Automation permission (node →
+  Terminal/iTerm2); if you decline — or the session runs under tmux or
+  another terminal — commands simply stay queued until the agent's next
+  round, as before. Nothing is ever typed unless the agent process itself
+  owns the terminal foreground.
+
+The daemon exits on its own when the task completes, when the session goes
+quiet for 30 minutes, when the agent process exits, or when the task
+disappears. Set `PHI_NO_SESSION_MIRROR=1` in the environment to opt out.
+
+Under other agents (e.g. Codex), call `say('…')` from a heredoc to reflect
+your own prose into the console manually — `say(text, {role:'user'})` echoes a
+user line; `narrate(text)` doubles as narration + the overlay pill.
+
 ## Troubleshooting
 
 - **CDP endpoint not found**: the toggle isn't on for the bundle id actually
   running (canary vs release), so no `CDPAgentSocket` pointer file exists. Turn
   on Settings ▸ Developer ▸ Remote debugging (no relaunch). Set
   `PHI_USER_DATA_DIR` to override the user-data-dir candidates.
+- **Console shows browser steps but not the conversation**: the CLI doesn't
+  export `CLAUDE_CODE_SESSION_ID` (update Claude Code, or use `say()`),
+  `PHI_NO_SESSION_MIRROR` is set, or the skill running your heredocs predates
+  the session mirror — rebuild Phi so the bundled skill has it.
+- **Console commands don't reach an idle session**: the first delivery needs
+  macOS Automation permission (node → your terminal app) — approve the
+  prompt, or re-grant under System Settings ▸ Privacy & Security ▸
+  Automation. Under tmux or an unsupported terminal, commands are picked up
+  at the agent's next round instead.
 - **Access denied**: you (or a stale *Always Allow*) denied this agent. Approve
   the next prompt, or remove the agent under Settings ▸ Developer ▸ Remote
   debugging ▸ Remembered agents and reconnect to be asked again.

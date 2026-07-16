@@ -54,11 +54,13 @@ struct AgentGrant: Identifiable {
     let remembered: Bool
     var id: String { key }
 
-    /// Signing identifier, or the executable name for an unsigned peer.
+    /// Signing identifier, or a friendly name derived from the path for an
+    /// unsigned/script peer (e.g. a `node` CLI agent named by the script it
+    /// runs, not the interpreter binary).
     var displayName: String {
         if key.hasPrefix("unsigned:") {
             let path = String(key.dropFirst("unsigned:".count))
-            return (path as NSString).lastPathComponent
+            return AgentPeerIdentity.deriveAgentName(fromPath: path)
         }
         if let range = key.range(of: ":") {
             return String(key[range.upperBound...])
@@ -85,6 +87,15 @@ enum AgentPeerIdentity {
         "env", "login", "sudo", "xargs", "timeout",
     ]
 
+    /// The subset of `passthroughNames` that run a SCRIPT as their first real
+    /// argument. When the responsible process is one of these (a bare CLI agent
+    /// with no signed-app ancestor), we name it by the script it runs rather
+    /// than by the interpreter's meaningless ad-hoc signing id ("node-<cdhash>").
+    private static let scriptInterpreters: Set<String> = [
+        "node", "deno", "bun", "tsx", "ts-node",
+        "python", "python2", "python3", "ruby", "perl", "php", "uv", "uvx",
+    ]
+
     /// Resolves the identity of the process connected on `socketFD`, or nil
     /// when the peer pid can't be read. Runs synchronous filesystem and
     /// Security calls — call it off the main thread.
@@ -92,7 +103,140 @@ enum AgentPeerIdentity {
         guard let peerPID = peerProcessID(socketFD: socketFD) else { return nil }
         let responsible = responsiblePID(startingAt: peerPID)
         let path = executablePath(responsible) ?? "pid-\(responsible)"
-        return signingIdentity(pid: responsible, executablePath: path)
+        let signed = signingIdentity(pid: responsible, executablePath: path)
+        // A bare interpreter (e.g. a `node` CLI agent with no signed-app
+        // ancestor) resolves to a per-build ad-hoc id like "node-<cdhash>",
+        // which is meaningless and brittle. Name it by the script it runs.
+        let exeName = (path as NSString).lastPathComponent
+        if scriptInterpreters.contains(exeName),
+           let scripted = scriptIdentity(startingAt: peerPID) {
+            return scripted
+        }
+        return signed
+    }
+
+    /// Walks the ancestry for the nearest interpreter that identifies a real
+    /// agent — either by a custom `argv[0]` (an agent that runs `node` but
+    /// renames itself "pi") or by the script it runs — skipping this skill's
+    /// own runner. So a `node`-based agent shows as "pi" rather than "node".
+    /// Returns nil when nothing better than the interpreter is found.
+    private static func scriptIdentity(startingAt peerPID: pid_t) -> AgentIdentity? {
+        var pid = peerPID
+        var guardCount = 0
+        while pid > 1 && guardCount < 32 {
+            guardCount += 1
+            if let exe = executablePath(pid),
+               scriptInterpreters.contains((exe as NSString).lastPathComponent),
+               let identity = interpreterIdentity(pid: pid, exe: exe) {
+                return identity
+            }
+            guard let parent = parentPID(pid), parent != pid else { break }
+            pid = parent
+        }
+        return nil
+    }
+
+    /// Identity of one interpreter process: prefers a custom `argv[0]` the
+    /// agent branded itself with (e.g. Pi launches `node` with argv[0]="pi"),
+    /// else the script file it runs. Returns nil for a plain interpreter or
+    /// this skill's own runner, so the walk keeps looking upward.
+    private static func interpreterIdentity(pid: pid_t, exe: String) -> AgentIdentity? {
+        guard let argv = processArgv(pid), let arg0 = argv.first else { return nil }
+        let interpreterName = (exe as NSString).lastPathComponent
+        let arg0Name = (arg0 as NSString).lastPathComponent
+        // (1) Custom argv[0] branding: a bare name (not a path) that isn't the
+        //     interpreter's own — the agent's self-declared identity.
+        if !arg0.contains("/"), !arg0Name.isEmpty, arg0Name != interpreterName,
+           !scriptInterpreters.contains(arg0Name) {
+            return unsignedIdentity(name: arg0Name, path: arg0Name, exe: exe)
+        }
+        // (2) Otherwise the script it runs — the first existing non-flag arg
+        //     that isn't our own runner.
+        for arg in argv.dropFirst() {
+            if arg.hasPrefix("-") { continue }
+            if FileManager.default.fileExists(atPath: arg), !isOwnRunner(arg) {
+                return unsignedIdentity(
+                    name: deriveAgentName(fromPath: arg), path: arg, exe: exe)
+            }
+        }
+        return nil
+    }
+
+    private static func unsignedIdentity(name: String, path: String,
+                                         exe: String) -> AgentIdentity {
+        AgentIdentity(key: "unsigned:\(path)", displayName: name,
+                      teamId: nil, verified: false, executablePath: exe)
+    }
+
+    /// This skill's own heredoc runner — skipped when walking for the agent so
+    /// we identify the launcher above it, not our own script.
+    private static func isOwnRunner(_ scriptPath: String) -> Bool {
+        scriptPath.contains("/phi-browser/scripts/")
+    }
+
+    /// A readable agent name from a script/executable path: the npm package
+    /// name when under `node_modules`, else a meaningful file stem, else the
+    /// nearest meaningful parent directory. `.../pi/cli.js` → "pi".
+    static func deriveAgentName(fromPath path: String) -> String {
+        if let r = path.range(of: "/node_modules/") {
+            let comps = path[r.upperBound...].split(separator: "/").map(String.init)
+            if let first = comps.first {
+                if first.hasPrefix("@"), comps.count >= 2 { return comps[1] }
+                return first
+            }
+        }
+        let generic: Set<String> = [
+            "cli", "index", "main", "bin", "dist", "build", "src", "lib",
+            "run", "start", "runner", "server", "app", "out", "node_modules",
+        ]
+        let base = (path as NSString).lastPathComponent
+        let stem = (base as NSString).deletingPathExtension
+        if !stem.isEmpty, !generic.contains(stem.lowercased()) { return stem }
+        var dir = (path as NSString).deletingLastPathComponent
+        for _ in 0..<5 {
+            let comp = (dir as NSString).lastPathComponent
+            if comp.isEmpty { break }
+            let bare = comp.hasPrefix(".") ? String(comp.dropFirst()) : comp
+            if !bare.isEmpty, !generic.contains(bare.lowercased()) { return bare }
+            dir = (dir as NSString).deletingLastPathComponent
+        }
+        return stem.isEmpty ? base : stem
+    }
+
+    /// A process's argv via `KERN_PROCARGS2` (same-uid processes only, which
+    /// the ancestry always is). Layout: Int32 argc, exec_path, null padding,
+    /// then argc null-terminated argument strings.
+    private static func processArgv(_ pid: pid_t) -> [String]? {
+        var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
+        var size = 0
+        guard sysctl(&mib, UInt32(mib.count), nil, &size, nil, 0) == 0, size > 4 else {
+            return nil
+        }
+        var buffer = [UInt8](repeating: 0, count: size)
+        guard sysctl(&mib, UInt32(mib.count), &buffer, &size, nil, 0) == 0 else { return nil }
+        var argc: Int32 = 0
+        withUnsafeMutableBytes(of: &argc) { dst in
+            buffer.withUnsafeBytes { src in
+                dst.copyMemory(from: UnsafeRawBufferPointer(rebasing: src[0..<4]))
+            }
+        }
+        var pos = MemoryLayout<Int32>.size
+        func nextString() -> String? {
+            guard pos < size else { return nil }
+            let start = pos
+            while pos < size && buffer[pos] != 0 { pos += 1 }
+            let s = String(decoding: buffer[start..<pos], as: UTF8.self)
+            pos += 1  // skip the null terminator
+            return s
+        }
+        _ = nextString()                                  // exec_path
+        while pos < size && buffer[pos] == 0 { pos += 1 } // padding before argv[0]
+        var args: [String] = []
+        for _ in 0..<Int(argc) {
+            guard let s = nextString() else { break }
+            args.append(s)
+        }
+        return args
     }
 
     /// True when the socket peer runs under the same uid as this process. The

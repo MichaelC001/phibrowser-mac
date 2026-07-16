@@ -216,7 +216,7 @@ final class AgentCDPListener {
         // upgrade is an agentSpace.* channel served in the app; everything else
         // (/json, /devtools) is stock CDP handed to Chromium with the fd intact.
         if Self.peekIsPhiAgent(fd) {
-            AgentDirectConnection(fd: fd).start()
+            AgentDirectConnection(fd: fd, agentName: identity.displayName).start()
             return
         }
 

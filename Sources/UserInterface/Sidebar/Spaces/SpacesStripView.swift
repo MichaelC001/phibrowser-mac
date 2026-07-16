@@ -521,9 +521,6 @@ struct SpacesStripView: View {
                     .overlay(alignment: .topTrailing) {
                         agentBadge(for: space.spaceId)
                     }
-                    .overlay(alignment: .bottomTrailing) {
-                        agentNumberBadge(for: space.spaceId)
-                    }
                     .opacity(stripDraggingId == space.spaceId ? 0.5 : 1)
                     // `.clipped()` below is visual only — pips beyond the
                     // window would still swallow clicks/hovers aimed at the
@@ -687,19 +684,38 @@ struct SpacesStripView: View {
         }
     }
 
-    /// Bottom-trailing ordinal badge (1, 2, 3…) that tells several concurrent
-    /// agent Spaces apart. Only agent Spaces carry a task, so only they show it.
+    /// The pip's icon. For a Space with a live agent task, draw the driving
+    /// agent's brand icon (Claude, Codex, Pi, …) so the pip identifies who is
+    /// working — a render-time override only: the Space keeps its stored robot
+    /// signature (the agent-Space detection/orphan-sweep depend on it), and
+    /// these icons are never added to the user's icon picker. Falls back to the
+    /// stored icon when no task is live (e.g. a persistent agent Space between
+    /// rounds).
     @ViewBuilder
-    private func agentNumberBadge(for spaceId: String) -> some View {
-        if let task = agentSpaceManager.tasksBySpaceId[spaceId] {
-            Text(verbatim: "\(task.number)")
-                .font(.system(size: 8, weight: .bold))
-                .foregroundStyle(.white)
-                .frame(minWidth: 9, minHeight: 9)
-                .padding(2)
-                .background(Circle().fill(Color.accentColor))
-                .overlay(Circle().stroke(Color(nsColor: .windowBackgroundColor), lineWidth: 1))
-                .offset(x: 3, y: 3)
+    private func pipIcon(for space: SpaceModel) -> some View {
+        if let task = agentSpaceManager.tasksBySpaceId[space.spaceId] {
+            let badge = AgentDriverBadge.make(agentName: task.agentName, origin: task.origin)
+            Group {
+                if let asset = badge.assetName {
+                    // Brand assets carry padding around their ink (see
+                    // `assetInkRatio`); widen the frame so the INK matches the
+                    // neighboring pips' SF Symbol glyphs at `iconSize`.
+                    Image(asset).renderingMode(.template).resizable().scaledToFit()
+                        .frame(width: Self.iconSize / AgentDriverBadge.assetInkRatio,
+                               height: Self.iconSize / AgentDriverBadge.assetInkRatio)
+                } else {
+                    Image(systemName: badge.symbol).resizable().scaledToFit()
+                        .frame(width: Self.iconSize, height: Self.iconSize)
+                }
+            }
+            .foregroundStyle(Color.primary)
+        } else {
+            SpaceIconView(
+                storedValue: space.iconName,
+                size: Self.iconSize,
+                symbolWeight: .semibold,
+                tint: Color.primary
+            )
         }
     }
 
@@ -714,12 +730,7 @@ struct SpacesStripView: View {
         return Button {
             activatePip(space)
         } label: {
-            SpaceIconView(
-                storedValue: space.iconName,
-                size: Self.iconSize,
-                symbolWeight: .semibold,
-                tint: Color.primary
-            )
+            pipIcon(for: space)
             .opacity(isActive ? 1 : 0.4)
             .frame(width: 24, height: rowHeight)
             // Publishes this pip's frame under its spaceId, for the
@@ -739,6 +750,19 @@ struct SpacesStripView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(space.name)
+        // Agent pips only: a shortcut into the session console, filtered to
+        // this task. Left-click must stay "switch Space", and the hover card
+        // renders in a passthrough panel that can't host buttons — so the
+        // context menu is the pip's one interactive extra.
+        .contextMenu {
+            if let task = agentSpaceManager.tasksBySpaceId[space.spaceId] {
+                Button(NSLocalizedString(
+                    "Show Transcript",
+                    comment: "Agent pip context menu - open the agent console for this task")) {
+                    AgentTranscriptPanelController.shared.show(focusTaskId: task.taskId)
+                }
+            }
+        }
         .onHover { hovering in
             if hovering {
                 highlightedPipId = space.spaceId
