@@ -3,6 +3,7 @@
 // Use of this source code is governed by an Apache license that can be
 // found in the LICENSE file.
 
+import AppKit
 import XCTest
 @testable import Phi
 
@@ -177,5 +178,203 @@ final class SidebarDiffableSnapshotTests: XCTestCase {
                 to: updated
             )
         )
+    }
+
+    func testTabSectionRootItemsTreatsRepeatedObjectsAsUnchanged() {
+        let first = SnapshotSidebarItem(id: "first")
+        let second = SnapshotSidebarItem(id: "second")
+
+        XCTAssertFalse(
+            TabSectionController.rootItemsChanged(
+                from: [first, second],
+                to: [first, second]
+            )
+        )
+    }
+
+    func testTabSectionRootItemsTreatsSameIDReplacementAsChanged() {
+        let oldItem = SnapshotSidebarItem(id: "item")
+        let replacement = SnapshotSidebarItem(id: "item")
+
+        XCTAssertTrue(
+            TabSectionController.rootItemsChanged(
+                from: [oldItem],
+                to: [replacement]
+            )
+        )
+    }
+
+    func testTabSectionRootItemsTreatsReorderAsChanged() {
+        let first = SnapshotSidebarItem(id: "first")
+        let second = SnapshotSidebarItem(id: "second")
+
+        XCTAssertTrue(
+            TabSectionController.rootItemsChanged(
+                from: [first, second],
+                to: [second, first]
+            )
+        )
+    }
+
+    func testTabSectionRootItemsTreatsInsertAsChanged() {
+        let first = SnapshotSidebarItem(id: "first")
+        let second = SnapshotSidebarItem(id: "second")
+
+        XCTAssertTrue(
+            TabSectionController.rootItemsChanged(
+                from: [first],
+                to: [first, second]
+            )
+        )
+    }
+}
+
+@MainActor
+final class SidebarTabSectionFastPathTests: XCTestCase {
+    private var tempDirectories: [URL] = []
+
+    override func tearDownWithError() throws {
+        for directory in tempDirectories {
+            try? FileManager.default.removeItem(at: directory)
+        }
+        tempDirectories.removeAll()
+        try super.tearDownWithError()
+    }
+
+    func testNoOpTabSectionUpdateRefreshesSelectionAndVisibleBookmarks() throws {
+        let state = try makeState()
+        let bookmarkGuid = "fast-path-bookmark"
+        state.localStore.createBookmark(
+            url: "https://bookmark.example",
+            title: "Bookmark",
+            profileId: state.profileId,
+            parentId: nil,
+            guid: bookmarkGuid,
+            spaceId: state.spaceId
+        )
+        guard waitUntil({
+            state.bookmarkManager.bookmark(withGuid: bookmarkGuid) != nil
+        }) else { return }
+        let bookmark = try XCTUnwrap(state.bookmarkManager.bookmark(withGuid: bookmarkGuid))
+        let tab = seedActiveTab(in: state, guid: 101)
+        let (controller, outlineView) = try makeActiveSidebar(for: state)
+        defer { controller.setActive(false) }
+        guard waitUntil({
+            outlineView.row(forItem: bookmark) >= 0
+                && outlineView.row(forItem: tab) >= 0
+                && state.visibleBookmarkTabs.map(\.guid) == [bookmarkGuid]
+        }) else { return }
+        waitForMainQueueUpdates()
+
+        outlineView.deselectAll(nil)
+        state.visibleBookmarkTabs = []
+
+        controller.tabSectionDidUpdate(with: TabSectionChange(
+            rootItemsChanged: false,
+            affectedGroupTokens: [],
+            affectedSplitIds: []
+        ))
+
+        XCTAssertEqual(
+            outlineView.selectedRowIndexes,
+            IndexSet(integer: outlineView.row(forItem: tab))
+        )
+        guard waitUntil({
+            state.visibleBookmarkTabs.map(\.guid) == [bookmarkGuid]
+        }) else { return }
+    }
+
+    func testSameIDReplacementUsesFullDiffablePath() throws {
+        let state = try makeState()
+        let oldTab = seedActiveTab(in: state, guid: 201)
+        let (controller, outlineView) = try makeActiveSidebar(for: state)
+        defer { controller.setActive(false) }
+        guard waitUntil({
+            outlineView.row(forItem: oldTab) >= 0
+        }) else { return }
+
+        let replacement = Tab(
+            guid: oldTab.guid,
+            url: "https://replacement.example",
+            isActive: true,
+            index: 0,
+            title: "Replacement"
+        )
+        state.tabs = [replacement]
+        state.updateNormalTabs()
+
+        guard waitUntil({
+            (0..<outlineView.numberOfRows).contains { row in
+                (outlineView.item(atRow: row) as? Tab) === replacement
+            }
+        }) else { return }
+        XCTAssertFalse((0..<outlineView.numberOfRows).contains { row in
+            (outlineView.item(atRow: row) as? Tab) === oldTab
+        })
+    }
+
+    private func makeState() throws -> BrowserState {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        tempDirectories.append(directory)
+        let store = LocalStore(
+            account: Account(userID: UUID().uuidString),
+            storeDirectoryURL: directory
+        )
+        return BrowserState(windowId: 7, localStore: store, profileId: "Default")
+    }
+
+    private func seedActiveTab(in state: BrowserState, guid: Int) -> Tab {
+        let tab = Tab(
+            guid: guid,
+            url: "https://tab.example",
+            isActive: true,
+            index: 0,
+            title: "Tab"
+        )
+        state.tabs = [tab]
+        state.updateNormalTabs()
+        state.focuseTab(tab)
+        return tab
+    }
+
+    private func makeActiveSidebar(
+        for state: BrowserState
+    ) throws -> (SidebarTabListViewController, SideBarOutlineView) {
+        let controller = SidebarTabListViewController(state: state)
+        controller.loadViewIfNeeded()
+        controller.view.frame = NSRect(x: 0, y: 0, width: 320, height: 640)
+        controller.setActive(true)
+        controller.view.layoutSubtreeIfNeeded()
+        let scrollView = try XCTUnwrap(
+            controller.view.subviews.compactMap { $0 as? NSScrollView }.first
+        )
+        let outlineView = try XCTUnwrap(scrollView.documentView as? SideBarOutlineView)
+        return (controller, outlineView)
+    }
+
+    private func waitForMainQueueUpdates() {
+        let updatesFinished = expectation(description: "Main queue updates finished")
+        DispatchQueue.main.async {
+            DispatchQueue.main.async {
+                updatesFinished.fulfill()
+            }
+        }
+        wait(for: [updatesFinished], timeout: 1)
+    }
+
+    @discardableResult
+    private func waitUntil(
+        timeout: TimeInterval = 1,
+        _ condition: () -> Bool
+    ) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if condition() { return true }
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        }
+        XCTFail("Condition was not met before timeout.")
+        return false
     }
 }

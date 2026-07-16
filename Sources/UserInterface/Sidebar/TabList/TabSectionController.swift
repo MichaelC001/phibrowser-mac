@@ -9,6 +9,10 @@ import Combine
 /// Describes tab-section rows whose cells need extra rebinding after the
 /// root sidebar snapshot has been applied.
 struct TabSectionChange {
+    /// Whether the ordered root rows changed by stable id or object identity.
+    /// A false value lets the consumer keep group/split cell updates local
+    /// without rebuilding the bookmark-heavy shared outline snapshot.
+    let rootItemsChanged: Bool
     /// Group tokens whose live `state.normalTabs.filter { groupToken == token }`
     /// child list changed (membership added/removed or intra-group reorder).
     /// The consumer updates only these wrappers' cells — adding an
@@ -28,7 +32,7 @@ class TabSectionController: NSObject {
     /// Per-group inner subscriptions. Refreshed whenever `browserState.groups`
     /// changes (groups created/closed) so that title/color/isCollapsed
     /// edits and membership-mutation `objectWillChange.send()` calls
-    /// (kJoined/kLeft/pending-claim drain) trigger an outline rebuild.
+    /// (kJoined/kLeft/pending-claim drain) trigger tab-section reconciliation.
     private var groupContentsCancellables = Set<AnyCancellable>()
 
     private(set) var tabItems: [SidebarItem] = []
@@ -79,7 +83,7 @@ class TabSectionController: NSObject {
     init(state: BrowserState? = nil) {
         self.browserState = state
         super.init()
-        refreshTabItems([])
+        refreshTabItems([], trigger: "initial")
     }
 
     private func setupBindings() {
@@ -116,7 +120,7 @@ class TabSectionController: NSObject {
             .dropFirst()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] tabs in
-                self?.refreshTabItems(tabs)
+                self?.refreshTabItems(tabs, trigger: "normal-tabs")
             }
             .store(in: &cancellables)
 
@@ -131,7 +135,7 @@ class TabSectionController: NSObject {
             .sink { [weak self] _ in
                 guard let self else { return }
                 self.subscribeToGroupContents()
-                self.refreshTabItems(self.browserState?.normalTabs ?? [])
+                self.refreshTabItems(self.browserState?.normalTabs ?? [], trigger: "groups")
             }
             .store(in: &cancellables)
 
@@ -142,6 +146,13 @@ class TabSectionController: NSObject {
         browserState.$focusingTab
             .dropFirst()
             .sink { [weak self] focusingTab in
+#if DEBUG
+                AppLogDebug(
+                    "[PHI_DEBUG][PIN_CLICK][BM][SIDEBAR_REFRESH] " +
+                    "windowId=\(self?.browserState?.windowId ?? -1) stage=focus-publisher " +
+                    "tabId=\(focusingTab?.guid ?? -1) directTabSectionRefresh=false"
+                )
+#endif
                 self?.delegate?.focusingTabChanged(focusingTab)
             }
             .store(in: &cancellables)
@@ -155,7 +166,7 @@ class TabSectionController: NSObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 guard let self else { return }
-                self.refreshTabItems(self.browserState?.normalTabs ?? [])
+                self.refreshTabItems(self.browserState?.normalTabs ?? [], trigger: "splits")
             }
             .store(in: &cancellables)
     }
@@ -163,19 +174,22 @@ class TabSectionController: NSObject {
     /// (Re)subscribes to every current `WebContentGroupInfo`'s
     /// `objectWillChange`. Any change to title / color / isCollapsed plus
     /// membership-driven nudges from `BrowserState.handleTabJoined/Left/
-    /// drainPendingGroupClaim` trigger a rebuild on the next runloop tick
+    /// drainPendingGroupClaim` trigger reconciliation on the next runloop tick
     /// (deferral matters because objectWillChange fires before the new
     /// value is stored).
     private func subscribeToGroupContents() {
         groupContentsCancellables.forEach { $0.cancel() }
         groupContentsCancellables.removeAll()
         guard let browserState else { return }
-        for info in browserState.groups.values {
+        for (token, info) in browserState.groups {
             info.objectWillChange
                 .receive(on: DispatchQueue.main)
                 .sink { [weak self] in
                     guard let self else { return }
-                    self.refreshTabItems(self.browserState?.normalTabs ?? [])
+                    self.refreshTabItems(
+                        self.browserState?.normalTabs ?? [],
+                        trigger: "group-contents:\(token)"
+                    )
                 }
                 .store(in: &groupContentsCancellables)
         }
@@ -290,34 +304,85 @@ class TabSectionController: NSObject {
         return items
     }
 
-    private func refreshTabItems(_ tabs: [Tab]) {
+    private func refreshTabItems(_ tabs: [Tab], trigger: String) {
+        let previousItems = tabItems
+#if DEBUG
+        let refreshStart = CFAbsoluteTimeGetCurrent()
+        let windowID = browserState?.windowId ?? -1
+        let previousItemIDs = previousItems.map(\.id)
+        let previousItemIdentities = previousItems.map(ObjectIdentifier.init)
+#endif
         guard let browserState else {
             tabItems = []
             previousGroupMembers = [:]
             previousSplitMembers = [:]
+#if DEBUG
+            AppLogDebug(
+                "[PHI_DEBUG][PIN_CLICK][BM][SIDEBAR_REFRESH] " +
+                "windowId=\(windowID) stage=tab-section trigger=\(trigger) state=missing " +
+                "totalMs=\(String(format: "%.3f", (CFAbsoluteTimeGetCurrent() - refreshStart) * 1000))"
+            )
+#endif
             delegate?.tabSectionDidUpdate(with: TabSectionChange(
+                rootItemsChanged: !previousItems.isEmpty,
                 affectedGroupTokens: [],
                 affectedSplitIds: []
             ))
             return
         }
         let groups = browserState.groups
+#if DEBUG
+        let buildStart = CFAbsoluteTimeGetCurrent()
+#endif
         let items = buildItems(from: tabs, groups: groups, state: browserState)
+#if DEBUG
+        let buildMs = (CFAbsoluteTimeGetCurrent() - buildStart) * 1000
+        let diffStart = CFAbsoluteTimeGetCurrent()
+#endif
         let newGroupMembers = Self.computeGroupMembers(tabs: tabs)
         let affectedTokens = Self.affectedGroupTokens(old: previousGroupMembers,
                                                       new: newGroupMembers)
         let newSplitMembers = Self.computeSplitMembers(items: items)
         let affectedSplits = Self.affectedSplitIds(old: previousSplitMembers,
                                                    new: newSplitMembers)
+        let rootItemsChanged = Self.rootItemsChanged(from: previousItems, to: items)
 
         self.tabItems = items
         self.previousGroupMembers = newGroupMembers
         self.previousSplitMembers = newSplitMembers
 
+#if DEBUG
+        let memberDiffMs = (CFAbsoluteTimeGetCurrent() - diffStart) * 1000
+        let itemIDsChanged = previousItemIDs != items.map(\.id)
+        let itemIdentitiesChanged = previousItemIdentities
+            != items.map(ObjectIdentifier.init)
+        let totalMs = (CFAbsoluteTimeGetCurrent() - refreshStart) * 1000
+        AppLogDebug(
+            "[PHI_DEBUG][PIN_CLICK][BM][SIDEBAR_REFRESH] " +
+            "windowId=\(windowID) stage=tab-section trigger=\(trigger) " +
+            "tabs=\(tabs.count) items=\(items.count) " +
+            "itemIDsChanged=\(itemIDsChanged) itemIdentitiesChanged=\(itemIdentitiesChanged) " +
+            "affectedGroups=\(affectedTokens.count) " +
+            "affectedSplits=\(affectedSplits.count) buildMs=\(String(format: "%.3f", buildMs)) " +
+            "memberDiffMs=\(String(format: "%.3f", memberDiffMs)) " +
+            "totalMs=\(String(format: "%.3f", totalMs))"
+        )
+#endif
         delegate?.tabSectionDidUpdate(with: TabSectionChange(
+            rootItemsChanged: rootItemsChanged,
             affectedGroupTokens: affectedTokens,
             affectedSplitIds: affectedSplits
         ))
+    }
+
+    /// Compares the exact identity contract used by the outline snapshot.
+    /// Stable ids preserve row location, while stable object identity keeps
+    /// the data source and AppKit's identity-keyed row state aligned.
+    static func rootItemsChanged(from oldItems: [SidebarItem], to newItems: [SidebarItem]) -> Bool {
+        guard oldItems.count == newItems.count else { return true }
+        return zip(oldItems, newItems).contains { oldItem, newItem in
+            oldItem.id != newItem.id || ObjectIdentifier(oldItem) != ObjectIdentifier(newItem)
+        }
     }
 
     /// Snapshot of each group's ordered guid list. Compared frame-over-frame

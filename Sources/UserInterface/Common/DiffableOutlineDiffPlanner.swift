@@ -25,11 +25,82 @@ struct DiffableOutlinePlan<ItemID: Hashable> {
 enum DiffableOutlineDiffPlanner {
     static func plan<ItemID: Hashable>(
         from old: DiffableOutlineSnapshot<ItemID>,
-        to new: DiffableOutlineSnapshot<ItemID>
+        to new: DiffableOutlineSnapshot<ItemID>,
+        debugLabel: String? = nil
     ) -> DiffableOutlinePlan<ItemID> {
-        guard old.validationError == nil, new.validationError == nil else {
+        let totalStart = performanceTimestamp()
+        let oldValidationStart = performanceTimestamp()
+        let oldValidationError = old.validationError
+        let oldValidationMs = elapsedMilliseconds(since: oldValidationStart)
+        guard oldValidationError == nil else {
+#if DEBUG
+            logPerformance(
+                debugLabel,
+                "stage=planner mode=invalid-old oldNodes=\(old.nodes.count) newNodes=\(new.nodes.count) " +
+                "validationMode=checked " +
+                "oldValidationMs=\(formatMilliseconds(oldValidationMs)) " +
+                "totalMs=\(formatMilliseconds(elapsedMilliseconds(since: totalStart)))"
+            )
+#endif
             return .unsafe
         }
+        let newValidationStart = performanceTimestamp()
+        let newValidationError = new.validationError
+        let newValidationMs = elapsedMilliseconds(since: newValidationStart)
+        guard newValidationError == nil else {
+#if DEBUG
+            logPerformance(
+                debugLabel,
+                "stage=planner mode=invalid-new oldNodes=\(old.nodes.count) newNodes=\(new.nodes.count) " +
+                "validationMode=checked " +
+                "oldValidationMs=\(formatMilliseconds(oldValidationMs)) " +
+                "newValidationMs=\(formatMilliseconds(newValidationMs)) " +
+                "totalMs=\(formatMilliseconds(elapsedMilliseconds(since: totalStart)))"
+            )
+#endif
+            return .unsafe
+        }
+
+        return makePlan(
+            from: old,
+            to: new,
+            debugLabel: debugLabel,
+            validationMode: "checked",
+            oldValidationMs: oldValidationMs,
+            newValidationMs: newValidationMs,
+            totalStart: totalStart
+        )
+    }
+
+    /// Plans without validating either snapshot. Callers must only use this
+    /// after validating `new` in the current transaction and proving `old`
+    /// came from a previously accepted, validated transaction.
+    static func planValidated<ItemID: Hashable>(
+        from old: DiffableOutlineSnapshot<ItemID>,
+        to new: DiffableOutlineSnapshot<ItemID>,
+        debugLabel: String? = nil
+    ) -> DiffableOutlinePlan<ItemID> {
+        makePlan(
+            from: old,
+            to: new,
+            debugLabel: debugLabel,
+            validationMode: "prevalidated",
+            oldValidationMs: 0,
+            newValidationMs: 0,
+            totalStart: performanceTimestamp()
+        )
+    }
+
+    private static func makePlan<ItemID: Hashable>(
+        from old: DiffableOutlineSnapshot<ItemID>,
+        to new: DiffableOutlineSnapshot<ItemID>,
+        debugLabel: String?,
+        validationMode: String,
+        oldValidationMs: Double,
+        newValidationMs: Double,
+        totalStart: CFAbsoluteTime
+    ) -> DiffableOutlinePlan<ItemID> {
+        let diffCoreStart = performanceTimestamp()
 
         let oldIDs = Set(old.nodes.keys)
         let newIDs = Set(new.nodes.keys)
@@ -67,47 +138,97 @@ enum DiffableOutlineDiffPlanner {
         })
         let structuralCoveredIDs = coveredIDs(highestRemoved, in: old)
             .union(coveredIDs(highestInserted, in: new))
+        let siblingDiffParentIDs = parentIDsForSiblingDiff(old: old, new: new)
         let structuralChanges = structuralOperations(
             old: old,
             new: new,
             highestRemoved: highestRemoved,
-            highestInserted: highestInserted
+            highestInserted: highestInserted,
+            parentIDs: siblingDiffParentIDs
         )
         let moveExcludedIDs = structuralCoveredIDs
             .union(replacementCoveredOldIDs)
             .union(replacementCoveredNewIDs)
-        let moves = sameParentMoves(old: old, new: new, excludedIDs: moveExcludedIDs)
-        let replacementSiblingParentIDs = replacementSiblingParentIDs(
+        let moves = sameParentMoves(
             old: old,
             new: new,
-            replacementCoveredOldIDs: replacementCoveredOldIDs,
-            replacementCoveredNewIDs: replacementCoveredNewIDs
+            excludedIDs: moveExcludedIDs,
+            parentIDs: siblingDiffParentIDs
         )
-        if moves.contains(where: { operation in
+        let replacementSiblingParentIDs = Set(highestReplaced.map { new.parentID(of: $0) })
+        let hasReplacementSiblingMove = moves.contains { operation in
             guard case .move(_, let parentID, _, _) = operation else { return false }
             return replacementSiblingParentIDs.contains(parentID)
-        }) {
+        }
+        let replacementSiblingStructureMatchesNewSnapshot = replacementSiblingStructureIsSafe(
+            old: old,
+            new: new,
+            parentIDs: replacementSiblingParentIDs,
+            removes: structuralChanges.removes,
+            inserts: structuralChanges.inserts
+        )
+        if hasReplacementSiblingMove || !replacementSiblingStructureMatchesNewSnapshot {
             return .unsafe
         }
         let replacements = replacementOperations(highestReplaced, in: new)
         let reloads = reloads(in: new)
 
-        return DiffableOutlinePlan(
+        let plan = DiffableOutlinePlan(
             operations: structuralChanges.removes + moves + structuralChanges.inserts + replacements + reloads,
             isSafe: true
         )
+#if DEBUG
+        logPerformance(
+            debugLabel,
+            "stage=planner mode=complete oldNodes=\(old.nodes.count) newNodes=\(new.nodes.count) " +
+            "operations=\(plan.operations.count) oldValidationMs=\(formatMilliseconds(oldValidationMs)) " +
+            "newValidationMs=\(formatMilliseconds(newValidationMs)) " +
+            "validationMode=\(validationMode) " +
+            "diffCoreMs=\(formatMilliseconds(elapsedMilliseconds(since: diffCoreStart))) " +
+            "totalMs=\(formatMilliseconds(elapsedMilliseconds(since: totalStart)))"
+        )
+#endif
+        return plan
     }
+
+    private static func performanceTimestamp() -> CFAbsoluteTime {
+#if DEBUG
+        CFAbsoluteTimeGetCurrent()
+#else
+        0
+#endif
+    }
+
+    private static func elapsedMilliseconds(since start: CFAbsoluteTime) -> Double {
+#if DEBUG
+        (CFAbsoluteTimeGetCurrent() - start) * 1000
+#else
+        0
+#endif
+    }
+
+#if DEBUG
+    private static func logPerformance(_ debugLabel: String?, _ details: String) {
+        guard let debugLabel else { return }
+        AppLogDebug("[PHI_DEBUG][PIN_CLICK][BM][SIDEBAR_REFRESH] \(debugLabel) \(details)")
+    }
+
+    private static func formatMilliseconds(_ value: Double) -> String {
+        String(format: "%.3f", value)
+    }
+#endif
 
     private static func structuralOperations<ItemID: Hashable>(
         old: DiffableOutlineSnapshot<ItemID>,
         new: DiffableOutlineSnapshot<ItemID>,
         highestRemoved: Set<ItemID>,
-        highestInserted: Set<ItemID>
+        highestInserted: Set<ItemID>,
+        parentIDs: [ItemID?]
     ) -> DiffableOutlineStructuralOperations<ItemID> {
         var removes: [DiffableOutlineOperation<ItemID>] = []
         var inserts: [DiffableOutlineOperation<ItemID>] = []
 
-        for parentID in parentIDsForSiblingDiff(old: old, new: new) {
+        for parentID in parentIDs {
             let oldChildren = old.childIDs(of: parentID)
             let newChildren = new.childIDs(of: parentID)
             guard oldChildren != newChildren else { continue }
@@ -134,11 +255,12 @@ enum DiffableOutlineDiffPlanner {
     private static func sameParentMoves<ItemID: Hashable>(
         old: DiffableOutlineSnapshot<ItemID>,
         new: DiffableOutlineSnapshot<ItemID>,
-        excludedIDs: Set<ItemID>
+        excludedIDs: Set<ItemID>,
+        parentIDs: [ItemID?]
     ) -> [DiffableOutlineOperation<ItemID>] {
         var operations: [DiffableOutlineOperation<ItemID>] = []
 
-        for parentID in parentIDsForSiblingDiff(old: old, new: new) {
+        for parentID in parentIDs {
             let oldChildren = old.childIDs(of: parentID).filter {
                 !excludedIDs.contains($0) && new.parentID(of: $0) == parentID
             }
@@ -167,27 +289,40 @@ enum DiffableOutlineDiffPlanner {
         return operations
     }
 
-    private static func replacementSiblingParentIDs<ItemID: Hashable>(
+    /// Replays the structural operations that run before replacements and
+    /// verifies that each affected sibling list reaches the new snapshot.
+    private static func replacementSiblingStructureIsSafe<ItemID: Hashable>(
         old: DiffableOutlineSnapshot<ItemID>,
         new: DiffableOutlineSnapshot<ItemID>,
-        replacementCoveredOldIDs: Set<ItemID>,
-        replacementCoveredNewIDs: Set<ItemID>
-    ) -> Set<ItemID?> {
-        var parentIDs = Set<ItemID?>()
+        parentIDs: Set<ItemID?>,
+        removes: [DiffableOutlineOperation<ItemID>],
+        inserts: [DiffableOutlineOperation<ItemID>]
+    ) -> Bool {
+        for parentID in parentIDs {
+            var currentIDs = old.childIDs(of: parentID)
 
-        for parentID in parentIDsForSiblingDiff(old: old, new: new) {
-            let oldContainsReplacement = old.childIDs(of: parentID).contains {
-                replacementCoveredOldIDs.contains($0)
+            for operation in removes {
+                guard case .remove(let id, let operationParentID, let index) = operation,
+                      operationParentID == parentID
+                else { continue }
+                guard currentIDs.indices.contains(index), currentIDs[index] == id else {
+                    return false
+                }
+                currentIDs.remove(at: index)
             }
-            let newContainsReplacement = new.childIDs(of: parentID).contains {
-                replacementCoveredNewIDs.contains($0)
+
+            for operation in inserts {
+                guard case .insert(let id, let operationParentID, let index) = operation,
+                      operationParentID == parentID
+                else { continue }
+                guard index >= 0, index <= currentIDs.count else { return false }
+                currentIDs.insert(id, at: index)
             }
-            if oldContainsReplacement || newContainsReplacement {
-                parentIDs.insert(parentID)
-            }
+
+            guard currentIDs == new.childIDs(of: parentID) else { return false }
         }
 
-        return parentIDs
+        return true
     }
 
     private static func replacementIDs<ItemID: Hashable>(
@@ -251,7 +386,13 @@ enum DiffableOutlineDiffPlanner {
         old: DiffableOutlineSnapshot<ItemID>,
         new: DiffableOutlineSnapshot<ItemID>
     ) -> [ItemID?] {
-        let parentIDs = Set([nil] + old.nodes.keys.map(Optional.some) + new.nodes.keys.map(Optional.some))
+        var parentIDs: Set<ItemID?> = [nil]
+        for (id, node) in old.nodes where !node.childIDs.isEmpty {
+            parentIDs.insert(id)
+        }
+        for (id, node) in new.nodes where !node.childIDs.isEmpty {
+            parentIDs.insert(id)
+        }
         return parentIDs.sorted { lhs, rhs in
             String(describing: lhs) < String(describing: rhs)
         }

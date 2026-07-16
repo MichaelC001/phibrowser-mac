@@ -83,6 +83,7 @@ struct DiffableOutlineSnapshot<ItemID: Hashable> {
 
     private func validate() -> DiffableOutlineSnapshotValidationError<ItemID>? {
         var referencedIDs = Set<ItemID>()
+        let orderedNodeIDs = nodes.keys.sortedForStableDiagnostics()
 
         for rootID in rootIDs {
             guard nodes[rootID] != nil else { return .missingRoot(rootID) }
@@ -119,7 +120,7 @@ struct DiffableOutlineSnapshot<ItemID: Hashable> {
 
         for id in orderedNodeIDs where !referencedIDs.contains(id) {
             if detectsCycle(startingAt: id) { return .cycleDetected(id) }
-            if nodes[id]?.parentID == nil { return .unreachableNode(id) }
+            return .unreachableNode(id)
         }
 
         for id in orderedNodeIDs where detectsCycle(startingAt: id) {
@@ -131,10 +132,6 @@ struct DiffableOutlineSnapshot<ItemID: Hashable> {
         }
 
         return nil
-    }
-
-    private var orderedNodeIDs: [ItemID] {
-        nodes.keys.sortedForStableDiagnostics()
     }
 
     private func detectsCycle(startingAt id: ItemID) -> Bool {

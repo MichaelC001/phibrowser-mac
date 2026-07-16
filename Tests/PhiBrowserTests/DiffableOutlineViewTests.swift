@@ -137,6 +137,26 @@ final class DiffableOutlineViewTests: XCTestCase {
         XCTAssertEqual(view.events, ["updateDataSource", "reloadData"])
     }
 
+    func testResetToInvalidSnapshotKeepsCheckedPlannerFallback() {
+        let view = RecordingDiffableOutlineView()
+        let invalid = DiffableOutlineSnapshot<AnyHashable>(
+            rootIDs: [AnyHashable("missing")],
+            nodes: [:]
+        )
+        let valid = applySnapshot(
+            ["item0"],
+            ["item0": (OutlineApplyItem("item0"), nil, [])]
+        )
+        view.resetDiffableSnapshot(invalid)
+
+        view.reloadWith(valid, animated: false) {
+            view.record("updateDataSource")
+        }
+
+        XCTAssertEqual(view.events, ["updateDataSource", "reloadData"])
+        XCTAssertTrue(view.invalidSnapshotErrors.isEmpty)
+    }
+
     func testInsertUpdatesDataSourceBeforeMutation() {
         let view = RecordingDiffableOutlineView()
         let item0 = OutlineApplyItem("item0")
@@ -328,6 +348,31 @@ final class DiffableOutlineViewTests: XCTestCase {
         XCTAssertEqual(view.events, ["updateDataSource", "reloadData"])
     }
 
+    func testReplacementSiblingStructuralRemovalFallsBackToReloadData() {
+        let view = RecordingDiffableOutlineView()
+        let a = OutlineApplyItem("a")
+        let oldProxy = OutlineApplyItem("proxy")
+        let newProxy = OutlineApplyItem("proxy")
+        let b = OutlineApplyItem("b")
+        let old = applySnapshot(["a", "proxy", "b"], [
+            "a": (a, nil, []),
+            "proxy": (oldProxy, nil, []),
+            "b": (b, nil, []),
+        ])
+        let new = applySnapshot(["b", "proxy"], [
+            "b": (b, nil, []),
+            "proxy": (newProxy, nil, []),
+        ])
+        view.reloadWith(old, animated: false) {}
+        view.clearEvents()
+
+        view.reloadWith(new, animated: false) {
+            view.record("updateDataSource")
+        }
+
+        XCTAssertEqual(view.events, ["updateDataSource", "reloadData"])
+    }
+
     func testMovingReplacementFallsBackToReloadData() {
         let view = RecordingDiffableOutlineView()
         let oldGroup = OutlineApplyItem("group")
@@ -387,6 +432,40 @@ final class DiffableOutlineViewTests: XCTestCase {
         XCTAssertEqual(
             view.invalidSnapshotErrors,
             [.missingRoot(AnyHashable("missing"))]
+        )
+    }
+
+    func testOrphanSnapshotCannotBecomeValidatedBaselineForLinkedTransition() {
+        let view = RecordingDiffableOutlineView()
+        let parent = OutlineApplyItem("parent")
+        let orphan = OutlineApplyItem("orphan")
+        let orphanSnapshot = applySnapshot(["parent"], [
+            "parent": (parent, nil, []),
+            "orphan": (orphan, "parent", []),
+        ])
+        let linkedSnapshot = applySnapshot(["parent"], [
+            "parent": (parent, nil, ["orphan"]),
+            "orphan": (orphan, "parent", []),
+        ])
+
+        view.reloadWith(orphanSnapshot, animated: false) {
+            view.record("orphanDataSource")
+        }
+
+        XCTAssertTrue(view.events.isEmpty)
+        XCTAssertEqual(
+            view.invalidSnapshotErrors,
+            [.unreachableNode(AnyHashable("orphan"))]
+        )
+
+        view.reloadWith(linkedSnapshot, animated: false) {
+            view.record("linkedDataSource")
+        }
+
+        XCTAssertEqual(view.events, ["linkedDataSource", "reloadData"])
+        XCTAssertEqual(
+            view.invalidSnapshotErrors,
+            [.unreachableNode(AnyHashable("orphan"))]
         )
     }
 

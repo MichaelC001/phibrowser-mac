@@ -191,6 +191,9 @@ class SidebarTabListViewController: NSViewController {
     /// Snapshot committed by the latest accepted `reloadWith` request.
     /// Unlike `allItems`, its captured child IDs cannot be changed by model reuse.
     private var lastAcceptedOutlineSnapshot: DiffableOutlineSnapshot<AnyHashable>?
+#if DEBUG
+    private var sidebarRefreshPerfSequence: UInt = 0
+#endif
     private var multiSelectionRangeAnchor: SidebarMultiSelectionUnit?
     /// Diffable completion runs before AppKit necessarily finishes moving rows.
     /// Keep group-local animations off until the latest structural transition settles.
@@ -431,14 +434,14 @@ class SidebarTabListViewController: NSViewController {
 
     private func activate() {
         guard isActive == false else {
-            refreshAllItems()
+            refreshAllItems(refreshReason: "activate-existing")
             return
         }
         isActive = true
         setupBindings()
         bookmarkSectionController.setActive(true)
         tabSectionController.browserState = browserState
-        refreshAllItems()
+        refreshAllItems(refreshReason: "activate")
     }
 
     private func deactivate() {
@@ -490,37 +493,68 @@ class SidebarTabListViewController: NSViewController {
     // MARK: - Data Management
     @discardableResult
     private func refreshAllItems(
+        refreshReason: String = "unspecified",
         presentationState: FloatingBookmarkPresentationState? = nil,
         animated: Bool = true,
         afterReload: ((_ outlineStructureChanged: Bool) -> Void)? = nil
     ) -> Bool {
         guard isActive else { return false }
+#if DEBUG
+        sidebarRefreshPerfSequence &+= 1
+        let perfTraceID = sidebarRefreshPerfSequence
+        let totalStart = CFAbsoluteTimeGetCurrent()
+        let makeAllItemsStart = CFAbsoluteTimeGetCurrent()
+#endif
         let items = makeAllItems()
+#if DEBUG
+        let makeAllItemsMs = (CFAbsoluteTimeGetCurrent() - makeAllItemsStart) * 1000
+        let presentationStart = CFAbsoluteTimeGetCurrent()
+#endif
         let resolvedPresentationState = presentationState
             ?? nextFloatingBookmarkPresentationState(
                 rootItems: items,
                 hiddenBookmarkGuid: temporarilyHiddenRealBookmarkGuid
             )
+#if DEBUG
+        let presentationMs = (CFAbsoluteTimeGetCurrent() - presentationStart) * 1000
+        let snapshotStart = CFAbsoluteTimeGetCurrent()
+#endif
         let snapshot = makeDiffableSnapshot(
             rootItems: items,
             focusedPresentation: resolvedPresentationState.focusedPresentation,
             hiddenBookmarkGuid: resolvedPresentationState.hiddenBookmarkGuid
         )
+#if DEBUG
+        let snapshotMs = (CFAbsoluteTimeGetCurrent() - snapshotStart) * 1000
+        let previousSnapshotStart = CFAbsoluteTimeGetCurrent()
+#endif
         let previousSnapshot = lastAcceptedOutlineSnapshot
             ?? makeDiffableSnapshot(
                 rootItems: [],
                 focusedPresentation: nil,
                 hiddenBookmarkGuid: nil
             )
+#if DEBUG
+        let previousSnapshotMs = (CFAbsoluteTimeGetCurrent() - previousSnapshotStart) * 1000
+        let structureCheckStart = CFAbsoluteTimeGetCurrent()
+#endif
         let outlineStructureChanged = Self.hasOutlineStructureChanges(
             from: previousSnapshot,
             to: snapshot
         )
+#if DEBUG
+        let structureCheckMs = (CFAbsoluteTimeGetCurrent() - structureCheckStart) * 1000
+        let diffableDebugLabel: String? = "windowId=\(browserState.windowId) id=\(perfTraceID) reason=\(refreshReason)"
+        let reloadWithStart = CFAbsoluteTimeGetCurrent()
+#else
+        let diffableDebugLabel: String? = nil
+#endif
 
         var didUpdateDataSource = false
         outlineView.reloadWith(
             snapshot,
             animated: animated,
+            debugLabel: diffableDebugLabel,
             updateDataSource: { [weak self] in
                 guard let self else { return }
                 self.lastAcceptedOutlineSnapshot = snapshot
@@ -540,20 +574,59 @@ class SidebarTabListViewController: NSViewController {
             completion: { [weak self] in
                 guard let self else { return }
                 guard didUpdateDataSource else { return }
+#if DEBUG
+                let selectionStart = CFAbsoluteTimeGetCurrent()
+#endif
                 self.selectActiveTab()
                 self.applyFocusingSelection(for: self.browserState.focusingTab)
+#if DEBUG
+                let selectionMs = (CFAbsoluteTimeGetCurrent() - selectionStart) * 1000
+#endif
 
                 DispatchQueue.main.async { [weak self] in
                     guard let self else { return }
+#if DEBUG
+                    let postReloadStart = CFAbsoluteTimeGetCurrent()
+#endif
                     if outlineStructureChanged {
                         self.reconcileTabGroupRowHeightsWithoutAnimation()
                     }
                     self.updateVisibleBookmarkTabs()
                     self.updateFloatingNewTabVisibility()
                     afterReload?(outlineStructureChanged)
+#if DEBUG
+                    let postReloadMs = (CFAbsoluteTimeGetCurrent() - postReloadStart) * 1000
+                    let totalToPostReloadMs = (CFAbsoluteTimeGetCurrent() - totalStart) * 1000
+                    AppLogDebug(
+                        "[PHI_DEBUG][PIN_CLICK][BM][SIDEBAR_REFRESH] " +
+                        "windowId=\(self.browserState.windowId) id=\(perfTraceID) " +
+                        "reason=\(refreshReason) stage=completion " +
+                        "selectionMs=\(String(format: "%.3f", selectionMs)) " +
+                        "postReloadMs=\(String(format: "%.3f", postReloadMs)) " +
+                        "totalToPostReloadMs=\(String(format: "%.3f", totalToPostReloadMs))"
+                    )
+#endif
                 }
             }
         )
+#if DEBUG
+        let reloadWithMs = (CFAbsoluteTimeGetCurrent() - reloadWithStart) * 1000
+        let synchronousTotalMs = (CFAbsoluteTimeGetCurrent() - totalStart) * 1000
+        AppLogDebug(
+            "[PHI_DEBUG][PIN_CLICK][BM][SIDEBAR_REFRESH] " +
+            "windowId=\(browserState.windowId) id=\(perfTraceID) " +
+            "reason=\(refreshReason) stage=refresh-all " +
+            "roots=\(items.count) nodes=\(snapshot.nodes.count) tabs=\(tabSectionController.tabItems.count) " +
+            "structureChanged=\(outlineStructureChanged) appliedNow=\(didUpdateDataSource) " +
+            "makeAllMs=\(String(format: "%.3f", makeAllItemsMs)) " +
+            "presentationMs=\(String(format: "%.3f", presentationMs)) " +
+            "snapshotMs=\(String(format: "%.3f", snapshotMs)) " +
+            "previousSnapshotMs=\(String(format: "%.3f", previousSnapshotMs)) " +
+            "structureCheckMs=\(String(format: "%.3f", structureCheckMs)) " +
+            "reloadWithMs=\(String(format: "%.3f", reloadWithMs)) " +
+            "syncTotalMs=\(String(format: "%.3f", synchronousTotalMs))"
+        )
+#endif
         return didUpdateDataSource
     }
 
@@ -3628,7 +3701,7 @@ extension SidebarTabListViewController: NSOutlineViewDelegate {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.restoreExpandedDescendantsIfNeeded(of: bookmark)
-            self.refreshAllItems(animated: false)
+            self.refreshAllItems(refreshReason: "bookmark-expand", animated: false)
         }
     }
     
@@ -3643,7 +3716,7 @@ extension SidebarTabListViewController: NSOutlineViewDelegate {
         temporarilyHiddenRealBookmarkGuid = nil
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            self.refreshAllItems(animated: false)
+            self.refreshAllItems(refreshReason: "bookmark-collapse", animated: false)
         }
     }
     
@@ -3684,7 +3757,10 @@ extension SidebarTabListViewController: SidebarTabListItemOwner {
                     floatingAnchorFolderGuid: folder.guid,
                     hiddenBookmarkGuid: focusingBookmark.guid
                 )
-                refreshAllItems(presentationState: presentationState) { [weak self] _ in
+                refreshAllItems(
+                    refreshReason: "bookmark-collapse-with-proxy",
+                    presentationState: presentationState
+                ) { [weak self] _ in
                     guard let self else { return }
                     self.outlineView.animator().collapseItem(item)
                     self.applyFocusingSelection(for: focusingTab)
@@ -3792,7 +3868,7 @@ extension SidebarTabListViewController: SidebarTabListItemOwner {
 extension SidebarTabListViewController: BookmarkSectionDelegate {
     func bookmarkSectionDidUpdate() {
         guard isActive else { return }
-        refreshAllItems()
+        refreshAllItems(refreshReason: "bookmark-section")
     }
     
     func bookmarkSectionInitialDataDidLoad() {
@@ -3832,7 +3908,38 @@ extension SidebarTabListViewController: TabSectionDelegate {
     
     func tabSectionDidUpdate(with change: TabSectionChange) {
         guard isActive else { return }
-        refreshAllItems { [weak self] outlineStructureChanged in
+        guard change.rootItemsChanged else {
+#if DEBUG
+            let selectionStart = CFAbsoluteTimeGetCurrent()
+#endif
+            selectActiveTab()
+            applyFocusingSelection(for: browserState.focusingTab)
+#if DEBUG
+            let selectionMs = (CFAbsoluteTimeGetCurrent() - selectionStart) * 1000
+            AppLogDebug(
+                "[PHI_DEBUG][PIN_CLICK][BM][SIDEBAR_REFRESH] " +
+                "windowId=\(browserState.windowId) stage=tab-section-consumer " +
+                "action=skip-outline-refresh rootItemsChanged=false " +
+                "affectedGroups=\(change.affectedGroupTokens.count) " +
+                "affectedSplits=\(change.affectedSplitIds.count) " +
+                "selectionMs=\(String(format: "%.3f", selectionMs))"
+            )
+#endif
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.updateVisibleBookmarkTabs()
+                self.updateFloatingNewTabVisibility()
+                self.pushMemberUpdatesToGroupCells(
+                    change.affectedGroupTokens,
+                    animated: !self.suppressesGroupUpdateAnimations
+                )
+                self.pushPaneUpdatesToSplitPairCells(change.affectedSplitIds)
+                self.updateNewTabCleanupVisibility()
+                self.clearFloatingProxyIfTabClosed()
+            }
+            return
+        }
+        refreshAllItems(refreshReason: "tab-section") { [weak self] outlineStructureChanged in
             guard let self else { return }
             self.pushMemberUpdatesToGroupCells(
                 change.affectedGroupTokens,
@@ -3934,6 +4041,7 @@ extension SidebarTabListViewController {
     @discardableResult
     private func clearFocusedBookmarkPresentation(animated: Bool, afterReload: (() -> Void)? = nil) -> Bool {
         refreshAllItems(
+            refreshReason: "clear-focused-bookmark",
             presentationState: .cleared,
             animated: animated,
             afterReload: { _ in afterReload?() }

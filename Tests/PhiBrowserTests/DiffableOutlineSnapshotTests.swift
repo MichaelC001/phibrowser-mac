@@ -76,6 +76,20 @@ final class DiffableOutlineSnapshotTests: XCTestCase {
         XCTAssertEqual(snapshot.validationError, .cycleDetected("a"))
     }
 
+    func testUnreferencedNodeWithExistingParentFailsValidation() {
+        let parent = DiffableOutlineTestItem("parent")
+        let orphan = DiffableOutlineTestItem("orphan")
+        let snapshot = DiffableOutlineSnapshot(
+            rootIDs: ["parent"],
+            nodes: [
+                "parent": .init(id: "parent", item: parent, parentID: nil, childIDs: []),
+                "orphan": .init(id: "orphan", item: orphan, parentID: "parent", childIDs: []),
+            ]
+        )
+
+        XCTAssertEqual(snapshot.validationError, .unreachableNode("orphan"))
+    }
+
     func testSameIDCanUseDifferentItemInstanceAcrossSnapshots() {
         let first = DiffableOutlineTestItem("first")
         let second = DiffableOutlineTestItem("second")
