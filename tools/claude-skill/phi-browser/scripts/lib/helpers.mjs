@@ -17,6 +17,9 @@ import {
   readDaemonControl, writeDaemonControl, clearDaemonControl,
   pidAlive, agentRootPid,
 } from './mirror-core.mjs'
+import { discoverClaudeTranscript } from './mirror-claude.mjs'
+import { discoverCodexTranscript } from './mirror-codex.mjs'
+import { discoverPiTranscript } from './mirror-pi.mjs'
 
 // Default viewport for the hidden agent window: both dimensions follow the
 // REAL window's web-content panel — window minus sidebar/header, reported by
@@ -570,56 +573,55 @@ function writeLastTargetId(taskId, targetId) {
 }
 
 // The tailer daemon (scripts/mirror-tailer.mjs): the session mirror. When
-// the driving CLI exports its session id (Claude Code does), the heredoc can
-// locate the session's own transcript, so it writes the daemon control file
-// and spawns a detached tailer — the binding is exact because we TELL the
-// daemon its transcript, task, and agent process. A live daemon is
-// re-targeted through the control file instead of respawned; complete()
+// the driving session's transcript can be located — exactly under Claude
+// Code (exported session id) and Codex (thread id, else the rollout
+// heuristic in mirror-codex.mjs) — the heredoc writes the daemon control
+// file and spawns a detached tailer; the binding is exact because we TELL
+// the daemon its transcript, format, task, and agent process. A live daemon
+// is re-targeted through the control file instead of respawned; complete()
 // deletes the file, which is also the daemon's exit signal.
 // PHI_NO_SESSION_MIRROR=1 opts out entirely.
 
-function claudeTranscript() {
-  const sessionId = process.env.CLAUDE_CODE_SESSION_ID
-  if (!sessionId) return null
-  try {
-    // Locate by session id across project dirs rather than deriving the
-    // munged cwd folder name — immune to the munging rules changing.
-    const projects = join(homedir(), '.claude', 'projects')
-    for (const dir of readdirSync(projects)) {
-      const path = join(projects, dir, `${sessionId}.jsonl`)
-      if (existsSync(path)) return { sessionId, path }
-    }
-  } catch {}
-  return null
+function discoverSessionTranscript(taskId, agentPid) {
+  return discoverClaudeTranscript()
+    || discoverCodexTranscript(taskId, agentPid)
+    || discoverPiTranscript(taskId, agentPid)
 }
 
 function spawnSessionMirror(taskId) {
   if (process.env.PHI_NO_SESSION_MIRROR) return
-  const transcript = claudeTranscript()
-  if (!transcript) return  // not Claude Code (or an old CLI): hook/say() remain
   try {
-    const prev = readDaemonControl(transcript.sessionId)
+    const agentPid = agentRootPid()
+    const transcript = discoverSessionTranscript(taskId, agentPid)
+    if (!transcript) return  // unknown driver: say() remains
+    const prev = readDaemonControl(transcript.sessionKey)
     const livePid = prev && prev.pid && pidAlive(prev.pid) ? prev.pid : null
-    writeDaemonControl(transcript.sessionId, {
-      taskId, transcriptPath: transcript.path, ts: Date.now(),
+    writeDaemonControl(transcript.sessionKey, {
+      taskId, transcriptPath: transcript.path, format: transcript.format,
+      ts: Date.now(),
       // The driving agent process: the daemon uses it to find the session's
       // terminal for console-command injection and to notice the session
       // closing. TERM_PROGRAM (inherited from that terminal) orders the
       // injection probe.
-      agentPid: agentRootPid(),
+      agentPid,
       termProgram: process.env.TERM_PROGRAM || '',
       ...(livePid ? { pid: livePid } : {}),
     })
     if (livePid) return  // the live tailer follows the control-file update
     const tailer = fileURLToPath(new URL('../mirror-tailer.mjs', import.meta.url))
-    spawn(process.execPath, [tailer, transcript.sessionId],
+    spawn(process.execPath, [tailer, transcript.sessionKey],
           { detached: true, stdio: 'ignore' }).unref()
   } catch {}
 }
 
-function stopSessionMirror() {
-  const sessionId = process.env.CLAUDE_CODE_SESSION_ID
-  if (sessionId) clearDaemonControl(sessionId)
+// Re-derives the session key (heredoc state does not survive rounds) and
+// deletes the control file — the daemon's exit signal. Best-effort: an
+// undiscoverable session just lets the daemon exit via unknown_task or TTL.
+function stopSessionMirror(taskId) {
+  try {
+    const transcript = discoverSessionTranscript(taskId, agentRootPid())
+    if (transcript) clearDaemonControl(transcript.sessionKey)
+  } catch {}
 }
 
 // Serializes the attach sequence. Concurrent work in one round is legitimate
@@ -3471,7 +3473,7 @@ export async function complete({ success = true, message = undefined } = {}) {
   })
   // The task is over: stop the session mirror — deleting the daemon control
   // file is the tailer's exit signal.
-  stopSessionMirror()
+  stopSessionMirror(task.taskId)
   state.task = null
   state.sessionId = null
   state.targetId = null

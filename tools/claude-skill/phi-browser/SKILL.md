@@ -74,7 +74,7 @@ The heredoc body is a Node.js script; all helpers below are preloaded.
 - Viewport: `setViewport({width?, height?})` — override the current tab's viewport; exceptional cases only (the default tracks the real window's content panel — see "Viewport")
 - Dialogs: `handleDialog(accept, promptText?)`
 - Page JS: `js(expression)` — Runtime.evaluate, returns by value
-- Presence: `setStatus(caption)` — shown to the watching user (alias `narrate(text)` — same call, named for the transcript console), `markError(message)`, `say(text, {role})` — mirror your own conversation into the console (assistant prose, or `{role:'user'}` to echo the user) when no session mirror is running (it is automatic under Claude Code)
+- Presence: `setStatus(caption)` — shown to the watching user (alias `narrate(text)` — same call, named for the transcript console), `markError(message)`, `say(text, {role})` — mirror your own conversation into the console (assistant prose, or `{role:'user'}` to echo the user) when no session mirror is running (it is automatic under Claude Code, Codex, and Pi)
 - User console: `readUserMessages()` — drain commands the user typed into Phi's Agent Transcript panel, `waitForUserMessage({timeout})` — block until one arrives — see "User commands from the browser"
 - Raw protocol: `cdp(method, params)` — current tab session for page domains, browser session for Target/Browser/PhiAgentSpace
 - Misc: `cliLog(value)` (the only terminal output channel), `wait(seconds)`
@@ -528,11 +528,11 @@ values) into `setStatus`/`narrate` text: both surfaces are displayed and
 buffered.
 
 The console mirrors the WHOLE session, not just browser steps: under Claude
-Code, `ensureAgentSpace` spawns a tailer daemon that streams your prompts and
-reply prose into the panel automatically (no setup — see
+Code, Codex, and Pi, `ensureAgentSpace` spawns a tailer daemon that streams your
+prompts and reply prose into the panel automatically (no setup — see
 references/install.md ▸ step 4), so it reads like your own transcript. When
-no mirror is running (e.g. under Codex), use `say('…')` to reflect a line of
-your own prose into the console yourself.
+no mirror is running (an unrecognized agent), use `say('…')` to reflect a
+line of your own prose into the console yourself.
 
 ## User commands from the browser
 

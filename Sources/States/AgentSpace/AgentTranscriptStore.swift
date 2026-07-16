@@ -69,6 +69,11 @@ final class AgentTranscriptStore: ObservableObject {
 
     @Published private(set) var entriesByTaskId: [String: [AgentTranscriptEntry]] = [:]
 
+    /// Wall-clock of the last append per task — the continuity signal for
+    /// task re-creates (see `AgentSpaceManager.beginTranscript`). Kept apart
+    /// from entry timestamps, which mirrored lines backdate to authored time.
+    private var lastAppendByTaskId: [String: Date] = [:]
+
     private var nextSeq = 0
 
     private init() {}
@@ -99,10 +104,17 @@ final class AgentTranscriptStore: ObservableObject {
             entries.removeFirst(entries.count - Self.maxEntriesPerTask)
         }
         entriesByTaskId[taskId] = entries
+        lastAppendByTaskId[taskId] = Date()
+    }
+
+    /// When the task's console last received a line (wall-clock), or nil.
+    func lastAppend(taskId: String) -> Date? {
+        lastAppendByTaskId[taskId]
     }
 
     func clear(taskId: String) {
         entriesByTaskId[taskId] = nil
+        lastAppendByTaskId[taskId] = nil
     }
 
     /// Frees buffers of tasks no longer alive — called when the console
@@ -110,6 +122,7 @@ final class AgentTranscriptStore: ObservableObject {
     /// outlives the last reader.
     func clearAll(except liveTaskIds: Set<String>) {
         entriesByTaskId = entriesByTaskId.filter { liveTaskIds.contains($0.key) }
+        lastAppendByTaskId = lastAppendByTaskId.filter { liveTaskIds.contains($0.key) }
     }
 
     /// Strips control characters (both senders are freeform / LLM-authored)

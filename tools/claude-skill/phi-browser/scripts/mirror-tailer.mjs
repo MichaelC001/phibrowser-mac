@@ -29,7 +29,9 @@ import {
   readDaemonControl, writeDaemonControl, readCursor, writeCursor,
   forwardEntries, openPhiChannel, pidAlive, BACKFILL_GRACE_MS,
 } from './lib/mirror-core.mjs'
-import { toEntry } from './lib/mirror-claude.mjs'
+import { toEntry as claudeToEntry } from './lib/mirror-claude.mjs'
+import { toEntry as codexToEntry } from './lib/mirror-codex.mjs'
+import { toEntry as piToEntry } from './lib/mirror-pi.mjs'
 import { ttyOfPid, isForeground, probeTerminal, injectText } from './lib/mirror-inject.mjs'
 
 const POLL_MS = 1000
@@ -37,6 +39,17 @@ const CONTROL_TTL_MS = 30 * 60 * 1000
 // The broadcast wakes the console-command bridge instantly; this sweep is
 // the delivery guarantee for a missed broadcast (channel down, app restart).
 const MESSAGE_SWEEP_MS = 10 * 1000
+// Between-rounds keep-alive. The skill's own long-TTL ping runs at clean
+// round end (__dispose) — but a driver whose harness SIGKILLs tool calls
+// (Pi's 10s bash timeout) never disposes, the task falls back to the app's
+// short default TTL, and it gets reaped mid-conversation: the re-created
+// task then starts a fresh console, losing the mirrored history. The daemon
+// is the one process that KNOWS the session is still alive (agentPid), so
+// it heartbeats the task while it runs. Bounded on every side: the daemon
+// exits with the session, with the control TTL (30 min after the last real
+// round), and on complete() — so an abandoned Space still closes.
+const HEARTBEAT_MS = 60 * 1000
+const HEARTBEAT_TTL_SECONDS = 300
 // Per-batch and in-memory bounds; overflow drops OLDEST (flood policy: a
 // long backlog keeps its newest lines).
 const MAX_LINES_PER_BATCH = 60
@@ -67,6 +80,11 @@ async function main() {
   const startTs = Date.now()
   let { cursor, known } = readCursor(sessionKey)
   const tail = new TranscriptTail(ctl.transcriptPath)
+  // The transcript's dialect, chosen by whoever spawned us (see the
+  // per-agent discover* in mirror-claude / mirror-codex / mirror-pi).
+  const toEntry = ctl.format === 'codex' ? codexToEntry
+    : ctl.format === 'pi' ? piToEntry
+    : claudeToEntry
   const pending = []
   const bridge = new ConsoleCommandBridge()
 
@@ -76,6 +94,9 @@ async function main() {
   let channel = null
   let bridgeWake = false
   let lastSweep = 0
+  // First heartbeat after one interval — the round that spawned us is live
+  // and already refreshing the clock itself.
+  let lastHeartbeat = Date.now()
   const ensureChannel = async () => {
     if (channel) return channel
     channel = await openPhiChannel()
@@ -133,6 +154,19 @@ async function main() {
       try {
         const gone = await bridge.deliverPending(ctl, await ensureChannel())
         if (gone) return  // unknown task: ended
+      } catch {
+        dropChannel()
+      }
+    }
+
+    // between-rounds keep-alive (see HEARTBEAT_MS)
+    if (ctl.taskId && Date.now() - lastHeartbeat >= HEARTBEAT_MS) {
+      lastHeartbeat = Date.now()
+      try {
+        const res = await (await ensureChannel()).send('agentSpace.ping', {
+          taskId: ctl.taskId, ttlSeconds: HEARTBEAT_TTL_SECONDS,
+        })
+        if (res && res.ok === false) return  // task ended: exit, respawn re-creates
       } catch {
         dropChannel()
       }

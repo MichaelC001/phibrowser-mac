@@ -270,7 +270,9 @@ private struct SkillInstallSectionView: View {
     private struct SkillTarget: Identifiable {
         let id: String
         let name: String
-        /// Bundled brand icon (template imageset under Assets ▸ agents).
+        /// Bundled brand icon (imageset under Assets ▸ agents). Rendering
+        /// follows the asset's own intent: the monochrome brand glyphs are
+        /// template, Hermes's favicon artwork renders in original color.
         let iconAsset: String
         let skillsDirectory: URL
 
@@ -286,11 +288,12 @@ private struct SkillInstallSectionView: View {
                         skillsDirectory: home.appendingPathComponent(".claude/skills", isDirectory: true)),
             SkillTarget(id: "codex", name: "Codex", iconAsset: "agent-openai",
                         skillsDirectory: home.appendingPathComponent(".codex/skills", isDirectory: true)),
+            SkillTarget(id: "hermes", name: "Hermes", iconAsset: "agent-hermes",
+                        skillsDirectory: home.appendingPathComponent(".hermes/skills", isDirectory: true)),
             SkillTarget(id: "openclaw", name: "OpenClaw", iconAsset: "agent-openclaw",
                         skillsDirectory: home.appendingPathComponent(".openclaw/skills", isDirectory: true)),
-            // Pi uses the shared ~/.agents/skills standard folder.
             SkillTarget(id: "pi", name: "Pi", iconAsset: "agent-pi",
-                        skillsDirectory: home.appendingPathComponent(".agents/skills", isDirectory: true)),
+                        skillsDirectory: home.appendingPathComponent(".pi/agent/skills", isDirectory: true)),
         ]
     }()
 
@@ -335,7 +338,6 @@ private struct SkillInstallSectionView: View {
                                          + (installedTargets.contains(target.id) ? "  ✓" : ""))
                                 } icon: {
                                     Image(target.iconAsset)
-                                        .renderingMode(.template)
                                         .resizable()
                                         .scaledToFit()
                                         .frame(width: 15, height: 15)

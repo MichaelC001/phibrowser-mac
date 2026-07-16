@@ -68,6 +68,8 @@ export function agentRootPid() {
 const PASSTHROUGH = new Set([
   'sh', 'bash', 'zsh', 'dash', 'fish', 'csh', 'tcsh', 'ksh',
   'env', 'login', 'sudo', 'xargs', 'timeout', 'nohup', 'caffeinate', 'script',
+  // Codex wraps sandboxed shell commands in seatbelt.
+  'sandbox-exec',
 ])
 
 // --- daemon control ----------------------------------------------------------

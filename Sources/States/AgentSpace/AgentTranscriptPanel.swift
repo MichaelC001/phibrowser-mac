@@ -5,14 +5,60 @@
 
 import AppKit
 import Combine
+import SnapKit
 import SwiftUI
 
-/// Floating console mirroring the driving code agent's session: the live
-/// transcript (actions, narration, rounds, lifecycle) plus a prompt where the
-/// user can type commands back to the agent. Follows the handoff-prompt
-/// pattern (single panel instance + dismiss) but titled, resizable, and
-/// long-lived — the user opens it deliberately and it stays up across Space
-/// switches and task turnover.
+/// Where the agent console lives on screen — the same choices DevTools
+/// offers, picked from the console header's placement menu and persisted
+/// across launches.
+enum AgentTranscriptPlacement: String, CaseIterable, Identifiable {
+    /// Docked as a right sidebar of the frontmost browser window.
+    case right
+    /// Docked along the bottom of the frontmost browser window.
+    case bottom
+    /// A regular standalone window.
+    case window
+
+    var id: String { rawValue }
+
+    var isDocked: Bool { self == .right || self == .bottom }
+
+    var dockEdge: AgentTranscriptDockEdge? {
+        switch self {
+        case .right: return .right
+        case .bottom: return .bottom
+        case .window: return nil
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .right:
+            return NSLocalizedString(
+                "Dock to Right", comment: "Agent console placement - right sidebar")
+        case .bottom:
+            return NSLocalizedString(
+                "Dock to Bottom", comment: "Agent console placement - bottom dock")
+        case .window:
+            return NSLocalizedString(
+                "Separate Window", comment: "Agent console placement - standalone window")
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .right: return "rectangle.trailinghalf.inset.filled"
+        case .bottom: return "rectangle.bottomhalf.inset.filled"
+        case .window: return "macwindow"
+        }
+    }
+}
+
+/// Console mirroring the driving code agent's session: the live transcript
+/// (actions, narration, rounds, lifecycle) plus a prompt where the user can
+/// type commands back to the agent. Like DevTools it can dock to the right
+/// or bottom of the browser window, or live in its own window — one console
+/// instance re-homed between those placements.
 ///
 /// Opened from View ▸ Agent Transcript, an agent pip's context menu, or
 /// automatically at task start while Agent Autoview is enabled.
@@ -20,11 +66,51 @@ import SwiftUI
 final class AgentTranscriptPanelController: NSObject {
     static let shared = AgentTranscriptPanelController()
 
-    private var panel: NSPanel?
-    private let model = AgentTranscriptPanelModel()
-    private static let frameAutosaveName = "AgentTranscriptPanel"
+    private static let placementDefaultsKey = "PhiAgentTranscriptPlacement"
+    private static let windowAutosaveName = "AgentTranscriptWindow"
 
-    var isVisible: Bool { panel?.isVisible == true }
+    private var window: NSWindow?
+    private var dockView: AgentTranscriptDockView?
+    private weak var dockHost: WebContentContainerViewController?
+    /// Docked placement counts as "shown" even while its host window is
+    /// briefly gone (closed, Space swap in flight) — the next browser window
+    /// to become key takes the dock back in.
+    private var dockActive = false
+    /// Set while a placement switch or programmatic teardown closes a
+    /// window, so `windowWillClose` doesn't treat the re-host as the user
+    /// closing the console.
+    private var isRehosting = false
+    /// Space of the last slot-visible key window, so a key change can be
+    /// told apart as "switched Spaces" vs "same Space refocused" — only a
+    /// real switch may steal the feed filter.
+    private var lastKeySpaceId: String?
+
+    private let model = AgentTranscriptPanelModel()
+    /// One hosting view shared by every placement — moving it between hosts
+    /// keeps the feed scroll position and a half-typed prompt across
+    /// re-docks.
+    private var hostingView: NSHostingView<AgentTranscriptPanelView>?
+
+    private(set) var placement: AgentTranscriptPlacement {
+        didSet { model.placement = placement }
+    }
+
+    override private init() {
+        placement = UserDefaults.standard.string(forKey: Self.placementDefaultsKey)
+            .flatMap(AgentTranscriptPlacement.init(rawValue:)) ?? .right
+        super.init()
+        model.placement = placement
+        // A docked console follows the frontmost browser window: a Space
+        // switch swaps NSWindows behind one visual "window", so the dock
+        // must re-host to keep that illusion intact.
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleWindowDidBecomeKey(_:)),
+            name: NSWindow.didBecomeKeyNotification, object: nil)
+    }
+
+    var isVisible: Bool {
+        window?.isVisible == true || (dockActive && dockView?.window != nil)
+    }
 
     func toggle() {
         if isVisible {
@@ -35,52 +121,172 @@ final class AgentTranscriptPanelController: NSObject {
     }
 
     /// Surfaces the console. `focusTaskId` preselects that task in the feed
-    /// filter (the pip context menu passes it); nil keeps the current filter —
-    /// "all tasks" by default.
+    /// filter (the pip context menu passes it). Without one, opening inside
+    /// an agent Space focuses that Space's own task; elsewhere the current
+    /// filter stays — "all tasks" by default.
     func show(focusTaskId: String? = nil) {
         if let focusTaskId {
             model.taskFilter = focusTaskId
+        } else if let taskId = activeSpaceTaskId() {
+            model.taskFilter = taskId
         }
         healStaleFilter()
-        if let panel {
-            panel.orderFrontRegardless()
-            return
-        }
+        present()
+    }
 
-        let hosting = NSHostingView(rootView: AgentTranscriptPanelView(model: model))
-        let panel = AgentTranscriptPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 380, height: 520),
-            styleMask: [.titled, .closable, .resizable, .utilityWindow, .nonactivatingPanel],
-            backing: .buffered, defer: false)
-        panel.title = NSLocalizedString(
-            "Agent Transcript", comment: "Agent console panel - window title")
-        panel.isFloatingPanel = true
-        panel.level = .floating
-        panel.hidesOnDeactivate = false
-        panel.isReleasedWhenClosed = false
-        panel.contentMinSize = NSSize(width: 300, height: 280)
-        panel.contentView = hosting
-        panel.delegate = self
+    /// The live task bound to the Space the user is currently looking at,
+    /// or nil when that Space isn't an agent Space.
+    private func activeSpaceTaskId() -> String? {
+        guard let spaceId = SpaceManager.shared.activeSpaceId else { return nil }
+        return AgentSpaceManager.shared.tasksBySpaceId[spaceId]?.taskId
+    }
 
-        // A remembered frame wins; the first open lands bottom-trailing of
-        // the browser window the user is looking at — a console's corner,
-        // not an alert's dead center.
-        if !panel.setFrameUsingName(Self.frameAutosaveName) {
-            let slot = SpaceManager.shared.keySlot ?? SpaceManager.shared.slots.first
-            let anchor = slot?.visibleController?.window?.frame
-                ?? NSScreen.main?.visibleFrame
-                ?? NSRect(x: 0, y: 0, width: 1280, height: 800)
-            let size = panel.frame.size
-            panel.setFrameOrigin(NSPoint(x: anchor.maxX - size.width - 16,
-                                         y: anchor.minY + 16))
-        }
-        panel.setFrameAutosaveName(Self.frameAutosaveName)
-        panel.orderFrontRegardless()
-        self.panel = panel
+    /// Moves the console to a new home, keeping it up if it was up.
+    func setPlacement(_ new: AgentTranscriptPlacement) {
+        guard new != placement else { return }
+        let wasVisible = isVisible || dockActive
+        tearDownPresentation()
+        placement = new
+        UserDefaults.standard.set(new.rawValue, forKey: Self.placementDefaultsKey)
+        if wasVisible { present() }
     }
 
     func dismiss() {
-        panel?.close()
+        tearDownPresentation()
+        reapEndedBuffers()
+    }
+
+    // MARK: - Presentation
+
+    private func present() {
+        switch placement {
+        case .window: presentWindow()
+        case .right, .bottom: presentDock()
+        }
+    }
+
+    private func sharedHostingView() -> NSHostingView<AgentTranscriptPanelView> {
+        if let hostingView { return hostingView }
+        let view = NSHostingView(rootView: AgentTranscriptPanelView(model: model))
+        hostingView = view
+        return view
+    }
+
+    private func presentWindow() {
+        if let window {
+            window.makeKeyAndOrderFront(nil)
+            window.orderFrontRegardless()
+            return
+        }
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 460, height: 560),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered, defer: false)
+        window.title = NSLocalizedString(
+            "Agent Transcript", comment: "Agent console panel - window title")
+        window.isReleasedWhenClosed = false
+        window.contentMinSize = NSSize(width: 320, height: 300)
+        window.contentView = sharedHostingView()
+        window.delegate = self
+        if !window.setFrameUsingName(Self.windowAutosaveName) {
+            window.center()
+        }
+        window.setFrameAutosaveName(Self.windowAutosaveName)
+        // orderFrontRegardless too: an auto-view show can land while Phi is
+        // in the background, where makeKeyAndOrderFront alone leaves the
+        // console behind the browser window.
+        window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
+        self.window = window
+    }
+
+    private func presentDock() {
+        guard let edge = placement.dockEdge else { return }
+        if dockActive, let dockView, dockView.window != nil, dockView.edge == edge { return }
+        guard let container = frontmostContainer() else { return }
+        let dock = AgentTranscriptDockView(edge: edge, content: sharedHostingView())
+        dockHost?.detachTranscriptDock()
+        container.attachTranscriptDock(dock, edge: edge)
+        dockView = dock
+        dockHost = container
+        dockActive = true
+    }
+
+    private func tearDownPresentation() {
+        isRehosting = true
+        defer { isRehosting = false }
+        if let window {
+            window.contentView = NSView()
+            window.close()
+            self.window = nil
+        }
+        if dockActive || dockView != nil {
+            hostingView?.removeFromSuperview()
+            dockHost?.detachTranscriptDock()
+            dockHost = nil
+            dockView = nil
+            dockActive = false
+        }
+    }
+
+    /// The container of the browser window a dock should live in right now.
+    /// Slot `visibleController`s only — NSApp.keyWindow can be the hidden
+    /// agent-Space window during task start (Chromium keys it briefly before
+    /// the slot pushes it back out), and a dock installed there is invisible.
+    private func frontmostContainer() -> WebContentContainerViewController? {
+        let controller = SpaceManager.shared.keySlot?.visibleController
+            ?? SpaceManager.shared.slots.first?.visibleController
+        return controller?.mainSplitViewController.webContentContainerViewController
+    }
+
+    /// Reacts to a different browser window coming to the front — a Space
+    /// switch swapping windows, or the user moving between two real windows.
+    /// The work runs one runloop turn later against SpaceManager state: this
+    /// observer can fire BEFORE the slot's own didBecomeKey observer (added
+    /// later) has repointed `visibleController`, and acting on the stale
+    /// value strands the dock in the window that just went off screen.
+    @objc private nonisolated func handleWindowDidBecomeKey(_ notification: Notification) {
+        MainActor.assumeIsolated {
+            guard (notification.object as? NSWindow)?.windowController
+                    is MainBrowserWindowController else { return }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    AgentTranscriptPanelController.shared.reconcileFrontWindow()
+                }
+            }
+        }
+    }
+
+    /// Aligns the console with the browser window the user is now looking
+    /// at: switching INTO an agent Space pulls the feed filter onto the task
+    /// that Space is bound to, and an active dock re-homes into the front
+    /// window (a Space switch swaps NSWindows behind one visual "window").
+    private func reconcileFrontWindow() {
+        guard let controller = SpaceManager.shared.keySlot?.visibleController
+            ?? SpaceManager.shared.slots.first?.visibleController else { return }
+
+        // Filter refocus only on a real Space change — a re-focus of the
+        // same Space must not undo a filter the user picked by hand.
+        let spaceChanged = controller.spaceId != lastKeySpaceId
+        lastKeySpaceId = controller.spaceId
+        if spaceChanged, isVisible,
+           let task = AgentSpaceManager.shared.tasksBySpaceId[controller.spaceId] {
+            model.taskFilter = task.taskId
+        }
+
+        guard dockActive, let edge = placement.dockEdge else { return }
+        let container = controller.mainSplitViewController.webContentContainerViewController
+        guard container !== dockHost, let dock = dockView else { return }
+        dockHost?.detachTranscriptDock()
+        container.attachTranscriptDock(dock, edge: edge)
+        dockHost = container
+    }
+
+    /// Reaps buffers of tasks that already ended — the open console was the
+    /// only reason they were retained.
+    private func reapEndedBuffers() {
+        let live = Set(AgentSpaceManager.shared.tasksBySpaceId.values.map(\.taskId))
+        AgentTranscriptStore.shared.clearAll(except: live)
     }
 
     /// A new task started while the console is up: steal the filter from a
@@ -108,22 +314,18 @@ final class AgentTranscriptPanelController: NSObject {
 }
 
 extension AgentTranscriptPanelController: NSWindowDelegate {
-    /// Covers both `dismiss()` and the title-bar close button: drop the
-    /// panel and reap the buffers of tasks that already ended — the open
-    /// console was the only reason they were retained.
+    /// The user closed the console via the title-bar button: drop the
+    /// window and reap ended tasks' buffers. Placement switches close the
+    /// same windows programmatically but flag `isRehosting` first.
     nonisolated func windowWillClose(_ notification: Notification) {
         MainActor.assumeIsolated {
-            panel = nil
-            let live = Set(AgentSpaceManager.shared.tasksBySpaceId.values.map(\.taskId))
-            AgentTranscriptStore.shared.clearAll(except: live)
+            guard !isRehosting else { return }
+            if let closing = notification.object as? NSWindow, closing === window {
+                window = nil
+            }
+            reapEndedBuffers()
         }
     }
-}
-
-/// `canBecomeKey` so the command prompt's text field can take focus despite
-/// the non-activating utility style.
-private final class AgentTranscriptPanel: NSPanel {
-    override var canBecomeKey: Bool { true }
 }
 
 /// View state that outlives panel open/close: the feed's task filter.
@@ -131,13 +333,171 @@ private final class AgentTranscriptPanel: NSPanel {
 final class AgentTranscriptPanelModel: ObservableObject {
     /// nil = all tasks interleaved; else only this taskId's lines.
     @Published var taskFilter: String?
+    /// Mirrors the controller's placement for the header's placement menu.
+    @Published var placement: AgentTranscriptPlacement = .right
+}
+
+// MARK: - Dock chrome
+
+/// Which browser-window edge a docked console occupies.
+enum AgentTranscriptDockEdge {
+    case right
+    case bottom
+
+    var sizeDefaultsKey: String {
+        switch self {
+        case .right: return "PhiAgentTranscriptDockWidth"
+        case .bottom: return "PhiAgentTranscriptDockHeight"
+        }
+    }
+}
+
+/// Chrome for a docked console: the console wrapped in the same rounded
+/// panel geometry as the page area, plus an invisible drag divider on the
+/// content-facing edge for resizing. Installed into a browser window by
+/// `WebContentContainerViewController.attachTranscriptDock`.
+final class AgentTranscriptDockView: NSView {
+    let edge: AgentTranscriptDockEdge
+
+    private static let defaultWidth: CGFloat = 360
+    private static let defaultHeight: CGFloat = 220
+    private static let minWidth: CGFloat = 280
+    private static let minHeight: CGFloat = 150
+    /// Room a resize must always leave for the page content.
+    private static let contentReserve: CGFloat = 400
+
+    private var sizeConstraint: NSLayoutConstraint!
+
+    init(edge: AgentTranscriptDockEdge, content: NSView) {
+        self.edge = edge
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+
+        // Same panel treatment as the page area (rounded corners, inset from
+        // the window edge) so the console reads as a sibling panel. The page
+        // side needs no inset here — the page panel's own 8pt edge inset
+        // provides the gap between the two panels.
+        let wrapper = NSView()
+        wrapper.wantsLayer = true
+        wrapper.layer?.cornerCurve = .continuous
+        wrapper.layer?.cornerRadius = LiquidGlassCompatible.webContentContainerCornerRadius
+        wrapper.layer?.masksToBounds = true
+        addSubview(wrapper)
+        wrapper.snp.makeConstraints { make in
+            make.top.equalToSuperview()
+            switch edge {
+            case .right:
+                make.leading.equalToSuperview()
+                make.trailing.bottom.equalToSuperview().inset(WebContentConstant.edgesSpacing)
+            case .bottom:
+                make.leading.trailing.bottom.equalToSuperview()
+                    .inset(WebContentConstant.edgesSpacing)
+            }
+        }
+
+        content.translatesAutoresizingMaskIntoConstraints = false
+        wrapper.addSubview(content)
+        content.snp.makeConstraints { make in
+            make.edges.equalToSuperview()
+        }
+
+        let divider = DividerView(edge: edge)
+        divider.currentSize = { [weak self] in self?.sizeConstraint.constant ?? 0 }
+        divider.onDrag = { [weak self] proposed in
+            guard let self else { return }
+            self.sizeConstraint.constant = self.clamped(proposed)
+        }
+        divider.onDragEnded = { [weak self] in
+            guard let self else { return }
+            UserDefaults.standard.set(Double(self.sizeConstraint.constant),
+                                      forKey: self.edge.sizeDefaultsKey)
+        }
+        addSubview(divider)
+        divider.snp.makeConstraints { make in
+            switch edge {
+            case .right:
+                make.leading.top.bottom.equalToSuperview()
+                make.width.equalTo(6)
+            case .bottom:
+                make.top.leading.trailing.equalToSuperview()
+                make.height.equalTo(6)
+            }
+        }
+
+        let stored = CGFloat(UserDefaults.standard.double(forKey: edge.sizeDefaultsKey))
+        let initial = stored > 0 ? stored
+            : (edge == .right ? Self.defaultWidth : Self.defaultHeight)
+        sizeConstraint = edge == .right
+            ? widthAnchor.constraint(equalToConstant: initial)
+            : heightAnchor.constraint(equalToConstant: initial)
+        // Below-required so an extreme window shrink compresses the dock
+        // instead of raising an unsatisfiable-constraints exception.
+        sizeConstraint.priority = NSLayoutConstraint.Priority(999)
+        sizeConstraint.isActive = true
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    private func clamped(_ proposed: CGFloat) -> CGFloat {
+        let minSize = edge == .right ? Self.minWidth : Self.minHeight
+        var maxSize = CGFloat.greatestFiniteMagnitude
+        if let superview {
+            maxSize = (edge == .right ? superview.bounds.width : superview.bounds.height)
+                - Self.contentReserve
+        }
+        return min(max(proposed, minSize), max(minSize, maxSize))
+    }
+
+    /// The drag strip along the dock's content-facing edge.
+    private final class DividerView: NSView {
+        let edge: AgentTranscriptDockEdge
+        var onDrag: ((CGFloat) -> Void)?
+        var onDragEnded: (() -> Void)?
+        var currentSize: (() -> CGFloat)?
+        private var dragOrigin: NSPoint = .zero
+        private var originalSize: CGFloat = 0
+
+        init(edge: AgentTranscriptDockEdge) {
+            self.edge = edge
+            super.init(frame: .zero)
+        }
+
+        required init?(coder: NSCoder) {
+            fatalError("init(coder:) has not been implemented")
+        }
+
+        override func resetCursorRects() {
+            addCursorRect(bounds, cursor: edge == .right ? .resizeLeftRight : .resizeUpDown)
+        }
+
+        override func mouseDown(with event: NSEvent) {
+            dragOrigin = event.locationInWindow
+            originalSize = currentSize?() ?? 0
+        }
+
+        override func mouseDragged(with event: NSEvent) {
+            let location = event.locationInWindow
+            // Right dock widens as the divider moves left; bottom dock grows
+            // as it moves up (window coordinates are y-up).
+            let delta = edge == .right
+                ? dragOrigin.x - location.x
+                : location.y - dragOrigin.y
+            onDrag?(originalSize + delta)
+        }
+
+        override func mouseUp(with event: NSEvent) {
+            onDragEnded?()
+        }
+    }
 }
 
 // MARK: - Console view
 
-/// The console: terminal-styled transcript feed + command prompt. Rendered
-/// dark in both themes on purpose — it mirrors the code agent's own medium,
-/// a terminal session.
+/// The console: terminal-styled transcript feed + command prompt. The
+/// palette follows the system (and per-window) light/dark appearance — a
+/// paper-light console in light mode, the terminal-dark one in dark mode.
 struct AgentTranscriptPanelView: View {
     @ObservedObject var model: AgentTranscriptPanelModel
     @ObservedObject private var store = AgentTranscriptStore.shared
@@ -148,15 +508,35 @@ struct AgentTranscriptPanelView: View {
     @FocusState private var promptFocused: Bool
 
     private enum Palette {
-        static let background = Color(red: 0.075, green: 0.08, blue: 0.10)
-        static let chrome = Color(red: 0.12, green: 0.125, blue: 0.155)
-        static let text = Color.white.opacity(0.92)
-        static let dim = Color.white.opacity(0.55)
-        static let faint = Color.white.opacity(0.35)
-        static let prompt = Color(red: 0.42, green: 0.85, blue: 0.55)
-        static let error = Color(red: 1.0, green: 0.48, blue: 0.42)
+        static let background = adaptive(
+            light: NSColor(red: 0.965, green: 0.965, blue: 0.975, alpha: 1),
+            dark: NSColor(red: 0.075, green: 0.08, blue: 0.10, alpha: 1))
+        static let chrome = adaptive(
+            light: NSColor(red: 0.915, green: 0.92, blue: 0.935, alpha: 1),
+            dark: NSColor(red: 0.12, green: 0.125, blue: 0.155, alpha: 1))
+        static let text = adaptive(
+            light: NSColor.black.withAlphaComponent(0.85),
+            dark: NSColor.white.withAlphaComponent(0.92))
+        static let dim = adaptive(
+            light: NSColor.black.withAlphaComponent(0.55),
+            dark: NSColor.white.withAlphaComponent(0.55))
+        static let faint = adaptive(
+            light: NSColor.black.withAlphaComponent(0.32),
+            dark: NSColor.white.withAlphaComponent(0.35))
+        static let prompt = adaptive(
+            light: NSColor(red: 0.05, green: 0.5, blue: 0.24, alpha: 1),
+            dark: NSColor(red: 0.42, green: 0.85, blue: 0.55, alpha: 1))
+        static let error = adaptive(
+            light: NSColor(red: 0.8, green: 0.22, blue: 0.17, alpha: 1),
+            dark: NSColor(red: 1.0, green: 0.48, blue: 0.42, alpha: 1))
         static let font = Font.system(size: 11.5, design: .monospaced)
         static let fontSmall = Font.system(size: 10, design: .monospaced)
+
+        /// Appearance-tracking color (`ThemedColor.dynamicColor`) so the
+        /// console re-renders when the system or window theme flips.
+        private static func adaptive(light: NSColor, dark: NSColor) -> Color {
+            Color(nsColor: ThemedColor(light: light, dark: dark).dynamicColor())
+        }
     }
 
     /// Live tasks by taskId, for R-tags, the filter menu, and prompt targeting.
@@ -251,10 +631,46 @@ struct AgentTranscriptPanelView: View {
             .buttonStyle(.plain)
             .font(Palette.fontSmall)
             .foregroundStyle(Palette.dim)
+
+            // DevTools-style placement switcher: dock right/bottom, float,
+            // or break out into a separate window.
+            Menu {
+                Picker("", selection: placementBinding) {
+                    ForEach(AgentTranscriptPlacement.allCases) { choice in
+                        Label(choice.title, systemImage: choice.symbol).tag(choice)
+                    }
+                }
+                .pickerStyle(.inline)
+                .labelsHidden()
+            } label: {
+                Image(systemName: model.placement.symbol)
+                    .font(Palette.fontSmall)
+                    .foregroundStyle(Palette.dim)
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+
+            // Docked chrome has no title bar, so it carries its own close.
+            if model.placement.isDocked {
+                Button {
+                    AgentTranscriptPanelController.shared.dismiss()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(Palette.fontSmall)
+                        .foregroundStyle(Palette.dim)
+                }
+                .buttonStyle(.plain)
+            }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(Palette.chrome)
+    }
+
+    private var placementBinding: Binding<AgentTranscriptPlacement> {
+        Binding(get: { model.placement },
+                set: { AgentTranscriptPanelController.shared.setPlacement($0) })
     }
 
     private struct FilterChoice {
@@ -442,6 +858,9 @@ struct AgentTranscriptPanelView: View {
         case numbered(String, String)
         case code(String)
         case paragraph(String)
+        /// A GFM table; first row is the header (the separator row that
+        /// declared it a table is consumed by the parser, not stored).
+        case table([[String]])
     }
 
     /// Renders a markdown string as a stack of styled lines. Kept monospaced
@@ -489,7 +908,42 @@ struct AgentTranscriptPanelView: View {
         case .paragraph(let text):
             inlineText(text).font(Palette.font).foregroundStyle(baseColor)
                 .fixedSize(horizontal: false, vertical: true)
+        case .table(let rows):
+            tableView(rows, baseColor: baseColor)
         }
+    }
+
+    /// A markdown table as a real grid: bold header, hairline under it, cells
+    /// wrapping within their columns so a wide table compresses instead of
+    /// overflowing the narrow console.
+    @ViewBuilder
+    private func tableView(_ rows: [[String]], baseColor: Color) -> some View {
+        let columns = rows.map(\.count).max() ?? 0
+        Grid(alignment: .topLeading, horizontalSpacing: 12, verticalSpacing: 3) {
+            if let header = rows.first {
+                GridRow {
+                    ForEach(0..<columns, id: \.self) { col in
+                        inlineText(col < header.count ? header[col] : "")
+                            .font(Palette.font.weight(.semibold))
+                            .foregroundStyle(Palette.text)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                Divider().overlay(Palette.faint)
+            }
+            ForEach(Array(rows.dropFirst().enumerated()), id: \.offset) { _, row in
+                GridRow {
+                    ForEach(0..<columns, id: \.self) { col in
+                        inlineText(col < row.count ? row[col] : "")
+                            .font(Palette.font)
+                            .foregroundStyle(baseColor)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        }
+        .padding(.vertical, 2)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// Inline markdown (bold/italic/`code`/links) → styled Text; bold and
@@ -508,11 +962,31 @@ struct AgentTranscriptPanelView: View {
     private func parseMarkdown(_ text: String) -> [MDBlock] {
         var out: [MDBlock] = []
         var inCode = false
-        for raw in text.components(separatedBy: "\n") {
+        let lines = text.components(separatedBy: "\n")
+        var index = 0
+        while index < lines.count {
+            let raw = lines[index]
+            index += 1
             let trimmed = raw.trimmingCharacters(in: .whitespaces)
             if trimmed.hasPrefix("```") { inCode.toggle(); continue }  // drop fence lines
             if inCode { out.append(.code(raw)); continue }
             if trimmed.isEmpty { out.append(.blank); continue }
+            // GFM table: a pipe row whose NEXT line is the |---|---| separator
+            // starts one; body rows are the following pipe rows. Without the
+            // separator, pipe-bearing lines stay ordinary paragraphs.
+            if trimmed.contains("|"), index < lines.count,
+               Self.isTableSeparator(lines[index].trimmingCharacters(in: .whitespaces)) {
+                var rows = [Self.tableCells(trimmed)]
+                index += 1  // consume the separator line
+                while index < lines.count {
+                    let row = lines[index].trimmingCharacters(in: .whitespaces)
+                    guard row.contains("|"), !row.isEmpty else { break }
+                    rows.append(Self.tableCells(row))
+                    index += 1
+                }
+                out.append(.table(rows))
+                continue
+            }
             if trimmed.hasPrefix("#") {
                 let hashes = trimmed.prefix(while: { $0 == "#" })
                 if hashes.count <= 6,
@@ -536,6 +1010,24 @@ struct AgentTranscriptPanelView: View {
             out.append(.paragraph(raw))
         }
         return out
+    }
+
+    /// `| --- | :---: |` and friends — dashes with optional alignment colons,
+    /// pipes and spaces, nothing else.
+    private static func isTableSeparator(_ s: String) -> Bool {
+        guard s.contains("-"), s.contains("|") else { return false }
+        return s.range(of: #"^\|?[ \t]*:?-+:?[ \t]*(\|[ \t]*:?-+:?[ \t]*)*\|?$"#,
+                       options: .regularExpression) != nil
+    }
+
+    /// Splits a pipe row into trimmed cells, dropping the empty edges a
+    /// leading/trailing pipe produces.
+    private static func tableCells(_ s: String) -> [String] {
+        var cells = s.components(separatedBy: "|")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+        if cells.first?.isEmpty == true { cells.removeFirst() }
+        if cells.last?.isEmpty == true { cells.removeLast() }
+        return cells
     }
 
     private func prefix(for kind: AgentTranscriptEntry.Kind) -> String {

@@ -176,7 +176,7 @@ extension AppController {
                     agentAutoViewItem.target = self
                     submenu.addItem(agentAutoViewItem)
 
-                    let agentTranscriptItem = NSMenuItem(title: NSLocalizedString("Agent Transcript", comment: "View menu - Toggle for the floating console mirroring the driving agent's session"),
+                    let agentTranscriptItem = NSMenuItem(title: NSLocalizedString("Agent Transcript", comment: "View menu - Toggle for the console mirroring the driving agent's session"),
                                                          action: #selector(toggleAgentTranscript(_:)),
                                                          keyEquivalent: "")
                     agentTranscriptItem.tag = AppController.agentTranscriptItemTag
@@ -628,7 +628,7 @@ extension AppController {
         }
     }
 
-    /// View ▸ Agent Transcript — the floating console mirroring the driving
+    /// View ▸ Agent Transcript — the console mirroring the driving
     /// code agent's session (live transcript + command prompt).
     @objc func toggleAgentTranscript(_ sender: Any?) {
         MainActor.assumeIsolated {

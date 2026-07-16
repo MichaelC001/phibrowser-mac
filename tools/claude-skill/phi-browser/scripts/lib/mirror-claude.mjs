@@ -1,10 +1,33 @@
 // Copyright 2026 Phinomenon Inc.
 //
-// Claude Code transcript parsing for the session mirror (the tailer daemon,
-// scripts/mirror-tailer.mjs). Kept separate from the agent-neutral core so
-// a Codex/Pi sibling supplies its own parsing and reuses everything else.
+// Claude Code adapter for the session mirror (the tailer daemon,
+// scripts/mirror-tailer.mjs): session discovery and transcript parsing.
+// Kept separate from the agent-neutral core so each agent's sibling
+// (mirror-codex.mjs today, Pi later) supplies only these two pieces and
+// reuses everything else.
 
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync, existsSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+
+/**
+ * The driving Claude Code session's transcript, or null. Exact: Claude Code
+ * exports its session id to every shell command, and the transcript path is
+ * located by session id across project dirs rather than by deriving the
+ * munged cwd folder name — immune to the munging rules changing.
+ */
+export function discoverClaudeTranscript() {
+  const sessionId = process.env.CLAUDE_CODE_SESSION_ID
+  if (!sessionId) return null
+  try {
+    const projects = join(homedir(), '.claude', 'projects')
+    for (const dir of readdirSync(projects)) {
+      const path = join(projects, dir, `${sessionId}.jsonl`)
+      if (existsSync(path)) return { sessionKey: sessionId, path, format: 'claude' }
+    }
+  } catch {}
+  return null
+}
 
 /** One transcript JSONL object → a console line, or null to skip. */
 export function toEntry(obj) {

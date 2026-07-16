@@ -100,6 +100,20 @@ export async function verifyEndpoint(endpoint) {
     version = await httpGetJson(endpoint, '/json/version', CONSENT_WAIT_MS)
   } catch (err) {
     if (err.message === DENIED_MESSAGE) throw err
+    // Codex runs shell commands in a seatbelt sandbox that by default denies
+    // ALL network syscalls — including connect() on Phi's unix socket, which
+    // then fails in 0 ms. Phi itself is usually fine and toggling it cannot
+    // help, so name the real fix instead of the generic toggle advice (which
+    // otherwise loops forever: every retry hits the same sandbox wall).
+    if (process.env.CODEX_SANDBOX_NETWORK_DISABLED
+        || (process.env.CODEX_SANDBOX && /connect|EPERM|ENETDOWN/i.test(err.message))) {
+      throw new Error(
+        `This shell runs inside Codex's network-disabled sandbox, which ` +
+        `blocks Phi's app socket (Phi itself is likely fine). Fix it on the ` +
+        `Codex side: add "[sandbox_workspace_write]\nnetwork_access = true" ` +
+        `to ~/.codex/config.toml, or re-run this command with escalated ` +
+        `(unsandboxed) permissions. [${err.message}]`)
+    }
     throw new Error(
       `Phi Browser CDP endpoint is not responding. Toggle it off and on in ` +
       `Settings ▸ Developer ▸ Remote debugging. [${err.message}]`)

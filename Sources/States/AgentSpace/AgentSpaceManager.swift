@@ -1000,12 +1000,27 @@ final class AgentSpaceManager: ObservableObject {
         pendingUserMessagesByTaskId[taskId]?.count ?? 0
     }
 
+    /// How recently a task's console must have been appended to for a
+    /// re-created task (same taskId) to CONTINUE the feed instead of starting
+    /// fresh. Covers a keep-alive reap between a driver's slow rounds; a
+    /// persistent Space re-bound after a real absence still starts clean.
+    static let transcriptContinuityWindow: TimeInterval = 30 * 60
+
     /// Console setup at task (re)start: a reused persistent Space must not
-    /// tail last week's transcript, so clear first, then the opening line.
-    /// Auto-opens the console when Agent Autoview is on — same preference,
-    /// same intent: the user wants to watch the agent work.
+    /// tail last week's transcript — but a task re-created moments after a
+    /// keep-alive reap (a driver whose harness kills rounds, Pi's 10s bash
+    /// timeout) must not lose the history the user is reading, so only a
+    /// stale buffer is cleared. Recency is judged by APPEND time — mirrored
+    /// lines carry backdated authored timestamps. Auto-opens the console when
+    /// Agent Autoview is on — same preference, same intent: the user wants to
+    /// watch the agent work.
     private func beginTranscript(taskId: String, spaceName: String) {
-        AgentTranscriptStore.shared.clear(taskId: taskId)
+        let continuing = AgentTranscriptStore.shared.lastAppend(taskId: taskId)
+            .map { Date().timeIntervalSince($0) < Self.transcriptContinuityWindow }
+            ?? false
+        if !continuing {
+            AgentTranscriptStore.shared.clear(taskId: taskId)
+        }
         appendTranscript(taskId: taskId, kind: .status,
                          text: "Task started — Space \(spaceName)")
         if PhiPreferences.AgentSpaces.autoViewEnabled {
