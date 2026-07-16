@@ -532,6 +532,9 @@
     "Clear Cookie" : {
       "comment" : "Address bar menu - Settings submenu item to clear cookie\nExtension list - Website settings item to clear cookies"
     },
+    "Clear search" : {
+      "comment" : "Icon picker - Accessibility label for clearing search"
+    },
     "Click " : {
       "comment" : "Phi Link - Custom bot guide prefix"
     },
@@ -1309,6 +1312,9 @@
     "No release notes available." : {
       "comment" : "Sparkle update window - Missing release notes placeholder"
     },
+    "No results" : {
+      "comment" : "Icon picker - Empty state when search has no matching icons"
+    },
     "No Results" : {
       "comment" : "Shortcuts settings - Empty state text when no shortcuts match search"
     },
@@ -1669,8 +1675,14 @@
     "Search" : {
       "comment" : "Omnibox - Accessibility description for search icon"
     },
+    "Search emoji" : {
+      "comment" : "Icon picker - Search field placeholder for emoji"
+    },
     "Search engine" : {
       "comment" : "Profiles settings - search engine row label"
+    },
+    "Search icons" : {
+      "comment" : "Icon picker - Search field placeholder for Phi icons"
     },
     "Search or Enter URL" : {
       "comment" : "Omnibox - Placeholder text prompting user to search or enter URL\nOmnibox suggestion - Placeholder text for search or URL entry\nSidebar address bar - Placeholder text prompting user to enter URL or search query\nWeb content address bar - Placeholder text shown when window has no tab"

@@ -18,6 +18,8 @@ struct IconPicker: View {
     private let emojiCatalog: EmojiCatalog
 
     @State private var selectedTab: IconPickerTab
+    @State private var iconSearchText = ""
+    @State private var emojiSearchText = ""
 
     /// Fixed height callers can use to size a container around the picker.
     static let preferredHeight: CGFloat = IconPickerMetrics.height
@@ -43,7 +45,7 @@ struct IconPicker: View {
     }
 
     private var pickerBody: some View {
-        VStack(spacing: IconPickerMetrics.segmentToGridSpacing) {
+        VStack(spacing: 0) {
             Picker("", selection: $selectedTab) {
                 Text("Icon").tag(IconPickerTab.icon)
                 Text("Emoji").tag(IconPickerTab.emoji)
@@ -54,15 +56,63 @@ struct IconPicker: View {
             .controlSize(.small)
             .frame(width: IconPickerMetrics.segmentWidth, height: IconPickerMetrics.segmentHeight)
 
-            switch selectedTab {
-            case .icon:
-                phiIconGrid
-            case .emoji:
-                emojiGrid
+            IconPickerSearchField(
+                text: activeSearchText,
+                placeholder: searchPlaceholder
+            )
+            .padding(.top, IconPickerMetrics.segmentToSearchSpacing)
+            .padding(.horizontal, searchHorizontalPadding)
+
+            Group {
+                switch selectedTab {
+                case .icon:
+                    phiIconGrid
+                case .emoji:
+                    emojiGrid
+                }
             }
+            .padding(.top, IconPickerMetrics.searchToGridSpacing)
         }
         .padding(.top, IconPickerMetrics.topPadding)
         .padding(.bottom, IconPickerMetrics.bottomPadding)
+    }
+
+    private var activeSearchText: Binding<String> {
+        switch selectedTab {
+        case .icon:
+            $iconSearchText
+        case .emoji:
+            $emojiSearchText
+        }
+    }
+
+    private var activeSearchQuery: String {
+        switch selectedTab {
+        case .icon:
+            iconSearchText
+        case .emoji:
+            emojiSearchText
+        }
+    }
+
+    private var searchPlaceholder: String {
+        switch selectedTab {
+        case .icon:
+            NSLocalizedString(
+                "Search icons",
+                comment: "Icon picker - Search field placeholder for Phi icons"
+            )
+        case .emoji:
+            NSLocalizedString(
+                "Search emoji",
+                comment: "Icon picker - Search field placeholder for emoji"
+            )
+        }
+    }
+
+    private var searchHorizontalPadding: CGFloat {
+        guard width == nil else { return IconPickerMetrics.gridHorizontalPadding }
+        return (resolvedWidth - IconPickerMetrics.fixedGridContentWidth) / 2
     }
 
     /// As many columns as fit `resolvedWidth` when an explicit width was given,
@@ -88,18 +138,24 @@ struct IconPicker: View {
 
     private var phiIconGrid: some View {
         ScrollView {
-            LazyVGrid(columns: gridColumns, spacing: IconPickerMetrics.rowSpacing) {
-                ForEach(PhiIconCatalog.allIds, id: \.self) { id in
-                    IconPickerGridButton(
-                        isSelected: selected == .phiIcon(id: id),
-                        help: id,
-                        action: { onSelect(.phiIcon(id: id)) }
-                    ) {
-                        Image(id)
-                            .resizable()
-                            .renderingMode(.original)
-                            .scaledToFit()
-                            .frame(width: IconPickerMetrics.iconSize, height: IconPickerMetrics.iconSize)
+            Group {
+                if filteredPhiIcons.isEmpty {
+                    emptySearchResults
+                } else {
+                    LazyVGrid(columns: gridColumns, spacing: IconPickerMetrics.rowSpacing) {
+                        ForEach(filteredPhiIcons) { icon in
+                            IconPickerGridButton(
+                                isSelected: selected == .phiIcon(id: icon.assetName),
+                                help: icon.name,
+                                action: { onSelect(.phiIcon(id: icon.assetName)) }
+                            ) {
+                                Image(icon.assetName)
+                                    .resizable()
+                                    .renderingMode(.original)
+                                    .scaledToFit()
+                                    .frame(width: IconPickerMetrics.iconSize, height: IconPickerMetrics.iconSize)
+                            }
+                        }
                     }
                 }
             }
@@ -109,21 +165,55 @@ struct IconPicker: View {
         .frame(height: IconPickerMetrics.gridHeight)
     }
 
+    private var filteredPhiIcons: [PhiIconCatalog.Icon] {
+        IconPickerSearch.phiIcons(matching: activeSearchQuery)
+    }
+
     private var emojiGrid: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 14) {
                 if showsGroups {
-                    ForEach(emojiCatalog.groups) { group in
-                        emojiGroup(group)
+                    if filteredEmojiGroups.isEmpty {
+                        emptySearchResults
+                    } else {
+                        ForEach(filteredEmojiGroups) { group in
+                            emojiGroup(group)
+                        }
                     }
                 } else {
-                    emojiItemsGrid(emojiCatalog.allItems)
+                    if filteredEmojiItems.isEmpty {
+                        emptySearchResults
+                    } else {
+                        emojiItemsGrid(filteredEmojiItems)
+                    }
                 }
             }
             .padding(.horizontal, IconPickerMetrics.gridHorizontalPadding)
             .padding(.vertical, IconPickerMetrics.gridVerticalPadding)
         }
         .frame(height: IconPickerMetrics.gridHeight)
+    }
+
+    private var filteredEmojiGroups: [EmojiCatalog.Group] {
+        IconPickerSearch.emojiGroups(in: emojiCatalog, matching: activeSearchQuery)
+    }
+
+    private var filteredEmojiItems: [EmojiItem] {
+        IconPickerSearch.emojiItems(in: emojiCatalog, matching: activeSearchQuery)
+    }
+
+    private var emptySearchResults: some View {
+        Text(NSLocalizedString(
+            "No results",
+            comment: "Icon picker - Empty state when search has no matching icons"
+        ))
+        .font(.system(size: 11))
+        .foregroundStyle(.secondary)
+        .frame(maxWidth: .infinity)
+        .frame(
+            minHeight: IconPickerMetrics.gridHeight
+                - 2 * IconPickerMetrics.gridVerticalPadding
+        )
     }
 
     private func emojiGroup(_ group: EmojiCatalog.Group) -> some View {
@@ -161,7 +251,7 @@ struct IconPickerSelectionView: View {
     var body: some View {
         switch selection ?? .defaultSelection {
         case .phiIcon(let id):
-            Image(id)
+            Image(PhiIconCatalog.canonicalId(for: id) ?? id)
                 .resizable()
                 .renderingMode(.original)
                 .scaledToFit()
@@ -179,14 +269,76 @@ private enum IconPickerTab: Hashable {
     case emoji
 }
 
+enum IconPickerSearch {
+    static func phiIcons(matching query: String) -> [PhiIconCatalog.Icon] {
+        guard let query = preparedQuery(query) else { return PhiIconCatalog.all }
+        return PhiIconCatalog.all.filter { icon in
+            matches(query, candidates: [icon.name, icon.assetName])
+        }
+    }
+
+    static func emojiGroups(in catalog: EmojiCatalog,
+                            matching query: String) -> [EmojiCatalog.Group] {
+        guard let query = preparedQuery(query) else { return catalog.groups }
+
+        return catalog.groups.compactMap { group in
+            if matches(query, candidates: [group.name]) {
+                return group
+            }
+
+            let items = group.items.filter { item in
+                matches(query, candidates: emojiKeywords(for: item))
+            }
+            guard !items.isEmpty else { return nil }
+            return EmojiCatalog.Group(name: group.name, items: items)
+        }
+    }
+
+    static func emojiItems(in catalog: EmojiCatalog,
+                           matching query: String) -> [EmojiItem] {
+        emojiGroups(in: catalog, matching: query).flatMap(\.items)
+    }
+
+    private static func emojiKeywords(for item: EmojiItem) -> [String] {
+        [item.text, item.name, item.subgroup]
+            + item.skinVariants.flatMap { [$0.text, $0.name] }
+    }
+
+    private static func preparedQuery(_ query: String) -> String? {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private static func matches(_ query: String, candidates: [String]) -> Bool {
+        let normalizedQuery = normalizedWords(in: query)
+        return candidates.contains { candidate in
+            if candidate.localizedStandardContains(query) {
+                return true
+            }
+
+            guard !normalizedQuery.isEmpty else { return false }
+            return normalizedWords(in: candidate)
+                .localizedStandardContains(normalizedQuery)
+        }
+    }
+
+    private static func normalizedWords(in value: String) -> String {
+        value.components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+}
+
 private enum IconPickerMetrics {
     static let width: CGFloat = 262
-    static let height: CGFloat = 248
+    static let height: CGFloat = 280
     static let topPadding: CGFloat = 8
     static let bottomPadding: CGFloat = 8
     static let segmentWidth: CGFloat = 128
     static let segmentHeight: CGFloat = 26
-    static let segmentToGridSpacing: CGFloat = 4
+    static let segmentToSearchSpacing: CGFloat = 8
+    static let searchHeight: CGFloat = 24
+    static let searchToGridSpacing: CGFloat = 4
     static let gridHeight: CGFloat = 202
     static let gridHorizontalPadding: CGFloat = 8
     static let gridVerticalPadding: CGFloat = 8
@@ -197,10 +349,54 @@ private enum IconPickerMetrics {
     static let emojiVerticalOffset: CGFloat = -1
     static let itemCornerRadius: CGFloat = 8
     static let rowSpacing: CGFloat = 4
+    static let fixedColumnCount = 8
+    static let fixedColumnSpacing: CGFloat = 4
+    static var fixedGridContentWidth: CGFloat {
+        CGFloat(fixedColumnCount) * itemSize
+            + CGFloat(fixedColumnCount - 1) * fixedColumnSpacing
+    }
     static let columns = Array(
-        repeating: GridItem(.fixed(itemSize), spacing: 4),
-        count: 8
+        repeating: GridItem(.fixed(itemSize), spacing: fixedColumnSpacing),
+        count: fixedColumnCount
     )
+}
+
+private struct IconPickerSearchField: View {
+    @Binding var text: String
+    let placeholder: String
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+
+            TextField(placeholder, text: $text)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12))
+
+            if !text.isEmpty {
+                Button(action: clearSearch) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(Text(NSLocalizedString(
+                    "Clear search",
+                    comment: "Icon picker - Accessibility label for clearing search"
+                )))
+            }
+        }
+        .padding(.horizontal, 8)
+        .frame(height: IconPickerMetrics.searchHeight)
+        .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 999))
+    }
+
+    private func clearSearch() {
+        text = ""
+    }
 }
 
 private struct IconPickerGridButton<Content: View>: View {
@@ -334,7 +530,7 @@ private struct EmojiSkinVariantPicker: View {
 }
 
 private struct IconPickerPreviewHost: View {
-    @State private var selection: IconPickerSelection? = .phiIcon(id: "phi-icon-1")
+    @State private var selection: IconPickerSelection? = .phiIcon(id: "phi-icon-rss")
 
     var body: some View {
         IconPicker(

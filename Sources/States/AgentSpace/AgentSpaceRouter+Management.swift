@@ -78,7 +78,7 @@ extension AgentSpaceRouter {
         let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { return invalid() }
         let colorHex = (obj["colorHex"] as? String) ?? "#3A6FF8"
-        let iconName = (obj["iconName"] as? String) ?? "phi:phi-icon-22"
+        let iconName = (obj["iconName"] as? String) ?? "phi:phi-icon-view-grid-add"
         let activate = obj["activate"] as? Bool ?? false
         let requestedProfile = (obj["profileId"] as? String) ?? ""
 

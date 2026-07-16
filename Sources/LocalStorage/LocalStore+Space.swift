@@ -15,11 +15,9 @@ extension LocalStore {
 
     private static let defaultSpaceName = "Default"
     private static let defaultSpaceColorHex = "#3A6FF8"
-    // Use the icon chooser's canonical default Phi icon (stored as
-    // "phi:phi-icon-1") so the Default space created when upgrading from a
-    // version without Spaces shows a real chooser icon instead of a bare
-    // SF Symbol placeholder.
-    private static let defaultSpaceIconName = "phi:phi-icon-22"
+    // Keep the existing view-grid-add artwork while using the semantic asset
+    // name written by the current icon chooser.
+    private static let defaultSpaceIconName = "phi:phi-icon-view-grid-add"
 
     @MainActor
     func ensureDefaultSpace(profileId: String) {
