@@ -31,12 +31,20 @@ struct SpacesSettingsView: View {
     @State private var orderedIds: [String] = []
 
     var body: some View {
-        HStack(alignment: .top, spacing: 16) {
-            spaceListPanel
-                .frame(width: 300, alignment: .top)
-                .frame(maxHeight: .infinity)
-            detailPanel
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        VStack(spacing: 16) {
+            HStack(alignment: .top, spacing: 16) {
+                spaceListPanel
+                    .frame(width: 300, alignment: .top)
+                    .frame(maxHeight: .infinity)
+                detailPanel
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            }
+            // The URL Rules editor lists every Space's rules, so it sits below
+            // the master-detail split as a pane-wide jump-off rather than a
+            // per-Space control.
+            SettingsDetailCard {
+                urlRulesRow
+            }
         }
         .padding(20)
         .onAppear {
@@ -141,18 +149,18 @@ struct SpacesSettingsView: View {
         return HStack(spacing: 8) {
             Image(systemName: "line.3.horizontal")
                 .font(.system(size: 12, weight: .medium))
-                .themedForeground(.textSecondary)
+                .themedForeground(isSelected ? ThemedColor(.white) : .textSecondary)
             Button {
                 select(space.spaceId)
             } label: {
                 HStack(spacing: 8) {
-                    spaceSwatch(space, size: 20)
+                    spaceSwatch(space, size: 20, isSelected: isSelected)
                     Text(space.name)
                         .font(.system(size: 13))
-                        .themedForeground(.textPrimary)
+                        .themedForeground(isSelected ? ThemedColor(.white) : .textPrimary)
                         .lineLimit(1)
                     if isDefault {
-                        SettingsDefaultBadge()
+                        SettingsDefaultBadge(onAccent: isSelected)
                     }
                     Spacer(minLength: 4)
                 }
@@ -172,7 +180,9 @@ struct SpacesSettingsView: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
         .frame(maxWidth: .infinity)
-        .background(isSelected ? Color.accentColor.opacity(0.15) : Color.clear)
+        // Solid system accent for the focused Space, matching the sidebar
+        // Space switcher's active row (SpacePickerRow).
+        .background(isSelected ? Color.accentColor : Color.clear)
         .clipShape(RoundedRectangle(cornerRadius: 6))
         .contentShape(Rectangle())
         // Use an explicit drag preview (not the implicit view snapshot): the
@@ -211,12 +221,12 @@ struct SpacesSettingsView: View {
             .padding(.leading, 2)
     }
 
-    private func spaceSwatch(_ space: SpaceModel, size: CGFloat) -> some View {
+    private func spaceSwatch(_ space: SpaceModel, size: CGFloat, isSelected: Bool = false) -> some View {
         SpaceIconView(
             storedValue: space.iconName,
             size: size * 0.8,
             symbolWeight: .semibold,
-            tint: Color.primary
+            tint: isSelected ? Color.white : Color.primary
         )
         .frame(width: size, height: size)
     }
@@ -233,14 +243,14 @@ struct SpacesSettingsView: View {
         return HStack(spacing: 8) {
             Image(systemName: "line.3.horizontal")
                 .font(.system(size: 12, weight: .medium))
-                .themedForeground(.textSecondary)
-            spaceSwatch(space, size: 20)
+                .foregroundStyle(Color.white.opacity(0.85))
+            spaceSwatch(space, size: 20, isSelected: true)
             Text(space.name)
                 .font(.system(size: 13))
-                .themedForeground(.textPrimary)
+                .foregroundStyle(Color.white)
                 .lineLimit(1)
             if isDefault {
-                SettingsDefaultBadge()
+                SettingsDefaultBadge(onAccent: true)
             }
             Spacer(minLength: 4)
             // Static stand-in for the row's profile picker (a drag image is
@@ -248,11 +258,11 @@ struct SpacesSettingsView: View {
             HStack(spacing: 4) {
                 Text(profileName)
                     .font(.system(size: 13))
-                    .themedForeground(.textPrimary)
+                    .foregroundStyle(Color.white)
                     .lineLimit(1)
                 Image(systemName: "chevron.up.chevron.down")
                     .font(.system(size: 9, weight: .medium))
-                    .themedForeground(.textSecondary)
+                    .foregroundStyle(Color.white.opacity(0.85))
             }
         }
         .padding(.horizontal, 8)
@@ -261,10 +271,8 @@ struct SpacesSettingsView: View {
         // side, so the row — and therefore this preview — is 288 wide.
         .frame(width: 288, alignment: .leading)
         // The lifted Space is selected the moment it's grabbed, so the preview
-        // carries the same accent highlight a selected row shows, layered over
-        // an opaque base so the floating drag image still reads as a card.
-        .background(Color.accentColor.opacity(0.15))
-        .themedBackground(.settingItemBackground)
+        // carries the same solid accent highlight a selected row shows.
+        .background(Color.accentColor)
         .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 
@@ -295,61 +303,37 @@ struct SpacesSettingsView: View {
     @ViewBuilder
     private var detailPanel: some View {
         if let space = selectedSpace {
-            let isDefault = space.spaceId == LocalStore.defaultSpaceId
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    HStack(spacing: 10) {
-                        spaceSwatch(space, size: 30)
-                        Text(space.name)
-                            .font(.system(size: 15, weight: .semibold))
-                            .themedForeground(.textPrimary)
-                            .lineLimit(1)
-                        Spacer()
-                    }
-                    .padding(.leading, 2)
-
-                    VStack(alignment: .leading, spacing: 8) {
-                        sectionHeader(NSLocalizedString("Icon", comment: "Spaces settings - icon section header"))
-                        SettingsDetailCard {
-                            IconPicker(
-                                selected: IconPickerSelection.fromStorageValue(space.iconName),
-                                showsGroups: true,
-                                onSelect: { selection in
-                                    spaceManager.changeIcon(spaceId: space.spaceId, iconName: selection.storageValue)
-                                }
-                            )
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 8)
-                        }
-                    }
-
-                    VStack(alignment: .leading, spacing: 8) {
-                        sectionHeader(NSLocalizedString("Theme", comment: "Spaces settings - theme section header"))
-                        SettingsDetailCard {
-                            SettingsDetailRow(NSLocalizedString("Color", comment: "Spaces settings - theme color row label")) {
-                                themeControl(space.spaceId)
+            // No outer ScrollView: the Icon card absorbs all spare height (the
+            // grid scrolls internally), so the Theme card's bottom edge lines up
+            // with the Space list's bottom edge.
+            VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 8) {
+                    sectionHeader(NSLocalizedString("Icon", comment: "Spaces settings - icon section header"))
+                    SettingsDetailCard {
+                        IconPicker(
+                            selected: IconPickerSelection.fromStorageValue(space.iconName),
+                            showsGroups: true,
+                            fillsAvailableHeight: true,
+                            onSelect: { selection in
+                                spaceManager.changeIcon(spaceId: space.spaceId, iconName: selection.storageValue)
                             }
-                        }
+                        )
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
                     }
-
-                    VStack(alignment: .leading, spacing: 8) {
-                        sectionHeader(NSLocalizedString("Routing", comment: "Spaces settings - routing section header"))
-                        SettingsDetailCard {
-                            urlRulesRow
-                        }
-                    }
-
-                    if isDefault {
-                        Text(NSLocalizedString("The default Space can't be moved to another profile or deleted.",
-                                               comment: "Spaces settings - default Space limits note"))
-                            .font(.system(size: 11))
-                            .themedForeground(.textSecondary)
-                            .padding(.leading, 2)
-                    }
-
+                    .frame(maxHeight: .infinity)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+
+                VStack(alignment: .leading, spacing: 8) {
+                    sectionHeader(NSLocalizedString("Theme", comment: "Spaces settings - theme section header"))
+                    SettingsDetailCard {
+                        SettingsDetailRow(NSLocalizedString("Color", comment: "Spaces settings - theme color row label")) {
+                            themeControl(space.spaceId)
+                        }
+                    }
+                }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         } else {
             Text(NSLocalizedString("Select a Space to view its settings.",
                                    comment: "Spaces settings - empty detail placeholder"))
@@ -372,7 +356,7 @@ struct SpacesSettingsView: View {
                     .font(.system(size: 13))
                     .themedForeground(.textPrimary)
                 Spacer(minLength: 8)
-                Image(systemName: "arrow.up.forward")
+                Image(systemName: "chevron.right")
                     .font(.system(size: 11, weight: .semibold))
                     .themedForeground(.textSecondary)
             }

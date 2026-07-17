@@ -13,6 +13,10 @@ struct IconPicker: View {
     /// fills exactly that width and the grid reflows to as many columns as fit —
     /// the create-Space form measures its container and passes the width in.
     let width: CGFloat?
+    /// When true the picker stretches vertically with its container instead of
+    /// the fixed popover height, letting the grid show as many rows as fit —
+    /// the Spaces settings pane fills its detail column with the picker.
+    let fillsAvailableHeight: Bool
     let onSelect: (IconPickerSelection) -> Void
 
     private let emojiCatalog: EmojiCatalog
@@ -20,6 +24,10 @@ struct IconPicker: View {
     @State private var selectedTab: IconPickerTab
     @State private var iconSearchText = ""
     @State private var emojiSearchText = ""
+    /// The selection last made by clicking a cell inside the picker. Such a
+    /// cell is already visible, so the grids skip the reveal-scroll for it
+    /// instead of shifting the grid under the cursor.
+    @State private var internallyPickedSelection: IconPickerSelection?
 
     /// Fixed height callers can use to size a container around the picker.
     static let preferredHeight: CGFloat = IconPickerMetrics.height
@@ -27,11 +35,13 @@ struct IconPicker: View {
     init(selected: IconPickerSelection?,
          showsGroups: Bool,
          width: CGFloat? = nil,
+         fillsAvailableHeight: Bool = false,
          emojiCatalog: EmojiCatalog = .shared,
          onSelect: @escaping (IconPickerSelection) -> Void) {
         self.selected = selected
         self.showsGroups = showsGroups
         self.width = width
+        self.fillsAvailableHeight = fillsAvailableHeight
         self.emojiCatalog = emojiCatalog
         self.onSelect = onSelect
         _selectedTab = State(initialValue: selected?.isEmoji == true ? .emoji : .icon)
@@ -40,8 +50,14 @@ struct IconPicker: View {
     private var resolvedWidth: CGFloat { width ?? IconPickerMetrics.width }
 
     var body: some View {
-        pickerBody
-            .frame(width: resolvedWidth, height: IconPickerMetrics.height)
+        if fillsAvailableHeight {
+            pickerBody
+                .frame(width: resolvedWidth)
+                .frame(maxHeight: .infinity)
+        } else {
+            pickerBody
+                .frame(width: resolvedWidth, height: IconPickerMetrics.height)
+        }
     }
 
     private var pickerBody: some View {
@@ -52,7 +68,9 @@ struct IconPicker: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .themedTint(.themeColor)
+            // System accent, not the Space theme: selection chrome in the
+            // picker follows the system focus color.
+            .tint(Color.accentColor)
             .controlSize(.small)
             .frame(width: IconPickerMetrics.segmentWidth, height: IconPickerMetrics.segmentHeight)
 
@@ -75,6 +93,13 @@ struct IconPicker: View {
         }
         .padding(.top, IconPickerMetrics.topPadding)
         .padding(.bottom, IconPickerMetrics.bottomPadding)
+        // Follow selection changes made from outside (switching Spaces in the
+        // settings pane): land on the tab holding the new selection, whose grid
+        // then reveals it on appear.
+        .onChange(of: selected) { newSelection in
+            guard let newSelection else { return }
+            selectedTab = newSelection.isEmoji ? .emoji : .icon
+        }
     }
 
     private var activeSearchText: Binding<String> {
@@ -137,32 +162,39 @@ struct IconPicker: View {
     }
 
     private var phiIconGrid: some View {
-        ScrollView {
-            Group {
-                if filteredPhiIcons.isEmpty {
-                    emptySearchResults
-                } else {
-                    LazyVGrid(columns: gridColumns, spacing: IconPickerMetrics.rowSpacing) {
-                        ForEach(filteredPhiIcons) { icon in
-                            IconPickerGridButton(
-                                isSelected: selected == .phiIcon(id: icon.assetName),
-                                help: icon.name,
-                                action: { onSelect(.phiIcon(id: icon.assetName)) }
-                            ) {
-                                Image(icon.assetName)
-                                    .resizable()
-                                    .renderingMode(.original)
-                                    .scaledToFit()
-                                    .frame(width: IconPickerMetrics.iconSize, height: IconPickerMetrics.iconSize)
+        ScrollViewReader { proxy in
+            ScrollView {
+                Group {
+                    if filteredPhiIcons.isEmpty {
+                        emptySearchResults
+                    } else {
+                        LazyVGrid(columns: gridColumns, spacing: IconPickerMetrics.rowSpacing) {
+                            ForEach(filteredPhiIcons) { icon in
+                                IconPickerGridButton(
+                                    isSelected: selected == .phiIcon(id: icon.assetName),
+                                    help: icon.name,
+                                    action: {
+                                        internallyPickedSelection = .phiIcon(id: icon.assetName)
+                                        onSelect(.phiIcon(id: icon.assetName))
+                                    }
+                                ) {
+                                    Image(icon.assetName)
+                                        .resizable()
+                                        .renderingMode(.original)
+                                        .scaledToFit()
+                                        .frame(width: IconPickerMetrics.iconSize, height: IconPickerMetrics.iconSize)
+                                }
                             }
                         }
                     }
                 }
+                .padding(.horizontal, IconPickerMetrics.gridHorizontalPadding)
+                .padding(.vertical, IconPickerMetrics.gridVerticalPadding)
             }
-            .padding(.horizontal, IconPickerMetrics.gridHorizontalPadding)
-            .padding(.vertical, IconPickerMetrics.gridVerticalPadding)
+            .frame(height: fillsAvailableHeight ? nil : IconPickerMetrics.gridHeight)
+            .onAppear { revealSelection(proxy) }
+            .onChange(of: selected) { handleSelectionChange($0, proxy: proxy) }
         }
-        .frame(height: IconPickerMetrics.gridHeight)
     }
 
     private var filteredPhiIcons: [PhiIconCatalog.Icon] {
@@ -170,28 +202,32 @@ struct IconPicker: View {
     }
 
     private var emojiGrid: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 14) {
-                if showsGroups {
-                    if filteredEmojiGroups.isEmpty {
-                        emptySearchResults
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 14) {
+                    if showsGroups {
+                        if filteredEmojiGroups.isEmpty {
+                            emptySearchResults
+                        } else {
+                            ForEach(filteredEmojiGroups) { group in
+                                emojiGroup(group)
+                            }
+                        }
                     } else {
-                        ForEach(filteredEmojiGroups) { group in
-                            emojiGroup(group)
+                        if filteredEmojiItems.isEmpty {
+                            emptySearchResults
+                        } else {
+                            emojiItemsGrid(filteredEmojiItems)
                         }
                     }
-                } else {
-                    if filteredEmojiItems.isEmpty {
-                        emptySearchResults
-                    } else {
-                        emojiItemsGrid(filteredEmojiItems)
-                    }
                 }
+                .padding(.horizontal, IconPickerMetrics.gridHorizontalPadding)
+                .padding(.vertical, IconPickerMetrics.gridVerticalPadding)
             }
-            .padding(.horizontal, IconPickerMetrics.gridHorizontalPadding)
-            .padding(.vertical, IconPickerMetrics.gridVerticalPadding)
+            .frame(height: fillsAvailableHeight ? nil : IconPickerMetrics.gridHeight)
+            .onAppear { revealSelection(proxy) }
+            .onChange(of: selected) { handleSelectionChange($0, proxy: proxy) }
         }
-        .frame(height: IconPickerMetrics.gridHeight)
     }
 
     private var filteredEmojiGroups: [EmojiCatalog.Group] {
@@ -232,7 +268,10 @@ struct IconPicker: View {
                 EmojiPickerGridButton(
                     item: item,
                     selectedEmojiId: selectedEmojiId,
-                    onSelect: onSelect
+                    onSelect: { selection in
+                        internallyPickedSelection = selection
+                        onSelect(selection)
+                    }
                 )
             }
         }
@@ -241,6 +280,78 @@ struct IconPicker: View {
     private var selectedEmojiId: String? {
         guard case .emoji(let id, _) = selected else { return nil }
         return id
+    }
+
+    /// Reveals a selection change in the active grid unless it came from a
+    /// click inside the picker — that cell is already visible, and re-anchoring
+    /// would shift the grid under the cursor.
+    private func handleSelectionChange(_ newSelection: IconPickerSelection?,
+                                       proxy: ScrollViewProxy) {
+        let wasInternal = newSelection != nil && newSelection == internallyPickedSelection
+        internallyPickedSelection = nil
+        guard !wasInternal else { return }
+        revealSelection(proxy)
+    }
+
+    /// Scrolls the active grid so the current selection sits in the viewport.
+    /// Runs when a grid appears and when the selection changes from outside
+    /// (switching Spaces in settings). The explicit anchor matters: an
+    /// anchorless scrollTo needs the target cell's current position, which the
+    /// lazy grid can't provide for cells it hasn't materialized, so off-screen
+    /// targets silently no-op.
+    ///
+    /// The reveal is staged. The grouped emoji grid nests per-group LazyVGrids
+    /// inside a LazyVStack, and an emoji id inside a group that was never built
+    /// is unknown to the proxy entirely — so the first hop targets the group
+    /// (a direct child of the outer lazy stack), which materializes the inner
+    /// grid; the later hops then land on the cell itself and correct the offset
+    /// once it exists. Icons skip the group hop: the single flat LazyVGrid can
+    /// estimate any cell's position from its data.
+    private func revealSelection(_ proxy: ScrollViewProxy) {
+        guard let targetId = selectionScrollTargetId else { return }
+        let groupId = selectionScrollGroupId
+        DispatchQueue.main.async {
+            if let groupId {
+                proxy.scrollTo(groupId, anchor: .top)
+            } else {
+                proxy.scrollTo(targetId, anchor: .center)
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                proxy.scrollTo(targetId, anchor: .center)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                    proxy.scrollTo(targetId, anchor: .center)
+                }
+            }
+        }
+    }
+
+    /// The grid item id holding the current selection: the phi-icon asset name,
+    /// or the base emoji whose cell also represents its selected skin variant.
+    /// Nil when nothing is selected or the active search filters it out.
+    private var selectionScrollTargetId: String? {
+        switch selected {
+        case .phiIcon(let id):
+            return filteredPhiIcons.first(where: { $0.assetName == id })?.id
+        case .emoji(let id, _):
+            let items = showsGroups ? filteredEmojiGroups.flatMap(\.items) : filteredEmojiItems
+            return items.first(where: { item in
+                item.id == id || item.skinVariants.contains(where: { $0.id == id })
+            })?.id
+        case nil:
+            return nil
+        }
+    }
+
+    /// The id of the emoji group containing the current selection — the first
+    /// hop of the staged reveal. Nil for icons and the ungrouped emoji grid,
+    /// which are single flat LazyVGrids that need no intermediate hop.
+    private var selectionScrollGroupId: String? {
+        guard showsGroups, case .emoji(let id, _) = selected else { return nil }
+        return filteredEmojiGroups.first(where: { group in
+            group.items.contains(where: { item in
+                item.id == id || item.skinVariants.contains(where: { $0.id == id })
+            })
+        })?.id
     }
 }
 
@@ -405,8 +516,6 @@ private struct IconPickerGridButton<Content: View>: View {
     let action: () -> Void
     let content: () -> Content
 
-    @Environment(\.phiTheme) private var theme
-    @Environment(\.phiAppearance) private var appearance
     @State private var isHovering = false
 
     init(isSelected: Bool,
@@ -433,25 +542,16 @@ private struct IconPickerGridButton<Content: View>: View {
         }
     }
 
-    @ViewBuilder
     private var background: some View {
-        let hoverColor = ThemedColor.themeColorOnHover.swiftUIColor(theme: theme, appearance: appearance)
-        let accent = ThemedColor.themeColor.swiftUIColor(theme: theme, appearance: appearance)
-        let shape = RoundedRectangle(cornerRadius: IconPickerMetrics.itemCornerRadius, style: .continuous)
-
-        shape
+        // Neutral rounded chip for the selected cell (no theme-colored fill or
+        // ring). Being luminance-based rather than a same-hue tint, it stays
+        // visible on the Space's themed sidebar backdrop too.
+        RoundedRectangle(cornerRadius: IconPickerMetrics.itemCornerRadius, style: .continuous)
             .fill(
                 isSelected
-                    ? hoverColor.opacity(0.5)
-                    : (isHovering ? hoverColor.opacity(0.24) : Color.clear)
+                    ? Color.primary.opacity(0.16)
+                    : (isHovering ? Color.primary.opacity(0.08) : Color.clear)
             )
-            // A crisp accent border marks the selected cell. The low-opacity fill
-            // alone vanishes when the picker sits on the Space's themed sidebar
-            // backdrop (a same-hue tint); the saturated, full-opacity border keeps
-            // a visible edge on any background.
-            .overlay {
-                shape.strokeBorder(isSelected ? accent : Color.clear, lineWidth: 1.5)
-            }
     }
 }
 

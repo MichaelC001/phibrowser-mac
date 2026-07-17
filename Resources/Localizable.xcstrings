@@ -300,7 +300,7 @@
       "comment" : "Developer settings - phi-browser skill section title"
     },
     "Agent Transcript" : {
-      "comment" : "Agent console panel - window title\nView menu - Toggle for the floating console mirroring the driving agent's session"
+      "comment" : "Agent console panel - window title\nView menu - Toggle for the console mirroring the driving agent's session"
     },
     "AI conversations will be closed and all connected Connectors will be disconnected." : {
       "comment" : "AI settings - Alert message explaining consequences of disabling AI features"
@@ -793,6 +793,12 @@
     },
     "Do not ask again" : {
       "comment" : "Suppression checkbox of the close-Incognito-Space confirmation"
+    },
+    "Dock to Bottom" : {
+      "comment" : "Agent console placement - bottom dock"
+    },
+    "Dock to Right" : {
+      "comment" : "Agent console placement - right sidebar"
     },
     "Domain" : {
       "comment" : "URL rule match type: exact host only"
@@ -1694,9 +1700,6 @@
     "Right URL" : {
       "comment" : "Bookmark editor - Label for the right (secondary) URL input field on a split-view bookmark"
     },
-    "Routing" : {
-      "comment" : "Spaces settings - routing section header"
-    },
     "Run" : {
       "comment" : "Notification card run button - Executes the suggested action"
     },
@@ -1741,6 +1744,9 @@
     },
     "Separate From Bookmark" : {
       "comment" : "Bookmark favicon command-hover hint - Preserve the current page as a normal tab and reset the bookmark"
+    },
+    "Separate Window" : {
+      "comment" : "Agent console placement - standalone window"
     },
     "Service issue" : {
       "comment" : "Phi Link - Custom bot service issue status\nPhi Link - Official bot service issue status"
@@ -1872,9 +1878,6 @@
     },
     "The connector authorization URL is invalid." : {
       "comment" : "AI settings - OAuth authorization URL error"
-    },
-    "The default Space can't be moved to another profile or deleted." : {
-      "comment" : "Spaces settings - default Space limits note"
     },
     "The local IM service is unavailable. Check whether Phi Sentinel started normally and the IM service is running." : {
       "comment" : "IM Channels - Message shown when im-server is not connected"
