@@ -239,7 +239,7 @@ class WebContentContainerViewController: NSViewController {
 
     /// The docked agent console currently hosted by this window, if any.
     /// Owned by `AgentTranscriptPanelController`; see `attachTranscriptDock`.
-    private(set) var transcriptDockView: NSView?
+    private(set) var transcriptDockView: AgentTranscriptDockView?
     private var transcriptDockEdge: AgentTranscriptDockEdge?
     
     // MARK: - Initialization
@@ -408,12 +408,13 @@ class WebContentContainerViewController: NSViewController {
     /// along the given edge, shrinking the content area to make room. One
     /// dock view exists app-wide; the controller moves it between windows as
     /// the frontmost browser window changes.
-    func attachTranscriptDock(_ dock: NSView, edge: AgentTranscriptDockEdge) {
+    func attachTranscriptDock(_ dock: AgentTranscriptDockView, edge: AgentTranscriptDockEdge) {
         guard transcriptDockView !== dock || transcriptDockEdge != edge else { return }
         transcriptDockView?.removeFromSuperview()
         transcriptDockView = dock
         transcriptDockEdge = edge
         view.addSubview(dock)
+        dock.updateLeadingInset(pageAreaLeadingInset)
         remakeContentLayout()
     }
 
@@ -1434,15 +1435,21 @@ class WebContentContainerViewController: NSViewController {
 
     /// Mirror of `WebContentViewController.updateSplitViewLeadingInset`, so
     /// the backdrop hugs the same leading edge the mounted panel uses.
-    /// Called from `updateLayoutForMode`, which already re-runs on layout-mode
-    /// and sidebar-collapse changes.
-    private func updatePageAreaBackdropLeadingInset() {
+    private var pageAreaLeadingInset: CGFloat {
         let traditionalLayout = PhiPreferences.GeneralSettings.loadLayoutMode().isTraditional
         let sidebarCollapsed = browserState?.sidebarCollapsed ?? true
-        let inset: CGFloat = (traditionalLayout || sidebarCollapsed)
+        return (traditionalLayout || sidebarCollapsed)
             ? WebContentConstant.edgesSpacing
             : 0
+    }
+
+    /// Called from `updateLayoutForMode`, which already re-runs on layout-mode
+    /// and sidebar-collapse changes. A bottom transcript dock shares the page
+    /// panel's left edge, so it follows the same inset.
+    private func updatePageAreaBackdropLeadingInset() {
+        let inset = pageAreaLeadingInset
         pageAreaBackdropLeadingConstraint?.update(inset: inset)
+        transcriptDockView?.updateLeadingInset(inset)
     }
 
     // MARK: - AI Chat Toggle

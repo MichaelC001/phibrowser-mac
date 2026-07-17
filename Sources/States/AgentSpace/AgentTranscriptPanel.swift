@@ -372,6 +372,10 @@ final class AgentTranscriptDockView: NSView {
     private static let contentReserve: CGFloat = 400
 
     private var sizeConstraint: NSLayoutConstraint!
+    /// Bottom dock only: the wrapper's leading inset, kept in sync with the
+    /// page panel's leading inset so both panels share one left edge. See
+    /// `updateLeadingInset`.
+    private var wrapperLeadingConstraint: Constraint?
 
     init(edge: AgentTranscriptDockEdge, content: NSView) {
         self.edge = edge
@@ -395,7 +399,9 @@ final class AgentTranscriptDockView: NSView {
                 make.leading.equalToSuperview()
                 make.trailing.bottom.equalToSuperview().inset(WebContentConstant.edgesSpacing)
             case .bottom:
-                make.leading.trailing.bottom.equalToSuperview()
+                wrapperLeadingConstraint = make.leading.equalToSuperview()
+                    .inset(WebContentConstant.edgesSpacing).constraint
+                make.trailing.bottom.equalToSuperview()
                     .inset(WebContentConstant.edgesSpacing)
             }
         }
@@ -443,6 +449,14 @@ final class AgentTranscriptDockView: NSView {
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    /// Aligns a bottom dock's left edge with the page panel, whose leading
+    /// inset varies with layout mode and sidebar state. Driven by
+    /// `WebContentContainerViewController`, the only layer that knows that
+    /// inset. No-op for a right dock (its leading edge faces the page).
+    func updateLeadingInset(_ inset: CGFloat) {
+        wrapperLeadingConstraint?.update(inset: inset)
     }
 
     private func clamped(_ proposed: CGFloat) -> CGFloat {
