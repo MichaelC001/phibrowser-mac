@@ -1393,25 +1393,9 @@ extension AppController {
 
     private func makeSpacesThemeSubmenu(for spaceId: String?) -> NSMenu {
         let menu = NSMenu(title: NSLocalizedString("Edit Theme", comment: "Spaces menu - Submenu to set a theme override for the active Space"))
-        let pinnedId = spaceId.flatMap { SpaceManager.shared.themeId(forSpaceId: $0) }
+        let pinnedId = spaceId.map { SpaceManager.shared.resolvedThemeId(forSpaceId: $0) }
 
-        let followGlobal = NSMenuItem(
-            title: NSLocalizedString("Follow Global", comment: "Spaces menu - Theme submenu entry that clears the per-Space override"),
-            action: #selector(selectSpaceTheme(_:)),
-            keyEquivalent: ""
-        )
-        followGlobal.target = self
-        followGlobal.representedObject = nil
-        followGlobal.state = (pinnedId == nil) ? .on : .off
-        followGlobal.image = .themeColorSwatch(for: ThemeManager.shared.currentTheme)
-        menu.addItem(followGlobal)
-
-        let themes = ThemeManager.shared.orderedThemes
-
-        if !themes.isEmpty {
-            menu.addItem(.separator())
-        }
-        for theme in themes {
+        for theme in ThemeManager.shared.orderedThemes {
             let item = NSMenuItem(
                 title: theme.name,
                 action: #selector(selectSpaceTheme(_:)),
@@ -1548,8 +1532,8 @@ extension AppController {
 
     @objc func selectSpaceTheme(_ sender: Any?) {
         guard let menuItem = sender as? NSMenuItem,
-              let space = currentActiveSpace() else { return }
-        let themeId = menuItem.representedObject as? String
+              let space = currentActiveSpace(),
+              let themeId = menuItem.representedObject as? String else { return }
         SpaceManager.shared.setTheme(forSpaceId: space.spaceId, themeId: themeId)
     }
 
@@ -1924,8 +1908,8 @@ extension AppController {
             if action == #selector(selectSpaceTheme(_:)) {
                 guard currentActiveSpace() != nil else { return false }
                 if let menuItem = item as? NSMenuItem {
-                    let pinnedId = currentActiveSpace().flatMap {
-                        SpaceManager.shared.themeId(forSpaceId: $0.spaceId)
+                    let pinnedId = currentActiveSpace().map {
+                        SpaceManager.shared.resolvedThemeId(forSpaceId: $0.spaceId)
                     }
                     let representedId = menuItem.representedObject as? String
                     menuItem.state = (pinnedId == representedId) ? .on : .off

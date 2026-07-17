@@ -174,18 +174,12 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
                 ordered.append(incognitoTarget)
             }
 
-            // Resolve each Space's theme color (its pinned theme, or the
-            // current theme when none) for the source window's appearance, so a
-            // row's tint matches what that Space actually looks like.
+            // Resolve each Space's theme (pinned theme + custom overlay
+            // opacity) for the source window's appearance, so a row's tint
+            // matches what that Space actually looks like.
             let appearance = sourceWindow.effectiveAppearance.phiAppearance
             let items: [SpaceChooserItem] = ordered.map { space in
-                let theme: Theme
-                if let pinnedId = manager.themeId(forSpaceId: space.spaceId),
-                   let pinned = ThemeManager.shared.registeredThemes[pinnedId] {
-                    theme = pinned
-                } else {
-                    theme = ThemeManager.shared.currentTheme
-                }
+                let theme = manager.resolvedTheme(forSpaceId: space.spaceId)
                 let themeNSColor = theme.color(for: .themeColor, appearance: appearance)
                 // Contrast is computed on the opaque color, then the row is
                 // tinted with the theme's overlay opacity (the Opacity setting)
@@ -206,16 +200,9 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
                     textColor: Color(nsColor: legible))
             }
 
-            // The box's translucency follows the current Space's theme overlay
-            // opacity (the Opacity setting in General settings), so it matches
-            // the window it sits over.
-            let currentTheme: Theme
-            if let pinnedId = manager.themeId(forSpaceId: currentSpaceId),
-               let pinned = ThemeManager.shared.registeredThemes[pinnedId] {
-                currentTheme = pinned
-            } else {
-                currentTheme = ThemeManager.shared.currentTheme
-            }
+            // The box's translucency follows the current Space's resolved
+            // overlay opacity, so it matches the window it sits over.
+            let currentTheme = manager.resolvedTheme(forSpaceId: currentSpaceId)
             let boxBackground = Color(
                 nsColor: currentTheme.color(for: .windowOverlayBackground, appearance: appearance))
 

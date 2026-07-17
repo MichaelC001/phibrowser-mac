@@ -6,30 +6,6 @@
 import AppKit
 import SwiftUI
 
-func normalizedThemeSliderTrackColor(from color: NSColor) -> NSColor {
-    let resolvedColor = color.usingColorSpace(.extendedSRGB) ?? color
-    return resolvedColor.withAlphaComponent(1)
-}
-
-/// Linear mapping between the overlay slider position (0...100) and the actual
-/// allowed opacity percentage (10...80). Keeping the slider on a full 0...100
-/// range lets the knob travel to both visual ends, while the underlying overlay
-/// alpha is constrained to a tasteful sub-range.
-private enum OverlayOpacityScale {
-    static let minOpacityPercent: Double = 10
-    static let maxOpacityPercent: Double = 80
-
-    static func opacityPercent(forSlider sliderValue: Double) -> Double {
-        let clamped = min(max(sliderValue, 0), 100)
-        return minOpacityPercent + (maxOpacityPercent - minOpacityPercent) * (clamped / 100)
-    }
-
-    static func sliderValue(forOpacityPercent opacityPercent: Double) -> Double {
-        let clamped = min(max(opacityPercent, minOpacityPercent), maxOpacityPercent)
-        return (clamped - minOpacityPercent) / (maxOpacityPercent - minOpacityPercent) * 100
-    }
-}
-
 enum NewTabBehaviour: String, CaseIterable, Identifiable {
     case newTabPage
     case omnibox
@@ -68,6 +44,8 @@ struct GeneralSettingView: View {
 }
 
 private struct ThemeSectionView: View {
+    @ObservedObject private var spaceManager = SpaceManager.shared
+
     @State private var selectedThemeId: String = ThemeManager.shared.currentTheme.id
     @State private var sliderValue: Double = OverlayOpacityScale.sliderValue(
         forOpacityPercent: ThemeManager.shared.currentTheme.windowOverlayOpacity(for: ThemeManager.shared.currentAppearance) * 100
@@ -81,58 +59,74 @@ private struct ThemeSectionView: View {
     private var themes: [Theme] {
         ThemeManager.shared.orderedThemes
     }
-    
+
     private var selectedTheme: Theme {
         themes.first(where: { $0.id == selectedThemeId }) ?? ThemeManager.shared.currentTheme
     }
-    
+
     private var sliderTrackColor: NSColor {
         selectedTheme.color(for: .windowOverlayBackground, appearance: appearance)
     }
-    
+
     private var sliderBorderColor: NSColor {
         ThemedColor.border.resolve(theme: selectedTheme, appearance: appearance)
+    }
+
+    /// These controls edit the DEFAULT Space. With a single Space that is
+    /// the whole browser; once more Spaces exist, each one carries its own
+    /// color and opacity, so the rows lock and defer to the Spaces pane.
+    private var themeEditingLocked: Bool {
+        spaceManager.userSpaces.count > 1
     }
 
     var body: some View {
         GeneralSectionView(title: NSLocalizedString("Theme", comment: "General settings - Theme section title")) {
             GeneralContainerView {
                 VStack(spacing: 0) {
-                    HStack(alignment: .top, spacing: 12) {
-                        Text(NSLocalizedString("Color", comment: "General settings - Theme color row title"))
-                            .font(.system(size: 13))
-                            .themedForeground(.textPrimary)
-                        
-                        Spacer(minLength: 12)
-                        
-                        HStack(alignment: .top, spacing: 13) {
-                            ForEach(themes, id: \.id) { theme in
-                                ThemeColorItemView(
-                                    theme: theme,
-                                    selected: selectedThemeId == theme.id,
-                                    action: { selectTheme(theme) }
-                                )
+                    Group {
+                        HStack(alignment: .top, spacing: 12) {
+                            Text(NSLocalizedString("Color", comment: "General settings - Theme color row title"))
+                                .font(.system(size: 13))
+                                .themedForeground(.textPrimary)
+
+                            Spacer(minLength: 12)
+
+                            HStack(alignment: .top, spacing: 13) {
+                                ForEach(themes, id: \.id) { theme in
+                                    ThemeColorItemView(
+                                        theme: theme,
+                                        selected: selectedThemeId == theme.id,
+                                        action: { selectTheme(theme) }
+                                    )
+                                }
                             }
                         }
+                        .padding(.vertical, 12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                        Divider()
+
+                        GeneralRowView(title: NSLocalizedString("Opacity", comment: "General settings - Theme opacity row title for adjusting the selected theme overlay transparency")) {
+                            ThemeOpacitySliderView(
+                                value: Binding(
+                                    get: { sliderValue },
+                                    set: { newValue in
+                                        sliderValue = newValue
+                                        handleSliderValueChanged(newValue)
+                                    }
+                                ),
+                                trackColor: sliderTrackColor,
+                                borderColor: sliderBorderColor
+                            )
+                            .frame(width: 324, height: 20)
+                        }
                     }
-                    .padding(.vertical, 12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    
-                    Divider()
-                    
-                    GeneralRowView(title: NSLocalizedString("Opacity", comment: "General settings - Theme opacity row title for adjusting the selected theme overlay transparency")) {
-                        ThemeOpacitySliderView(
-                            value: Binding(
-                                get: { sliderValue },
-                                set: { newValue in
-                                    sliderValue = newValue
-                                    handleSliderValueChanged(newValue)
-                                }
-                            ),
-                            trackColor: sliderTrackColor,
-                            borderColor: sliderBorderColor
-                        )
-                        .frame(width: 324, height: 20)
+                    .disabled(themeEditingLocked)
+                    .opacity(themeEditingLocked ? 0.4 : 1.0)
+
+                    if themeEditingLocked {
+                        Divider()
+                        editInSpacesHintRow
                     }
 
                     Divider()
@@ -153,19 +147,48 @@ private struct ThemeSectionView: View {
         .onReceive(NotificationCenter.default.publisher(for: .appearanceDidChange)) { _ in
             syncSliderValue()
         }
+        .onReceive(NotificationCenter.default.publisher(for: .spaceThemeDidChange)) { _ in
+            syncThemeControls()
+        }
         .onAppear {
             syncThemeControls()
         }
+    }
+
+    /// Shown while the color/opacity rows are locked: says why and jumps
+    /// to the pane where per-Space themes are edited.
+    private var editInSpacesHintRow: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Text(NSLocalizedString("You have more than one Space, so each Space sets its own color and opacity.", comment: "General settings - Hint shown when the theme color/opacity rows are locked because multiple Spaces exist"))
+                .font(.system(size: 11))
+                .themedForeground(.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 12)
+            Button {
+                AppController.shared?.ensureSettingsWindowController().show(pane: .spaces)
+            } label: {
+                Text(NSLocalizedString("Edit in Spaces settings\u{2026}", comment: "General settings - Link that jumps to the Spaces settings pane"))
+                    .font(.system(size: 12))
+                    .foregroundStyle(Color.accentColor)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func selectTheme(_ theme: Theme) {
         guard selectedThemeId != theme.id else { return }
 
         selectedThemeId = theme.id
-        ThemeManager.shared.switchTheme(to: theme.id)
+        // This control edits the default Space; SpaceManager also switches
+        // the global theme to it so non-browser chrome and pre-Space
+        // fallbacks stay in step.
+        SpaceManager.shared.setTheme(forSpaceId: LocalStore.defaultSpaceId, themeId: theme.id)
         syncSliderValue()
     }
-    
+
     private func handleSliderValueChanged(_ newSliderValue: Double) {
         // Always resolve the appearance through the manager. The Binding stored in
         // ThemeOpacitySliderView.Coordinator is created once and captures a stale
@@ -174,17 +197,28 @@ private struct ThemeSectionView: View {
         let opacityPercent = OverlayOpacityScale.opacityPercent(forSlider: newSliderValue)
         let alpha = CGFloat(opacityPercent / 100)
         AppLogDebug("[OverlayOpacity] slider→opacity slider=\(newSliderValue) percent=\(opacityPercent) alpha=\(alpha) appearance=\(ThemeManager.shared.currentAppearance) theme=\(ThemeManager.shared.currentTheme.id)")
+        // Persist on the default Space first so its window's resolver reads
+        // the new value when the registry rewrite below publishes.
+        SpaceManager.shared.setOverlayOpacity(
+            alpha,
+            forSpaceId: LocalStore.defaultSpaceId,
+            appearance: ThemeManager.shared.currentAppearance
+        )
+        // Keep the registry rewrite: it is what future Spaces (and the
+        // create panel's previews) inherit as their default alpha. Only
+        // reachable with a single user Space, so it can't bleed across
+        // other Spaces' custom opacities.
         ThemeManager.shared.updateCurrentThemeOverlayOpacity(alpha)
     }
 
     private func syncThemeControls() {
-        selectedThemeId = ThemeManager.shared.currentTheme.id
+        selectedThemeId = SpaceManager.shared.resolvedThemeId(forSpaceId: LocalStore.defaultSpaceId)
         syncSliderValue()
     }
 
     private func syncSliderValue() {
         let appearance = ThemeManager.shared.currentAppearance
-        let alpha = ThemeManager.shared.currentTheme.windowOverlayOpacity(for: appearance)
+        let alpha = SpaceManager.shared.effectiveOverlayOpacity(forSpaceId: LocalStore.defaultSpaceId, appearance: appearance)
         let opacityPercent = alpha * 100
         let newSliderValue = OverlayOpacityScale.sliderValue(forOpacityPercent: opacityPercent)
         AppLogDebug("[OverlayOpacity] sync appearance=\(appearance) theme=\(ThemeManager.shared.currentTheme.id) alpha=\(alpha) percent=\(opacityPercent) slider=\(newSliderValue) (was=\(sliderValue))")
@@ -489,182 +523,6 @@ private struct ThemeColorItemView: View {
             action: action
         )
         .frame(width: 30)
-    }
-}
-
-private struct ThemeOpacitySliderView: NSViewRepresentable {
-    @Binding var value: Double
-    let trackColor: NSColor
-    let borderColor: NSColor
-    
-    func makeCoordinator() -> Coordinator {
-        Coordinator(value: $value)
-    }
-    
-    private static let knobDiameter: CGFloat = 18
-
-    func makeNSView(context: Context) -> CustomSlider {
-        let slider = ThemeOpacityCustomSlider(frame: NSRect(origin: .zero, size: NSSize(width: 324, height: 20)))
-        slider.minValue = 0
-        slider.maxValue = 100
-        slider.doubleValue = value
-        slider.isContinuous = true
-        slider.barSize = NSSize(width: 324, height: 10)
-        slider.knobSize = NSSize(width: Self.knobDiameter, height: Self.knobDiameter)
-        slider.knobView = ThemeOpacitySliderKnobView(
-            frame: NSRect(origin: .zero, size: NSSize(width: Self.knobDiameter, height: Self.knobDiameter)),
-            borderColor: borderColor
-        )
-        slider.trackImage = makeTrackImage(color: trackColor, borderColor: borderColor)
-        slider.target = context.coordinator
-        slider.action = #selector(Coordinator.sliderValueChanged(_:))
-        return slider
-    }
-    
-    func updateNSView(_ slider: CustomSlider, context: Context) {
-        slider.trackImage = makeTrackImage(color: trackColor, borderColor: borderColor)
-        if let knobView = slider.knobView as? ThemeOpacitySliderKnobView {
-            knobView.borderColor = borderColor
-        }
-        if slider.doubleValue != value {
-            AppLogDebug("[OverlayOpacity] updateNSView push slider \(slider.doubleValue) → \(value)")
-            slider.doubleValue = value
-        }
-    }
-    
-    private func makeTrackImage(color: NSColor, borderColor: NSColor) -> NSImage {
-        let size = NSSize(width: 324, height: 10)
-        let image = NSImage(size: size)
-        image.lockFocus()
-        
-        let rect = NSRect(origin: .zero, size: size)
-        let path = NSBezierPath(roundedRect: rect, xRadius: size.height / 2, yRadius: size.height / 2)
-        path.addClip()
-        
-        let baseColor = normalizedThemeSliderTrackColor(from: color)
-        let startColor = baseColor.withAlphaComponent(OverlayOpacityScale.minOpacityPercent / 100)
-        let endColor = baseColor.withAlphaComponent(OverlayOpacityScale.maxOpacityPercent / 100)
-        let gradient = NSGradient(starting: startColor, ending: endColor)
-        gradient?.draw(in: path, angle: 0)
-        
-        borderColor.setStroke()
-        path.lineWidth = 1
-        path.stroke()
-        
-        image.unlockFocus()
-        return image
-    }
-    
-    final class Coordinator: NSObject {
-        @Binding private var value: Double
-        
-        init(value: Binding<Double>) {
-            self._value = value
-        }
-        
-        @objc func sliderValueChanged(_ sender: NSSlider) {
-            AppLogDebug("[OverlayOpacity] NSSlider action value=\(sender.doubleValue)")
-            value = sender.doubleValue
-        }
-    }
-}
-
-private final class ThemeOpacitySliderKnobView: NSView {
-    var borderColor: NSColor {
-        didSet {
-            needsDisplay = true
-        }
-    }
-    
-    override init(frame frameRect: NSRect) {
-        self.borderColor = ThemedColor.border.resolved()
-        super.init(frame: frameRect)
-        wantsLayer = true
-    }
-    
-    init(frame frameRect: NSRect, borderColor: NSColor) {
-        self.borderColor = borderColor
-        super.init(frame: frameRect)
-        wantsLayer = true
-    }
-    
-    required init?(coder: NSCoder) {
-        self.borderColor = ThemedColor.border.resolved()
-        super.init(coder: coder)
-        wantsLayer = true
-    }
-    
-    override func draw(_ dirtyRect: NSRect) {
-        super.draw(dirtyRect)
-
-        // Inset by half the stroke width so the 1pt border sits exactly on the
-        // view edge, leaving no visible gap when the knob rests at the bar end.
-        let strokeWidth: CGFloat = 1
-        let circleRect = bounds.insetBy(dx: strokeWidth / 2, dy: strokeWidth / 2)
-        let shadow = NSShadow()
-        shadow.shadowBlurRadius = 2
-        shadow.shadowOffset = NSSize(width: 0, height: -1)
-        shadow.shadowColor = NSColor.black.withAlphaComponent(0.16)
-        shadow.set()
-
-        let fillPath = NSBezierPath(ovalIn: circleRect)
-        NSColor.white.setFill()
-        fillPath.fill()
-
-        NSGraphicsContext.current?.saveGraphicsState()
-        NSShadow().set()
-        borderColor.setStroke()
-        fillPath.lineWidth = strokeWidth
-        fillPath.stroke()
-        NSGraphicsContext.current?.restoreGraphicsState()
-    }
-}
-
-/// Slider variant whose cell positions the knob using the configured `knobSize`
-/// instead of AppKit's default `knobThickness` (~21pt). Other CustomSlider
-/// callers use a 20pt knob, where the resulting ~0.5pt gap is invisible; our
-/// 16pt knob produces a ~2.5pt visible gap, so we take over the layout.
-private final class ThemeOpacityCustomSlider: CustomSlider {
-    override class var cellClass: AnyClass? {
-        get { ThemeOpacitySliderCell.self }
-        set { _ = newValue }
-    }
-}
-
-private final class ThemeOpacitySliderCell: ImageSliderCell {
-    override var knobThickness: CGFloat {
-        knobSize?.width ?? super.knobThickness
-    }
-
-    /// Span the whole control width so the gradient track image (also generated
-    /// at full width) is not squeezed into AppKit's default knob padding.
-    override func barRect(flipped: Bool) -> NSRect {
-        guard let controlView else {
-            return super.barRect(flipped: flipped)
-        }
-        let bounds = controlView.bounds
-        let drawHeight = barSize?.height ?? bounds.height
-        return NSRect(
-            x: 0,
-            y: (bounds.height - drawHeight) / 2.0,
-            width: bounds.width,
-            height: drawHeight
-        )
-    }
-
-    override func knobRect(flipped: Bool) -> NSRect {
-        guard let controlView else {
-            return super.knobRect(flipped: flipped)
-        }
-        let bounds = controlView.bounds
-        let knobWidth = knobSize?.width ?? super.knobThickness
-        let knobHeight = knobSize?.height ?? bounds.height
-        let denominator = maxValue - minValue
-        let ratio: CGFloat = denominator > 0 ? CGFloat((doubleValue - minValue) / denominator) : 0
-        let travel = max(0, bounds.width - knobWidth)
-        let x = ratio * travel
-        let y = (bounds.height - knobHeight) / 2.0
-        return NSRect(x: x, y: y, width: knobWidth, height: knobHeight)
     }
 }
 

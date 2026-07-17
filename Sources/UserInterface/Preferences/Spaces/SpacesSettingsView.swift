@@ -18,11 +18,14 @@ struct SpacesSettingsView: View {
     @ObservedObject private var profileManager = ProfileManager.shared
 
     @State private var selectedSpaceId: String?
-    /// Pinned theme id for the selected Space (nil = Follow Global), loaded on
-    /// selection and updated optimistically (setTheme writes to a separate store
-    /// that doesn't republish `spaces`, so unlike icon/profile this needs local
-    /// state).
-    @State private var spacePinnedThemeId: String?
+    /// Resolved theme id and opacity slider position for the selected Space,
+    /// loaded on selection and updated optimistically (setTheme /
+    /// setOverlayOpacity write to stores that don't republish `spaces`, so
+    /// unlike icon/profile these need local state).
+    @State private var spaceThemeId: String = Theme.default.id
+    @State private var spaceOpacitySliderValue: Double = 0
+
+    @Environment(\.phiAppearance) private var appearance
 
     /// Drag-reorder state, mirroring SpacesStripView's picker: `orderedIds` is
     /// the live snapshot rearranged as a drag hovers across rows; the persisted
@@ -58,6 +61,19 @@ struct SpacesSettingsView: View {
             if draggingSpaceId == nil { orderedIds = ids }
             if let sel = selectedSpaceId, ids.contains(sel) { return }
             selectInitialSpace()
+        }
+        // Resync theme controls when the selected Space is edited from
+        // another surface (General pane, sidebar picker, Spaces menu), the
+        // global theme registry changes, or the appearance flips (the
+        // opacity slider edits the current appearance's value).
+        .onReceive(NotificationCenter.default.publisher(for: .spaceThemeDidChange)) { _ in
+            syncThemeControls()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .themeDidChange)) { _ in
+            syncThemeControls()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .appearanceDidChange)) { _ in
+            syncThemeControls()
         }
     }
 
@@ -212,15 +228,6 @@ struct SpacesSettingsView: View {
         ))
     }
 
-    /// Gray, small-caps-style section label sitting above a settings card, as in
-    /// the Spaces settings layout (Icon / Theme sections).
-    private func sectionHeader(_ title: String) -> some View {
-        Text(title)
-            .font(.system(size: 12, weight: .regular))
-            .themedForeground(.textSecondary)
-            .padding(.leading, 2)
-    }
-
     private func spaceSwatch(_ space: SpaceModel, size: CGFloat, isSelected: Bool = false) -> some View {
         SpaceIconView(
             storedValue: space.iconName,
@@ -304,32 +311,40 @@ struct SpacesSettingsView: View {
     private var detailPanel: some View {
         if let space = selectedSpace {
             // No outer ScrollView: the Icon card absorbs all spare height (the
-            // grid scrolls internally), so the Theme card's bottom edge lines up
-            // with the Space list's bottom edge.
+            // grid scrolls internally), so the Opacity card's bottom edge lines
+            // up with the Space list's bottom edge.
             VStack(alignment: .leading, spacing: 16) {
-                VStack(alignment: .leading, spacing: 8) {
-                    sectionHeader(NSLocalizedString("Icon", comment: "Spaces settings - icon section header"))
-                    SettingsDetailCard {
+                SettingsDetailCard {
+                    // Report the card's real content width so the picker
+                    // reflows its grid edge-to-edge (the width-less path
+                    // renders a fixed 262pt column centered in the card,
+                    // leaving blank margins on both sides).
+                    GeometryReader { geo in
                         IconPicker(
                             selected: IconPickerSelection.fromStorageValue(space.iconName),
                             showsGroups: true,
+                            width: geo.size.width,
                             fillsAvailableHeight: true,
                             onSelect: { selection in
                                 spaceManager.changeIcon(spaceId: space.spaceId, iconName: selection.storageValue)
                             }
                         )
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
                     }
-                    .frame(maxHeight: .infinity)
+                    .padding(.vertical, 8)
                 }
+                .frame(maxHeight: .infinity)
 
-                VStack(alignment: .leading, spacing: 8) {
-                    sectionHeader(NSLocalizedString("Theme", comment: "Spaces settings - theme section header"))
-                    SettingsDetailCard {
-                        SettingsDetailRow(NSLocalizedString("Color", comment: "Spaces settings - theme color row label")) {
-                            themeControl(space.spaceId)
-                        }
+                SettingsDetailCard {
+                    colorRow(space.spaceId)
+                    SettingsRowDivider()
+                    SettingsDetailRow(NSLocalizedString("Opacity", comment: "Spaces settings - theme opacity row label for the per-Space window overlay transparency")) {
+                        ThemeOpacitySliderView(
+                            value: opacityBinding(space.spaceId),
+                            trackColor: opacitySliderTrackColor(space.spaceId),
+                            borderColor: ThemedColor.border.resolve(theme: displayedTheme, appearance: appearance),
+                            width: Self.opacitySliderWidth
+                        )
+                        .frame(width: Self.opacitySliderWidth, height: 20)
                     }
                 }
             }
@@ -397,87 +412,100 @@ struct SpacesSettingsView: View {
 
     private func select(_ spaceId: String) {
         selectedSpaceId = spaceId
-        spacePinnedThemeId = spaceManager.themeId(forSpaceId: spaceId)
+        syncThemeControls()
+    }
+
+    /// Loads the selected Space's resolved theme id and effective overlay
+    /// opacity (for the current appearance) into the local control state.
+    private func syncThemeControls() {
+        guard let spaceId = selectedSpaceId else { return }
+        spaceThemeId = spaceManager.resolvedThemeId(forSpaceId: spaceId)
+        let alpha = spaceManager.effectiveOverlayOpacity(
+            forSpaceId: spaceId,
+            appearance: ThemeManager.shared.currentAppearance
+        )
+        spaceOpacitySliderValue = OverlayOpacityScale.sliderValue(forOpacityPercent: alpha * 100)
     }
 
     // MARK: - Detail bindings
 
+    private static let opacitySliderWidth: CGFloat = 220
 
-    /// Theme dropdown matching the sidebar's right-click "Edit Theme" submenu:
-    /// a "Follow Global" entry, a divider, then every theme with its color
-    /// swatch; the current one is checkmarked. A `nil` selection = Follow Global.
-    private func themeControl(_ spaceId: String) -> some View {
-        Menu {
-            Picker("", selection: themeBinding(spaceId)) {
-                Label {
-                    Text(NSLocalizedString("Follow Global", comment: "Spaces settings - theme entry that clears the per-Space override"))
-                } icon: {
-                    Image(nsImage: .themeColorSwatch(for: ThemeManager.shared.currentTheme))
-                        .renderingMode(.original)
-                }
-                .tag(String?.none)
+    /// Inline theme swatch row mirroring the General pane's Color row: one
+    /// dot per built-in theme, the Space's resolved theme ringed with its
+    /// name captioned underneath. Compact sizing so all eight dots fit the
+    /// narrower detail card.
+    private func colorRow(_ spaceId: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Text(NSLocalizedString("Color", comment: "Spaces settings - theme color row label"))
+                .font(.system(size: 13))
+                .themedForeground(.textPrimary)
+                // The swatch row eats most of the card width; never let the
+                // label wrap into a vertical letter stack.
+                .lineLimit(1)
+                .fixedSize()
 
-                Divider()
+            Spacer(minLength: 8)
 
+            HStack(alignment: .top, spacing: 3) {
                 ForEach(ThemeManager.shared.orderedThemes, id: \.id) { theme in
-                    Label {
-                        Text(theme.name)
-                    } icon: {
-                        Image(nsImage: .themeColorSwatch(for: theme))
-                            .renderingMode(.original)
-                    }
-                    .tag(String?(theme.id))
+                    ThemeSwatchView(
+                        fillColor: theme == .pure
+                            ? .white
+                            : Color(theme.color(for: .themeColor, appearance: appearance)),
+                        ringColor: Color(theme.color(for: .themeColor, appearance: appearance)),
+                        selected: spaceThemeId == theme.id,
+                        title: theme.name,
+                        showsContrastBorder: theme == .pure,
+                        action: { selectTheme(theme.id, for: spaceId) }
+                    )
+                    .frame(width: 26)
                 }
             }
-            .pickerStyle(.inline)
-            .labelsHidden()
-        } label: {
-            HStack(spacing: 6) {
-                Image(nsImage: .themeColorSwatch(for: displayedTheme))
-                    .renderingMode(.original)
-                Text(displayedThemeName)
-                    .font(.system(size: 13))
-                    .themedForeground(.textPrimary)
-                    .lineLimit(1)
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 9, weight: .medium))
-                    .themedForeground(.textSecondary)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(Color.primary.opacity(0.06))
-            .clipShape(RoundedRectangle(cornerRadius: 6))
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func themeBinding(_ spaceId: String) -> Binding<String?> {
+    private func selectTheme(_ themeId: String, for spaceId: String) {
+        guard spaceThemeId != themeId else { return }
+        spaceThemeId = themeId
+        // For the default Space this also switches the global theme
+        // (SpaceManager keeps that invariant).
+        spaceManager.setTheme(forSpaceId: spaceId, themeId: themeId)
+        // The new theme's own alpha may differ; re-derive the slider (a
+        // custom per-Space opacity survives the switch).
+        syncThemeControls()
+    }
+
+    private func opacityBinding(_ spaceId: String) -> Binding<Double> {
         Binding(
-            get: { spacePinnedThemeId },
-            set: { newThemeId in
-                spacePinnedThemeId = newThemeId
-                spaceManager.setTheme(forSpaceId: spaceId, themeId: newThemeId)
+            get: { spaceOpacitySliderValue },
+            set: { newValue in
+                spaceOpacitySliderValue = newValue
+                let percent = OverlayOpacityScale.opacityPercent(forSlider: newValue)
+                spaceManager.setOverlayOpacity(
+                    CGFloat(percent / 100),
+                    forSpaceId: spaceId,
+                    appearance: ThemeManager.shared.currentAppearance
+                )
             }
         )
     }
 
-    /// The theme whose swatch/name the closed dropdown shows: the pinned theme,
-    /// or the current global theme when following global.
-    private var displayedTheme: Theme {
-        if let id = spacePinnedThemeId {
-            return ThemeManager.shared.registeredThemes[id]
-                ?? Theme.builtInThemes.first(where: { $0.id == id })
-                ?? ThemeManager.shared.currentTheme
-        }
-        return ThemeManager.shared.currentTheme
+    /// The gradient hue behind the opacity slider: the Space's resolved
+    /// overlay color (alpha is stripped by the track renderer).
+    private func opacitySliderTrackColor(_ spaceId: String) -> NSColor {
+        spaceManager.resolvedTheme(forSpaceId: spaceId)
+            .color(for: .windowOverlayBackground, appearance: appearance)
     }
 
-    private var displayedThemeName: String {
-        spacePinnedThemeId == nil
-            ? NSLocalizedString("Follow Global", comment: "Spaces settings - theme follows global label")
-            : displayedTheme.name
+    /// The selected Space's theme instance, for chrome derived from it
+    /// (the opacity slider's border color).
+    private var displayedTheme: Theme {
+        ThemeManager.shared.registeredThemes[spaceThemeId]
+            ?? Theme.builtInThemes.first(where: { $0.id == spaceThemeId })
+            ?? ThemeManager.shared.currentTheme
     }
 
     private func profileBinding(_ spaceId: String) -> Binding<String> {

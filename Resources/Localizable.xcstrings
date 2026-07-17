@@ -860,6 +860,9 @@
     "Edit Folder" : {
       "comment" : "Folder editor - Title of the sheet to edit a folder"
     },
+    "Edit in Spaces settings…" : {
+      "comment" : "General settings - Link that jumps to the Spaces settings pane"
+    },
     "Edit Pinned Split" : {
       "comment" : "Favorite editor - Title of the sheet to edit a pinned split-view tab"
     },
@@ -979,9 +982,6 @@
     },
     "Folder Name" : {
       "comment" : "Folder editor - Placeholder for folder name input\nNew folder dialog input placeholder"
-    },
-    "Follow Global" : {
-      "comment" : "Create-Space panel — toggle so the new Space follows the global theme\nSpaces menu - Theme submenu entry that clears the per-Space override\nSpaces settings - theme entry that clears the per-Space override\nSpaces settings - theme follows global label\nTheme menu: clear per-Space override"
     },
     "Forward" : {
       "comment" : "Web content header - Accessibility description for forward navigation button"
@@ -1404,7 +1404,7 @@
       "comment" : "General settings - Option to open Omnibox search when pressing ⌘+T"
     },
     "Opacity" : {
-      "comment" : "General settings - Theme opacity row title for adjusting the selected theme overlay transparency"
+      "comment" : "General settings - Theme opacity row title for adjusting the selected theme overlay transparency\nSpaces settings - theme opacity row label for the per-Space window overlay transparency"
     },
     "Open as Split" : {
       "comment" : "Bookmark context menu - Open this bookmark as a new tab paired with the current tab in a split\nTab context menu - Open a new tab as the second pane in a split with this tab\nTab multi-selection context menu - split exactly two selected tabs into paired panes"
@@ -1901,7 +1901,7 @@
       "comment" : "Help menu - Time Machine restore error when a selected backup disappears"
     },
     "Theme" : {
-      "comment" : "General settings - Theme section title\nSpaces settings - theme section header"
+      "comment" : "General settings - Theme section title"
     },
     "This action cannot be undone." : {
       "comment" : "Bookmark multi-selection delete confirmation irreversible warning"
@@ -2084,6 +2084,9 @@
     },
     "You can save a zip of your Phi user data folder before local files are removed and the app quits." : {
       "comment" : "Debug clear data - Alert body explaining optional zip backup before clearing user data"
+    },
+    "You have more than one Space, so each Space sets its own color and opacity." : {
+      "comment" : "General settings - Hint shown when the theme color/opacity rows are locked because multiple Spaces exist"
     },
     "You will be logged out and returned to the login screen. Are you sure?" : {
       "comment" : "Account settings - Logout confirmation dialog message"

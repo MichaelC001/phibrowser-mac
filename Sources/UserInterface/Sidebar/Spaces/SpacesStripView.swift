@@ -1072,7 +1072,7 @@ struct SpacesStripView: View {
             },
             onChangeIcon: { manager.changeIcon(spaceId: $0, iconName: $1) },
             onSetTheme: { manager.setTheme(forSpaceId: $0, themeId: $1) },
-            currentThemeId: { manager.themeId(forSpaceId: $0) },
+            currentThemeId: { manager.resolvedThemeId(forSpaceId: $0) },
             onDelete: { space in
                 isPickerOpen = false
                 confirmDelete(space)
@@ -1099,19 +1099,14 @@ struct SpacesStripView: View {
         profileManager.profile(for: profileId)?.displayName ?? profileId
     }
 
-    /// A Space's effective theme: its pinned theme, or the global theme when
-    /// no override is set.
+    /// A Space's effective theme, resolved through the single source of
+    /// truth (pinned theme + custom overlay opacity).
     private func theme(for space: SpaceModel) -> Theme {
-        if let pinnedId = manager.themeId(forSpaceId: space.spaceId),
-           let pinned = ThemeManager.shared.registeredThemes[pinnedId] {
-            return pinned
-        }
-        return ThemeManager.shared.currentTheme
+        manager.resolvedTheme(forSpaceId: space.spaceId)
     }
 
-    /// Each Space's accent comes from its pinned theme (or the global theme
-    /// when no override is set), so the active-Space icon previews what the
-    /// window currently looks like.
+    /// Each Space's accent comes from its resolved theme, so the
+    /// active-Space icon previews what the window currently looks like.
     fileprivate func iconColor(for space: SpaceModel) -> Color {
         Color(nsColor: theme(for: space).color(for: .textPrimary, appearance: windowAppearance))
     }
@@ -1175,8 +1170,8 @@ private struct SpacePickerPopup: View {
     let onActivate: (String) -> Void
     let onRename: (SpaceModel) -> Void
     let onChangeIcon: (String, String) -> Void
-    let onSetTheme: (String, String?) -> Void
-    let currentThemeId: (String) -> String?
+    let onSetTheme: (String, String) -> Void
+    let currentThemeId: (String) -> String
     let onDelete: (SpaceModel) -> Void
     let onCreate: () -> Void
     /// Spaces already shown as pips in the strip, hidden from this list so the
@@ -1295,13 +1290,7 @@ private struct SpacePickerPopup: View {
     }
 
     private func iconColor(for space: SpaceModel) -> Color {
-        let theme: Theme
-        if let pinnedId = manager.themeId(forSpaceId: space.spaceId),
-           let pinned = ThemeManager.shared.registeredThemes[pinnedId] {
-            theme = pinned
-        } else {
-            theme = ThemeManager.shared.currentTheme
-        }
+        let theme = manager.resolvedTheme(forSpaceId: space.spaceId)
         return Color(nsColor: theme.color(for: .textPrimary, appearance: windowAppearance))
     }
 
@@ -1474,15 +1463,17 @@ private struct SpacePickerRow: View {
     let onActivate: () -> Void
     let onRename: () -> Void
     let onChangeIcon: (String) -> Void
-    let onSetTheme: (String?) -> Void
-    let currentThemeId: () -> String?
+    let onSetTheme: (String) -> Void
+    let currentThemeId: () -> String
     let onDelete: () -> Void
 
     @State private var isHovering: Bool = false
     @State private var showsIconPicker: Bool = false
 
-    /// Drives the Change-Theme picker: nil = Follow Global, else a pinned id.
-    private var themeSelection: Binding<String?> {
+    /// Drives the Change-Theme picker with the Space's resolved theme id —
+    /// every Space owns a theme, so the picker always has a concrete
+    /// selection.
+    private var themeSelection: Binding<String> {
         Binding(
             get: { currentThemeId() },
             set: { onSetTheme($0) }
@@ -1538,16 +1529,6 @@ private struct SpacePickerRow: View {
             }
             Menu(NSLocalizedString("Change Theme", comment: "")) {
                 Picker(NSLocalizedString("Change Theme", comment: ""), selection: themeSelection) {
-                    Label {
-                        Text(NSLocalizedString("Follow Global", comment: "Theme menu: clear per-Space override"))
-                    } icon: {
-                        Image(nsImage: .themeColorSwatch(for: ThemeManager.shared.currentTheme))
-                            .renderingMode(.original)
-                    }
-                    .tag(String?.none)
-
-                    Divider()
-
                     ForEach(ThemeManager.shared.orderedThemes, id: \.id) { theme in
                         Label {
                             Text(theme.name)
@@ -1555,7 +1536,7 @@ private struct SpacePickerRow: View {
                             Image(nsImage: .themeColorSwatch(for: theme))
                                 .renderingMode(.original)
                         }
-                        .tag(String?(theme.id))
+                        .tag(theme.id)
                     }
                 }
                 .pickerStyle(.inline)

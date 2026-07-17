@@ -191,6 +191,15 @@ public class Theme: NSObject {
         colorPalette[role] = ColorPair(light: light, dark: dark)
     }
 
+    /// Full palette copy carrying the same id/name. Used to derive per-window
+    /// variants (e.g. a Space's custom overlay opacity) without mutating the
+    /// registered instance. Not a snapshot round-trip: `makeSnapshot()` only
+    /// carries the four editable roles, which would drop the rest of a
+    /// built-in theme's palette.
+    public func duplicating() -> Theme {
+        Theme(id: id, name: name, colorPalette: colorPalette)
+    }
+
     public func windowOverlayOpacity(for appearance: Appearance) -> CGFloat {
         color(for: .windowOverlayBackground, appearance: appearance).alphaComponent
     }

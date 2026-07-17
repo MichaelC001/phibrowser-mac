@@ -124,6 +124,18 @@ public final class BrowserThemeContext: NSObject, ThemeStateProvider {
     /// callers can toggle this freely after construction.
     public var mirrorsSharedTheme: Bool
     public var mirrorsSharedAppearance: Bool
+
+    /// Recomputes the theme this window should display from its Space's
+    /// persisted state (pinned theme + custom overlay opacity) — installed
+    /// by `SpaceManager` when it pins a Space theme, and consulted on
+    /// global theme publishes so registry-wide edits (e.g. the General
+    /// opacity slider rewriting every theme's alpha) reach pinned windows
+    /// without losing the Space's own variant. Deliberately NOT applied
+    /// inside `setTheme`: transient drivers (the Space push-in theme ramp)
+    /// push raw interpolated themes through `setTheme` every frame and
+    /// must not be re-clamped.
+    public var spaceThemeResolver: (() -> Theme?)?
+
     private var cancellables = Set<AnyCancellable>()
 
     @MainActor
@@ -181,12 +193,18 @@ public final class BrowserThemeContext: NSObject, ThemeStateProvider {
                 guard let self else { return }
                 if self.mirrorsSharedTheme {
                     self.currentTheme = theme
-                } else if let refreshed = manager.registeredThemes[self.currentTheme.id] {
-                    // Pinned themes ignore the active theme but must still
+                } else if let resolved = self.spaceThemeResolver?() {
+                    // Pinned windows ignore the active theme but must still
                     // pick up edits applied across the whole registry — e.g.
-                    // the global opacity slider rewrites every theme's
-                    // overlay alpha. Re-resolve our pinned id so those edits
-                    // reach this window.
+                    // the General opacity slider rewrites every theme's
+                    // overlay alpha. Recompute from the Space's persisted
+                    // state so those edits reach this window with the
+                    // Space's own overlay opacity re-applied on top.
+                    self.currentTheme = resolved
+                } else if let refreshed = manager.registeredThemes[self.currentTheme.id] {
+                    // No resolver installed (e.g. the fixed incognito theme,
+                    // which is never registered) — fall back to re-resolving
+                    // the pinned id so registry edits still land.
                     self.currentTheme = refreshed
                 }
             }
