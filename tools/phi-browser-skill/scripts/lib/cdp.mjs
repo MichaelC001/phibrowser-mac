@@ -430,15 +430,23 @@ export class CdpClient {
  * `onEvent(type, cb)` surface, so helpers.mjs doesn't care which is in play.
  */
 export class DirectPhiChannel {
-  constructor({ socketPath }) {
+  constructor({ socketPath, agentPid = null }) {
     this.socketPath = socketPath
+    this.agentPid = agentPid
     this.nextId = 1
     this.pending = new Map()
     this.listeners = []
   }
 
   async connect() {
-    this.ws = new UnixWebSocket({ socketPath: this.socketPath, path: '/phi-agent' })
+    // The agent-session pid rides the upgrade URL: a detached mirror daemon
+    // no longer shares the agent's process ancestry, so it names the agent
+    // it acts for and the app resolves the consent identity from that pid
+    // (see AgentCDPListener.claimedAgentPid).
+    const path = Number.isInteger(this.agentPid) && this.agentPid > 0
+      ? `/phi-agent?agentPid=${this.agentPid}`
+      : '/phi-agent'
+    this.ws = new UnixWebSocket({ socketPath: this.socketPath, path })
     await new Promise((resolve, reject) => {
       this.ws.addEventListener('open', () => resolve(), { once: true })
       this.ws.addEventListener('error', (ev) =>

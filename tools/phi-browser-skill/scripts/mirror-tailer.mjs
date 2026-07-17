@@ -99,7 +99,11 @@ async function main() {
   let lastHeartbeat = Date.now()
   const ensureChannel = async () => {
     if (channel) return channel
-    channel = await openPhiChannel()
+    // Name the driving agent session on the connection: this daemon is
+    // detached (reparented to launchd once its spawning round exits), so the
+    // app's ancestry walk can't reach the agent — the claimed pid keeps the
+    // consent identity on the agent instead of this daemon.
+    channel = await openPhiChannel({ agentPid: Number(ctl.agentPid) || null })
     channel.onEvent('agentSpace.userMessage', ({ taskId }) => {
       const cur = readDaemonControl(sessionKey)
       if (cur && cur.taskId === taskId) bridgeWake = true

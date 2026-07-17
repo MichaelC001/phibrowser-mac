@@ -145,12 +145,14 @@ function sanitizeKey(id) {
  * A direct app-socket channel (throws if Phi or the socket is down). The
  * daemon holds one persistently — it also carries the agentSpace.userMessage
  * broadcasts that wake the console-command bridge — and reconnects by simply
- * calling this again after a send failure.
+ * calling this again after a send failure. `agentPid` names the driving
+ * agent session for the app's consent identity — pass it from any process
+ * (the detached daemon) that no longer shares the agent's ancestry.
  */
-export async function openPhiChannel() {
+export async function openPhiChannel({ agentPid = null } = {}) {
   const endpoint = discoverEndpoint()
   if (endpoint.kind !== 'uds') throw new Error('no app socket endpoint')
-  return new DirectPhiChannel({ socketPath: endpoint.socketPath }).connect()
+  return new DirectPhiChannel({ socketPath: endpoint.socketPath, agentPid }).connect()
 }
 
 /**

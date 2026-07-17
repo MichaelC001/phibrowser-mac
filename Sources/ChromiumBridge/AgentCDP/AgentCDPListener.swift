@@ -202,9 +202,27 @@ final class AgentCDPListener {
             return
         }
 
-        let identity = AgentPeerIdentity.resolve(socketFD: fd)
+        // Peek (never consume) the request line up front: routing needs it,
+        // and a `/phi-agent` upgrade may carry the agent-session pid used for
+        // the consent identity below.
+        let requestLine = Self.peekRequestLine(fd)
+        let isPhiAgent = requestLine?.hasPrefix("GET /phi-agent") ?? false
+
+        // The consent identity: normally the peer's process ancestry. The
+        // skill's mirror daemon runs detached — by the time it (re)connects
+        // its spawning session's ancestry is gone — so it names its driving
+        // agent's pid in the request instead, resolving to the same identity
+        // (and grant) the agent's own connections use.
+        var identity = AgentPeerIdentity.resolve(socketFD: fd)
             ?? AgentIdentity(key: "unknown", displayName: "Unknown process",
                              teamId: nil, verified: false, executablePath: "")
+        if isPhiAgent, let requestLine,
+           let claimedPid = Self.claimedAgentPid(inRequestLine: requestLine),
+           let claimed = AgentPeerIdentity.resolveClaimed(pid: claimedPid) {
+            AppLogInfo("[AgentCDP] peer \(identity.displayName) acts for agent pid "
+                       + "\(claimedPid) (\(claimed.displayName))")
+            identity = claimed
+        }
 
         guard evaluate(identity) else {
             AppLogInfo("[AgentCDP] denied access to \(identity.displayName)")
@@ -212,10 +230,11 @@ final class AgentCDPListener {
             return
         }
 
-        // Route by the (peeked, not consumed) request line: a `/phi-agent`
-        // upgrade is an agentSpace.* channel served in the app; everything else
-        // (/json, /devtools) is stock CDP handed to Chromium with the fd intact.
-        if Self.peekIsPhiAgent(fd) {
+        // Route by the request line: a `/phi-agent` upgrade is an agentSpace.*
+        // channel served in the app; everything else (/json, /devtools) is
+        // stock CDP handed to Chromium with the fd intact (the peek never
+        // consumed it).
+        if isPhiAgent {
             AgentDirectConnection(fd: fd, agentName: identity.displayName).start()
             return
         }
@@ -231,20 +250,34 @@ final class AgentCDPListener {
         }
     }
 
-    /// Peeks (without consuming) at the request line to detect the app-served
-    /// `/phi-agent` WebSocket path. Non-consuming so a non-matching fd stays
-    /// pristine for Chromium's HTTP server to read from the start.
-    private static func peekIsPhiAgent(_ fd: Int32) -> Bool {
+    /// Peeks (without consuming) at the HTTP request line. Non-consuming so a
+    /// Chromium-bound fd stays pristine for its HTTP server to read from the
+    /// start.
+    private static func peekRequestLine(_ fd: Int32) -> String? {
         var pfd = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
         _ = poll(&pfd, 1, 2000)  // up to 2s for the request line to arrive
         var buf = [UInt8](repeating: 0, count: 256)
         let n = recv(fd, &buf, buf.count, Int32(MSG_PEEK))
-        guard n > 0 else { return false }
+        guard n > 0 else { return nil }
         let text = String(decoding: buf[0..<n], as: UTF8.self)
-        guard let line = text.split(separator: "\r\n", maxSplits: 1).first else {
-            return false
+        return text.split(separator: "\r\n", maxSplits: 1).first.map(String.init)
+    }
+
+    /// The `agentPid` query value of a `/phi-agent` request line, e.g.
+    /// "GET /phi-agent?agentPid=123 HTTP/1.1".
+    private static func claimedAgentPid(inRequestLine line: String) -> pid_t? {
+        let parts = line.split(separator: " ")
+        guard parts.count >= 2,
+              let query = parts[1].split(separator: "?").dropFirst().first else {
+            return nil
         }
-        return line.hasPrefix("GET /phi-agent")
+        for pair in query.split(separator: "&") {
+            let kv = pair.split(separator: "=", maxSplits: 1)
+            if kv.count == 2, kv[0] == "agentPid" {
+                return pid_t(kv[1])
+            }
+        }
+        return nil
     }
 
     /// Returns true when `identity` may connect: a cached session grant, a
