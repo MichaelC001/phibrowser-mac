@@ -877,6 +877,20 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
 // Asks Chromium to rebuild the main menu after shortcut settings change.
 - (void)requestRebuildMainMenu;
 
+/// Whether UMA metrics + crash reporting is enabled — the state of the
+/// "Help improve Phi's features and performance" toggle in chrome://settings.
+/// Reflects the effective consent value (Phi defaults this to ON until the
+/// user explicitly opts out, so the backing pref may be absent from Local
+/// State). Main thread only.
+- (BOOL)isMetricsReportingEnabled;
+
+/// The UMA client id used to identify this browser install in metrics
+/// uploads — a random 36-char lowercase UUID, unrelated to any account.
+/// Returns nil while metrics reporting is disabled (opting out clears the
+/// id; re-enabling generates a fresh one) or before the id is first
+/// created. Main thread only.
+- (NSString * _Nullable)getMetricsClientId;
+
 #pragma mark - Security / Certificate
 
 /// Get security state and certificate chain for a tab.
