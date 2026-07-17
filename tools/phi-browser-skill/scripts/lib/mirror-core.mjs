@@ -3,15 +3,16 @@
 // Agent-neutral core of the session mirror: the per-session control file
 // that binds a driving agent session to its browser task and its tailer
 // daemon, the per-session transcript cursor, and the batched forward into
-// the task's console. The daemon (scripts/mirror-tailer.mjs) supplies the
-// agent-specific parts — transcript location and parsing (lib/mirror-claude
-// for Claude Code today; Codex/Pi siblings later reuse everything here).
+// the task's console. The per-agent siblings (lib/mirror-claude, -codex,
+// -pi, -hermes, -openclaw) supply only the agent-specific parts — session
+// discovery and record parsing — and reuse everything here.
 //
 // Session binding is explicit, not inferred: the heredoc that starts a task
-// KNOWS its own session (CLAUDE_CODE_SESSION_ID) and transcript, writes them
-// into the control file, and spawns the daemon against it — so a concurrent
-// unrelated session can never leak its conversation into someone else's
-// console, and two agents driving two tasks each mirror into their own.
+// KNOWS its own session (an exported session id, or the evidence heuristics
+// in the per-agent discover*) and transcript, writes them into the control
+// file, and spawns the daemon against it — so a concurrent unrelated
+// session can never leak its conversation into someone else's console, and
+// two agents driving two tasks each mirror into their own.
 
 import {
   readFileSync, writeFileSync, unlinkSync, mkdirSync, readdirSync, statSync,

@@ -20,6 +20,8 @@ import {
 import { discoverClaudeTranscript } from './mirror-claude.mjs'
 import { discoverCodexTranscript } from './mirror-codex.mjs'
 import { discoverPiTranscript } from './mirror-pi.mjs'
+import { discoverHermesTranscript } from './mirror-hermes.mjs'
+import { discoverOpenclawTranscript } from './mirror-openclaw.mjs'
 
 // Default viewport for the hidden agent window: both dimensions follow the
 // REAL window's web-content panel — window minus sidebar/header, reported by
@@ -574,17 +576,21 @@ function writeLastTargetId(taskId, targetId) {
 
 // The tailer daemon (scripts/mirror-tailer.mjs): the session mirror. When
 // the driving session's transcript can be located — exactly under Claude
-// Code (exported session id) and Codex (thread id, else the rollout
-// heuristic in mirror-codex.mjs) — the heredoc writes the daemon control
-// file and spawns a detached tailer; the binding is exact because we TELL
-// the daemon its transcript, format, task, and agent process. A live daemon
-// is re-targeted through the control file instead of respawned; complete()
-// deletes the file, which is also the daemon's exit signal.
-// PHI_NO_SESSION_MIRROR=1 opts out entirely.
+// Code and Hermes (exported session ids), by thread id or the rollout
+// heuristic under Codex, and by the recorded-toolCall evidence heuristics
+// under OpenClaw and Pi (see the discover* in lib/mirror-*.mjs) — the
+// heredoc writes the daemon control file and spawns a detached tailer; the
+// binding is exact because we TELL the daemon its transcript, format, task,
+// and agent process. A live daemon is re-targeted through the control file
+// instead of respawned; complete() deletes the file, which is also the
+// daemon's exit signal. PHI_NO_SESSION_MIRROR=1 opts out entirely.
 
+// Exact env-exported session ids first, evidence heuristics after.
 function discoverSessionTranscript(taskId, agentPid) {
   return discoverClaudeTranscript()
+    || discoverHermesTranscript()
     || discoverCodexTranscript(taskId, agentPid)
+    || discoverOpenclawTranscript(taskId)
     || discoverPiTranscript(taskId, agentPid)
 }
 

@@ -532,12 +532,14 @@ narrate intent, not mechanics. Never put secrets (passwords, tokens, cookie
 values) into `setStatus`/`narrate` text: both surfaces are displayed and
 buffered.
 
-The console mirrors the WHOLE session, not just browser steps: under Claude
-Code, Codex, and Pi, `ensureAgentSpace` spawns a tailer daemon that streams your
-prompts and reply prose into the panel automatically (no setup — see
+The console mirrors the WHOLE session, not just browser steps: under all
+five supported agents — Claude Code, Codex, OpenClaw, Pi, and Hermes —
+`ensureAgentSpace` spawns a tailer daemon that streams your prompts and
+reply prose into the panel automatically (no setup — see
 references/install.md ▸ step 4), so it reads like your own transcript. When
-no mirror is running (an unrecognized agent), use `say('…')` to reflect a
-line of your own prose into the console yourself.
+no mirror is running (an unrecognized agent, or a session the discovery
+could not identify), use `say('…')` to reflect a line of your own prose into
+the console yourself.
 
 ## User commands from the browser
 

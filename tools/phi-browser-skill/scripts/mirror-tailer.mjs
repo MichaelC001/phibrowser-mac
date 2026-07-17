@@ -3,15 +3,19 @@
 // Session-mirror tailer daemon — the bridge between a driving code agent
 // session and its agent Space console, in BOTH directions, with no setup:
 //
-//   session → console: tails the session transcript and forwards new
-//     prompt/prose lines (batched, cursor-ordered) so the console reads like
-//     the agent's own conversation.
+//   session → console: tails the session transcript — the agent's JSONL
+//     file (Claude Code, Codex, Pi) or its SQLite transcript rows (Hermes,
+//     OpenClaw; see lib/mirror-sqlite.mjs) — and forwards new prompt/prose
+//     lines (batched, cursor-ordered) so the console reads like the agent's
+//     own conversation.
 //   console → session: listens for the app's agentSpace.userMessage
 //     broadcast; while the task is IDLE (no round live to drain the queue
-//     itself) it drains the user's console commands and types them into the
-//     session's own terminal tab — tty-matched and foreground-guarded (see
-//     lib/mirror-inject.mjs) — so a console command wakes an idle session
-//     instead of waiting for its next round.
+//     itself) it drains the user's console commands and delivers them into
+//     the session — typed into its terminal tab, tty-matched and
+//     foreground-guarded (see lib/mirror-inject.mjs; Codex gets the split
+//     type-then-Enter flow), or handed to the openclaw CLI for OpenClaw,
+//     whose gateway has no terminal — so a console command wakes an idle
+//     session instead of waiting for its next round.
 //
 // ensureAgentSpace spawns it detached (arg: session key) after writing the
 // session's daemon control file. Lifetime is bounded by construction —
@@ -32,6 +36,13 @@ import {
 import { toEntry as claudeToEntry } from './lib/mirror-claude.mjs'
 import { toEntry as codexToEntry } from './lib/mirror-codex.mjs'
 import { toEntry as piToEntry } from './lib/mirror-pi.mjs'
+import {
+  toEntry as hermesToEntry, hermesQuery, hermesRowToItem,
+} from './lib/mirror-hermes.mjs'
+import {
+  toEntry as openclawToEntry, openclawQuery, openclawRowToItem, deliverOpenclaw,
+} from './lib/mirror-openclaw.mjs'
+import { SqliteTail } from './lib/mirror-sqlite.mjs'
 import { ttyOfPid, isForeground, probeTerminal, injectText } from './lib/mirror-inject.mjs'
 
 const POLL_MS = 1000
@@ -79,11 +90,21 @@ async function main() {
 
   const startTs = Date.now()
   let { cursor, known } = readCursor(sessionKey)
-  const tail = new TranscriptTail(ctl.transcriptPath)
-  // The transcript's dialect, chosen by whoever spawned us (see the
-  // per-agent discover* in mirror-claude / mirror-codex / mirror-pi).
+  // The transcript's shape and dialect, chosen by whoever spawned us (see
+  // the per-agent discover* in lib/mirror-*.mjs). Hermes and OpenClaw keep
+  // transcripts as SQLite rows — for them the session key IS the row
+  // filter's session id; the JSONL agents get the byte-offset tail below.
+  const tail = ctl.format === 'hermes'
+    ? new SqliteTail(ctl.transcriptPath,
+                     (since) => hermesQuery(sessionKey, since), hermesRowToItem)
+    : ctl.format === 'openclaw'
+      ? new SqliteTail(ctl.transcriptPath,
+                       (since) => openclawQuery(sessionKey, since), openclawRowToItem)
+      : new TranscriptTail(ctl.transcriptPath)
   const toEntry = ctl.format === 'codex' ? codexToEntry
     : ctl.format === 'pi' ? piToEntry
+    : ctl.format === 'hermes' ? hermesToEntry
+    : ctl.format === 'openclaw' ? openclawToEntry
     : claudeToEntry
   const pending = []
   const bridge = new ConsoleCommandBridge()
@@ -182,13 +203,15 @@ async function main() {
 
 /**
  * The console → session direction. Drains the app's queued console commands
- * and types them into the driving session's terminal, ONLY when:
+ * and delivers them into the driving session, ONLY when:
  *   - the task is idle (a live round is expected to drain the queue itself —
  *     racing it would strand a waitForUserMessage on an empty queue), and
- *   - a terminal tab owning the agent's tty was located, and
- *   - the agent owns the tty foreground (never type into a bare shell).
- * When injection is unavailable the queue is left alone — the driver drains
- * it at its next round, the pre-bridge behavior. Commands are injected with
+ *   - a delivery transport exists: for the terminal agents a terminal tab
+ *     owning the agent's tty was located AND the agent owns the tty
+ *     foreground (never type into a bare shell); OpenClaw instead goes
+ *     through the openclaw CLI to its gateway — no terminal involved.
+ * When delivery is unavailable the queue is left alone — the driver drains
+ * it at its next round, the pre-bridge behavior. Commands are delivered with
  * a "[phi-console]" prefix: the agent sees the provenance (answer via
  * narrate/console, not just the terminal), and the mirror suppresses the
  * echoed transcript line (the app already echoed the command at enqueue).
@@ -212,13 +235,21 @@ class ConsoleCommandBridge {
     // count in its ensureAgentSpace return.
     if (task.status !== 'idle') return false
 
-    const tty = ttyOfPid(ctl.agentPid)
-    if (!tty) return false
-    if (!this.injector) {
-      this.injector = probeTerminal(tty, ctl.termProgram || '')
-      if (!this.injector) return false  // no permission/terminal: leave queued
+    let deliver
+    if (ctl.format === 'openclaw') {
+      deliver = (text) => deliverOpenclaw(sessionKey, text)
+    } else {
+      const tty = ttyOfPid(ctl.agentPid)
+      if (!tty) return false
+      if (!this.injector) {
+        this.injector = probeTerminal(tty, ctl.termProgram || '')
+        if (!this.injector) return false  // no permission/terminal: leave queued
+      }
+      if (!isForeground(ctl.agentPid)) return false
+      // Codex's TUI needs the split type-then-Enter flow (mirror-inject.mjs).
+      deliver = (text) => injectText(this.injector, tty, text,
+                                     { split: ctl.format === 'codex' })
     }
-    if (!isForeground(ctl.agentPid)) return false
 
     if (queued) {
       const { messages } = await channel.send(
@@ -230,7 +261,7 @@ class ConsoleCommandBridge {
     const retry = []
     for (const item of this.undelivered) {
       try {
-        injectText(this.injector, tty, `[phi-console] ${item.text}`)
+        await deliver(`[phi-console] ${item.text}`)
         await sleep(300)  // separate Enter presses for queued commands
       } catch {
         item.attempts += 1

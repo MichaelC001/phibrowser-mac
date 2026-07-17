@@ -3,8 +3,8 @@
 // Claude Code adapter for the session mirror (the tailer daemon,
 // scripts/mirror-tailer.mjs): session discovery and transcript parsing.
 // Kept separate from the agent-neutral core so each agent's sibling
-// (mirror-codex.mjs today, Pi later) supplies only these two pieces and
-// reuses everything else.
+// (mirror-codex, -pi, -hermes, -openclaw) supplies only these two pieces
+// and reuses everything else.
 
 import { readFileSync, readdirSync, existsSync } from 'node:fs'
 import { homedir } from 'node:os'

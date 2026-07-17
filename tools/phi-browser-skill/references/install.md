@@ -80,25 +80,43 @@ node ~/.claude/skills/phi-browser/scripts/selftest.mjs
 ## 4. Session mirror (automatic, two-way)
 
 The Agent Transcript panel (View ▸ Agent Transcript) always shows the browser
-action steps, narration, rounds, and lifecycle. Under Claude Code, Codex,
-and Pi the driving session is ALSO mirrored automatically, in both
-directions, with no setup: `ensureAgentSpace` locates the session's own
-transcript — Claude Code exports its session id (`CLAUDE_CODE_SESSION_ID`);
-Codex is matched by thread id when `CODEX_THREAD_ID` is exported, else by a
-rollout heuristic; Pi by the same heuristic over its session files (freshest
-transcript whose recorded cwd matches and whose tail mentions the task) —
-mirroring nothing rather than guessing wrong — and spawns a small tailer
-daemon (`scripts/mirror-tailer.mjs`) that
+action steps, narration, rounds, and lifecycle. Under all five supported
+agents — Claude Code, Codex, OpenClaw, Pi, and Hermes — the driving session
+is ALSO mirrored automatically, in both directions, with no setup:
+`ensureAgentSpace` locates the session's own transcript and spawns a small
+tailer daemon (`scripts/mirror-tailer.mjs`). Discovery is per agent,
+mirroring nothing rather than guessing wrong:
+
+- **Claude Code** — exact, by the exported `CLAUDE_CODE_SESSION_ID`
+  (transcript JSONL under `~/.claude/projects`).
+- **Hermes** — exact, by the exported `HERMES_SESSION_ID`; the transcript is
+  rows in `~/.hermes/state.db` (SQLite), polled read-only.
+- **Codex** — by thread id when `CODEX_THREAD_ID` is exported, else by a
+  rollout heuristic (fresh rollout whose recorded cwd matches and whose tail
+  mentions the task).
+- **OpenClaw** — by evidence over the gateway's per-agent SQLite state
+  (`~/.openclaw/agents/*/agent/openclaw-agent.sqlite`): the fresh session
+  whose recent transcript events mention the task. Assumes the gateway runs
+  on this Mac.
+- **Pi** — by the same evidence heuristic over its session files.
+
+The daemon then
 
 - forwards your prompts and the assistant's reply prose into the Space's
   console while the task is live, and
-- delivers commands you type into the console back INTO the idle session, by
-  typing them into the terminal tab running it (prefixed `[phi-console]`).
-  The first delivery asks for macOS Automation permission (node →
-  Terminal/iTerm2); if you decline — or the session runs under tmux or
-  another terminal — commands simply stay queued until the agent's next
-  round, as before. Nothing is ever typed unless the agent process itself
-  owns the terminal foreground.
+- delivers commands you type into the console back INTO the idle session
+  (prefixed `[phi-console]`). For the terminal agents (Claude Code, Codex,
+  Pi, Hermes) they are typed into the terminal tab running the session; the
+  first delivery asks for macOS Automation permission (node →
+  Terminal/iTerm2), and nothing is ever typed unless the agent process
+  itself owns the terminal foreground. Codex's TUI treats fast synthetic
+  typing as a paste, so there the daemon types the text, waits out the
+  paste-burst window, and presses Enter separately — automatic, no config
+  needed. For OpenClaw the command is handed to the `openclaw` CLI
+  (`openclaw agent --session-id … --message …`), which routes it through
+  your gateway — no terminal involved. If delivery isn't possible (declined
+  Automation, tmux or another terminal, missing openclaw CLI), commands
+  simply stay queued until the agent's next round, as before.
 
 The daemon exits on its own when the task completes, when the session goes
 quiet for 30 minutes, when the agent process exits, or when the task
@@ -108,6 +126,9 @@ Under other agents, call `say('…')` from a heredoc to reflect your own prose
 into the console manually — `say(text, {role:'user'})` echoes a user line;
 `narrate(text)` doubles as narration + the overlay pill.
 
+After changing any mirror code, run its fixture selftest (no Phi or agents
+needed): `node scripts/selftest-mirror.mjs`.
+
 ## Troubleshooting
 
 - **CDP endpoint not found**: the toggle isn't on for the bundle id actually
@@ -116,15 +137,27 @@ into the console manually — `say(text, {role:'user'})` echoes a user line;
   `PHI_USER_DATA_DIR` to override the user-data-dir candidates.
 - **Console shows browser steps but not the conversation**: the session
   couldn't be identified (Claude Code: update the CLI so it exports
-  `CLAUDE_CODE_SESSION_ID`; Codex: the rollout heuristic found no match —
-  or use `say()`), `PHI_NO_SESSION_MIRROR` is set, or the skill running your
-  heredocs predates the session mirror — rebuild Phi so the bundled skill
-  has it.
+  `CLAUDE_CODE_SESSION_ID`; Hermes: the session must export
+  `HERMES_SESSION_ID` — the classic CLI does; Codex/OpenClaw/Pi: the
+  evidence heuristic found no match — or use `say()`), the transcript store
+  isn't where discovery looks (`PHI_CODEX_SESSIONS_DIR`, `PHI_HERMES_HOME`,
+  `PHI_OPENCLAW_STATE_DIR`, `PI_CODING_AGENT_SESSION_DIR` override the
+  roots), `PHI_NO_SESSION_MIRROR` is set, or the skill running your heredocs
+  predates the session mirror — rebuild Phi so the bundled skill has it.
 - **Console commands don't reach an idle session**: the first delivery needs
   macOS Automation permission (node → your terminal app) — approve the
   prompt, or re-grant under System Settings ▸ Privacy & Security ▸
   Automation. Under tmux or an unsupported terminal, commands are picked up
   at the agent's next round instead.
+- **Under Codex: console commands land in the composer but don't send**:
+  the skill copy running the daemon predates the split type-then-Enter
+  delivery — rebuild Phi (or relink the skill) so it has it. As a stopgap on
+  an old copy, `disable_paste_burst = true` in `~/.codex/config.toml` makes
+  Codex accept the one-shot write.
+- **Under OpenClaw: console commands stay queued**: the daemon delivers via
+  the `openclaw` CLI — it must be installed (PATH, `~/.local/bin`, or set
+  `PHI_OPENCLAW_BIN`) and able to reach your gateway. Check
+  `openclaw agent --session-id <id> --message test` by hand.
 - **Access denied**: you (or a stale *Always Allow*) denied this agent. Approve
   the next prompt, or remove the agent under Settings ▸ Developer ▸ Remote
   debugging ▸ Remembered agents and reconnect to be asked again.
