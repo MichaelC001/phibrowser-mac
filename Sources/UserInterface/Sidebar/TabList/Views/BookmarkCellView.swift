@@ -7,6 +7,7 @@ import AppKit
 import Combine
 import SnapKit
 import SwiftUI
+import SVGView
 
 /// A lightweight protocol to allow the sidebar to show "virtual" bookmark items
 /// while still rendering and operating on the underlying real `Bookmark`.
@@ -33,6 +34,7 @@ private final class BookmarkCellViewState {
     var primaryTabIsLive = false
     var secondaryTabIsLive = false
     var isFolder = false
+    var isFolderExpanded = false
     var isActive = false
     var isOpened = false
     var isHovered = false
@@ -200,6 +202,7 @@ class BookmarkCellView: SidebarCellView {
         viewState.primaryTabIsLive = false
         viewState.secondaryTabIsLive = false
         viewState.isFolder = false
+        viewState.isFolderExpanded = false
         viewState.isActive = false
         viewState.isOpened = false
         viewState.isHovered = false
@@ -493,7 +496,7 @@ class BookmarkCellView: SidebarCellView {
 
     private func updateFolderIcon(bookmark: Bookmark) {
         guard bookmark.isFolder else { return }
-        viewState.primaryFaviconImage = NSImage(resource: bookmark.isExpanded ? .folderOpen : .folderClose)
+        viewState.isFolderExpanded = bookmark.isExpanded
     }
 
     private func applyTitleAndSplitState(bookmark: Bookmark,
@@ -734,6 +737,7 @@ private struct SidebarBookmarkCellContentView: View {
                 pageURL: state.primaryPageURL,
                 revision: state.primaryFaviconRevision,
                 isFolder: state.isFolder,
+                isFolderExpanded: state.isFolderExpanded,
                 liveTabViewModel: state.primaryTabIsLive ? primaryTabViewModel : nil,
                 onNavigateToOriginalURL: onNavigatePrimaryToOriginalURL,
                 onReturnHoverChanged: { primaryFaviconHoverAction = $0 }
@@ -751,6 +755,7 @@ private struct SidebarBookmarkCellContentView: View {
                     pageURL: state.secondaryPageURL,
                     revision: state.secondaryFaviconRevision,
                     isFolder: false,
+                    isFolderExpanded: false,
                     liveTabViewModel: state.secondaryTabIsLive ? secondaryTabViewModel : nil,
                     onNavigateToOriginalURL: onNavigateSecondaryToOriginalURL,
                     onReturnHoverChanged: { secondaryFaviconHoverAction = $0 }
@@ -816,6 +821,7 @@ private struct BookmarkFaviconView: View {
     let pageURL: String?
     let revision: Int
     let isFolder: Bool
+    let isFolderExpanded: Bool
     let liveTabViewModel: TabViewModel?
     let onNavigateToOriginalURL: (Bool) -> Void
     let onReturnHoverChanged: (BookmarkFaviconHoverAction?) -> Void
@@ -923,7 +929,9 @@ private struct BookmarkFaviconView: View {
 
     @ViewBuilder
     private var faviconContent: some View {
-        if let liveTabViewModel {
+        if isFolder {
+            BookmarkFolderIconView(isExpanded: isFolderExpanded)
+        } else if let liveTabViewModel {
             UnifiedTabFaviconView(viewModel: liveTabViewModel)
         } else if let image {
             faviconImage(image)
@@ -936,17 +944,105 @@ private struct BookmarkFaviconView: View {
 
     @ViewBuilder
     private func faviconImage(_ image: NSImage) -> some View {
-        if isFolder {
-            Image(nsImage: image)
-                .resizable()
-                .scaledToFit()
+        Image(nsImage: image)
+            .resizable()
+            .scaledToFit()
+            .frame(width: Self.faviconSize, height: Self.faviconSize)
+            .clipShape(RoundedRectangle(cornerRadius: Self.faviconCornerRadius, style: .continuous))
+    }
+}
+
+private struct BookmarkFolderIconView: View {
+    let isExpanded: Bool
+
+    @Environment(\.phiTheme) private var theme
+    @Environment(\.phiAppearance) private var appearance
+
+    private var resourceName: String {
+        isExpanded ? "bookmark-folder-open" : "bookmark-folder-closed"
+    }
+
+    var body: some View {
+        if let url = Bundle.main.url(forResource: resourceName, withExtension: "svg") {
+            let svgView = tintedSVGView(from: url)
+
+            svgView
+                .aspectRatio(1, contentMode: .fit)
         } else {
-            Image(nsImage: image)
+            Image(isExpanded ? .folderOpen : .folderClose)
                 .resizable()
                 .scaledToFit()
-                .frame(width: Self.faviconSize, height: Self.faviconSize)
-                .clipShape(RoundedRectangle(cornerRadius: Self.faviconCornerRadius, style: .continuous))
         }
+    }
+
+    private func tintedSVGView(from url: URL) -> SVGView {
+        let svgView = SVGView(contentsOf: url)
+        applyPalette(to: svgView)
+        return svgView
+    }
+
+    private func applyPalette(to svgView: SVGView) {
+        let palette = BookmarkFolderIconPalette(theme: theme, appearance: appearance)
+        setShape(
+            id: "folder-back-silhouette",
+            in: svgView,
+            fill: palette.backFill,
+            stroke: nil
+        )
+        setShape(
+            id: "folder-back-body",
+            in: svgView,
+            fill: palette.backFill,
+            stroke: palette.stroke
+        )
+        setShape(
+            id: "folder-front-panel",
+            in: svgView,
+            fill: palette.frontFill,
+            stroke: palette.stroke
+        )
+    }
+
+    private func setShape(id: String, in svgView: SVGView, fill: NSColor, stroke: NSColor?) {
+        guard let shape = svgView.getNode(byId: id) as? SVGShape else { return }
+
+        shape.fill = fill.svgViewColor
+        if let stroke {
+            shape.stroke = SVGStroke(fill: stroke.svgViewColor, width: 1)
+        } else {
+            shape.stroke = nil
+        }
+    }
+}
+
+private struct BookmarkFolderIconPalette {
+    let backFill: NSColor
+    let frontFill: NSColor
+    let stroke: NSColor
+
+    init(theme: Theme, appearance: Appearance) {
+        let accent = theme.color(for: .themeColor, appearance: appearance)
+        if appearance.isDark {
+            backFill = accent.blended(withFraction: 0.25, of: .white) ?? accent
+            frontFill = accent.blended(withFraction: 0.45, of: .white) ?? accent
+            stroke = accent.blended(withFraction: 0.15, of: .black) ?? accent
+        } else {
+            backFill = accent.blended(withFraction: 0.35, of: .white) ?? accent
+            frontFill = accent.blended(withFraction: 0.65, of: .white) ?? accent
+            stroke = accent.blended(withFraction: 0.25, of: .black) ?? accent
+        }
+    }
+}
+
+private extension NSColor {
+    var svgViewColor: SVGColor {
+        let color = usingColorSpace(.sRGB) ?? self
+        return SVGColor(
+            r: Int(round(color.redComponent * 255)),
+            g: Int(round(color.greenComponent * 255)),
+            b: Int(round(color.blueComponent * 255)),
+            opacity: Double(color.alphaComponent)
+        )
     }
 }
 
