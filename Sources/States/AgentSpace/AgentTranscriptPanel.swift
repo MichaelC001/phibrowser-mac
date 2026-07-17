@@ -168,6 +168,11 @@ final class AgentTranscriptPanelController: NSObject {
     private func sharedHostingView() -> NSHostingView<AgentTranscriptPanelView> {
         if let hostingView { return hostingView }
         let view = NSHostingView(rootView: AgentTranscriptPanelView(model: model))
+        // The browser window is full-size-content, so its title-bar safe area
+        // reaches into the docked console's frame and NSHostingView would pad
+        // the layout down by it — a blank strip above the header. The console
+        // draws its own chrome; opt out of safe-area handling entirely.
+        view.safeAreaRegions = []
         hostingView = view
         return view
     }
@@ -529,8 +534,13 @@ struct AgentTranscriptPanelView: View {
         static let error = adaptive(
             light: NSColor(red: 0.8, green: 0.22, blue: 0.17, alpha: 1),
             dark: NSColor(red: 1.0, green: 0.48, blue: 0.42, alpha: 1))
+        /// Transcript content is monospaced; the chrome around it (header,
+        /// status pill, hints) uses the UI font so controls read as controls,
+        /// not as more console output.
         static let font = Font.system(size: 11.5, design: .monospaced)
         static let fontSmall = Font.system(size: 10, design: .monospaced)
+        static let fontUI = Font.system(size: 11)
+        static let fontUISmall = Font.system(size: 10)
 
         /// Appearance-tracking color (`ThemedColor.dynamicColor`) so the
         /// console re-renders when the system or window theme flips.
@@ -584,6 +594,9 @@ struct AgentTranscriptPanelView: View {
 
     private var header: some View {
         HStack(spacing: 8) {
+            // The title is the one element allowed to give way: it truncates
+            // (no .fixedSize) so the fixed-size pill and buttons after it can
+            // never be squeezed into wrapping.
             Menu {
                 Button {
                     model.taskFilter = nil
@@ -600,37 +613,40 @@ struct AgentTranscriptPanelView: View {
                     }
                 }
             } label: {
-                Label {
-                    Text(filterLabel)
-                } icon: {
+                HStack(spacing: 5) {
                     if let filter = model.taskFilter {
                         badgeIcon(for: filter)
                     } else {
                         Image(systemName: "list.bullet")
                     }
+                    Text(filterLabel)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 8, weight: .semibold))
+                        .foregroundStyle(Palette.faint)
                 }
-                .font(Palette.fontSmall)
+                .font(Palette.fontUI.weight(.medium))
                 .foregroundStyle(Palette.dim)
             }
             .menuStyle(.borderlessButton)
-            .fixedSize()
+            .menuIndicator(.hidden)
 
-            Spacer()
+            Spacer(minLength: 8)
 
-            Text(runningSummary)
-                .font(Palette.fontSmall)
-                .foregroundStyle(Palette.faint)
+            statusPill
 
-            Button(NSLocalizedString("Clear", comment: "Agent console - clear the feed")) {
+            Button {
                 if let filter = model.taskFilter {
                     AgentTranscriptStore.shared.clear(taskId: filter)
                 } else {
                     AgentTranscriptStore.shared.clearAll(except: [])
                 }
+            } label: {
+                headerIcon("trash")
             }
             .buttonStyle(.plain)
-            .font(Palette.fontSmall)
-            .foregroundStyle(Palette.dim)
+            .help(NSLocalizedString("Clear", comment: "Agent console - clear the feed"))
 
             // DevTools-style placement switcher: dock right/bottom, float,
             // or break out into a separate window.
@@ -643,9 +659,7 @@ struct AgentTranscriptPanelView: View {
                 .pickerStyle(.inline)
                 .labelsHidden()
             } label: {
-                Image(systemName: model.placement.symbol)
-                    .font(Palette.fontSmall)
-                    .foregroundStyle(Palette.dim)
+                headerIcon(model.placement.symbol)
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
@@ -656,16 +670,60 @@ struct AgentTranscriptPanelView: View {
                 Button {
                     AgentTranscriptPanelController.shared.dismiss()
                 } label: {
-                    Image(systemName: "xmark")
-                        .font(Palette.fontSmall)
-                        .foregroundStyle(Palette.dim)
+                    headerIcon("xmark")
                 }
                 .buttonStyle(.plain)
             }
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, 6)
+        // Fixed bar height instead of vertical padding: the borderless-button
+        // Menu reports a tall ideal height in some states, and padding around
+        // it lets the whole bar balloon — the clamp keeps the title row to
+        // exactly one line no matter what the controls ask for.
+        .frame(height: 32)
         .background(Palette.chrome)
+    }
+
+    private func headerIcon(_ systemName: String) -> some View {
+        Image(systemName: systemName)
+            .font(.system(size: 10.5, weight: .medium))
+            .foregroundStyle(Palette.dim)
+            .frame(width: 20, height: 20)
+            .contentShape(Rectangle())
+    }
+
+    /// Compact live/running indicator: a status dot plus the running count,
+    /// fixed-size so it can never wrap; the full "N live · N running" phrase
+    /// lives in its tooltip.
+    @ViewBuilder
+    private var statusPill: some View {
+        if !liveTasks.isEmpty {
+            HStack(spacing: 5) {
+                Circle()
+                    .fill(runningCount > 0 ? Palette.prompt : Palette.faint)
+                    .frame(width: 6, height: 6)
+                Text(statusPillLabel)
+                    .font(Palette.fontUISmall)
+                    .foregroundStyle(Palette.dim)
+            }
+            .padding(.horizontal, 7)
+            .padding(.vertical, 2.5)
+            .background(Palette.faint.opacity(0.12), in: Capsule())
+            .fixedSize()
+            .help(runningSummary)
+        }
+    }
+
+    private var statusPillLabel: String {
+        guard runningCount > 0 else {
+            return NSLocalizedString(
+                "idle", comment: "Agent console - status pill when no task is actively running")
+        }
+        return String(
+            format: NSLocalizedString(
+                "%d running",
+                comment: "Agent console - status pill with the actively running task count"),
+            runningCount)
     }
 
     private var placementBinding: Binding<AgentTranscriptPlacement> {
@@ -729,8 +787,11 @@ struct AgentTranscriptPanelView: View {
         }
     }
 
+    private var runningCount: Int {
+        manager.tasksBySpaceId.values.filter { $0.status == .running }.count
+    }
+
     private var runningSummary: String {
-        let running = manager.tasksBySpaceId.values.filter { $0.status == .running }.count
         guard !liveTasks.isEmpty else {
             return NSLocalizedString(
                 "no active tasks", comment: "Agent console - footer with no live agent task")
@@ -739,28 +800,34 @@ struct AgentTranscriptPanelView: View {
             format: NSLocalizedString(
                 "%d live · %d running",
                 comment: "Agent console - live vs actively running agent task counts"),
-            liveTasks.count, running)
+            liveTasks.count, runningCount)
     }
 
     private var feed: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 3) {
+                LazyVStack(alignment: .leading, spacing: 4) {
                     if entries.isEmpty {
-                        Text(NSLocalizedString(
-                            "Nothing yet — agent activity appears here live.",
-                            comment: "Agent console - empty feed placeholder"))
-                            .font(Palette.font)
-                            .foregroundStyle(Palette.faint)
-                            .padding(.top, 12)
-                            .frame(maxWidth: .infinity)
+                        VStack(spacing: 8) {
+                            Image(systemName: "sparkles")
+                                .font(.system(size: 18))
+                                .foregroundStyle(Palette.faint)
+                            Text(NSLocalizedString(
+                                "Nothing yet — agent activity appears here live.",
+                                comment: "Agent console - empty feed placeholder"))
+                                .font(Palette.fontUISmall)
+                                .foregroundStyle(Palette.faint)
+                                .multilineTextAlignment(.center)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 48)
                     }
                     ForEach(entries) { entry in
                         entryRow(entry)
                             .id(entry.id)
                     }
                 }
-                .padding(10)
+                .padding(12)
             }
             .onHover { feedHovered = $0 }
             .onChange(of: entries.last?.id) { lastId in
@@ -776,10 +843,12 @@ struct AgentTranscriptPanelView: View {
                     } label: {
                         Text(NSLocalizedString(
                             "Jump to latest", comment: "Agent console - scroll to newest line"))
-                            .font(Palette.fontSmall)
+                            .font(Palette.fontUISmall)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 3)
                             .background(Palette.chrome, in: Capsule())
+                            .overlay(Capsule().strokeBorder(Palette.faint.opacity(0.3),
+                                                            lineWidth: 1))
                             .foregroundStyle(Palette.dim)
                     }
                     .buttonStyle(.plain)
@@ -789,64 +858,87 @@ struct AgentTranscriptPanelView: View {
         }
     }
 
-    /// Prose kinds carry the mirrored conversation and may hold markdown; the
-    /// terse kinds are single plain lines.
-    private func isProse(_ kind: AgentTranscriptEntry.Kind) -> Bool {
-        kind == .assistant || kind == .narration || kind == .user
-    }
-
     @ViewBuilder
     private func entryRow(_ entry: AgentTranscriptEntry) -> some View {
-        if entry.kind == .round {
+        switch entry.kind {
+        case .round:
             HStack(spacing: 6) {
                 Rectangle().fill(Palette.faint.opacity(0.4)).frame(height: 1)
                 Text(entry.text)
-                    .font(Palette.fontSmall)
+                    .font(Palette.fontUISmall)
                     .foregroundStyle(Palette.faint)
                     .fixedSize()
                 Rectangle().fill(Palette.faint.opacity(0.4)).frame(height: 1)
             }
-            .padding(.vertical, 3)
-        } else if isProse(entry.kind) {
+            .padding(.vertical, 4)
+        case .user:
+            // A user command opens a turn: the tinted block is the visual
+            // boundary the eye scans for, so the command itself stays in the
+            // plain text color rather than shouting in green too.
+            HStack(alignment: .top, spacing: 6) {
+                if showTaskTags { taskTag(entry.taskNumber) }
+                Text("❯")
+                    .font(Palette.font.weight(.bold))
+                    .foregroundStyle(Palette.prompt)
+                markdownBlock(entry.text, baseColor: Palette.text)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(Palette.prompt.opacity(0.09),
+                        in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .padding(.top, 6)
+            .textSelection(.enabled)
+        case .assistant, .narration:
             // Mirrored conversation — render markdown (headings, bullets,
             // **bold**, `code`) so a structured reply reads like the agent's
             // own transcript instead of a wall of literal markup.
             HStack(alignment: .top, spacing: 6) {
-                if showTaskTags {
-                    Text(AgentSpaceManager.agentSpaceName(entry.taskNumber))
-                        .font(Palette.fontSmall)
-                        .foregroundStyle(Palette.faint)
-                }
-                if entry.kind == .user {
-                    Text("❯").font(Palette.font).foregroundStyle(Palette.prompt)
-                }
+                if showTaskTags { taskTag(entry.taskNumber) }
                 markdownBlock(entry.text, baseColor: color(for: entry.kind))
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .textSelection(.enabled)
-        } else {
-            VStack(alignment: .leading, spacing: 1) {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    if showTaskTags {
-                        Text(AgentSpaceManager.agentSpaceName(entry.taskNumber))
-                            .font(Palette.fontSmall)
-                            .foregroundStyle(Palette.faint)
-                    }
-                    Text(prefix(for: entry.kind) + entry.text)
+        case .action, .status, .error:
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                if showTaskTags { taskTag(entry.taskNumber) }
+                if let glyph = glyph(for: entry.kind) {
+                    Text(glyph.symbol)
+                        .font(Palette.font)
+                        .foregroundStyle(glyph.color)
+                }
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(entry.text)
                         .font(Palette.font)
                         .foregroundStyle(color(for: entry.kind))
                         .fixedSize(horizontal: false, vertical: true)
-                }
-                if let detail = entry.detail {
-                    Text(detail)
-                        .font(Palette.fontSmall)
-                        .foregroundStyle(Palette.faint)
-                        .padding(.leading, showTaskTags ? 40 : 16)
-                        .fixedSize(horizontal: false, vertical: true)
+                    // Detail hangs under its own line inside the column, so
+                    // it stays aligned whether or not task tags are shown.
+                    if let detail = entry.detail {
+                        HStack(alignment: .firstTextBaseline, spacing: 4) {
+                            Text("⎿")
+                                .font(Palette.fontSmall)
+                                .foregroundStyle(Palette.faint)
+                            Text(detail)
+                                .font(Palette.fontSmall)
+                                .foregroundStyle(Palette.faint)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
                 }
             }
             .textSelection(.enabled)
         }
+    }
+
+    private func taskTag(_ number: Int) -> some View {
+        Text(AgentSpaceManager.agentSpaceName(number))
+            .font(Palette.fontUISmall.weight(.medium))
+            .foregroundStyle(Palette.dim)
+            .padding(.horizontal, 4)
+            .padding(.vertical, 0.5)
+            .background(Palette.faint.opacity(0.14),
+                        in: RoundedRectangle(cornerRadius: 3, style: .continuous))
     }
 
     // MARK: - Markdown
@@ -1030,12 +1122,13 @@ struct AgentTranscriptPanelView: View {
         return cells
     }
 
-    private func prefix(for kind: AgentTranscriptEntry.Kind) -> String {
+    /// Leading glyph of a terse line — accent-colored so the glyph column,
+    /// not the text, carries the row's role.
+    private func glyph(for kind: AgentTranscriptEntry.Kind) -> (symbol: String, color: Color)? {
         switch kind {
-        case .action: return "⏺ "
-        case .user: return "❯ "
-        case .error: return "✗ "
-        case .assistant, .narration, .status, .round: return ""
+        case .action: return ("⏺", Palette.prompt)
+        case .error: return ("✗", Palette.error)
+        case .user, .assistant, .narration, .status, .round: return nil
         }
     }
 
@@ -1052,10 +1145,10 @@ struct AgentTranscriptPanelView: View {
     }
 
     private var promptRow: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 Text("❯")
-                    .font(Palette.font)
+                    .font(Palette.font.weight(.bold))
                     .foregroundStyle(promptTarget == nil ? Palette.faint : Palette.prompt)
                 TextField(promptPlaceholder, text: $draft)
                     .textFieldStyle(.plain)
@@ -1064,13 +1157,32 @@ struct AgentTranscriptPanelView: View {
                     .focused($promptFocused)
                     .disabled(promptTarget == nil)
                     .onSubmit(sendDraft)
+                if !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Button(action: sendDraft) {
+                        Image(systemName: "arrow.up.circle.fill")
+                            .font(.system(size: 15))
+                            .foregroundStyle(Palette.prompt)
+                    }
+                    .buttonStyle(.plain)
+                }
             }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(Palette.background,
+                        in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .strokeBorder(promptFocused ? Palette.prompt.opacity(0.5)
+                                                : Palette.faint.opacity(0.35),
+                                  lineWidth: 1)
+            )
             if let target = promptTarget, target.status != .running {
                 Text(NSLocalizedString(
                     "agent idle — commands are queued until its next round",
                     comment: "Agent console - hint that a command waits for the next agent round"))
-                    .font(Palette.fontSmall)
+                    .font(Palette.fontUISmall)
                     .foregroundStyle(Palette.faint)
+                    .padding(.leading, 2)
             }
         }
         .padding(.horizontal, 10)

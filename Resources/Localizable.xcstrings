@@ -214,6 +214,9 @@
     "%d min ago" : {
       "comment" : "Download item row - Relative time showing minutes since download completed"
     },
+    "%d running" : {
+      "comment" : "Agent console - status pill with the actively running task count"
+    },
     "%d Spaces" : {
       "comment" : "Profiles settings - Count of Spaces bound to a profile"
     },
@@ -232,6 +235,9 @@
     },
     "© %d Phinomenon. All rights reserved." : {
       "comment" : "About window - Copyright notice at bottom"
+    },
+    "⎿" : {
+
     },
     "A new version of Phi is available" : {
       "comment" : "Sparkle update window - Title"
@@ -1039,6 +1045,9 @@
     },
     "Icon" : {
       "comment" : "Spaces settings - icon section header"
+    },
+    "idle" : {
+      "comment" : "Agent console - status pill when no task is actively running"
     },
     "Image file not found" : {
       "comment" : "Image preview error"
