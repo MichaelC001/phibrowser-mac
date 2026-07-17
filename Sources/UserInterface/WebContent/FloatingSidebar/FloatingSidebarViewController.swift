@@ -449,9 +449,12 @@ class FloatingSidebarViewController: NSViewController {
         bottomBarSwiftUI.setChatHidden(shouldHideChat)
     }
 
+    /// Hide the AI memory button when Phi AI is disabled or in incognito mode,
+    /// mirroring the docked sidebar (`SidebarViewController`).
     private func updateMemoryButtonVisibility() {
         let phiAIEnabled = UserDefaults.standard.bool(forKey: PhiPreferences.AISettings.phiAIEnabled.rawValue)
-        bottomBarSwiftUI.setMemoryHidden(!phiAIEnabled)
+        let shouldHideMemory = state.isIncognito || !phiAIEnabled
+        bottomBarSwiftUI.setMemoryHidden(shouldHideMemory)
     }
 
     private func updateBottomBarHeight(_ newHeight: CGFloat) {
