@@ -41,11 +41,16 @@ rather than guessing.
 
 For setup or connection problems, read `references/install.md`.
 
-Run all browser operations with the `Bash` tool via a heredoc. Do not write
-scripts to files first:
+Run all browser operations with your shell-execution tool via a heredoc. Do
+not write scripts to files first. `<skill-dir>` below stands for this skill's
+own directory — the folder YOU loaded this SKILL.md from. Substitute the
+path where this skill is installed for your agent (Claude Code:
+`~/.claude/skills/phi-browser`, Codex: `~/.codex/skills/phi-browser`, Pi:
+`~/.pi/agent/skills/phi-browser`, …) — always your own agent's skills
+folder, never another agent's:
 
 ```bash
-node ~/.claude/skills/phi-browser/scripts/runner.mjs <<'EOF'
+node <skill-dir>/scripts/runner.mjs <<'EOF'
 const task = await ensureAgentSpace('inspect example page')
 await openTab('https://example.com')
 cliLog(await snapshotText())
@@ -63,7 +68,7 @@ The heredoc body is a Node.js script; all helpers below are preloaded.
 - Waiting: `waitForElement(target, {timeout, visible, minCount})` (`minCount: N` waits until ≥N matches — streaming SPA lists), `waitForFunction(expr, {timeout, poll})` (poll arbitrary page JS until truthy; returns the value), `waitForNetworkIdle({timeout, idleMs, maxInflight})`
 - Challenges: `detectChallenge()` — Cloudflare interstitial/Turnstile/block detection; hand off on first sight — see "Cloudflare challenges"
 - Consent: `acceptCookies(opts?)` — dismiss a cookie/GDPR banner with static rules (no model turn); `goto`/`openTab` run it automatically — see "Cookie-consent banners"
-- Observation: `observe(opts?)` (primary — structured element map), `snapshotText(opts?)` (fallback — prose), `annotatedScreenshot(path?)` (screenshot with @ref-labeled boxes — Read it), `screenshot(path?)` (web viewport PNG — Read it), `screenshotBrowser(path?)` (the WHOLE browser window — native chrome + web content — Read it), `pageInfo()`. Both scans take `{diff, within, showHidden}` — see "Scan options"
+- Observation: `observe(opts?)` (primary — structured element map), `snapshotText(opts?)` (fallback — prose), `annotatedScreenshot(path?)` (screenshot with @ref-labeled boxes — view the PNG with your image-reading tool), `screenshot(path?)` (web viewport PNG — view it), `screenshotBrowser(path?)` (the WHOLE browser window — native chrome + web content — view it), `pageInfo()`. Both scans take `{diff, within, showHidden}` — see "Scan options"
 - Diagnostics: `readConsole({errors, max})` (console messages incl. buffered history), `readNetwork({failedOnly, max})` (requests captured this round), `diffUrls(url1, url2)` (prose diff of two pages) — see "Console, network, and page diffs"
 - Saved state: `saveState(name, {allDomains})`, `loadState(name, {openTabs})` — cookies + tab URLs on disk, survive Space completion; `importCookies(source, {url})` — inject cookies the user handed you (one-call session bootstrap) — see "Saved state"
 - Export: `savePdf(path?, opts?)`, `archivePage(path?)` (MHTML), `scrapeMedia(opts?)` (bulk media download) — see "Page export and media"
@@ -192,7 +197,7 @@ untouched.
 
 Policy for the MAIN editing surface of such apps:
 
-- Go visual first: `screenshot()` + Read, then `click(x, y)` to place the
+- Go visual first: `screenshot()` + view the PNG, then `click(x, y)` to place the
   caret/selection and REAL keystrokes — `typeText(...)`, `pressKey(...)`,
   `click(x, y, {clickCount: 2})` to select a word/cell. Refs/locators remain
   right for the app's chrome: menus, toolbars, dialogs, and search boxes are
@@ -488,7 +493,7 @@ with the tab inventory in hand — check it before opening more tabs.
   viewport override), and it does not refresh the keep-alive clock it
   reports. `{gone: true}` means the Space no longer exists — the task is
   over; do not recreate it just to look around.
-- `{shots: 'current'}` adds `shot`, a PNG path of the ATTACHED tab (Read
+- `{shots: 'current'}` adds `shot`, a PNG path of the ATTACHED tab (view
   it), or null if the capture fails. Only the attached tab can be shot:
   background tabs of the hidden window do not paint, so there is no
   all-tabs contact sheet — `switchTab` to a tab before shooting it.
@@ -587,11 +592,12 @@ control, every mutating helper fails with "user is controlling".
 Whenever your turn ends with the USER holding control — after a `handOff()`,
 or after a round died with "user is controlling" — start a background watcher
 before ending the turn, so the task resumes the moment they hand back instead
-of waiting for a chat message. Run it with the Bash tool's
-`run_in_background: true`:
+of waiting for a chat message. Run it in the background with your
+shell-execution tool (e.g. Claude Code's `run_in_background: true`, or your
+agent's equivalent background/detached mode):
 
 ```bash
-node ~/.claude/skills/phi-browser/scripts/runner.mjs <<'EOF'
+node <skill-dir>/scripts/runner.mjs <<'EOF'
 await ensureAgentSpace('same-task-name')
 cliLog(await waitForAgentControl({ timeout: 3600 }))
 EOF
@@ -709,7 +715,7 @@ hand off or ask. A plain "we use cookies" notice is not one of them.
    (`spaceStatus()` gives the same view any time, see "Space status").
 2. Observe with `observe()` to get the `{ref, role, name, loc}` element map;
    fall back to `snapshotText()` when you need to read body prose, or
-   `screenshot()` + the Read tool for canvas-like pages. If a cookie-consent
+   `screenshot()` + your image-reading tool for canvas-like pages. If a cookie-consent
    banner is covering the page, accept it first — see "Cookie-consent banners".
 3. Act with `click('@N')` / `fillInput('@N', text)` (refs/locators from
    `observe()`), `pressKey('Enter')`, `scroll`, or DOM-level `js(...)`. Use

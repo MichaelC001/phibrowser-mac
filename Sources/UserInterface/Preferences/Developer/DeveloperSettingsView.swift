@@ -264,7 +264,7 @@ private struct AgentPermissionsSectionView: View {
 // MARK: - phi-browser skill installer
 
 private struct SkillInstallSectionView: View {
-    // A Claude-Code-style coding agent that loads skills from a folder.
+    // A coding agent that loads skills from a folder.
     // "Install" links this app's bundled phi-browser skill into
     // <skillsDirectory>/phi-browser so the agent can drive Phi over CDP.
     private struct SkillTarget: Identifiable {
@@ -297,10 +297,10 @@ private struct SkillInstallSectionView: View {
         ]
     }()
 
-    // The skill tree is bundled at Contents/Resources/claude-skill/phi-browser.
+    // The skill tree is bundled at Contents/Resources/phi-browser-skill.
     private static var bundledSkillURL: URL? {
         Bundle.main.resourceURL?
-            .appendingPathComponent("claude-skill/phi-browser", isDirectory: true)
+            .appendingPathComponent("phi-browser-skill", isDirectory: true)
     }
 
     // IDs of agents whose skills folder already links to *this* app's bundle.

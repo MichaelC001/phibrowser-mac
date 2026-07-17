@@ -12,7 +12,7 @@ agent's `skills/phi-browser`, so it stays current with each Phi Browser update.
 Or link it by hand from a source checkout (swap the destination for your agent):
 
 ```bash
-ln -sfn /Users/jixiang/Phi/phibrowser-mac/tools/claude-skill/phi-browser ~/.claude/skills/phi-browser
+ln -sfn /Users/jixiang/Phi/phibrowser-mac/tools/phi-browser-skill ~/.claude/skills/phi-browser
 ```
 
 Requires Node >= 22. No npm dependencies.
@@ -55,7 +55,8 @@ curl -s --unix-socket "$SOCK" http://localhost/json/version
 ```
 
 The first request triggers the consent prompt — approve it in Phi, then the
-JSON version blob prints. Then a smoke round:
+JSON version blob prints. Then a smoke round (swap `~/.claude/skills` for
+your agent's skills folder):
 
 ```bash
 node ~/.claude/skills/phi-browser/scripts/runner.mjs <<'EOF'
