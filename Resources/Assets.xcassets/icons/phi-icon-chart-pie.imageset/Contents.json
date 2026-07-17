@@ -1,7 +1,7 @@
 {
   "images" : [
     {
-      "filename" : "phi-icon-chart-pie.pdf",
+      "filename" : "phi-icon-chart-pie.svg",
       "idiom" : "universal"
     },
     {
@@ -11,7 +11,7 @@
           "value" : "dark"
         }
       ],
-      "filename" : "phi-icon-chart-pie-dark.pdf",
+      "filename" : "phi-icon-chart-pie-dark.svg",
       "idiom" : "universal"
     }
   ],

@@ -1,7 +1,7 @@
 {
   "images" : [
     {
-      "filename" : "phi-icon-cube-transparent.pdf",
+      "filename" : "phi-icon-cube-transparent.svg",
       "idiom" : "universal"
     },
     {
@@ -11,7 +11,7 @@
           "value" : "dark"
         }
       ],
-      "filename" : "phi-icon-cube-transparent-dark.pdf",
+      "filename" : "phi-icon-cube-transparent-dark.svg",
       "idiom" : "universal"
     }
   ],

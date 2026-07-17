@@ -1,7 +1,7 @@
 {
   "images" : [
     {
-      "filename" : "phi-icon-music-note.pdf",
+      "filename" : "phi-icon-music-note.svg",
       "idiom" : "universal"
     },
     {
@@ -11,7 +11,7 @@
           "value" : "dark"
         }
       ],
-      "filename" : "phi-icon-music-note-dark.pdf",
+      "filename" : "phi-icon-music-note-dark.svg",
       "idiom" : "universal"
     }
   ],

@@ -1,7 +1,7 @@
 {
   "images" : [
     {
-      "filename" : "phi-icon-lock-closed.pdf",
+      "filename" : "phi-icon-lock-closed.svg",
       "idiom" : "universal"
     },
     {
@@ -11,7 +11,7 @@
           "value" : "dark"
         }
       ],
-      "filename" : "phi-icon-lock-closed-dark.pdf",
+      "filename" : "phi-icon-lock-closed-dark.svg",
       "idiom" : "universal"
     }
   ],

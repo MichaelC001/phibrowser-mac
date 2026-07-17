@@ -454,7 +454,7 @@ private enum IconPickerMetrics {
     static let gridHorizontalPadding: CGFloat = 8
     static let gridVerticalPadding: CGFloat = 8
     static let itemSize: CGFloat = 26
-    static let iconSize: CGFloat = 16
+    static let iconSize: CGFloat = 20
     static let emojiFontSize: CGFloat = 16
     static let skinVariantEmojiFontSize: CGFloat = 16
     static let emojiVerticalOffset: CGFloat = -1

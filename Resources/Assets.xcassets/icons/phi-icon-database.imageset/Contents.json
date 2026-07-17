@@ -1,7 +1,7 @@
 {
   "images" : [
     {
-      "filename" : "phi-icon-database.pdf",
+      "filename" : "phi-icon-database.svg",
       "idiom" : "universal"
     },
     {
@@ -11,7 +11,7 @@
           "value" : "dark"
         }
       ],
-      "filename" : "phi-icon-database-dark.pdf",
+      "filename" : "phi-icon-database-dark.svg",
       "idiom" : "universal"
     }
   ],

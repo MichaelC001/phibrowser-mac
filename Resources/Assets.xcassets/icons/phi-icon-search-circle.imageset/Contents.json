@@ -1,7 +1,7 @@
 {
   "images" : [
     {
-      "filename" : "phi-icon-search-circle.pdf",
+      "filename" : "phi-icon-search-circle.svg",
       "idiom" : "universal"
     },
     {
@@ -11,7 +11,7 @@
           "value" : "dark"
         }
       ],
-      "filename" : "phi-icon-search-circle-dark.pdf",
+      "filename" : "phi-icon-search-circle-dark.svg",
       "idiom" : "universal"
     }
   ],

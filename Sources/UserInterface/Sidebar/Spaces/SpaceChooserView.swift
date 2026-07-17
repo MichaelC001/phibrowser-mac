@@ -119,7 +119,6 @@ struct SpaceChooserView: View {
                           size: 16,
                           symbolWeight: .regular,
                           tint: foreground)
-                .frame(width: 18)
             Text(item.name)
                 .fontWeight(.medium)
             if item.isCurrent {

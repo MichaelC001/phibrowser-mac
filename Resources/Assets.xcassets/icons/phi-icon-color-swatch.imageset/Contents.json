@@ -1,7 +1,7 @@
 {
   "images" : [
     {
-      "filename" : "phi-icon-color-swatch.pdf",
+      "filename" : "phi-icon-color-swatch.svg",
       "idiom" : "universal"
     },
     {
@@ -11,7 +11,7 @@
           "value" : "dark"
         }
       ],
-      "filename" : "phi-icon-color-swatch-dark.pdf",
+      "filename" : "phi-icon-color-swatch-dark.svg",
       "idiom" : "universal"
     }
   ],

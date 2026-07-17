@@ -1,7 +1,7 @@
 {
   "images" : [
     {
-      "filename" : "phi-icon-credit-card.pdf",
+      "filename" : "phi-icon-credit-card.svg",
       "idiom" : "universal"
     },
     {
@@ -11,7 +11,7 @@
           "value" : "dark"
         }
       ],
-      "filename" : "phi-icon-credit-card-dark.pdf",
+      "filename" : "phi-icon-credit-card-dark.svg",
       "idiom" : "universal"
     }
   ],

@@ -137,7 +137,7 @@ private struct FolderIconView: View {
     let size: CGFloat
 
     var body: some View {
-        Image(.foderClose)
+        Image(.folderClose)
             .resizable()
             .scaledToFit()
             .foregroundStyle(.orange)

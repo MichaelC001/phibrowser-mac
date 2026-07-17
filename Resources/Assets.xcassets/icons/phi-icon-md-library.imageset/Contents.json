@@ -1,7 +1,7 @@
 {
   "images" : [
     {
-      "filename" : "phi-icon-md-library.pdf",
+      "filename" : "phi-icon-md-library.svg",
       "idiom" : "universal"
     },
     {
@@ -11,7 +11,7 @@
           "value" : "dark"
         }
       ],
-      "filename" : "phi-icon-md-library-dark.pdf",
+      "filename" : "phi-icon-md-library-dark.svg",
       "idiom" : "universal"
     }
   ],

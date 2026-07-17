@@ -493,7 +493,7 @@ class BookmarkCellView: SidebarCellView {
 
     private func updateFolderIcon(bookmark: Bookmark) {
         guard bookmark.isFolder else { return }
-        viewState.primaryFaviconImage = NSImage(resource: bookmark.isExpanded ? .foderOpen : .foderClose)
+        viewState.primaryFaviconImage = NSImage(resource: bookmark.isExpanded ? .folderOpen : .folderClose)
     }
 
     private func applyTitleAndSplitState(bookmark: Bookmark,

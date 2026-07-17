@@ -1,7 +1,7 @@
 {
   "images" : [
     {
-      "filename" : "phi-icon-view-grid-add.pdf",
+      "filename" : "phi-icon-view-grid-add.svg",
       "idiom" : "universal"
     },
     {
@@ -11,7 +11,7 @@
           "value" : "dark"
         }
       ],
-      "filename" : "phi-icon-view-grid-add-dark.pdf",
+      "filename" : "phi-icon-view-grid-add-dark.svg",
       "idiom" : "universal"
     }
   ],

@@ -1498,7 +1498,6 @@ private struct SpacePickerRow: View {
                     symbolWeight: .semibold,
                     tint: isActive ? Color.white : tint
                 )
-                .frame(width: 16)
                 Text(space.name)
                     .font(.system(size: 13, weight: isActive ? .semibold : .regular))
                     .lineLimit(1)
@@ -1591,9 +1590,13 @@ private struct SpacePickerRow: View {
 
 struct SpaceIconView: View {
     let storedValue: String?
+    /// Desired emoji/SF Symbol glyph size. Phi icons keep their full canvas and
+    /// use the same 20:16 canvas-to-glyph ratio as IconPicker.
     let size: CGFloat
     let symbolWeight: Font.Weight
     let tint: Color
+
+    private static let phiIconCanvasScale: CGFloat = 1.25
 
     private var storedIconValue: String {
         guard let storedValue, !storedValue.isEmpty else { return "rectangle.stack" }
@@ -1601,34 +1604,36 @@ struct SpaceIconView: View {
     }
 
     var body: some View {
-        if let selection = IconPickerSelection.fromStorageValue(storedIconValue) {
-            switch selection {
-            case .phiIcon:
-                IconPickerSelectionView(selection: selection, size: size)
-            case .emoji(_, let text):
-                Text(text)
-                    .font(.system(size: emojiFontSize))
-                    .lineLimit(1)
-                    .fixedSize()
-                    .frame(width: emojiFrameSize.width, height: emojiFrameSize.height)
+        Group {
+            if let selection = IconPickerSelection.fromStorageValue(storedIconValue) {
+                switch selection {
+                case .phiIcon:
+                    IconPickerSelectionView(selection: selection, size: phiIconCanvasSize)
+                case .emoji(_, let text):
+                    Text(text)
+                        .font(.system(size: size))
+                        .lineLimit(1)
+                        .fixedSize()
+                }
+            } else if let symbol = systemSymbolName(for: storedIconValue) {
+                Image(systemName: symbol)
+                    .font(.system(size: size, weight: symbolWeight))
+                    .foregroundStyle(tint)
+            } else {
+                Image(systemName: "rectangle.stack")
+                    .font(.system(size: size, weight: symbolWeight))
+                    .foregroundStyle(tint)
             }
-        } else if let symbol = systemSymbolName(for: storedIconValue) {
-            Image(systemName: symbol)
-                .font(.system(size: size, weight: symbolWeight))
-                .foregroundStyle(tint)
-        } else {
-            Image(systemName: "rectangle.stack")
-                .font(.system(size: size, weight: symbolWeight))
-                .foregroundStyle(tint)
         }
+        .frame(width: contentFrameSize, height: contentFrameSize)
     }
 
-    private var emojiFontSize: CGFloat {
-        size
+    private var phiIconCanvasSize: CGFloat {
+        size * Self.phiIconCanvasScale
     }
 
-    private var emojiFrameSize: CGSize {
-        CGSize(width: size + 4, height: size + 4)
+    private var contentFrameSize: CGFloat {
+        max(phiIconCanvasSize, size + 4)
     }
 
     /// A menu-ready icon for a Space's stored icon value, for use as an

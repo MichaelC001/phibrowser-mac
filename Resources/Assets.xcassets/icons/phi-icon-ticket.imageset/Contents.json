@@ -1,7 +1,7 @@
 {
   "images" : [
     {
-      "filename" : "phi-icon-ticket.pdf",
+      "filename" : "phi-icon-ticket.svg",
       "idiom" : "universal"
     },
     {
@@ -11,7 +11,7 @@
           "value" : "dark"
         }
       ],
-      "filename" : "phi-icon-ticket-dark.pdf",
+      "filename" : "phi-icon-ticket-dark.svg",
       "idiom" : "universal"
     }
   ],
