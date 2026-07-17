@@ -1155,7 +1155,7 @@ extension AppController {
             item.target = self
             item.representedObject = space.spaceId
             item.state = (space.spaceId == activeSpaceId) ? .on : .off
-            item.image = spaceMenuIcon(for: space.iconName)
+            item.image = spaceMenuIcon(for: space)
             item.attributedTitle = spaceMenuTitle(name: space.name, profileId: space.profileId)
             menu.addItem(item)
         }
@@ -1199,13 +1199,33 @@ extension AppController {
         return title
     }
 
-    /// A menu-ready icon for a Space, shared with the URL rules editor's target
-    /// picker. Always called on the main thread during menu tracking, but this
-    /// synchronous menu-build path isn't `@MainActor`-isolated, so assume the
-    /// isolation `SpaceIconView.menuImage` requires rather than ripple the
-    /// annotation through it.
-    private func spaceMenuIcon(for storedValue: String) -> NSImage? {
-        MainActor.assumeIsolated { SpaceIconView.menuImage(for: storedValue) }
+    /// A menu-ready icon for a Space row. A Space with a live agent task wears
+    /// the driving agent's brand icon — the same render-time override as the
+    /// strip's pip (`SpacesStripView.pipIcon`), so the menu and the switcher
+    /// agree on who is working; the Space's stored robot signature stays
+    /// untouched. Always called on the main thread during menu tracking, but
+    /// this synchronous menu-build path isn't `@MainActor`-isolated, so assume
+    /// the isolation the helpers require rather than ripple the annotation
+    /// through it.
+    private func spaceMenuIcon(for space: SpaceModel) -> NSImage? {
+        MainActor.assumeIsolated {
+            guard let task = AgentSpaceManager.shared.tasksBySpaceId[space.spaceId] else {
+                return SpaceIconView.menuImage(for: space.iconName)
+            }
+            let badge = AgentDriverBadge.make(agentName: task.agentName, origin: task.origin)
+            if let asset = badge.assetName,
+               let image = NSImage(named: asset)?.copy() as? NSImage {
+                // Menu glyphs are 16pt; the brand assets pad their ink to
+                // `assetInkRatio` of the canvas, so size the canvas up for the
+                // INK to match. Copied first — NSImage(named:) is a shared
+                // cache instance.
+                let canvas = 16 / AgentDriverBadge.assetInkRatio
+                image.size = NSSize(width: canvas, height: canvas)
+                return image
+            }
+            return NSImage(systemSymbolName: badge.symbol,
+                           accessibilityDescription: badge.label)
+        }
     }
 
     private func applyEffectiveShortcut(_ command: CommandWrapper, to item: NSMenuItem) {
@@ -1324,7 +1344,7 @@ extension AppController {
                 item.target = self
                 item.representedObject = space.spaceId
                 item.state = (space.spaceId == activeSpaceId) ? .on : .off
-                item.image = spaceMenuIcon(for: space.iconName)
+                item.image = spaceMenuIcon(for: space)
                 menu.addItem(item)
             }
         }
