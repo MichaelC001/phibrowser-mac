@@ -731,7 +731,6 @@ struct SpacesStripView: View {
             activatePip(space)
         } label: {
             pipIcon(for: space)
-            .opacity(isActive ? 1 : 0.4)
             .frame(width: 24, height: rowHeight)
             // Publishes this pip's frame under its spaceId, for the
             // strip-level glass chip to target (see `iconStrip`).

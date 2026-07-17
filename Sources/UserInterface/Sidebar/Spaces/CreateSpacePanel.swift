@@ -30,6 +30,12 @@ struct CreateSpacePanel: View {
     /// from the sidebar, or the menu's active-window profile.
     let initialProfileId: String?
     let onClose: () -> Void
+    /// Live theme preview while the form is up: called with the resolved theme
+    /// whenever the selection changes — including the initial random pick —
+    /// so the sidebar overlay hosting the form can re-tint to the new Space's
+    /// look. Follow Global reports the current global theme. Nil for the
+    /// window style, which has no hosting surface to preview on.
+    var onThemeSelectionChange: ((Theme) -> Void)? = nil
 
     @State private var name: String = ""
     /// Icon/emoji pinned to the new Space, chosen from the same picker the
@@ -59,6 +65,9 @@ struct CreateSpacePanel: View {
                 selectedIcon = .phiIcon(id: PhiIconCatalog.allIds.randomElement() ?? PhiIconCatalog.allIds[0])
                 selectedThemeId = Theme.builtInThemes.randomElement()?.id ?? Theme.default.id
                 DispatchQueue.main.async { nameFocused = true }
+            }
+            .onChange(of: selectedThemeId) { _ in
+                onThemeSelectionChange?(effectiveTheme())
             }
     }
 
@@ -400,7 +409,9 @@ struct CreateSpacePanel: View {
                     .foregroundStyle(Color.white.opacity(0.95))
                     .padding(.horizontal, 16)
                     .padding(.vertical, 6)
-                    .background(Self.accentColor)
+                    // System accent, matching the selection chrome elsewhere,
+                    // rather than the panel's fixed brand blue.
+                    .background(Color.accentColor)
                     .clipShape(Capsule())
             }
             .buttonStyle(.plain)
