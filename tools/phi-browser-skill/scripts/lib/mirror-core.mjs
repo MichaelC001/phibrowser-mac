@@ -76,7 +76,7 @@ const PASSTHROUGH = new Set([
 // --- daemon control ----------------------------------------------------------
 
 // One control file per session coordinates the mirror: the skill writes
-// {taskId, transcriptPath, agentPid, termProgram, ts} on every
+// {taskId, transcriptPath, agentPid, ts} on every
 // ensureAgentSpace (refreshing the TTL and re-targeting a live daemon
 // without a respawn), the daemon adds its pid claim, and complete() deletes
 // the file — which is also how a running daemon is told to exit.

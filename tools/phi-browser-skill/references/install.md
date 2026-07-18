@@ -105,18 +105,13 @@ The daemon then
 - forwards your prompts and the assistant's reply prose into the Space's
   console while the task is live, and
 - delivers commands you type into the console back INTO the idle session
-  (prefixed `[phi-console]`). For the terminal agents (Claude Code, Codex,
-  Pi, Hermes) they are typed into the terminal tab running the session; the
-  first delivery asks for macOS Automation permission (node →
-  Terminal/iTerm2), and nothing is ever typed unless the agent process
-  itself owns the terminal foreground. Codex's TUI treats fast synthetic
-  typing as a paste, so there the daemon types the text, waits out the
-  paste-burst window, and presses Enter separately — automatic, no config
-  needed. For OpenClaw the command is handed to the `openclaw` CLI
+  (prefixed `[phi-console]`) where the agent has a delivery transport: for
+  OpenClaw the command is handed to the `openclaw` CLI
   (`openclaw agent --session-id … --message …`), which routes it through
-  your gateway — no terminal involved. If delivery isn't possible (declined
-  Automation, tmux or another terminal, missing openclaw CLI), commands
-  simply stay queued until the agent's next round, as before.
+  your gateway. The terminal agents (Claude Code, Codex, Pi, Hermes) have
+  no transport — their commands, and OpenClaw's when delivery isn't
+  possible (missing openclaw CLI), simply stay queued until the agent's
+  next round, where the driver drains them via `readUserMessages()`.
 
 The daemon exits on its own when the task completes, when the session goes
 quiet for 30 minutes, when the agent process exits, or when the task
@@ -144,16 +139,9 @@ needed): `node scripts/selftest-mirror.mjs`.
   `PHI_OPENCLAW_STATE_DIR`, `PI_CODING_AGENT_SESSION_DIR` override the
   roots), `PHI_NO_SESSION_MIRROR` is set, or the skill running your heredocs
   predates the session mirror — rebuild Phi so the bundled skill has it.
-- **Console commands don't reach an idle session**: the first delivery needs
-  macOS Automation permission (node → your terminal app) — approve the
-  prompt, or re-grant under System Settings ▸ Privacy & Security ▸
-  Automation. Under tmux or an unsupported terminal, commands are picked up
-  at the agent's next round instead.
-- **Under Codex: console commands land in the composer but don't send**:
-  the skill copy running the daemon predates the split type-then-Enter
-  delivery — rebuild Phi (or relink the skill) so it has it. As a stopgap on
-  an old copy, `disable_paste_burst = true` in `~/.codex/config.toml` makes
-  Codex accept the one-shot write.
+- **Console commands don't reach an idle session**: for the terminal agents
+  (Claude Code, Codex, Pi, Hermes) that is by design — commands are picked
+  up at the agent's next round, not typed into its terminal.
 - **Under OpenClaw: console commands stay queued**: the daemon delivers via
   the `openclaw` CLI — it must be installed (PATH, `~/.local/bin`, or set
   `PHI_OPENCLAW_BIN`) and able to reach your gateway. Check

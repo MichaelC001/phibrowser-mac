@@ -5,15 +5,12 @@
 // lines. Hermes stores every session in one SQLite database —
 // ~/.hermes/state.db, messages table — not per-session JSONL, so the tailer
 // polls rows by autoincrement id through lib/mirror-sqlite. Everything
-// downstream (control file, cursor, batched forward, terminal injection) is
-// the shared core.
+// downstream (control file, cursor, batched forward) is the shared core.
 //
 // Discovery is exact: Hermes exports HERMES_SESSION_ID into every tool
 // subprocess (the strongest binding of all five agents — gate and session
-// key in one). Injection reuses the terminal path unchanged: the classic
-// `hermes` CLI is a prompt_toolkit REPL where Enter submits typed text. The
-// --tui / desktop / gateway surfaces have no reachable terminal — their
-// console commands stay queued for the next round, the standard fallback.
+// key in one). Console commands stay queued for the driver's next round,
+// the standard terminal-agent behavior.
 
 import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -62,8 +59,8 @@ export function toEntry(obj) {
   if (!text) return null
   const ts = obj.timestamp ? Math.round(Number(obj.timestamp) * 1000) : undefined
   if (obj.role === 'user') {
-    // A console command the daemon injected comes back around as a user
-    // message; the app already echoed it at enqueue time.
+    // A "[phi-console]"-marked line is a console command delivered into the
+    // session; the app already echoed it at enqueue time.
     if (text.trimStart().startsWith('[phi-console]')) return null
     return { kind: 'user', text, ts }
   }

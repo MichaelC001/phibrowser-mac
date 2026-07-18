@@ -5,9 +5,8 @@
 // scripts/lib/mirror-*.mjs:
 //   node scripts/selftest-mirror.mjs
 //
-// Everything runs against fixtures — no Phi, no agents, no terminal needed
-// (the AppleScript injection itself is exercised by the live checks in
-// references/install.md, not here). Covers: each agent's toEntry parsing
+// Everything runs against fixtures — no Phi and no agents needed.
+// Covers: each agent's toEntry parsing
 // (echo suppression, machinery skipping), the SQLite tail source against
 // throwaway databases shaped like Hermes'/OpenClaw's, the env-gated session
 // discovery for the two SQLite agents, and OpenClaw's CLI delivery seam.

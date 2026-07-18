@@ -10,12 +10,12 @@
 //     own conversation.
 //   console → session: listens for the app's agentSpace.userMessage
 //     broadcast; while the task is IDLE (no round live to drain the queue
-//     itself) it drains the user's console commands and delivers them into
-//     the session — typed into its terminal tab, tty-matched and
-//     foreground-guarded (see lib/mirror-inject.mjs; Codex gets the split
-//     type-then-Enter flow), or handed to the openclaw CLI for OpenClaw,
-//     whose gateway has no terminal — so a console command wakes an idle
-//     session instead of waiting for its next round.
+//     itself) it drains the user's console commands and hands them to the
+//     openclaw CLI for OpenClaw — so a console command wakes an idle
+//     OpenClaw session instead of waiting for its next round. The terminal
+//     agents (Claude Code, Codex, Pi, Hermes) have no delivery transport:
+//     their commands stay queued until the driver's next round
+//     (readUserMessages / waitForUserMessage).
 //
 // ensureAgentSpace spawns it detached (arg: session key) after writing the
 // session's daemon control file. Lifetime is bounded by construction —
@@ -43,7 +43,6 @@ import {
   toEntry as openclawToEntry, openclawQuery, openclawRowToItem, deliverOpenclaw,
 } from './lib/mirror-openclaw.mjs'
 import { SqliteTail } from './lib/mirror-sqlite.mjs'
-import { ttyOfPid, isForeground, probeTerminal, injectText } from './lib/mirror-inject.mjs'
 
 const POLL_MS = 1000
 const CONTROL_TTL_MS = 30 * 60 * 1000
@@ -66,8 +65,8 @@ const HEARTBEAT_TTL_SECONDS = 300
 const MAX_LINES_PER_BATCH = 60
 const MAX_PENDING = 500
 // Delivery attempts per console command before giving up with a console
-// error line (tab closed mid-task and the like).
-const MAX_INJECT_ATTEMPTS = 5
+// error line (gateway unreachable and the like).
+const MAX_DELIVER_ATTEMPTS = 5
 
 const sessionKey = process.argv[2]
 process.title = 'phi-mirror-tailer'
@@ -206,25 +205,23 @@ async function main() {
  * and delivers them into the driving session, ONLY when:
  *   - the task is idle (a live round is expected to drain the queue itself —
  *     racing it would strand a waitForUserMessage on an empty queue), and
- *   - a delivery transport exists: for the terminal agents a terminal tab
- *     owning the agent's tty was located AND the agent owns the tty
- *     foreground (never type into a bare shell); OpenClaw instead goes
- *     through the openclaw CLI to its gateway — no terminal involved.
- * When delivery is unavailable the queue is left alone — the driver drains
- * it at its next round, the pre-bridge behavior. Commands are delivered with
- * a "[phi-console]" prefix: the agent sees the provenance (answer via
- * narrate/console, not just the terminal), and the mirror suppresses the
- * echoed transcript line (the app already echoed the command at enqueue).
+ *   - a delivery transport exists: OpenClaw goes through the openclaw CLI to
+ *     its gateway. The terminal agents have no transport — their queue is
+ *     left alone and the driver drains it at its next round.
+ * Commands are delivered with a "[phi-console]" prefix: the agent sees the
+ * provenance (answer via narrate/console, not just its own surface), and the
+ * mirror suppresses the echoed transcript line (the app already echoed the
+ * command at enqueue).
  */
 class ConsoleCommandBridge {
   constructor() {
-    this.injector = null      // resolved terminal app, probed lazily
     this.undelivered = []     // [{text, attempts}] retrying across ticks
   }
 
   /** True means the task no longer exists — the daemon should exit. */
   async deliverPending(ctl, channel) {
     if (!ctl.taskId || !ctl.agentPid) return false
+    if (ctl.format !== 'openclaw') return false  // no transport: leave queued
     const { tasks } = await channel.send('agentSpace.list', {})
     const task = (tasks || []).find((t) => t.taskId === ctl.taskId)
     if (!task) return true
@@ -235,21 +232,7 @@ class ConsoleCommandBridge {
     // count in its ensureAgentSpace return.
     if (task.status !== 'idle') return false
 
-    let deliver
-    if (ctl.format === 'openclaw') {
-      deliver = (text) => deliverOpenclaw(sessionKey, text)
-    } else {
-      const tty = ttyOfPid(ctl.agentPid)
-      if (!tty) return false
-      if (!this.injector) {
-        this.injector = probeTerminal(tty, ctl.termProgram || '')
-        if (!this.injector) return false  // no permission/terminal: leave queued
-      }
-      if (!isForeground(ctl.agentPid)) return false
-      // Codex's TUI needs the split type-then-Enter flow (mirror-inject.mjs).
-      deliver = (text) => injectText(this.injector, tty, text,
-                                     { split: ctl.format === 'codex' })
-    }
+    const deliver = (text) => deliverOpenclaw(sessionKey, text)
 
     if (queued) {
       const { messages } = await channel.send(
@@ -262,15 +245,15 @@ class ConsoleCommandBridge {
     for (const item of this.undelivered) {
       try {
         await deliver(`[phi-console] ${item.text}`)
-        await sleep(300)  // separate Enter presses for queued commands
+        await sleep(300)  // pace successive deliveries
       } catch {
         item.attempts += 1
-        if (item.attempts < MAX_INJECT_ATTEMPTS) {
+        if (item.attempts < MAX_DELIVER_ATTEMPTS) {
           retry.push(item)
         } else {
           await forwardEntries(ctl.taskId, [{
             kind: 'error',
-            text: 'Could not deliver your command to the agent’s terminal',
+            text: 'Could not deliver your command to the agent',
             detail: item.text.slice(0, 200),
           }], channel).catch(() => {})
         }

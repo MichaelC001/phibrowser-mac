@@ -894,8 +894,23 @@ struct AgentTranscriptPanelView: View {
                 Text("❯")
                     .font(Palette.font.weight(.bold))
                     .foregroundStyle(Palette.prompt)
-                markdownBlock(entry.text, baseColor: Palette.text)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .leading, spacing: 1) {
+                    markdownBlock(entry.text, baseColor: Palette.text)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    // The idle-session delivery warning (see sendUserMessage)
+                    // hangs under the command it describes.
+                    if let detail = entry.detail {
+                        HStack(alignment: .firstTextBaseline, spacing: 4) {
+                            Text("⎿")
+                                .font(Palette.fontSmall)
+                                .foregroundStyle(Palette.faint)
+                            Text(detail)
+                                .font(Palette.fontSmall)
+                                .foregroundStyle(Palette.faint)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 6)

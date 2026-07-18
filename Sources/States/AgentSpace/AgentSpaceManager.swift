@@ -847,7 +847,8 @@ final class AgentSpaceManager: ObservableObject {
             t.ownership = .agent
             tasksBySpaceId[spaceId] = t
             appendTranscript(taskId: taskId, kind: .status,
-                             text: "You handed control back to the agent")
+                             text: "You handed control back to the agent",
+                             detail: terminalNudgeHint(for: t))
             refreshOperatingMask(forSpaceId: spaceId,
                                  activeTabId: currentActiveTabId(forSpaceId: spaceId))
             ChromiumLauncher.sharedInstance().bridge?
@@ -967,7 +968,7 @@ final class AgentSpaceManager: ObservableObject {
     /// polling. The queue stays authoritative — the broadcast is advisory.
     func sendUserMessage(taskId: String, text: String) {
         guard let spaceId = spaceIdByTaskId[taskId],
-              tasksBySpaceId[spaceId] != nil else { return }
+              let task = tasksBySpaceId[spaceId] else { return }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         let capped = String(trimmed.prefix(Self.maxUserMessageChars))
@@ -978,13 +979,32 @@ final class AgentSpaceManager: ObservableObject {
             queue.removeFirst(queue.count - Self.maxPendingUserMessages)
         }
         pendingUserMessagesByTaskId[taskId] = queue
-        appendTranscript(taskId: taskId, kind: .user, text: capped)
+        // An idle session has no live round draining the queue, and nothing
+        // is ever typed into the agent's terminal — the command sits queued
+        // until its next round, so tell the user how to wake it themselves.
+        appendTranscript(taskId: taskId, kind: .user, text: capped,
+                         detail: task.status == .idle ? terminalNudgeHint(for: task) : nil)
         // Same rule as broadcastOwnership: user text is freeform — serialize,
         // never interpolate into JSON.
         guard let data = try? JSONSerialization.data(withJSONObject: [
                 "taskId": taskId, "id": message.id.uuidString, "text": capped]),
               let payload = String(data: data, encoding: .utf8) else { return }
         ExtensionMessaging.shared.broadcast(type: "agentSpace.userMessage", payload: payload)
+    }
+
+    /// The between-rounds delivery warning, scoped to Codex: nothing is ever
+    /// typed into its terminal, so queued console input and hand-backs are
+    /// only noticed at the session's next turn — the user has to nudge it
+    /// themselves. Nil for every other driver: phi-agent's backend resumes
+    /// the agent itself, OpenClaw delivers through its gateway CLI, and the
+    /// remaining terminal agents typically sit blocked in waitForUserMessage
+    /// rather than parked idle.
+    private func terminalNudgeHint(for task: AgentTask) -> String? {
+        guard task.origin == .cdp,
+              AgentDriverBadge.make(agentName: task.agentName,
+                                    origin: task.origin).label == "Codex"
+        else { return nil }
+        return "Codex only sees this at its next turn — go to its terminal and type \"continue\" to wake it now."
     }
 
     /// Hands the queued user commands to the driver and empties the queue.

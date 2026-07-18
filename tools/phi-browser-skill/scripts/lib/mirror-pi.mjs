@@ -3,8 +3,8 @@
 // Pi adapter for the session mirror: locates the driving Pi session's
 // transcript (session format v3 JSONL under ~/.pi/agent/sessions/<munged
 // cwd>/<timestamp>_<uuid>.jsonl) and parses its records into console lines.
-// Everything downstream (control file, cursor, batched forward, terminal
-// injection) is the shared core — this file only knows what is Pi-specific.
+// Everything downstream (control file, cursor, batched forward) is the
+// shared core — this file only knows what is Pi-specific.
 //
 // Discovery: Pi exports no session id to its shells (only the
 // PI_CODING_AGENT marker, set in the CLI's own process and inherited), so
@@ -43,8 +43,8 @@ export function toEntry(obj) {
     const close = text.lastIndexOf('</skill>')
     const prompt = (close >= 0 ? text.slice(close + '</skill>'.length) : text).trim()
     if (!prompt) return null
-    // A console command the daemon injected comes back around as a user
-    // message; the app already echoed it at enqueue time.
+    // A "[phi-console]"-marked line is a console command delivered into the
+    // session; the app already echoed it at enqueue time.
     if (prompt.startsWith('[phi-console]')) return null
     return { kind: 'user', text: prompt, ts }
   }

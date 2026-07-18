@@ -59,9 +59,9 @@ export function toEntry(obj) {
 }
 
 /**
- * A console command the daemon injected into the terminal comes back around
- * as a user prompt carrying this marker — the app already echoed it in the
- * console at enqueue time, so mirroring it again would duplicate the line.
+ * A user prompt carrying the "[phi-console]" marker is a console command
+ * delivered into the session — the app already echoed it in the console at
+ * enqueue time, so mirroring it again would duplicate the line.
  */
 function userEntry(text, ts) {
   if (text.trimStart().startsWith('[phi-console]')) return null

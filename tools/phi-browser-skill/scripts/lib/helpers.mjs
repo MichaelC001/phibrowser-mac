@@ -605,12 +605,10 @@ function spawnSessionMirror(taskId) {
     writeDaemonControl(transcript.sessionKey, {
       taskId, transcriptPath: transcript.path, format: transcript.format,
       ts: Date.now(),
-      // The driving agent process: the daemon uses it to find the session's
-      // terminal for console-command injection and to notice the session
-      // closing. TERM_PROGRAM (inherited from that terminal) orders the
-      // injection probe.
+      // The driving agent process: the daemon uses it to notice the session
+      // closing, and names it on the app channel so consent identity stays
+      // on the agent.
       agentPid,
-      termProgram: process.env.TERM_PROGRAM || '',
       ...(livePid ? { pid: livePid } : {}),
     })
     if (livePid) return  // the live tailer follows the control-file update

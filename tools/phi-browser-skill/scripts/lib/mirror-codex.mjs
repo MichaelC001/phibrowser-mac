@@ -2,8 +2,8 @@
 //
 // Codex adapter for the session mirror: locates the driving Codex session's
 // rollout transcript and parses its records into console lines. Everything
-// downstream (control file, cursor, batched forward, terminal injection) is
-// the shared core — this file only knows what is Codex-specific.
+// downstream (control file, cursor, batched forward) is the shared core —
+// this file only knows what is Codex-specific.
 //
 // Discovery, in order of confidence:
 //   1. CODEX_THREAD_ID in the environment names the rollout file exactly
@@ -39,8 +39,8 @@ export function toEntry(obj) {
   const p = obj.payload
   if (typeof p.message !== 'string' || !p.message.trim()) return null
   if (p.type === 'user_message') {
-    // A console command the daemon injected comes back around as a user
-    // message; the app already echoed it at enqueue time.
+    // A "[phi-console]"-marked line is a console command delivered into the
+    // session; the app already echoed it at enqueue time.
     if (p.message.trimStart().startsWith('[phi-console]')) return null
     return { kind: 'user', text: p.message, ts }
   }
