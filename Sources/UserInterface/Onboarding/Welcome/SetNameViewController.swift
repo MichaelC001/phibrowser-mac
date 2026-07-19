@@ -136,10 +136,22 @@ class SetNameViewController: OnboardingBaseViewController {
         }
         
         isLoading = true
+        let account = AccountController.shared.account
         
         Task {
             do {
-                let _ =  try await APIClient.shared.updateProfile(updates: .init(name: textField.stringValue))
+                let response = try await APIClient.shared.updateProfile(updates: .init(name: textField.stringValue))
+                if response.code == 0,
+                   let account,
+                   response.data.auth0_id == account.userID {
+                    // chrome://settings is unreachable during onboarding, so
+                    // updating the shared cache is sufficient; no live bridge
+                    // notification is needed.
+                    account.userDefaults.set(
+                        response.data,
+                        forCodableKey: AccountUserDefaults.DefaultsKey.cachedProfile.rawValue
+                    )
+                }
                 await MainActor.run {
                     isLoading = false
                     UserDefaults.standard.set(textField.stringValue, forKey: PhiPreferences.preferedUserName.rawValue)

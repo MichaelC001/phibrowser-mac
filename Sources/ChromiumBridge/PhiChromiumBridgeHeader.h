@@ -416,6 +416,15 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
 /// A subsequent newTabCreatedWithInfo + activeTabChanged provides the new tab.
 /// @param windowId The window's session id.
 - (void)windowDidExitPlaceholderMode:(int64_t)windowId;
+
+/// The current Phi account's display info, shown on the chrome://settings
+/// account row. Same nickname/email source as the Mac client's account
+/// settings page. Keys: nickname (NSString), email (NSString), avatarPNG
+/// (NSData, PNG bytes). Return nil — or omit any key — when the value is
+/// unavailable (signed out, not yet fetched); Chromium falls back per field
+/// to the local Chromium profile display. Called synchronously on the UI
+/// thread per settings page load — must not block (answer from cache).
+- (NSDictionary<NSString *, id> * _Nullable)getPhiAccountInfo;
 @end
 
 @protocol PhiChromiumBridgeProtocol <NSObject>

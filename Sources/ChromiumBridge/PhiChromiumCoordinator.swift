@@ -332,6 +332,29 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
         AppLogDebug("🌐 [Chromium] isUserLoggedIn check: \(isLoggedIn)")
         return isLoggedIn
     }
+
+    /// Returns the current Phi account identity from the same per-account
+    /// profile cache used by the Mac account settings page. The ID-token
+    /// identity covers the short window before the init prefetch completes.
+    func getPhiAccountInfo() -> [String: Any]? {
+        guard let account = AccountController.shared.account else { return nil }
+        let profile: Profile? = account.userDefaults.codableValue(
+            forKey: AccountUserDefaults.DefaultsKey.cachedProfile.rawValue
+        )
+
+        var info: [String: Any] = [:]
+        if let profile, profile.auth0_id == account.userID {
+            if !profile.name.isEmpty { info["nickname"] = profile.name }
+            if !profile.email.isEmpty { info["email"] = profile.email }
+        } else if let user = account.userInfo {
+            if let name = user.name, !name.isEmpty { info["nickname"] = name }
+            if let email = user.email, !email.isEmpty { info["email"] = email }
+        }
+        if let avatarPNG = AccountController.shared.avatarPNG(for: account) {
+            info["avatarPNG"] = avatarPNG
+        }
+        return info.isEmpty ? nil : info
+    }
     
     func showLoginUI() {
         AppLogInfo("🌐 [Chromium] showLoginUI called by Chromium")

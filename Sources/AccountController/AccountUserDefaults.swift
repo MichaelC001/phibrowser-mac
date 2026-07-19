@@ -97,6 +97,30 @@ final class AccountUserDefaults {
             AppLogError("Failed to encode value for key \(key): \(error.localizedDescription)")
         }
     }
+
+    /// Atomically writes an encoded value only when the stored data has not
+    /// changed since the caller captured `expectedData`.
+    @discardableResult
+    func set<T: Encodable>(
+        _ value: T,
+        forCodableKey key: String,
+        ifCurrentDataEquals expectedData: Data?
+    ) -> Bool {
+        let data: Data
+        do {
+            data = try JSONEncoder().encode(value)
+        } catch {
+            AppLogError("Failed to encode value for key \(key): \(error.localizedDescription)")
+            return false
+        }
+
+        return queue.sync {
+            guard (storage[key] as? Data) == expectedData else { return false }
+            storage[key] = data
+            persistLocked()
+            return true
+        }
+    }
     
     func codableValue<T: Decodable>(forKey key: String) -> T? {
         guard let data = data(forKey: key) else { return nil }
