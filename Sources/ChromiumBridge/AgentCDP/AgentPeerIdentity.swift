@@ -30,6 +30,13 @@ struct AgentIdentity: Equatable {
     let verified: Bool
     /// Absolute path of the responsible process's executable.
     let executablePath: String
+    /// Pid of the responsible/branded agent process, nil when the identity is
+    /// a fallback with no real agent behind it. Echoed to `/phi-agent` clients
+    /// (see AgentDirectConnection) so a SANDBOXED skill round — which cannot
+    /// walk its own ancestry (Codex's seatbelt denies the sysctls `ps` needs)
+    /// — still learns the agent pid to record for its detached daemon and
+    /// watchers to claim.
+    let pid: pid_t?
 
     /// Secondary line for the prompt, e.g. "Team 87DQ3HMK5G · verified".
     var detail: String {
@@ -104,12 +111,14 @@ enum AgentPeerIdentity {
         return resolve(pid: peerPID)
     }
 
-    /// Identity of a process the connecting client CLAIMS to act for. The
-    /// skill's mirror daemon runs detached — its spawning session's ancestry
-    /// is gone by the time it (re)connects — so it names its driving agent's
-    /// pid in the `/phi-agent` request instead. Honored only for a live
-    /// process of the same user; a claim is an identification aid exactly
-    /// like argv[0] branding (see the header note), not a security boundary.
+    /// Identity of a process the connecting client CLAIMS to act for. A
+    /// client whose ancestry no longer reaches its driving agent — the
+    /// skill's detached mirror daemon, a hand-back watcher orphaned by a
+    /// backgrounding shell — names the agent's pid in the request instead
+    /// (an `agentPid` query or `X-Phi-Agent-Pid` header, on any route).
+    /// Honored only for a live process of the same user; a claim is an
+    /// identification aid exactly like argv[0] branding (see the header
+    /// note), not a security boundary.
     static func resolveClaimed(pid: pid_t) -> AgentIdentity? {
         guard pid > 0, processUID(pid) == getuid() else { return nil }
         return resolve(pid: pid)
@@ -150,7 +159,7 @@ enum AgentPeerIdentity {
             if let exe = executablePath(pid),
                scriptInterpreters.contains((exe as NSString).lastPathComponent),
                let argv = processArgv(pid) {
-                if let identity = interpreterIdentity(argv: argv, exe: exe) {
+                if let identity = interpreterIdentity(argv: argv, exe: exe, pid: pid) {
                     return identity
                 }
                 if ownPlumbingExe == nil, isOwnPlumbing(argv: argv) {
@@ -161,15 +170,17 @@ enum AgentPeerIdentity {
             pid = parent
         }
         guard let ownPlumbingExe else { return nil }
+        // The skill's own plumbing is not an agent — no pid to echo back.
         return unsignedIdentity(name: "phi-browser", path: "phi-browser",
-                                exe: ownPlumbingExe)
+                                exe: ownPlumbingExe, pid: nil)
     }
 
     /// Identity of one interpreter process: prefers a custom `argv[0]` the
     /// agent branded itself with (e.g. Pi launches `node` with argv[0]="pi"),
     /// else the script file it runs. Returns nil for a plain interpreter or
     /// this skill's own plumbing, so the walk keeps looking upward.
-    private static func interpreterIdentity(argv: [String], exe: String) -> AgentIdentity? {
+    private static func interpreterIdentity(argv: [String], exe: String,
+                                            pid: pid_t) -> AgentIdentity? {
         guard let arg0 = argv.first else { return nil }
         if isOwnPlumbing(argv: argv) { return nil }
         let interpreterName = (exe as NSString).lastPathComponent
@@ -178,12 +189,12 @@ enum AgentPeerIdentity {
         //     interpreter's own — the agent's self-declared identity.
         if !arg0.contains("/"), !arg0Name.isEmpty, arg0Name != interpreterName,
            !scriptInterpreters.contains(arg0Name) {
-            return unsignedIdentity(name: arg0Name, path: arg0Name, exe: exe)
+            return unsignedIdentity(name: arg0Name, path: arg0Name, exe: exe, pid: pid)
         }
         // (2) Otherwise the script it runs.
         if let script = scriptArgument(in: argv) {
             return unsignedIdentity(
-                name: deriveAgentName(fromPath: script), path: script, exe: exe)
+                name: deriveAgentName(fromPath: script), path: script, exe: exe, pid: pid)
         }
         return nil
     }
@@ -214,9 +225,9 @@ enum AgentPeerIdentity {
     }
 
     private static func unsignedIdentity(name: String, path: String,
-                                         exe: String) -> AgentIdentity {
+                                         exe: String, pid: pid_t?) -> AgentIdentity {
         AgentIdentity(key: "unsigned:\(path)", displayName: name,
-                      teamId: nil, verified: false, executablePath: exe)
+                      teamId: nil, verified: false, executablePath: exe, pid: pid)
     }
 
     /// This skill's own plumbing (heredoc runner, mirror-tailer daemon) —
@@ -380,7 +391,8 @@ enum AgentPeerIdentity {
             displayName: fallbackName,
             teamId: nil,
             verified: false,
-            executablePath: path)
+            executablePath: path,
+            pid: pid)
 
         let attributes = [kSecGuestAttributePid: pid] as CFDictionary
         var code: SecCode?
@@ -420,6 +432,7 @@ enum AgentPeerIdentity {
             displayName: signingId ?? fallbackName,
             teamId: teamId,
             verified: true,
-            executablePath: path)
+            executablePath: path,
+            pid: pid)
     }
 }

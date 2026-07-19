@@ -202,22 +202,29 @@ final class AgentCDPListener {
             return
         }
 
-        // Peek (never consume) the request line up front: routing needs it,
-        // and a `/phi-agent` upgrade may carry the agent-session pid used for
-        // the consent identity below.
-        let requestLine = Self.peekRequestLine(fd)
+        // Peek (never consume) the request head up front: the first line
+        // routes the connection, and any request may carry the agent-session
+        // pid claim used for the consent identity below.
+        let requestHead = Self.peekRequestHead(fd)
+        let requestLine = requestHead
+            .flatMap { $0.split(separator: "\r\n", maxSplits: 1).first }
+            .map(String.init)
         let isPhiAgent = requestLine?.hasPrefix("GET /phi-agent") ?? false
 
-        // The consent identity: normally the peer's process ancestry. The
-        // skill's mirror daemon runs detached — by the time it (re)connects
-        // its spawning session's ancestry is gone — so it names its driving
-        // agent's pid in the request instead, resolving to the same identity
-        // (and grant) the agent's own connections use.
+        // The consent identity: normally the peer's process ancestry. A peer
+        // whose ancestry no longer reaches the agent it acts for — the
+        // skill's detached mirror daemon, or a hand-back watcher orphaned by
+        // a backgrounding shell (`… &` under Codex) — names its driving
+        // agent's pid in the request instead (an `agentPid` query or
+        // `X-Phi-Agent-Pid` header, on any route: Chromium ignores unknown
+        // headers), resolving to the same identity (and grant) the agent's
+        // own connections use.
         var identity = AgentPeerIdentity.resolve(socketFD: fd)
             ?? AgentIdentity(key: "unknown", displayName: "Unknown process",
-                             teamId: nil, verified: false, executablePath: "")
-        if isPhiAgent, let requestLine,
-           let claimedPid = Self.claimedAgentPid(inRequestLine: requestLine),
+                             teamId: nil, verified: false, executablePath: "",
+                             pid: nil)
+        if let requestHead,
+           let claimedPid = Self.claimedAgentPid(inRequestHead: requestHead),
            let claimed = AgentPeerIdentity.resolveClaimed(pid: claimedPid) {
             AppLogInfo("[AgentCDP] peer \(identity.displayName) acts for agent pid "
                        + "\(claimedPid) (\(claimed.displayName))")
@@ -235,7 +242,8 @@ final class AgentCDPListener {
         // stock CDP handed to Chromium with the fd intact (the peek never
         // consumed it).
         if isPhiAgent {
-            AgentDirectConnection(fd: fd, agentName: identity.displayName).start()
+            AgentDirectConnection(fd: fd, agentName: identity.displayName,
+                                  agentPid: identity.pid).start()
             return
         }
 
@@ -250,32 +258,43 @@ final class AgentCDPListener {
         }
     }
 
-    /// Peeks (without consuming) at the HTTP request line. Non-consuming so a
-    /// Chromium-bound fd stays pristine for its HTTP server to read from the
-    /// start.
-    private static func peekRequestLine(_ fd: Int32) -> String? {
+    /// Peeks (without consuming) at the start of the HTTP request — enough to
+    /// cover the request line and the early headers that may carry the agent
+    /// claim (the skill puts X-Phi-Agent-Pid right after Host). Non-consuming
+    /// so a Chromium-bound fd stays pristine for its HTTP server to read from
+    /// the start.
+    private static func peekRequestHead(_ fd: Int32) -> String? {
         var pfd = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
-        _ = poll(&pfd, 1, 2000)  // up to 2s for the request line to arrive
-        var buf = [UInt8](repeating: 0, count: 256)
+        _ = poll(&pfd, 1, 2000)  // up to 2s for the request to arrive
+        var buf = [UInt8](repeating: 0, count: 1024)
         let n = recv(fd, &buf, buf.count, Int32(MSG_PEEK))
         guard n > 0 else { return nil }
-        let text = String(decoding: buf[0..<n], as: UTF8.self)
-        return text.split(separator: "\r\n", maxSplits: 1).first.map(String.init)
+        return String(decoding: buf[0..<n], as: UTF8.self)
     }
 
-    /// The `agentPid` query value of a `/phi-agent` request line, e.g.
-    /// "GET /phi-agent?agentPid=123 HTTP/1.1".
-    private static func claimedAgentPid(inRequestLine line: String) -> pid_t? {
+    /// The agent-session pid a request claims to act for: an `agentPid` query
+    /// value on the request line (e.g. "GET /phi-agent?agentPid=123
+    /// HTTP/1.1") or an `X-Phi-Agent-Pid` header on any route.
+    private static func claimedAgentPid(inRequestHead head: String) -> pid_t? {
+        let lines = head.components(separatedBy: "\r\n")
+        guard let line = lines.first else { return nil }
         let parts = line.split(separator: " ")
-        guard parts.count >= 2,
-              let query = parts[1].split(separator: "?").dropFirst().first else {
-            return nil
-        }
-        for pair in query.split(separator: "&") {
-            let kv = pair.split(separator: "=", maxSplits: 1)
-            if kv.count == 2, kv[0] == "agentPid" {
-                return pid_t(kv[1])
+        if parts.count >= 2,
+           let query = parts[1].split(separator: "?").dropFirst().first {
+            for pair in query.split(separator: "&") {
+                let kv = pair.split(separator: "=", maxSplits: 1)
+                if kv.count == 2, kv[0] == "agentPid", let pid = pid_t(kv[1]) {
+                    return pid
+                }
             }
+        }
+        for header in lines.dropFirst() {
+            if header.isEmpty { break }  // end of headers
+            guard let colon = header.firstIndex(of: ":") else { continue }
+            guard header[..<colon].lowercased() == "x-phi-agent-pid" else { continue }
+            let value = header[header.index(after: colon)...]
+                .trimmingCharacters(in: .whitespaces)
+            return pid_t(value)
         }
         return nil
     }

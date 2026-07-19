@@ -71,7 +71,7 @@ const INTER_ROUND_KEEPALIVE_SECONDS = 30 * 60
 
 async function cdpClient() {
   if (state.cdp) return state.cdp
-  state.cdp = await connectBrowser()
+  state.cdp = await connectBrowser({ agentPid: claimAgentPid() })
   // `state.cdp.phi` is the agentSpace.* channel — direct to Swift over the
   // app socket, or the Chromium tunnel under the TCP dev override. Either way
   // the ownership push lands here.
@@ -594,10 +594,42 @@ function discoverSessionTranscript(taskId, agentPid) {
     || discoverPiTranscript(taskId, agentPid)
 }
 
+// The pid of the agent session this round acts for, claimed on every
+// app-socket connection (the X-Phi-Agent-Pid header — see cdp.mjs) so the
+// consent prompt names the AGENT even when process ancestry can't. Normally
+// that ancestry walk finds it directly; an ORPHANED round — e.g. a hand-back
+// watcher an agent without a tracked background mode ran with `… &`,
+// reparented to launchd once its spawning shell exited — walks to nothing,
+// and without a claim the app can only present its "phi-browser" fallback
+// identity (re-prompting despite the agent's existing grant). Such a round
+// inherits the pid a fully-parented round of the SAME session recorded in
+// the mirror control file. Null when neither source knows the agent.
+function claimAgentPid() {
+  const live = agentRootPid()
+  if (live) return live
+  try {
+    const transcript = discoverSessionTranscript(null, null)
+    const prev = transcript && readDaemonControl(transcript.sessionKey)
+    if (prev && prev.agentPid && pidAlive(prev.agentPid)) return prev.agentPid
+  } catch {}
+  return null
+}
+
+// The agent pid the APP resolved for this round's /phi-agent connection
+// (echoed on the upgrade response — see AgentDirectConnection). The
+// authoritative ancestry answer when this process cannot walk its own:
+// Codex's seatbelt sandbox denies the sysctls `ps` needs, so
+// `agentRootPid()` returns null in every sandboxed round even though the
+// codex process sits right above us. Null before the channel exists or
+// when the app resolved no real agent (e.g. an unclaimed orphan).
+function appProvidedAgentPid() {
+  return state.cdp?.phi?.peerAgentPid ?? null
+}
+
 function spawnSessionMirror(taskId) {
   if (process.env.PHI_NO_SESSION_MIRROR) return
   try {
-    const agentPid = agentRootPid()
+    const agentPid = agentRootPid() ?? appProvidedAgentPid()
     const transcript = discoverSessionTranscript(taskId, agentPid)
     if (!transcript) return  // unknown driver: say() remains
     const prev = readDaemonControl(transcript.sessionKey)
@@ -607,8 +639,11 @@ function spawnSessionMirror(taskId) {
       ts: Date.now(),
       // The driving agent process: the daemon uses it to notice the session
       // closing, and names it on the app channel so consent identity stays
-      // on the agent.
-      agentPid,
+      // on the agent. An orphaned round (backgrounded watcher) resolves null
+      // here — keep the pid a parented round recorded rather than clobbering
+      // the daemon's claim and its agent-death exit signal.
+      agentPid: agentPid
+        ?? (prev && prev.agentPid && pidAlive(prev.agentPid) ? prev.agentPid : null),
       ...(livePid ? { pid: livePid } : {}),
     })
     if (livePid) return  // the live tailer follows the control-file update
@@ -3457,6 +3492,36 @@ export async function waitForAgentControl({ timeout = 600 } = {}) {
     await wait(2)
   }
   throw new Error('waitForAgentControl: timed out')
+}
+
+/**
+ * Blocking ask-for-help: hands control to the user AND waits — in the SAME
+ * round — for them to hand it back, so the task resumes WITHOUT the round
+ * ending. This is the handoff to use under an agent that cannot be woken once
+ * it goes idle (Codex): because the round stays live, the user clicking "Hand
+ * back" continues the SAME turn with no re-invocation. It is `handOff()`
+ * immediately followed by `waitForAgentControl()` — see both for details.
+ *
+ * Resolves with what `waitForAgentControl` returns: `{owner: 'agent'}` when the
+ * user hands back (control is already yours — do NOT `takeOver()`; verify page
+ * state and continue), or `{gone, reason}` when they ended the task. Returns
+ * `{timedOut: true}` instead of throwing when the wait elapses.
+ *
+ * IMPORTANT — keep hand-offs SHORT. The driving agent may cap a single
+ * tool-call's duration (Codex kills a shell call around ~120s), which would
+ * SIGKILL this blocking round before the user finishes a slow login/captcha.
+ * `timeout` therefore defaults BELOW that cap. On `{timedOut: true}` (or when
+ * you expect a long hand-off), fall back to the non-blocking path: tell the
+ * user in chat, start a background hand-back watcher, and end the round.
+ */
+export async function handOffAndWait(message, { timeout = 100 } = {}) {
+  await handOff(message)
+  try {
+    return await waitForAgentControl({ timeout })
+  } catch (err) {
+    if (String(err && err.message).includes('timed out')) return { timedOut: true }
+    throw err
+  }
 }
 
 /**

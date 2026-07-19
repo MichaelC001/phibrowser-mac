@@ -66,11 +66,29 @@ export function discoverEndpoint() {
   throw new Error(NOT_FOUND_MESSAGE)
 }
 
+/**
+ * The claim header carried on every connection to the app socket: names the
+ * agent session this process acts for, so the app's consent prompt resolves
+ * the AGENT even when the connecting process's ancestry no longer reaches it
+ * (a hand-back watcher orphaned by a backgrounding shell, the detached mirror
+ * daemon). Chromium-bound requests carry it too — DevTools ignores unknown
+ * headers — so every connection of a round lands on the same identity and
+ * grant. An identification aid like argv[0] branding, not a security
+ * boundary: the app only honors a live same-user pid (see
+ * AgentPeerIdentity.resolveClaimed).
+ */
+function agentPidHeader(agentPid) {
+  return Number.isInteger(agentPid) && agentPid > 0
+    ? { 'X-Phi-Agent-Pid': String(agentPid) }
+    : {}
+}
+
 /** GETs a JSON document from the app socket over HTTP. */
-function httpGetJson(endpoint, path, timeoutMs) {
+function httpGetJson(endpoint, path, timeoutMs, agentPid = null) {
   return new Promise((resolve, reject) => {
     const req = http.request(
-      { socketPath: endpoint.socketPath, path, headers: { Host: 'localhost' } },
+      { socketPath: endpoint.socketPath, path,
+        headers: { Host: 'localhost', ...agentPidHeader(agentPid) } },
       (res) => {
       let body = ''
       res.setEncoding('utf8')
@@ -94,10 +112,10 @@ function httpGetJson(endpoint, path, timeoutMs) {
  * path for the browser-target WebSocket upgrade. This is the first connection,
  * so it may trigger (and wait on) the consent prompt.
  */
-export async function verifyEndpoint(endpoint) {
+export async function verifyEndpoint(endpoint, { agentPid = null } = {}) {
   let version
   try {
-    version = await httpGetJson(endpoint, '/json/version', CONSENT_WAIT_MS)
+    version = await httpGetJson(endpoint, '/json/version', CONSENT_WAIT_MS, agentPid)
   } catch (err) {
     if (err.message === DENIED_MESSAGE) throw err
     // Codex runs shell commands in a seatbelt sandbox that by default denies
@@ -137,13 +155,14 @@ export async function verifyEndpoint(endpoint) {
  * with continuation reassembly and ping/pong handling.
  */
 export class UnixWebSocket {
-  constructor({ socketPath, path, host = 'localhost' }) {
+  constructor({ socketPath, path, host = 'localhost', agentPid = null }) {
     this._listeners = { open: [], message: [], error: [], close: [] }
     this._buf = Buffer.alloc(0)
     this._handshakeDone = false
     this._closed = false
     this._fragOpcode = 0
     this._fragChunks = []
+    this._agentPid = agentPid
     this._openSocket(socketPath, path, host)
   }
 
@@ -175,10 +194,14 @@ export class UnixWebSocket {
     this._sock.on('close', () => {
       if (!this._closed) { this._closed = true; this._emit('close', {}) }
     })
+    // The claim header sits right after Host so it lands inside the app's
+    // single request-head peek (see agentPidHeader / AgentCDPListener).
+    const [claimName, claimValue] = Object.entries(agentPidHeader(this._agentPid))[0] ?? []
     this._sock.on('connect', () => {
       this._sock.write(
         `GET ${path} HTTP/1.1\r\n` +
         `Host: ${host}\r\n` +
+        (claimName ? `${claimName}: ${claimValue}\r\n` : '') +
         `Upgrade: websocket\r\n` +
         `Connection: Upgrade\r\n` +
         `Sec-WebSocket-Key: ${key}\r\n` +
@@ -192,7 +215,13 @@ export class UnixWebSocket {
     if (!this._handshakeDone) {
       const idx = this._buf.indexOf('\r\n\r\n')
       if (idx < 0) return
-      const statusLine = this._buf.slice(0, idx).toString('latin1').split('\r\n')[0]
+      const head = this._buf.slice(0, idx).toString('latin1')
+      const statusLine = head.split('\r\n')[0]
+      // The app echoes the agent pid it resolved for this connection on the
+      // /phi-agent upgrade — the authoritative ancestry answer for a round
+      // that cannot walk its own (see helpers.appProvidedAgentPid).
+      const claim = /^x-phi-agent-pid:\s*(\d+)\s*$/im.exec(head)
+      this.peerAgentPid = claim ? Number(claim[1]) : null
       if (!/ 101 /.test(statusLine)) {
         const denied = / 403 /.test(statusLine)
         this._emit('error', {
@@ -311,7 +340,7 @@ export class UnixWebSocket {
 }
 
 export class CdpClient {
-  /** `transport` is `{ socketPath, wsPath }` on the app socket. */
+  /** `transport` is `{ socketPath, wsPath, agentPid? }` on the app socket. */
   constructor(transport) {
     this.transport = transport
     this.nextId = 1
@@ -321,7 +350,8 @@ export class CdpClient {
 
   async connect() {
     this.ws = new UnixWebSocket({ socketPath: this.transport.socketPath,
-                                  path: this.transport.wsPath })
+                                  path: this.transport.wsPath,
+                                  agentPid: this.transport.agentPid ?? null })
     await new Promise((resolve, reject) => {
       this.ws.addEventListener('open', () => resolve(), { once: true })
       this.ws.addEventListener('error', (ev) =>
@@ -439,14 +469,15 @@ export class DirectPhiChannel {
   }
 
   async connect() {
-    // The agent-session pid rides the upgrade URL: a detached mirror daemon
-    // no longer shares the agent's process ancestry, so it names the agent
-    // it acts for and the app resolves the consent identity from that pid
-    // (see AgentCDPListener.claimedAgentPid).
+    // The agent-session pid rides the upgrade URL — kept alongside the newer
+    // X-Phi-Agent-Pid header (which every connection carries) so an app that
+    // predates the header still resolves the daemon's consent identity from
+    // the query (see AgentCDPListener.claimedAgentPid).
     const path = Number.isInteger(this.agentPid) && this.agentPid > 0
       ? `/phi-agent?agentPid=${this.agentPid}`
       : '/phi-agent'
-    this.ws = new UnixWebSocket({ socketPath: this.socketPath, path })
+    this.ws = new UnixWebSocket({ socketPath: this.socketPath, path,
+                                  agentPid: this.agentPid })
     await new Promise((resolve, reject) => {
       this.ws.addEventListener('open', () => resolve(), { once: true })
       this.ws.addEventListener('error', (ev) =>
@@ -455,6 +486,8 @@ export class DirectPhiChannel {
           : new Error('phi-agent channel failed to connect')),
         { once: true })
     })
+    // The agent pid the app resolved for this connection (see _onData).
+    this.peerAgentPid = this.ws.peerAgentPid ?? null
     this.ws.addEventListener('message', (ev) => this.#onMessage(ev.data))
     this.ws.addEventListener('close', () => {
       for (const [, p] of this.pending) p.reject(new Error('phi-agent channel closed'))
@@ -515,19 +548,21 @@ export class DirectPhiChannel {
   close() { try { this.ws.close() } catch {} }
 }
 
-export async function connectBrowser() {
+export async function connectBrowser({ agentPid = null } = {}) {
   const endpoint = discoverEndpoint()
   if (endpoint.kind !== 'uds') {
     // The --remote-debugging-port override has no authenticated agent-Space
     // surface, so the skill can't drive agent Spaces over it.
     throw new Error(TCP_ONLY_MESSAGE)
   }
-  const { browserWsPath } = await verifyEndpoint(endpoint)
-  const client = new CdpClient({ socketPath: endpoint.socketPath, wsPath: browserWsPath })
+  const { browserWsPath } = await verifyEndpoint(endpoint, { agentPid })
+  const client = new CdpClient({ socketPath: endpoint.socketPath,
+                                 wsPath: browserWsPath, agentPid })
   await client.connect()
   // Management + lifecycle go straight to the app over a second WS on the same
   // socket (/phi-agent); page automation stays on the Chromium browser-target
   // WS above.
-  client.phi = await new DirectPhiChannel({ socketPath: endpoint.socketPath }).connect()
+  client.phi = await new DirectPhiChannel({ socketPath: endpoint.socketPath,
+                                            agentPid }).connect()
   return client
 }

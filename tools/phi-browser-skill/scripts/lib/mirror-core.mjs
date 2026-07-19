@@ -104,7 +104,12 @@ export function clearDaemonControl(sessionKey) {
 }
 
 export function pidAlive(pid) {
-  try { process.kill(pid, 0); return true } catch { return false }
+  // EPERM means the process EXISTS but we may not signal it — true for a
+  // sandboxed round probing the agent (Codex's seatbelt allows signaling
+  // only itself). Only ESRCH (and friends) mean gone.
+  try { process.kill(pid, 0); return true } catch (err) {
+    return !!err && err.code === 'EPERM'
+  }
 }
 
 // --- per-session transcript cursor ------------------------------------------
@@ -157,7 +162,9 @@ export async function openPhiChannel({ agentPid = null } = {}) {
 }
 
 /**
- * Sends `entries` ([{kind, text, detail?, ts?}], oldest first) to the task's
+ * Sends `entries` ([{kind, text, detail?, ts?, agent?}], oldest first — the
+ * optional `agent` names the origin CLI whose visual style the console
+ * renders the line in) to the task's
  * console as ONE batched agentSpace.log call, so delivery is all-or-nothing:
  * a failure re-tries the whole batch on the next tick instead of duplicating
  * an already-delivered prefix. `touch: false` marks this as mirror traffic —
@@ -178,6 +185,7 @@ export async function forwardEntries(taskId, entries, channel = null) {
         text: String(e.text).slice(0, 4000),
         ...(e.detail ? { detail: String(e.detail).slice(0, 500) } : {}),
         ...(e.ts ? { ts: e.ts } : {}),
+        ...(e.agent ? { agent: String(e.agent).slice(0, 16) } : {}),
       })),
     })
     if (res && res.ok === false) {

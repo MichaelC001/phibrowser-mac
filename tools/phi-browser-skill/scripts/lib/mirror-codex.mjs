@@ -30,13 +30,21 @@ const ROLLOUT_MAX_AGE_MS = 30 * 60 * 1000
  * One rollout JSONL record → a console line, or null to skip. Rollouts carry
  * each message TWICE — as a `response_item` (raw model item, where role:user
  * also covers system-injected texts) and as an `event_msg` (the display
- * stream, only real prompts and replies). We parse event_msg exclusively:
- * one source, no duplicates, no machinery.
+ * stream, only real prompts and replies). Messages and reasoning come from
+ * event_msg — one source, no duplicates, no machinery. Tool calls have no
+ * event_msg counterpart in the rollout, so those come from the
+ * function_call / custom_tool_call response_items.
  */
 export function toEntry(obj) {
-  if (!obj || obj.type !== 'event_msg' || !obj.payload) return null
+  if (!obj || !obj.payload) return null
   const ts = Date.parse(obj.timestamp || '') || undefined
+  if (obj.type === 'response_item') return toolCallEntry(obj.payload, ts)
+  if (obj.type !== 'event_msg') return null
   const p = obj.payload
+  if (p.type === 'agent_reasoning') {
+    return typeof p.text === 'string' && p.text.trim()
+      ? { kind: 'thinking', text: p.text, ts } : null
+  }
   if (typeof p.message !== 'string' || !p.message.trim()) return null
   if (p.type === 'user_message') {
     // A "[phi-console]"-marked line is a console command delivered into the
@@ -48,6 +56,81 @@ export function toEntry(obj) {
     return { kind: 'assistant', text: p.message, ts }
   }
   return null
+}
+
+// The phi heredocs that drive the browser are already narrated line-by-line
+// by the skill's own action log; mirroring the call too would double every
+// step.
+const PHI_PLUMBING = /runner\.mjs|phi-browser/
+
+/**
+ * A function_call / custom_tool_call response_item → the console line the
+ * Codex TUI shows for it ("Ran git status", "Updated Plan", "Edited
+ * src/app.ts"), or null for machinery: harness pacing (`wait`) and the phi
+ * heredocs themselves.
+ */
+function toolCallEntry(p, ts) {
+  if (!p || (p.type !== 'function_call' && p.type !== 'custom_tool_call')) return null
+  const name = p.name || ''
+  const raw = String((p.type === 'custom_tool_call' ? p.input : p.arguments) || '')
+  if (name === 'wait' || PHI_PLUMBING.test(raw)) return null
+  let args = null
+  try { args = JSON.parse(raw) } catch {}
+  if (name === 'shell' || name === 'container.exec' || name === 'local_shell_call') {
+    const cmd = shellCommand(args)
+    return cmd ? tool(`Ran ${condense(cmd)}`, ts) : null
+  }
+  if (name === 'exec') {
+    // The JS-repl harness wraps the real command in exec_command({cmd: "…"});
+    // surface that command. Everything else the harness does with its cells
+    // (write_stdin, wait, kill) is pacing plumbing, not a step to mirror.
+    const m = /\bcmd:\s*"((?:[^"\\]|\\.)*)"/.exec(raw)
+    if (!m) return null
+    let cmd = m[1]
+    try { cmd = JSON.parse(`"${m[1]}"`) } catch {}
+    return tool(`Ran ${condense(cmd)}`, ts)
+  }
+  if (name === 'update_plan') {
+    const steps = Array.isArray(args?.plan) ? args.plan : []
+    const detail = steps
+      .map((s) => `${s?.status === 'completed' ? '✔' : '○'} ${condense(s?.step, 60)}`)
+      .join(' · ')
+    return { ...tool('Updated Plan', ts), ...(detail ? { detail } : {}) }
+  }
+  if (name === 'apply_patch') {
+    const patch = typeof args?.input === 'string' ? args.input : raw
+    const files = [...patch.matchAll(/^\*\*\* (Add|Update|Delete) File: (.+)$/gm)]
+    if (!files.length) return tool('Edited files', ts)
+    const label = { Add: 'Added', Update: 'Edited', Delete: 'Deleted' }[files[0][1]]
+    const more = files.length > 1 ? ` (+${files.length - 1} more)` : ''
+    return tool(`${label} ${condense(files[0][2])}${more}`, ts)
+  }
+  return tool(`${name}(${condense(raw)})`, ts)
+}
+
+function tool(text, ts) {
+  return { kind: 'tool', text, ts }
+}
+
+/** The command of a shell-tool call, unwrapped from its `bash -lc` vector. */
+function shellCommand(args) {
+  const cmd = args?.command ?? args?.cmd
+  if (typeof cmd === 'string') return cmd
+  if (!Array.isArray(cmd)) return ''
+  const parts = cmd.map(String)
+  if (parts.length === 3 && /^(ba|z|da|)sh$/.test(basename(parts[0] || ''))
+      && /^-l?c$/.test(parts[1])) {
+    return parts[2]
+  }
+  return parts.join(' ')
+}
+
+/** First non-empty line, whitespace collapsed, capped for a title slot. */
+function condense(value, max = 120) {
+  const line = String(value ?? '').split('\n').map((l) => l.trim())
+    .find((l) => l) || ''
+  const s = line.replace(/\s+/g, ' ')
+  return s.length > max ? `${s.slice(0, max)}…` : s
 }
 
 /**

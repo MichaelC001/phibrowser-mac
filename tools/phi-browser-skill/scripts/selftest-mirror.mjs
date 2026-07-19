@@ -47,8 +47,26 @@ const sql = (db, stmt) => execFileSync('/usr/bin/sqlite3', [db, stmt], { encodin
     type: 'user', message: { content: [{ type: 'tool_result', content: 'x' }] },
   }) === null)
   const a = claudeToEntry({ type: 'assistant', message: { content: [
-    { type: 'text', text: 'reply' }, { type: 'tool_use', name: 'Bash' }] } })
-  check('claude: assistant text blocks only', a?.kind === 'assistant' && a.text === 'reply')
+    { type: 'thinking', thinking: 'hmm' },
+    { type: 'text', text: 'reply' },
+    { type: 'tool_use', name: 'Bash', input: { command: 'git status' } }] } })
+  check('claude: assistant record interleaves blocks', Array.isArray(a) && a.length === 3
+        && a[0].kind === 'thinking' && a[0].text === 'hmm'
+        && a[1].kind === 'assistant' && a[1].text === 'reply'
+        && a[2].kind === 'tool' && a[2].text === 'Bash(git status)')
+  check('claude: phi heredoc suppressed', claudeToEntry({ type: 'assistant',
+    message: { content: [{ type: 'tool_use', name: 'Bash',
+      input: { command: "node scripts/runner.mjs <<'EOF'\ngoto('x')\nEOF" } }] },
+  }) === null)
+  const edit = claudeToEntry({ type: 'assistant', message: { content: [
+    { type: 'tool_use', name: 'Edit', input: { file_path: 'src/app.ts' } }] } })
+  check('claude: edit titled like Claude Code', Array.isArray(edit)
+        && edit[0].kind === 'tool' && edit[0].text === 'Update(src/app.ts)')
+  const abs = claudeToEntry({ type: 'assistant', message: { content: [
+    { type: 'tool_use', name: 'Read',
+      input: { file_path: join(process.cwd(), 'src/x.ts') } }] } })
+  check('claude: paths shown cwd-relative', Array.isArray(abs)
+        && abs[0].text === 'Read(src/x.ts)')
   check('claude: meta skipped', claudeToEntry({ type: 'user', isMeta: true,
     message: { content: 'x' } }) === null)
   check('claude: [phi-console] echo suppressed', claudeToEntry({ type: 'user',
@@ -64,10 +82,48 @@ const sql = (db, stmt) => execFileSync('/usr/bin/sqlite3', [db, stmt], { encodin
   const a = codexToEntry({ type: 'event_msg',
                            payload: { type: 'agent_message', message: 'reply' } })
   check('codex: event_msg agent', a?.kind === 'assistant' && a.text === 'reply')
-  check('codex: response_item skipped (no duplicates)', codexToEntry({
+  check('codex: response_item message skipped (no duplicates)', codexToEntry({
     type: 'response_item', payload: { role: 'user', content: 'x' } }) === null)
   check('codex: [phi-console] echo suppressed', codexToEntry({ type: 'event_msg',
     payload: { type: 'user_message', message: ' [phi-console] go' } }) === null)
+  const th = codexToEntry({ type: 'event_msg',
+    payload: { type: 'agent_reasoning', text: '**Scanning repo**' } })
+  check('codex: reasoning becomes thinking', th?.kind === 'thinking'
+        && th.text === '**Scanning repo**')
+  const ran = codexToEntry({ type: 'response_item', payload: {
+    type: 'function_call', name: 'shell',
+    arguments: '{"command":["bash","-lc","git status"]}' } })
+  check('codex: shell call titled like the TUI', ran?.kind === 'tool'
+        && ran.text === 'Ran git status')
+  check('codex: wait call is machinery', codexToEntry({ type: 'response_item',
+    payload: { type: 'function_call', name: 'wait',
+      arguments: '{"cell_id":"2"}' } }) === null)
+  check('codex: phi heredoc suppressed', codexToEntry({ type: 'response_item',
+    payload: { type: 'custom_tool_call', name: 'exec',
+      input: 'const r = await tools.exec_command({ cmd: "node /x/runner.mjs" })' },
+  }) === null)
+  const repl = codexToEntry({ type: 'response_item', payload: {
+    type: 'custom_tool_call', name: 'exec',
+    input: 'const r = await tools.exec_command({\n  cmd: "git log --oneline"\n})' } })
+  check('codex: repl exec unwraps the real command', repl?.kind === 'tool'
+        && repl.text === 'Ran git log --oneline')
+  check('codex: repl cell plumbing is machinery', codexToEntry({
+    type: 'response_item', payload: { type: 'custom_tool_call', name: 'exec',
+      input: 'const r = await tools.write_stdin({ session_id: 1, chars: "" })' },
+  }) === null)
+  const plan = codexToEntry({ type: 'response_item', payload: {
+    type: 'function_call', name: 'update_plan',
+    arguments: '{"plan":[{"step":"scan","status":"completed"},'
+      + '{"step":"fix","status":"pending"}]}' } })
+  check('codex: update_plan cell', plan?.kind === 'tool' && plan.text === 'Updated Plan'
+        && plan.detail === '✔ scan · ○ fix')
+  const patch = codexToEntry({ type: 'response_item', payload: {
+    type: 'function_call', name: 'apply_patch',
+    arguments: JSON.stringify({
+      input: '*** Begin Patch\n*** Update File: src/a.ts\n'
+        + '*** Add File: src/b.ts\n*** End Patch' }) } })
+  check('codex: apply_patch names its files', patch?.kind === 'tool'
+        && patch.text === 'Edited src/a.ts (+1 more)')
 }
 
 // --- toEntry: Pi ---------------------------------------------------------------

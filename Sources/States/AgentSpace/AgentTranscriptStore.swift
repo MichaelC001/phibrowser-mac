@@ -29,6 +29,13 @@ struct AgentTranscriptEntry: Identifiable, Equatable {
         /// session (the Claude Code / Codex reply text), so the console reads
         /// like the agent's own transcript — not just the browser steps.
         case assistant
+        /// The driving agent's reasoning summary, mirrored from its session —
+        /// rendered dim italic, the way the origin CLIs set thinking apart.
+        case thinking
+        /// A tool call from the driving agent's session (a shell command, a
+        /// file edit), titled the way the origin CLI displays it ("Bash(git
+        /// status)", "Ran git status").
+        case tool
     }
 
     let id: UUID
@@ -40,6 +47,11 @@ struct AgentTranscriptEntry: Identifiable, Equatable {
     let text: String
     /// Optional dimmed second line (a URL, char count, js preview).
     let detail: String?
+    /// The driving agent a mirrored line came from ("claude", "codex", …) —
+    /// picks the origin CLI's visual language in the console (Claude Code's
+    /// >/⏺/⎿ beats vs Codex's ▌/•/└ cells). nil for app- and skill-authored
+    /// lines, which keep Phi's own console style.
+    let agent: String?
     /// The task's pip ordinal at append time, so the merged feed can tag
     /// lines "R1"/"R2" when several tasks are live without re-resolving
     /// tasks that have since completed.
@@ -83,12 +95,13 @@ final class AgentTranscriptStore: ObservableObject {
     /// (forwarded after the heredoc it describes) still sorts into its true
     /// place in the feed rather than after the actions it introduced.
     func append(taskId: String, kind: AgentTranscriptEntry.Kind,
-                text: String, detail: String? = nil, taskNumber: Int,
-                timestamp: Date = Date()) {
+                text: String, detail: String? = nil, agent: String? = nil,
+                taskNumber: Int, timestamp: Date = Date()) {
         nextSeq += 1
         // Conversation lines keep their paragraph shape; terse lines collapse
         // to one line.
         let multiline = kind == .assistant || kind == .user || kind == .narration
+            || kind == .thinking
         let entry = AgentTranscriptEntry(
             id: UUID(),
             timestamp: timestamp,
@@ -97,6 +110,7 @@ final class AgentTranscriptStore: ObservableObject {
             text: Self.sanitize(text, cap: multiline ? Self.maxProseChars : Self.maxTerseChars,
                                 keepBreaks: multiline),
             detail: detail.map { Self.sanitize($0, cap: Self.maxDetailChars, keepBreaks: false) },
+            agent: agent.map { String($0.prefix(16)) },
             taskNumber: taskNumber)
         var entries = entriesByTaskId[taskId] ?? []
         entries.append(entry)

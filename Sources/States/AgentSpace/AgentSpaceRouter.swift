@@ -326,6 +326,7 @@ enum AgentSpaceRouter {
                 AgentSpaceManager.shared.appendTranscript(
                     taskId: taskId, kind: kind, text: text,
                     detail: item["detail"] as? String,
+                    agent: item["agent"] as? String,
                     timestamp: Self.clampedLogTimestamp(item["ts"] as? Double))
             }
         }

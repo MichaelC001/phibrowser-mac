@@ -5,9 +5,10 @@
 //
 //   session → console: tails the session transcript — the agent's JSONL
 //     file (Claude Code, Codex, Pi) or its SQLite transcript rows (Hermes,
-//     OpenClaw; see lib/mirror-sqlite.mjs) — and forwards new prompt/prose
-//     lines (batched, cursor-ordered) so the console reads like the agent's
-//     own conversation.
+//     OpenClaw; see lib/mirror-sqlite.mjs) — and forwards new prompt,
+//     prose, reasoning, and tool-call lines (batched, cursor-ordered),
+//     each tagged with the origin agent so the console renders them in
+//     that agent's own visual style.
 //   console → session: listens for the app's agentSpace.userMessage
 //     broadcast; while the task is IDLE (no round live to drain the queue
 //     itself) it drains the user's console commands and hands them to the
@@ -150,7 +151,13 @@ async function main() {
         let obj
         try { obj = JSON.parse(raw) } catch { continue }
         const e = toEntry(obj)
-        if (e) entries.push(e)
+        if (!e) continue
+        // Tagged with the origin so the console renders each line in the
+        // driving agent's own visual language (Claude Code's >/⏺/⎿ beats,
+        // Codex's ▌/•/└ cells).
+        for (const one of Array.isArray(e) ? e : [e]) {
+          entries.push({ ...one, agent: ctl.format || 'claude' })
+        }
       }
       if (!known) {
         entries = entries.filter((e) => !e.ts || e.ts >= startTs - BACKFILL_GRACE_MS)

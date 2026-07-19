@@ -62,7 +62,7 @@ The heredoc body is a Node.js script; all helpers below are preloaded.
 ## Helpers
 
 - Agent spaces: `ensureAgentSpace(name, {profile, persistent})` (returns the Space's open `tabs` too; `{persistent: true}` = permanent workspace — see "Persistent Spaces"), `listAgentSpaces()`, `listProfiles()`, `spaceStatus({shots})` (one-call digest of the current Space — see "Space status"), `complete({success, message})`, `ping(ttlSeconds?)` — keep-alive control, see "Task lifecycle"
-- Ownership: `ownership()`, `handOff(message)`, `takeOver()`, `waitForAgentControl({timeout})`
+- Ownership: `ownership()`, `handOff(message)`, `handOffAndWait(message, {timeout})` (blocking handoff — hand off then wait for hand-back in the same round; the handoff to use under Codex — see "Control handoff"), `takeOver()`, `waitForAgentControl({timeout})`
 - Tabs: `listTabs()`, `openTab(url)` (reuses the Space's blank seed tab in place when one exists; `{reuseBlank: false}` forces a separate tab; safe to fire concurrently for many tabs — see "Caveats"), `switchTab(targetId)`, `closeTab(targetId?)`
 - Navigation: `goto(url, {timeout})`, `waitForLoad({timeout})`
 - Waiting: `waitForElement(target, {timeout, visible, minCount})` (`minCount: N` waits until ≥N matches — streaming SPA lists), `waitForFunction(expr, {timeout, poll})` (poll arbitrary page JS until truthy; returns the value), `waitForNetworkIdle({timeout, idleMs, maxInflight})`
@@ -534,9 +534,13 @@ buffered.
 
 The console mirrors the WHOLE session, not just browser steps: under all
 five supported agents — Claude Code, Codex, OpenClaw, Pi, and Hermes —
-`ensureAgentSpace` spawns a tailer daemon that streams your prompts and
-reply prose into the panel automatically (no setup — see
-references/install.md ▸ step 4), so it reads like your own transcript. When
+`ensureAgentSpace` spawns a tailer daemon that streams your prompts, reply
+prose, reasoning summaries, and tool calls into the panel automatically (no
+setup — see references/install.md ▸ step 4), rendered in your own CLI's
+visual style (Claude Code's `>` prompts and ⏺ bullets, Codex's ▌ quote bars
+and • cells), so it reads like your own transcript. Your phi heredocs are
+the one exception: the action log already narrates them step by step, so
+the mirror drops those tool calls instead of echoing every script twice. When
 no mirror is running (an unrecognized agent, or a session the discovery
 could not identify), use `say('…')` to reflect a line of your own prose into
 the console yourself.
@@ -578,9 +582,17 @@ control, every mutating helper fails with "user is controlling".
 - **Handing off**: when the task needs the user (login, captcha, manual
   confirmation), call `await handOff("what to do, e.g. Sign in then hand
   back")` — the message is shown to the user in a native prompt with a button
-  to jump into the agent Space. Also tell them in chat, start a hand-back
-  watcher (below), then stop. (`waitForAgentControl()` inside the same
-  heredoc also works for waits you expect to be short.)
+  to jump into the agent Space. Two ways to wait for the hand-back:
+  - **Blocking (preferred under Codex)**: `await handOffAndWait("what to
+    do")` hands off and blocks the SAME round until the user hands back, then
+    returns `{owner: 'agent'}` and you continue in that same turn — no round
+    ending, no watcher, so an agent that can't be woken from idle (Codex)
+    still resumes automatically. Keep the hand-off SHORT: the driving agent
+    may cap a single tool-call (Codex ~120s), so `timeout` defaults below
+    that; on `{timedOut: true}` fall back to the non-blocking path below.
+  - **Non-blocking**: tell the user in chat, start a hand-back watcher
+    (below), then stop. Use this for hand-offs you expect to run long
+    (past the tool-call cap), where a single blocking round would be killed.
 - **Resuming** — two signals, either one suffices:
   - The hand-back watcher fires (the user clicked "Hand back"): control is
     already yours — do NOT call `takeOver()`; verify page state and continue.

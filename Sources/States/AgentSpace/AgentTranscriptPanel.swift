@@ -872,6 +872,23 @@ struct AgentTranscriptPanelView: View {
         }
     }
 
+    /// The origin-CLI dialect of a mirrored line — which visual language the
+    /// row borrows so the console reads like the driving agent's own UI.
+    /// nil (app/skill-authored) keeps Phi's console style; unrecognized
+    /// agents get a neutral CLI look.
+    private enum Flavor {
+        case claude, codex, generic
+
+        init?(_ agent: String?) {
+            switch agent {
+            case nil: return nil
+            case "claude": self = .claude
+            case "codex": self = .codex
+            default: self = .generic
+            }
+        }
+    }
+
     @ViewBuilder
     private func entryRow(_ entry: AgentTranscriptEntry) -> some View {
         switch entry.kind {
@@ -886,52 +903,51 @@ struct AgentTranscriptPanelView: View {
             }
             .padding(.vertical, 4)
         case .user:
-            // A user command opens a turn: the tinted block is the visual
-            // boundary the eye scans for, so the command itself stays in the
-            // plain text color rather than shouting in green too.
-            HStack(alignment: .top, spacing: 6) {
-                if showTaskTags { taskTag(entry.taskNumber) }
-                Text("❯")
-                    .font(Palette.font.weight(.bold))
-                    .foregroundStyle(Palette.prompt)
-                VStack(alignment: .leading, spacing: 1) {
-                    markdownBlock(entry.text, baseColor: Palette.text)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    // The idle-session delivery warning (see sendUserMessage)
-                    // hangs under the command it describes.
-                    if let detail = entry.detail {
-                        HStack(alignment: .firstTextBaseline, spacing: 4) {
-                            Text("⎿")
-                                .font(Palette.fontSmall)
-                                .foregroundStyle(Palette.faint)
-                            Text(detail)
-                                .font(Palette.fontSmall)
-                                .foregroundStyle(Palette.faint)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
-                }
+            if let flavor = Flavor(entry.agent) {
+                mirroredUserRow(entry, flavor: flavor)
+            } else {
+                consoleUserRow(entry)
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .background(Palette.prompt.opacity(0.09),
-                        in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-            .padding(.top, 6)
-            .textSelection(.enabled)
         case .assistant, .narration:
             // Mirrored conversation — render markdown (headings, bullets,
             // **bold**, `code`) so a structured reply reads like the agent's
-            // own transcript instead of a wall of literal markup.
+            // own transcript instead of a wall of literal markup. Claude Code
+            // opens every reply block with its ⏺ bullet; the other CLIs set
+            // prose plain.
             HStack(alignment: .top, spacing: 6) {
                 if showTaskTags { taskTag(entry.taskNumber) }
+                if entry.kind == .assistant, Flavor(entry.agent) == .claude {
+                    Text("⏺")
+                        .font(Palette.font)
+                        .foregroundStyle(Palette.text)
+                }
                 markdownBlock(entry.text, baseColor: color(for: entry.kind))
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .textSelection(.enabled)
-        case .action, .status, .error:
+        case .thinking:
+            // Reasoning summaries — dim italic, the way both CLIs set
+            // thinking apart from the real reply. Inline markdown only:
+            // Codex headlines arrive as **bold** runs and lose nothing
+            // without block structure.
+            HStack(alignment: .top, spacing: 6) {
+                if showTaskTags { taskTag(entry.taskNumber) }
+                if Flavor(entry.agent) == .claude {
+                    Text("✻")
+                        .font(Palette.font)
+                        .foregroundStyle(Palette.faint)
+                }
+                inlineText(entry.text)
+                    .font(Palette.font.italic())
+                    .foregroundStyle(Palette.faint)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .textSelection(.enabled)
+        case .action, .status, .error, .tool:
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 if showTaskTags { taskTag(entry.taskNumber) }
-                if let glyph = glyph(for: entry.kind) {
+                if let glyph = glyph(for: entry) {
                     Text(glyph.symbol)
                         .font(Palette.font)
                         .foregroundStyle(glyph.color)
@@ -944,19 +960,78 @@ struct AgentTranscriptPanelView: View {
                     // Detail hangs under its own line inside the column, so
                     // it stays aligned whether or not task tags are shown.
                     if let detail = entry.detail {
-                        HStack(alignment: .firstTextBaseline, spacing: 4) {
-                            Text("⎿")
-                                .font(Palette.fontSmall)
-                                .foregroundStyle(Palette.faint)
-                            Text(detail)
-                                .font(Palette.fontSmall)
-                                .foregroundStyle(Palette.faint)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
+                        detailRow(detail, elbow: Flavor(entry.agent) == .codex ? "└" : "⎿")
                     }
                 }
             }
             .textSelection(.enabled)
+        }
+    }
+
+    /// A command typed into THIS console: the tinted block is the visual
+    /// boundary the eye scans for, so the command itself stays in the plain
+    /// text color rather than shouting in green too.
+    private func consoleUserRow(_ entry: AgentTranscriptEntry) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            if showTaskTags { taskTag(entry.taskNumber) }
+            Text("❯")
+                .font(Palette.font.weight(.bold))
+                .foregroundStyle(Palette.prompt)
+            VStack(alignment: .leading, spacing: 1) {
+                markdownBlock(entry.text, baseColor: Palette.text)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                // The idle-session delivery warning (see sendUserMessage)
+                // hangs under the command it describes.
+                if let detail = entry.detail {
+                    detailRow(detail, elbow: "⎿")
+                }
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(Palette.prompt.opacity(0.09),
+                    in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .padding(.top, 6)
+        .textSelection(.enabled)
+    }
+
+    /// A prompt mirrored from the driving agent's own session, in the origin
+    /// CLI's look: Claude Code prefixes prompts with `>`, Codex quotes them
+    /// behind a ▌ bar. The tinted block stays reserved for commands typed
+    /// into this console.
+    private func mirroredUserRow(_ entry: AgentTranscriptEntry, flavor: Flavor) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            if showTaskTags { taskTag(entry.taskNumber) }
+            if flavor == .codex {
+                markdownBlock(entry.text, baseColor: Palette.text)
+                    .padding(.leading, 9)
+                    .overlay(alignment: .leading) {
+                        RoundedRectangle(cornerRadius: 1.5)
+                            .fill(Palette.prompt)
+                            .frame(width: 3)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                Text(">")
+                    .font(Palette.font.weight(.bold))
+                    .foregroundStyle(Palette.dim)
+                markdownBlock(entry.text, baseColor: Palette.text)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(.top, 6)
+        .textSelection(.enabled)
+    }
+
+    private func detailRow(_ detail: String, elbow: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 4) {
+            Text(elbow)
+                .font(Palette.fontSmall)
+                .foregroundStyle(Palette.faint)
+            Text(detail)
+                .font(Palette.fontSmall)
+                .foregroundStyle(Palette.faint)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -1152,12 +1227,14 @@ struct AgentTranscriptPanelView: View {
     }
 
     /// Leading glyph of a terse line — accent-colored so the glyph column,
-    /// not the text, carries the row's role.
-    private func glyph(for kind: AgentTranscriptEntry.Kind) -> (symbol: String, color: Color)? {
-        switch kind {
+    /// not the text, carries the row's role. Mirrored tool calls use the
+    /// origin CLI's bullet: Claude Code's ⏺, Codex's •.
+    private func glyph(for entry: AgentTranscriptEntry) -> (symbol: String, color: Color)? {
+        switch entry.kind {
         case .action: return ("⏺", Palette.prompt)
         case .error: return ("✗", Palette.error)
-        case .user, .assistant, .narration, .status, .round: return nil
+        case .tool: return (Flavor(entry.agent) == .codex ? "•" : "⏺", Palette.prompt)
+        case .user, .assistant, .narration, .status, .round, .thinking: return nil
         }
     }
 
@@ -1170,6 +1247,8 @@ struct AgentTranscriptPanelView: View {
         case .status: return Palette.dim
         case .error: return Palette.error
         case .round: return Palette.faint
+        case .thinking: return Palette.faint
+        case .tool: return Palette.text
         }
     }
 

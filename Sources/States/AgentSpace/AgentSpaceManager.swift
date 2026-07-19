@@ -954,11 +954,11 @@ final class AgentSpaceManager: ObservableObject {
     /// time so backfilled prose sorts into its true place.
     func appendTranscript(taskId: String, kind: AgentTranscriptEntry.Kind,
                           text: String, detail: String? = nil,
-                          timestamp: Date = Date()) {
+                          agent: String? = nil, timestamp: Date = Date()) {
         guard let spaceId = spaceIdByTaskId[taskId],
               let task = tasksBySpaceId[spaceId] else { return }
         AgentTranscriptStore.shared.append(
-            taskId: taskId, kind: kind, text: text, detail: detail,
+            taskId: taskId, kind: kind, text: text, detail: detail, agent: agent,
             taskNumber: task.number, timestamp: timestamp)
     }
 

@@ -134,6 +134,12 @@ final class AgentDirectConnection {
     /// The authenticated identity of the connecting code agent, forwarded to
     /// `agentSpace.create` so the Space it opens is badged with who drives it.
     private let agentName: String
+    /// Pid of the resolved agent process, echoed back on the 101 upgrade
+    /// (X-Phi-Agent-Pid) — the authoritative ancestry answer for a skill
+    /// round that cannot walk its own (Codex's seatbelt denies the sysctls
+    /// `ps` needs). The skill records it for its detached daemon and
+    /// watchers to claim on later connections.
+    private let agentPid: pid_t?
     private let queue: DispatchQueue
     private var readSource: DispatchSourceRead?
     private var buffer = Data()
@@ -145,9 +151,10 @@ final class AgentDirectConnection {
     private static let wsGUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
     private static let maxFrameBytes = 8 * 1024 * 1024
 
-    init(fd: Int32, agentName: String = "") {
+    init(fd: Int32, agentName: String = "", agentPid: pid_t? = nil) {
         self.fd = fd
         self.agentName = agentName
+        self.agentPid = agentPid
         self.queue = DispatchQueue(label: "com.phibrowser.cdp.direct.\(fd)")
     }
 
@@ -208,9 +215,11 @@ final class AgentDirectConnection {
             return false
         }
         let accept = Self.acceptKey(for: key)
+        let claim = agentPid.map { "X-Phi-Agent-Pid: \($0)\r\n" } ?? ""
         writeRaw(
             "HTTP/1.1 101 Switching Protocols\r\n" +
             "Upgrade: websocket\r\nConnection: Upgrade\r\n" +
+            claim +
             "Sec-WebSocket-Accept: \(accept)\r\n\r\n")
         handshakeDone = true
         return true
