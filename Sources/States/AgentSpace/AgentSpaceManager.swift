@@ -1000,9 +1000,8 @@ final class AgentSpaceManager: ObservableObject {
     /// typed into its terminal, so queued console input and hand-backs are
     /// only noticed at the session's next turn — the user has to nudge it
     /// themselves. Nil for every other driver: phi-agent's backend resumes
-    /// the agent itself, OpenClaw delivers through its gateway CLI, and the
-    /// remaining terminal agents typically sit blocked in waitForUserMessage
-    /// rather than parked idle.
+    /// the agent itself, OpenClaw uses its gateway CLI, Pi uses its installed
+    /// in-process extension, and Hermes typically waits in waitForUserMessage.
     private func terminalNudgeHint(for task: AgentTask) -> String? {
         guard task.origin == .cdp,
               AgentDriverBadge.make(agentName: task.agentName,

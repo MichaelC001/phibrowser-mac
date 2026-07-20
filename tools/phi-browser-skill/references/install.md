@@ -8,11 +8,17 @@ the phi-browser skill" click **Install** next to your agent — Claude Code
 OpenClaw (`~/.openclaw/skills`), Pi (`~/.pi/agent/skills`), or Hermes
 (`~/.hermes/skills`). This links the skill bundled inside the app into that
 agent's `skills/phi-browser`, so it stays current with each Phi Browser update.
+For Pi, Install also links a companion extension at
+`~/.pi/agent/extensions/phi-browser`; run `/reload` in an already-open Pi
+session so it can wake automatically when Agent Transcript receives a command.
 
-Or link it by hand from a source checkout (swap the destination for your agent):
+Or link it by hand from the repository root (swap the skill destination for
+another agent). Pi needs both links:
 
 ```bash
-ln -sfn /Users/jixiang/Phi/phibrowser-mac/tools/phi-browser-skill ~/.claude/skills/phi-browser
+mkdir -p ~/.pi/agent/skills ~/.pi/agent/extensions
+ln -sfn "$PWD/tools/phi-browser-skill" ~/.pi/agent/skills/phi-browser
+ln -sfn "$PWD/tools/phi-browser-skill/extensions/pi" ~/.pi/agent/extensions/phi-browser
 ```
 
 Requires Node >= 22. No npm dependencies.
@@ -100,18 +106,17 @@ mirroring nothing rather than guessing wrong:
   on this Mac.
 - **Pi** — by the same evidence heuristic over its session files.
 
-The daemon then
+The mirror then
 
 - forwards your prompts and the assistant's reply prose into the Space's
   console while the task is live, and
 - delivers commands you type into the console back INTO the idle session
-  (prefixed `[phi-console]`) where the agent has a delivery transport: for
-  OpenClaw the command is handed to the `openclaw` CLI
-  (`openclaw agent --session-id … --message …`), which routes it through
-  your gateway. The terminal agents (Claude Code, Codex, Pi, Hermes) have
-  no transport — their commands, and OpenClaw's when delivery isn't
-  possible (missing openclaw CLI), simply stay queued until the agent's
-  next round, where the driver drains them via `readUserMessages()`.
+  (prefixed `[phi-console]`) where the agent has a delivery transport. Pi's
+  installed companion extension calls its supported in-process
+  `pi.sendUserMessage()` API, which wakes the session immediately. OpenClaw
+  uses `openclaw agent --session-id … --message …` through its gateway. The
+  remaining terminal agents have no transport, so their commands stay queued
+  until the next round drains them via `readUserMessages()`.
 
 The daemon exits on its own when the task completes, when the session goes
 quiet for 30 minutes, when the agent process exits, or when the task
@@ -139,9 +144,13 @@ needed): `node scripts/selftest-mirror.mjs`.
   `PHI_OPENCLAW_STATE_DIR`, `PI_CODING_AGENT_SESSION_DIR` override the
   roots), `PHI_NO_SESSION_MIRROR` is set, or the skill running your heredocs
   predates the session mirror — rebuild Phi so the bundled skill has it.
-- **Console commands don't reach an idle session**: for the terminal agents
-  (Claude Code, Codex, Pi, Hermes) that is by design — commands are picked
-  up at the agent's next round, not typed into its terminal.
+- **Under Pi: console commands wait for “continue”**: the companion extension
+  is not loaded. Install Pi again from Phi settings, then run `/reload` in Pi.
+  The skill link alone can mirror the transcript but cannot call Pi's
+  in-process `sendUserMessage()` API.
+- **Console commands don't reach another terminal agent's idle session**:
+  Claude Code, Codex, and Hermes have no supported delivery transport, so
+  commands are picked up at the next round rather than typed into a terminal.
 - **Under OpenClaw: console commands stay queued**: the daemon delivers via
   the `openclaw` CLI — it must be installed (PATH, `~/.local/bin`, or set
   `PHI_OPENCLAW_BIN`) and able to reach your gateway. Check

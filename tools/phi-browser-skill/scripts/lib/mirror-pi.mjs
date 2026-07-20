@@ -269,11 +269,15 @@ export function discoverPiTranscript(taskId, agentPid) {
         if (header.cwd === cwd) score += 2
       }
     } catch {}
-    if (taskId && tailOf(f.path).includes(jsonEscaped(taskId))) score += 3
-    return { ...f, score, sessionId }
+    const taskMatch = !!taskId && tailOf(f.path).includes(jsonEscaped(taskId))
+    if (taskMatch) score += 3
+    return { ...f, score, sessionId, taskMatch }
   }).sort((a, b) => b.score - a.score || b.mtime - a.mtime)
   const best = scored[0]
-  if (!best || best.score === 0) return null
+  // When ensureAgentSpace supplied a task id, its freshly persisted tool call
+  // is the binding proof. CWD alone is only a tie-breaker, never permission to
+  // mirror or auto-deliver another concurrent Pi session's conversation.
+  if (!best || best.score === 0 || (taskId && !best.taskMatch)) return null
   return {
     sessionKey: best.sessionId || `pi-${Math.round(best.mtime)}`,
     path: best.path,

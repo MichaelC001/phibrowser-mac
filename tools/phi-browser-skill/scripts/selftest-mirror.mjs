@@ -18,7 +18,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { toEntry as claudeToEntry } from './lib/mirror-claude.mjs'
 import { toEntry as codexToEntry } from './lib/mirror-codex.mjs'
-import { toEntry as piToEntry } from './lib/mirror-pi.mjs'
+import {
+  toEntry as piToEntry, discoverPiTranscript,
+} from './lib/mirror-pi.mjs'
+import {
+  PiConsoleBridge, formatPiConsoleMessages,
+} from './lib/mirror-pi-bridge.mjs'
 import {
   toEntry as hermesToEntry, hermesQuery, hermesRowToItem, discoverHermesTranscript,
 } from './lib/mirror-hermes.mjs'
@@ -322,6 +327,91 @@ const sql = (db, stmt) => execFileSync('/usr/bin/sqlite3', [db, stmt], { encodin
   check('pi: length stop matches native error', Array.isArray(length)
         && length[0].kind === 'assistant' && length[1].kind === 'error'
         && length[1].text.includes('maximum output token limit'))
+}
+
+// --- discovery: Pi --------------------------------------------------------------
+
+{
+  const root = join(dir, 'pi-sessions')
+  const project = join(root, 'project')
+  execFileSync('/bin/mkdir', ['-p', project])
+  const unrelated = join(project, 'unrelated.jsonl')
+  const matched = join(project, 'matched.jsonl')
+  writeFileSync(unrelated, JSON.stringify({
+    type: 'session', id: 'pi-unrelated', cwd: process.cwd(),
+  }) + '\n' + JSON.stringify({ type: 'message', message: {
+    role: 'assistant', content: [{ type: 'text', text: 'other session' }],
+  } }) + '\n')
+  writeFileSync(matched, JSON.stringify({
+    type: 'session', id: 'pi-matched', cwd: process.cwd(),
+  }) + '\n' + JSON.stringify({ type: 'message', message: {
+    role: 'assistant', content: [{ type: 'toolCall', name: 'bash',
+      arguments: { command: "ensureAgentSpace('task-proof')" } }],
+  } }) + '\n')
+  const saved = {
+    PI_CODING_AGENT: process.env.PI_CODING_AGENT,
+    PI_CODING_AGENT_SESSION_DIR: process.env.PI_CODING_AGENT_SESSION_DIR,
+  }
+  process.env.PI_CODING_AGENT = 'true'
+  process.env.PI_CODING_AGENT_SESSION_DIR = root
+  try {
+    const hit = discoverPiTranscript('task-proof', process.pid)
+    check('pi discovery: task evidence binds the exact session',
+          hit?.sessionKey === 'pi-matched' && hit.path === matched)
+    check('pi discovery: cwd alone never binds a different session',
+          discoverPiTranscript('missing-task-proof', process.pid) === null)
+  } finally {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
+  }
+}
+
+// --- Pi in-process console bridge ----------------------------------------------
+
+{
+  check('pi bridge: batches console commands as one marked user turn',
+        formatPiConsoleMessages([{ text: 'first' }, { text: ' second ' }])
+          === '[phi-console] first\n\n[phi-console] second')
+
+  let control = null
+  let opened = 0
+  let reads = 0
+  let task = { taskId: 'pi-task', status: 'idle', pendingUserMessages: 2 }
+  const delivered = []
+  const channel = {
+    async send(type) {
+      if (type === 'agentSpace.list') return { tasks: [task] }
+      if (type === 'agentSpace.readUserMessages') {
+        reads += 1
+        return { messages: [{ text: 'open example.com' }, { text: 'then summarize it' }] }
+      }
+      throw new Error(`unexpected send: ${type}`)
+    },
+    onEvent() { return () => {} },
+    close() {},
+  }
+  const bridge = new PiConsoleBridge({
+    sessionKey: 'pi-session',
+    sendUserMessage: (text, options) => delivered.push({ text, options }),
+    readControl: () => control,
+    openChannel: async () => { opened += 1; return channel },
+  })
+
+  check('pi bridge: no task binding means no app connection',
+        await bridge.pollOnce() === false && opened === 0)
+  control = { format: 'pi', taskId: 'pi-task' }
+  task = { ...task, status: 'running' }
+  check('pi bridge: live browser round keeps authority over its queue',
+        await bridge.pollOnce() === false && reads === 0 && delivered.length === 0)
+  task = { ...task, status: 'idle' }
+  check('pi bridge: idle command drains and wakes Pi through steer',
+        await bridge.pollOnce() === true && reads === 1 && delivered.length === 1
+        && delivered[0].text === '[phi-console] open example.com\n\n'
+          + '[phi-console] then summarize it'
+        && delivered[0].options?.deliverAs === 'steer')
+  bridge.stop()
 }
 
 // --- toEntry: Hermes -----------------------------------------------------------

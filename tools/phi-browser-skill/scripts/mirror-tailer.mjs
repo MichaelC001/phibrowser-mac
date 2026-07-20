@@ -13,10 +13,10 @@
 //     broadcast; while the task is IDLE (no round live to drain the queue
 //     itself) it drains the user's console commands and hands them to the
 //     openclaw CLI for OpenClaw — so a console command wakes an idle
-//     OpenClaw session instead of waiting for its next round. The terminal
-//     agents (Claude Code, Codex, Pi, Hermes) have no delivery transport:
-//     their commands stay queued until the driver's next round
-//     (readUserMessages / waitForUserMessage).
+//     OpenClaw session instead of waiting for its next round. Pi is delivered
+//     separately by its installed in-process extension (mirror-pi-bridge.mjs),
+//     the only layer that can call pi.sendUserMessage(). The remaining terminal
+//     agents queue commands until the driver's next round.
 //
 // ensureAgentSpace spawns it detached (arg: session key) after writing the
 // session's daemon control file. Lifetime is bounded by construction —
@@ -291,9 +291,9 @@ async function main() {
  * and delivers them into the driving session, ONLY when:
  *   - the task is idle (a live round is expected to drain the queue itself —
  *     racing it would strand a waitForUserMessage on an empty queue), and
- *   - a delivery transport exists: OpenClaw goes through the openclaw CLI to
- *     its gateway. The terminal agents have no transport — their queue is
- *     left alone and the driver drains it at its next round.
+ *   - a delivery transport exists here: OpenClaw goes through its gateway CLI.
+ *     Pi's in-process extension owns its queue independently; the other
+ *     terminal agents have no transport and drain at their next round.
  * Commands are delivered with a "[phi-console]" prefix: the agent sees the
  * provenance (answer via narrate/console, not just its own surface), and the
  * mirror suppresses the echoed transcript line (the app already echoed the
@@ -307,7 +307,9 @@ class ConsoleCommandBridge {
   /** True means the task no longer exists — the daemon should exit. */
   async deliverPending(ctl, channel) {
     if (!ctl.taskId || !ctl.agentPid) return false
-    if (ctl.format !== 'openclaw') return false  // no transport: leave queued
+    // Pi's companion extension drains its queue in-process. Every other
+    // non-OpenClaw terminal agent leaves the queue for its next round.
+    if (ctl.format !== 'openclaw') return false
     const { tasks } = await channel.send('agentSpace.list', {})
     const task = (tasks || []).find((t) => t.taskId === ctl.taskId)
     if (!task) return true

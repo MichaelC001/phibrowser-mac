@@ -1622,8 +1622,8 @@ struct AgentTranscriptPanelView: View {
             )
             if let target = promptTarget, target.status != .running {
                 Text(NSLocalizedString(
-                    "agent idle — commands are queued until its next round",
-                    comment: "Agent console - hint that a command waits for the next agent round"))
+                    "agent idle — command starts or queues its next round",
+                    comment: "Agent console - hint for sending a command to an idle agent"))
                     .font(Palette.fontUISmall)
                     .foregroundStyle(Palette.faint)
                     .padding(.leading, 2)

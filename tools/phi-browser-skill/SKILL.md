@@ -561,12 +561,13 @@ the console yourself.
 ## User commands from the browser
 
 The transcript console has a prompt where the user can type commands to you
-mid-task. While you are IDLE between rounds, the tailer daemon delivers them
-straight into your session as user messages prefixed `[phi-console]` — treat
-those exactly like chat from the user, and acknowledge via `narrate(...)`
-(the user is watching the console, not your terminal). While a round is
-live — or when delivery isn't possible — they queue per task in the app
-until you drain them:
+mid-task. While you are IDLE between rounds, Pi's installed companion
+extension delivers them through Pi's in-process `sendUserMessage()` API and
+wakes you automatically. OpenClaw uses its gateway transport. Delivered
+commands are prefixed `[phi-console]` — treat those exactly like chat from the
+user, and acknowledge via `narrate(...)` (the user is watching the console,
+not your terminal). While a round is live — or when a delivery transport is
+unavailable — commands queue per task in the app until you drain them:
 
 - **Drain at every round start**: `ensureAgentSpace(...)` returns
   `pendingUserMessages` (a count; also on `spaceStatus()`) — when non-zero,

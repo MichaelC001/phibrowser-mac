@@ -154,7 +154,7 @@
         }
       }
     },
-    "%@ can now use the phi-browser skill. If it isn’t already on, enable remote debugging above and relaunch so the skill can connect." : {
+    "%@ can now use the phi-browser skill. Enable remote debugging above if needed. Restart newly configured agents; in Pi, /reload is enough." : {
       "comment" : "Developer settings - Skill install success body; %@ is the agent name"
     },
     "%@ tab group, %d tabs, collapsed" : {
@@ -293,8 +293,8 @@
     "Agent Autoview" : {
       "comment" : "View menu - Toggle that automatically switches to the Space of an operating agent"
     },
-    "agent idle — commands are queued until its next round" : {
-      "comment" : "Agent console - hint that a command waits for the next agent round"
+    "agent idle — command starts or queues its next round" : {
+      "comment" : "Agent console - hint for sending a command to an idle agent"
     },
     "Agent permissions" : {
       "comment" : "Developer settings - Agent permissions section title"
@@ -1175,7 +1175,7 @@
     "Linking..." : {
       "comment" : "Phi Link - Custom bot linking text"
     },
-    "Links the skill bundled in this app into an AI coding agent’s skills folder so it can drive Phi over the DevTools Protocol. Requires Node 22+; enable remote debugging above so it can connect." : {
+    "Links the skill bundled in this app into an AI coding agent’s skills folder so it can drive Phi over the DevTools Protocol. Pi also gets a companion extension that wakes idle sessions from Agent Transcript commands. Requires Node 22+; enable remote debugging above so it can connect." : {
       "comment" : "Developer settings - Explanation for the phi-browser skill installer"
     },
     "Loading image…" : {
@@ -1905,6 +1905,9 @@
     },
     "This build doesn’t include the phi-browser skill resources. Rebuild Phi Browser and try again." : {
       "comment" : "Developer settings - Skill install failure body when the resource is missing"
+    },
+    "This build doesn’t include the Pi companion extension. Rebuild Phi Browser and try again." : {
+      "comment" : "Developer settings - Pi companion extension missing"
     },
     "This replaces the Phi user data folder with the archive and restarts Phi. Save your work first." : {
       "comment" : "Debug import user data - Confirmation alert body warning data replacement and relaunch"

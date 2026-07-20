@@ -275,9 +275,26 @@ private struct SkillInstallSectionView: View {
         /// template, Hermes's favicon artwork renders in original color.
         let iconAsset: String
         let skillsDirectory: URL
+        /// Pi alone exposes a supported in-process message API. Its companion
+        /// extension wakes idle sessions when Agent Transcript receives input.
+        let companionExtensionDirectory: URL?
+
+        init(id: String, name: String, iconAsset: String, skillsDirectory: URL,
+             companionExtensionDirectory: URL? = nil) {
+            self.id = id
+            self.name = name
+            self.iconAsset = iconAsset
+            self.skillsDirectory = skillsDirectory
+            self.companionExtensionDirectory = companionExtensionDirectory
+        }
 
         var linkURL: URL {
             skillsDirectory.appendingPathComponent("phi-browser", isDirectory: true)
+        }
+
+        var companionExtensionLinkURL: URL? {
+            companionExtensionDirectory?
+                .appendingPathComponent("phi-browser", isDirectory: true)
         }
     }
 
@@ -294,8 +311,11 @@ private struct SkillInstallSectionView: View {
                         skillsDirectory: home.appendingPathComponent(".hermes/skills", isDirectory: true)),
             SkillTarget(id: "openclaw", name: "OpenClaw", iconAsset: "agent-openclaw",
                         skillsDirectory: home.appendingPathComponent(".openclaw/skills", isDirectory: true)),
-            SkillTarget(id: "pi", name: "Pi", iconAsset: "agent-pi",
-                        skillsDirectory: home.appendingPathComponent(".pi/agent/skills", isDirectory: true)),
+            SkillTarget(
+                id: "pi", name: "Pi", iconAsset: "agent-pi",
+                skillsDirectory: home.appendingPathComponent(".pi/agent/skills", isDirectory: true),
+                companionExtensionDirectory: home.appendingPathComponent(
+                    ".pi/agent/extensions", isDirectory: true)),
         ]
     }()
 
@@ -303,6 +323,11 @@ private struct SkillInstallSectionView: View {
     private static var bundledSkillURL: URL? {
         Bundle.main.resourceURL?
             .appendingPathComponent("phi-browser-skill", isDirectory: true)
+    }
+
+    private static var bundledPiExtensionURL: URL? {
+        bundledSkillURL?
+            .appendingPathComponent("extensions/pi", isDirectory: true)
     }
 
     // IDs of agents whose skills folder already links to *this* app's bundle.
@@ -316,7 +341,7 @@ private struct SkillInstallSectionView: View {
                         Text(NSLocalizedString("Install the phi-browser skill", comment: "Developer settings - Title for installing the phi-browser agent skill"))
                             .font(.system(size: 13))
                             .themedForeground(.textPrimary)
-                        Text(NSLocalizedString("Links the skill bundled in this app into an AI coding agent’s skills folder so it can drive Phi over the DevTools Protocol. Requires Node 22+; enable remote debugging above so it can connect.", comment: "Developer settings - Explanation for the phi-browser skill installer"))
+                        Text(NSLocalizedString("Links the skill bundled in this app into an AI coding agent’s skills folder so it can drive Phi over the DevTools Protocol. Pi also gets a companion extension that wakes idle sessions from Agent Transcript commands. Requires Node 22+; enable remote debugging above so it can connect.", comment: "Developer settings - Explanation for the phi-browser skill installer"))
                             .font(.system(size: 11))
                             .themedForeground(.textTertiary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -375,7 +400,7 @@ private struct SkillInstallSectionView: View {
             presentSkillAlert(
                 title: NSLocalizedString("Skill installed", comment: "Developer settings - Skill install success title"),
                 body: String(
-                    format: NSLocalizedString("%@ can now use the phi-browser skill. If it isn’t already on, enable remote debugging above and relaunch so the skill can connect.", comment: "Developer settings - Skill install success body; %@ is the agent name"),
+                    format: NSLocalizedString("%@ can now use the phi-browser skill. Enable remote debugging above if needed. Restart newly configured agents; in Pi, /reload is enough.", comment: "Developer settings - Skill install success body; %@ is the agent name"),
                     succeeded.joined(separator: ", ")),
                 style: .informational)
         } else {
@@ -395,7 +420,12 @@ private struct SkillInstallSectionView: View {
 
     static func installedTargetIDs() -> Set<String> {
         guard let bundled = bundledSkillURL else { return [] }
-        return Set(skillTargets.filter { isLinked($0.linkURL, to: bundled) }.map(\.id))
+        return Set(skillTargets.filter { target in
+            guard isLinked(target.linkURL, to: bundled) else { return false }
+            guard let companionLink = target.companionExtensionLinkURL else { return true }
+            guard let companion = bundledPiExtensionURL else { return false }
+            return isLinked(companionLink, to: companion)
+        }.map(\.id))
     }
 
     // True only when linkURL is a symlink resolving to *this* app's bundled
@@ -428,20 +458,40 @@ private struct SkillInstallSectionView: View {
             return .failure(NSLocalizedString("This build doesn’t include the phi-browser skill resources. Rebuild Phi Browser and try again.", comment: "Developer settings - Skill install failure body when the resource is missing"))
         }
 
-        let link = target.linkURL
-        do {
-            try fm.createDirectory(at: target.skillsDirectory, withIntermediateDirectories: true)
+        var installs: [(link: URL, source: URL)] = [(target.linkURL, bundled)]
+        if let companionLink = target.companionExtensionLinkURL {
+            guard let companion = Self.bundledPiExtensionURL,
+                  fm.fileExists(atPath: companion.path) else {
+                return .failure(NSLocalizedString(
+                    "This build doesn’t include the Pi companion extension. Rebuild Phi Browser and try again.",
+                    comment: "Developer settings - Pi companion extension missing"))
+            }
+            installs.append((companionLink, companion))
+        }
 
-            if (try? fm.destinationOfSymbolicLink(atPath: link.path)) != nil {
-                // An existing symlink (ours, another build's, or broken) — replace it.
-                try fm.removeItem(at: link)
-            } else if fm.fileExists(atPath: link.path) {
-                // A real file/directory the user placed — don't clobber without asking.
-                guard confirmSkillOverwrite(at: link.path) else { return .cancelled }
-                try fm.removeItem(at: link)
+        do {
+            // Ask about every real destination before changing any of them, so
+            // declining the Pi extension replacement cannot leave a partial install.
+            for install in installs {
+                try fm.createDirectory(
+                    at: install.link.deletingLastPathComponent(),
+                    withIntermediateDirectories: true)
+                let isSymlink = (try? fm.destinationOfSymbolicLink(
+                    atPath: install.link.path)) != nil
+                if !isSymlink, fm.fileExists(atPath: install.link.path),
+                   !confirmSkillOverwrite(at: install.link.path) {
+                    return .cancelled
+                }
             }
 
-            try fm.createSymbolicLink(at: link, withDestinationURL: bundled)
+            for install in installs {
+                if (try? fm.destinationOfSymbolicLink(atPath: install.link.path)) != nil
+                    || fm.fileExists(atPath: install.link.path) {
+                    try fm.removeItem(at: install.link)
+                }
+                try fm.createSymbolicLink(
+                    at: install.link, withDestinationURL: install.source)
+            }
             installedTargets.insert(target.id)
             return .success
         } catch {
@@ -455,7 +505,7 @@ private struct SkillInstallSectionView: View {
             presentSkillAlert(
                 title: NSLocalizedString("Skill installed", comment: "Developer settings - Skill install success title"),
                 body: String(
-                    format: NSLocalizedString("%@ can now use the phi-browser skill. If it isn’t already on, enable remote debugging above and relaunch so the skill can connect.", comment: "Developer settings - Skill install success body; %@ is the agent name"),
+                    format: NSLocalizedString("%@ can now use the phi-browser skill. Enable remote debugging above if needed. Restart newly configured agents; in Pi, /reload is enough.", comment: "Developer settings - Skill install success body; %@ is the agent name"),
                     target.name),
                 style: .informational)
         case .cancelled:
