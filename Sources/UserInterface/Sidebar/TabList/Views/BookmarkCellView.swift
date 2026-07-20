@@ -238,15 +238,20 @@ class BookmarkCellView: SidebarCellView {
 
     private func updateEditFieldLayout() {
         // Match the SwiftUI row chrome:
-        // `edgesSpacing` is the outer row inset, `6` is the inner leading
-        // padding before the primary favicon, `16` is the favicon width, `8`
-        // is the gap from the last favicon to the title, and split bookmarks
-        // add another `16 + 8` for the secondary favicon plus its trailing gap.
+        // `edgesSpacing` is the outer row inset. Folder icons use a 20-point
+        // slot with 4 points of leading padding, while regular bookmark
+        // favicons keep their original 16-point slot with 6 points of leading
+        // padding, so both icon centers stay aligned. Folders use a 6-point
+        // title gap; regular bookmarks retain their original 8-point gap.
+        let leadingPadding: CGFloat = viewState.isFolder ? 4 : 6
+        let primaryFaviconSlotSize: CGFloat = viewState.isFolder ? 20 : 16
+        let titleGap: CGFloat = viewState.isFolder ? 6 : 8
+        let secondaryFaviconOffset: CGFloat = viewState.showsSecondaryFavicon ? 24 : 0
         let leadingOffset = WebContentConstant.edgesSpacing
-            + 6
-            + 16
-            + 8
-            + (viewState.showsSecondaryFavicon ? 24 : 0)
+            + leadingPadding
+            + primaryFaviconSlotSize
+            + titleGap
+            + secondaryFaviconOffset
         editField.snp.remakeConstraints { make in
             make.leading.equalToSuperview().offset(leadingOffset)
             make.trailing.equalToSuperview().inset(WebContentConstant.edgesSpacing + 8)
@@ -731,7 +736,7 @@ private struct SidebarBookmarkCellContentView: View {
     }
 
     var body: some View {
-        HStack(alignment: .center, spacing: 8) {
+        HStack(alignment: .center, spacing: state.isFolder ? 6 : 8) {
             BookmarkFaviconView(
                 image: state.primaryFaviconImage,
                 pageURL: state.primaryPageURL,
@@ -796,7 +801,7 @@ private struct SidebarBookmarkCellContentView: View {
             }
         }
         .help(state.title)
-        .padding(.leading, 6)
+        .padding(.leading, state.isFolder ? 4 : 6)
         .padding(.trailing, 8)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(
@@ -830,10 +835,15 @@ private struct BookmarkFaviconView: View {
     @State private var isCommandKeyPressed = false
     @State private var modifierFlagsMonitor: Any?
 
-    private static let slotSize: CGFloat = 16
+    private static let faviconSlotSize: CGFloat = 16
     private static let faviconSize: CGFloat = 14
+    private static let folderSize: CGFloat = 20
     private static let faviconCornerRadius: CGFloat = 3
     private static let returnButtonSize: CGFloat = 24
+
+    private var slotSize: CGFloat {
+        isFolder ? Self.folderSize : Self.faviconSlotSize
+    }
 
     private var canNavigateToOriginalURL: Bool {
         guard !isFolder,
@@ -884,7 +894,7 @@ private struct BookmarkFaviconView: View {
                     )
             )
         )
-        .frame(width: Self.slotSize, height: Self.slotSize)
+        .frame(width: slotSize, height: slotSize)
     }
 
     private func updateReturnButtonHover(_ hovering: Bool) {
@@ -931,6 +941,7 @@ private struct BookmarkFaviconView: View {
     private var faviconContent: some View {
         if isFolder {
             BookmarkFolderIconView(isExpanded: isFolderExpanded)
+                .frame(width: Self.folderSize, height: Self.folderSize)
         } else if let liveTabViewModel {
             UnifiedTabFaviconView(viewModel: liveTabViewModel)
         } else if let image {
