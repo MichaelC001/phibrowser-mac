@@ -288,6 +288,8 @@ private struct SkillInstallSectionView: View {
                         skillsDirectory: home.appendingPathComponent(".claude/skills", isDirectory: true)),
             SkillTarget(id: "codex", name: "Codex", iconAsset: "agent-openai",
                         skillsDirectory: home.appendingPathComponent(".codex/skills", isDirectory: true)),
+            SkillTarget(id: "cursor", name: "Cursor", iconAsset: "agent-cursor",
+                        skillsDirectory: home.appendingPathComponent(".cursor/skills", isDirectory: true)),
             SkillTarget(id: "hermes", name: "Hermes", iconAsset: "agent-hermes",
                         skillsDirectory: home.appendingPathComponent(".hermes/skills", isDirectory: true)),
             SkillTarget(id: "openclaw", name: "OpenClaw", iconAsset: "agent-openclaw",

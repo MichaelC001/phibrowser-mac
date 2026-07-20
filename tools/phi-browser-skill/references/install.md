@@ -4,8 +4,8 @@
 
 Easiest: in Phi Browser open **Settings → General → Developer**, under "Install
 the phi-browser skill" click **Install** next to your agent — Claude Code
-(`~/.claude/skills`), Codex (`~/.codex/skills`), OpenClaw
-(`~/.openclaw/skills`), Pi (`~/.pi/agent/skills`), or Hermes
+(`~/.claude/skills`), Codex (`~/.codex/skills`), Cursor (`~/.cursor/skills`),
+OpenClaw (`~/.openclaw/skills`), Pi (`~/.pi/agent/skills`), or Hermes
 (`~/.hermes/skills`). This links the skill bundled inside the app into that
 agent's `skills/phi-browser`, so it stays current with each Phi Browser update.
 
