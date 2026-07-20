@@ -129,12 +129,10 @@ final class WebContentAddressBarMenuPresenter {
                     let item = NSMenuItem(title: ext.name, action: nil, keyEquivalent: "")
                     item.image = normalizedExtensionMenuIcon(from: ext.icon)
                     let target = MenuActionTarget {
-                        let convertedLocation = ExtensionPopupAnchor.pointBelowView(anchorView)
-                            ?? ExtensionPopupAnchor.mouseFallback()
                         let windowId = browserState?.windowId.int64Value ?? 0
                         ChromiumLauncher.sharedInstance().bridge?.triggerExtension(
                             withId: ext.id,
-                            pointInScreen: convertedLocation,
+                            anchorRect: ExtensionPopupAnchor.rectOfView(anchorView),
                             windowId: windowId
                         )
                     }

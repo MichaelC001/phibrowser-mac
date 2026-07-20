@@ -729,6 +729,12 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
 /// and isForcePinned. Chromium's complete snapshot is authoritative.
 - (void)getAllExtensionsWithCompletion:(void (^)(NSArray<NSDictionary *> *))completion windowId:(int64_t)windowId;
 - (void)triggerExtensionWithId:(NSString *)extensionId pointInScreen:(NSPoint)pointInScreen windowId:(int64_t)windowId;
+/// Preferred trigger: anchors the popup to the clicked icon's screen rect
+/// (Chromium screen coords, top-left origin). The popup's top edge aligns
+/// below the rect, right edge to the rect's right edge, mirroring when space
+/// runs out. The point-based selector above is a legacy thin wrapper that
+/// passes a zero-size rect.
+- (void)triggerExtensionWithId:(NSString *)extensionId rectInScreen:(NSRect)rectInScreen windowId:(int64_t)windowId;
 - (void)triggerExtensionContextMenuWithId:(NSString *)extensionId pointInScreen:(NSPoint)pointInScreen windowId:(int64_t)windowId;
 - (void)pinExtensionWithId:(NSString *)extensionId windowId:(int64_t)windowId;
 - (void)unpinExtensionWithId:(NSString *)extensionId windowId:(int64_t)windowId;

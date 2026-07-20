@@ -371,6 +371,48 @@ final class PhiBrowserTests: XCTestCase {
         )
     }
 
+    @MainActor
+    func testExtensionPopupAnchorRectFlipUsesPrimaryScreenHeight() {
+        let appKitRect = NSRect(x: 240, y: 320, width: 100, height: 24)
+        let primaryFrame = NSRect(x: 0, y: 0, width: 1920, height: 900)
+
+        let chromiumRect = ExtensionPopupAnchor.chromiumScreenRect(
+            from: appKitRect,
+            primaryScreenFrame: primaryFrame
+        )
+
+        XCTAssertEqual(chromiumRect.origin.x, 240)
+        XCTAssertEqual(
+            chromiumRect.origin.y,
+            556,
+            "Anchor rects must flip as y = primary height - maxY so the rect's top edge lands in Chromium's top-left-origin screen space."
+        )
+        XCTAssertEqual(chromiumRect.size, appKitRect.size)
+    }
+
+    @MainActor
+    func testExtensionPopupAnchorLegacyPointMatchesPointBasedConversion() {
+        let appKitRect = NSRect(x: 240, y: 320, width: 100, height: 24)
+        let primaryFrame = NSRect(x: 0, y: 0, width: 1920, height: 900)
+
+        let pointFromRect = ExtensionPopupAnchor.legacyAnchorPoint(
+            for: ExtensionPopupAnchor.chromiumScreenRect(
+                from: appKitRect,
+                primaryScreenFrame: primaryFrame
+            )
+        )
+        let pointFromBottomLeft = ExtensionPopupAnchor.chromiumScreenPoint(
+            from: NSPoint(x: appKitRect.minX, y: appKitRect.minY),
+            primaryScreenFrame: primaryFrame
+        )
+
+        XCTAssertEqual(
+            pointFromRect,
+            pointFromBottomLeft,
+            "The old-framework fallback must reproduce the icon's visual bottom-left corner exactly as the point-based path did."
+        )
+    }
+
     func testAuthFailureTraceBufferKeepsMostRecentEntries() {
         let baseDate = Date(timeIntervalSince1970: 1_713_600_000)
         var tick: TimeInterval = 0

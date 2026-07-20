@@ -895,12 +895,10 @@ class PinnedTabViewController: NSViewController {
             handleExtensionSecondaryClicked(item)
             return
         }
-        let point = ExtensionPopupAnchor.pointBelowView(view)
-            ?? ExtensionPopupAnchor.mouseFallback()
         let windowId = MainBrowserWindowControllersManager.shared.activeWindowController?.browserState.windowId
         ChromiumLauncher.sharedInstance().bridge?.triggerExtension(
             withId: item.id,
-            pointInScreen: point,
+            anchorRect: ExtensionPopupAnchor.rectOfView(view),
             windowId: windowId?.int64Value ?? 0
         )
     }
