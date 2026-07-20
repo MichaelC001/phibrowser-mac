@@ -8,12 +8,10 @@ import SwiftData
 import Cocoa
 @testable import Phi
 
-/// Pinned tabs are per-profile records shared by every Space. An edit is
-/// applied by the editing Space through `updateTabURL`/`updateTabTitle`, and
-/// every other Space's BrowserState only hears about it through
-/// `pinnedTabsPublisher`. These tests pin down the cross-Space half of the
-/// edit: the other Space must retarget its own open copy of the pinned tab,
-/// not just refresh metadata.
+/// Shared-scope pinned-tab edits are applied by one Space through
+/// `updateTabURL`/`updateTabTitle`, and other BrowserState instances hear
+/// about them through `pinnedTabsPublisher`. These tests pin down the
+/// cross-Space half of the edit and the live-tab rebind after scope migration.
 @MainActor
 final class BrowserStatePinnedTabEditCrossSpaceTests: XCTestCase {
     private var tempDirectories: [URL] = []
@@ -169,6 +167,106 @@ final class BrowserStatePinnedTabEditCrossSpaceTests: XCTestCase {
             ]
         )
         XCTAssertEqual(wrapper.navigatedURLs, ["https://www.google.com/"])
+    }
+
+    func testScopeMigrationRebindsOpenPinnedTabWithoutReplacingRuntimeObject() async throws {
+        let store = try makeStore()
+        try seedPinnedTab(in: store, guid: "pinned-guid", url: "https://old.example")
+        let context = try XCTUnwrap(store.getMainContext())
+        context.insert(SpaceModel(
+            spaceId: "space-a",
+            profileId: "Default",
+            name: "A",
+            colorHex: "#000000",
+            iconName: "star",
+            sortOrder: 0
+        ))
+        try context.save()
+
+        let state = BrowserState(
+            windowId: 1,
+            localStore: store,
+            profileId: "Default",
+            spaceId: "space-a"
+        )
+        let pinnedTab = try XCTUnwrap(state.pinnedTabs.first)
+        let wrapper = PinnedEditWebContentWrapperSpy(urlString: "https://old.example")
+        let liveTab = Tab(
+            guid: 99,
+            url: "https://old.example",
+            isActive: true,
+            index: 0,
+            webContentView: wrapper,
+            customGuid: "pinned-guid"
+        )
+        state.tabs = [liveTab]
+        pinnedTab.isOpenned = true
+        pinnedTab.guid = liveTab.guid
+        pinnedTab.setWebContentsWrapper(wrapper: wrapper)
+
+        try await store.changePinnedTabScope(
+            to: .space,
+            preferredProfileId: "Default",
+            preferredSpaceId: "space-a"
+        )
+
+        try waitUntil(state, describing: "scope migration rebinds the live pinned tab") {
+            state.pinnedTabs.first === pinnedTab &&
+            pinnedTab.guidInLocalDB != "pinned-guid" &&
+            liveTab.guidInLocalDB == pinnedTab.guidInLocalDB
+        }
+        let newGuid = try XCTUnwrap(pinnedTab.guidInLocalDB)
+        XCTAssertTrue(state.pinnedTabs.first === pinnedTab)
+        XCTAssertEqual(liveTab.guidInLocalDB, newGuid)
+        XCTAssertEqual(wrapper.customValues.last, newGuid)
+        XCTAssertTrue(wrapper.navigatedURLs.isEmpty)
+    }
+
+    func testEditOpenedBeforeScopeMigrationWritesReboundActiveGuid() async throws {
+        let store = try makeStore()
+        try seedPinnedTab(in: store, guid: "pinned-guid", url: "https://old.example")
+        let context = try XCTUnwrap(store.getMainContext())
+        context.insert(SpaceModel(
+            spaceId: "space-a",
+            profileId: "Default",
+            name: "A",
+            colorHex: "#000000",
+            iconName: "star",
+            sortOrder: 0
+        ))
+        try context.save()
+
+        let state = BrowserState(
+            windowId: 1,
+            localStore: store,
+            profileId: "Default",
+            spaceId: "space-a"
+        )
+        // This is the object an already-open edit sheet retains.
+        let editTarget = try XCTUnwrap(state.pinnedTabs.first)
+
+        try await store.changePinnedTabScope(to: .space)
+        try waitUntil(state, describing: "scope migration rebinds the edit target") {
+            editTarget.guidInLocalDB != "pinned-guid"
+        }
+        let reboundGuid = try XCTUnwrap(editTarget.guidInLocalDB)
+
+        Tab.applyPinnedTabEdit(
+            targetTab: editTarget,
+            url: "https://new.example",
+            title: "Renamed",
+            in: state
+        )
+        await store.performBackgroundWriteAndWait { _ in }
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+
+        let active = try XCTUnwrap(store.getTab(by: reboundGuid))
+        XCTAssertEqual(active.url.absoluteString, "https://new.example")
+        XCTAssertEqual(active.title, "Renamed")
+
+        let inactiveBackup = try XCTUnwrap(store.getTab(by: "pinned-guid"))
+        XCTAssertEqual(inactiveBackup.url.absoluteString, "https://old.example")
+        XCTAssertEqual(inactiveBackup.title, "Pinned")
     }
 
     private func makeStore() throws -> LocalStore {

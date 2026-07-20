@@ -368,6 +368,9 @@
     "Any unsaved changes may be lost." : {
       "comment" : "Quit confirmation message"
     },
+    "App" : {
+      "comment" : "Spaces settings - App pinned-tab scope option"
+    },
     "Appearance" : {
       "comment" : "General settings - Appearance section title"
     },
@@ -443,6 +446,9 @@
     "Bookmarks" : {
       "comment" : "Default root bookmarks folder title\nImport data type - Bookmarks toggle label\nMain menu - Top-level Bookmarks menu title in the application menu bar\nSearch Tabs - Bookmark root menu title\nSearch Tabs - Bookmarks section title"
     },
+    "Bookmarks and pinned tabs belonging to this Space will also be removed. This action cannot be undone." : {
+      "comment" : "Body of the delete-Space confirmation with Space-scoped pinned tabs"
+    },
     "Bookmarks Bar" : {
       "comment" : "Bookmark editor - Root bookmark folder display name in folder picker"
     },
@@ -503,11 +509,17 @@
     "Change Name" : {
       "comment" : "Account settings - Dialog title for changing user name"
     },
+    "Change Pinned Tab Scope?" : {
+      "comment" : "Spaces settings - title of pinned-tab scope migration confirmation"
+    },
     "Change Profile" : {
       "comment" : "Confirm button of the change-Space-profile confirmation\nSpaces menu - Submenu to re-bind the active Space to another profile"
     },
     "Change Profile to “%@”?" : {
       "comment" : "Title of the change-Space-profile confirmation"
+    },
+    "Change Scope" : {
+      "comment" : "Spaces settings - confirm pinned-tab scope change"
     },
     "Change Theme" : {
       "comment" : "Active-Space menu: change current Space theme"
@@ -854,6 +866,9 @@
     "Each space has its own independent bookmarks" : {
       "comment" : "Subtitle of the create-Space panel"
     },
+    "Each Space has its own pinned tabs." : {
+      "comment" : "Spaces settings - description of Space pinned-tab scope"
+    },
     "Edit Bookmark" : {
       "comment" : "Bookmark editor - Title of the sheet to edit a bookmark"
     },
@@ -1184,6 +1199,9 @@
     "Loading release notes..." : {
       "comment" : "Sparkle update window - Release notes loading placeholder"
     },
+    "Local browser data is unavailable." : {
+      "comment" : "Pinned-tab scope migration error when the local store cannot be opened"
+    },
     "Log in" : {
       "comment" : "Onboarding Login button title"
     },
@@ -1502,11 +1520,20 @@
     "Pink" : {
       "comment" : "Tab Groups - color name shown in auto-named group title and color picker"
     },
+    "Pinned tab scope" : {
+      "comment" : "Spaces settings - pinned-tab scope row label"
+    },
+    "Pinned Tab Scope Wasn’t Changed" : {
+      "comment" : "Spaces settings - pinned-tab scope migration error title"
+    },
     "Pinned Tabs" : {
       "comment" : "Search Tabs - Pinned tabs section title"
     },
-    "Pinned tabs and bookmarks belonging to this Space will also be removed. This action cannot be undone." : {
-      "comment" : "Body of the delete-Space confirmation"
+    "Pinned tabs are shared across all profiles and Spaces." : {
+      "comment" : "Spaces settings - description of App pinned-tab scope"
+    },
+    "Pinned tabs from the existing destinations will be merged. Unchanged copies will be combined, while different versions will be kept." : {
+      "comment" : "Spaces settings - confirmation body for broadening pinned-tab scope"
     },
     "Please quit Safari before importing its data." : {
       "comment" : "Import browser data page - Reminder to quit Safari before importing so its data can be read"
@@ -1554,7 +1581,7 @@
       "comment" : "Developer settings - Explanation for the allowed CDP agent list"
     },
     "Profile" : {
-      "comment" : "Label for the profile picker in the create-Space panel"
+      "comment" : "Label for the profile picker in the create-Space panel\nSpaces settings - Profile pinned-tab scope option"
     },
     "Profile name" : {
       "comment" : "Placeholder for the profile-name field"
@@ -1820,6 +1847,9 @@
     "Something went wrong? " : {
       "comment" : "Retry hint prefix text shown when login fails in onboarding"
     },
+    "Space" : {
+      "comment" : "Spaces settings - Space pinned-tab scope option"
+    },
     "Space %d" : {
       "comment" : "Default name for a newly created Space"
     },
@@ -1828,6 +1858,9 @@
     },
     "Spaces" : {
       "comment" : "Accessibility label for the Spaces picker affordance\nMain menu - Top-level Spaces menu title in the application menu bar\nSettings - Tab title for profiles and spaces management"
+    },
+    "Spaces using the same profile share pinned tabs." : {
+      "comment" : "Spaces settings - description of Profile pinned-tab scope"
     },
     "Split with Current" : {
       "comment" : "Tab context menu - Pair this tab with the currently focused tab in a split"
@@ -1912,8 +1945,14 @@
     "This replaces the Phi user data folder with the archive and restarts Phi. Save your work first." : {
       "comment" : "Debug import user data - Confirmation alert body warning data replacement and relaunch"
     },
+    "This Space's window will be reopened with the new profile and its open tabs will be reloaded there. Site logins won't carry over. Bookmarks and pinned tabs stay with the Space." : {
+      "comment" : "Body of the change-Space-profile confirmation with Space-scoped pinned tabs"
+    },
+    "This Space's window will be reopened with the new profile and its open tabs will be reloaded there. Site logins won't carry over. Bookmarks stay with the Space; pinned tabs remain shared across the app." : {
+      "comment" : "Body of the change-Space-profile confirmation with App-scoped pinned tabs"
+    },
     "This Space's window will be reopened with the new profile and its open tabs will be reloaded there. Site logins won't carry over. Bookmarks stay with the Space; pinned tabs will be the new profile's." : {
-      "comment" : "Body of the change-Space-profile confirmation"
+      "comment" : "Body of the change-Space-profile confirmation with Profile-scoped pinned tabs"
     },
     "This version of Phi cannot open local browser data that was updated by a newer version. Install the latest Phi version and try again." : {
       "comment" : "Local store compatibility alert - body when a newer app is required to read local data"
@@ -2090,6 +2129,9 @@
     },
     "You will be logged out and returned to the login screen. Are you sure?" : {
       "comment" : "Account settings - Logout confirmation dialog message"
+    },
+    "Your current pinned tabs will be copied into each existing destination. The copies can then be changed independently." : {
+      "comment" : "Spaces settings - confirmation body for narrowing pinned-tab scope"
     },
     "Your Data and Settings" : {
       "comment" : "Profiles settings - data & settings section header"

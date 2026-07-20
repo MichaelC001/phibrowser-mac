@@ -121,7 +121,8 @@ extension LocalStore {
     /// is why it isn't an `updateSpace` parameter: every bookmark row is
     /// stamped with `(profileId, profile)` and all bookmark fetches filter
     /// on them, so the Space's whole subtree must be re-stamped in the same
-    /// write or its bookmarks become unreachable. `sortOrder` is left
+    /// write or its bookmarks become unreachable. Space-scoped pinned tabs
+    /// are re-stamped as well so they stay with the Space. `sortOrder` is left
     /// untouched — the strip sorts by it first, so keeping the value keeps
     /// the Space's position; any tie with the new profile's existing values
     /// stays deterministic via the `getAllSpaces` tiebreaks.
@@ -150,7 +151,10 @@ extension LocalStore {
                 ))
                 let bookmarkTypes = [TabDataType.bookmark.rawValue,
                                      TabDataType.bookmarkFolder.rawValue]
-                for row in rows where bookmarkTypes.contains(row.type) {
+                let includesPinnedTabs = try self.pinnedTabScope(in: context) == .space
+                let pinnedType = TabDataType.pinnedTab.rawValue
+                for row in rows where bookmarkTypes.contains(row.type)
+                    || (includesPinnedTabs && row.type == pinnedType) {
                     row.profileId = newProfileId
                     row.profile = newProfile
                 }

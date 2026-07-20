@@ -7,8 +7,6 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		F01D3A000000000000000001 /* bookmark-folder-open.svg in Resources */ = {isa = PBXBuildFile; fileRef = F01D3A000000000000000011 /* bookmark-folder-open.svg */; };
-		F01D3A000000000000000002 /* bookmark-folder-closed.svg in Resources */ = {isa = PBXBuildFile; fileRef = F01D3A000000000000000012 /* bookmark-folder-closed.svg */; };
 		04FE4637EFE3A1396687DD63 /* AISettingsConnectorViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8FCAEAE328C802016D87943 /* AISettingsConnectorViewModel.swift */; };
 		15B618E574463D94C98AEA5F /* AISettingHostingViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1B584F695BF7833FAA99558 /* AISettingHostingViewController.swift */; };
 		2ABF91DB68C2445BAA58C9BA /* GroupTabsTableView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 457F461C0F164136A46FF641 /* GroupTabsTableView.swift */; };
@@ -178,10 +176,10 @@
 		5ACE00000000000000000006 /* SpacesSettingHostingViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ACE00000000000000000003 /* SpacesSettingHostingViewController.swift */; };
 		5ACE00000000000000000007 /* SpacesSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ACE00000000000000000004 /* SpacesSettingsView.swift */; };
 		5ACE00000000000000000009 /* SettingsSectionCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ACE00000000000000000008 /* SettingsSectionCard.swift */; };
-		5ACE00000000000000000012 /* ThemeOpacitySlider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ACE00000000000000000011 /* ThemeOpacitySlider.swift */; };
 		5ACE0000000000000000000E /* ProfilesSettingViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ACE0000000000000000000B /* ProfilesSettingViewController.swift */; };
 		5ACE0000000000000000000F /* ProfilesSettingHostingViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ACE0000000000000000000C /* ProfilesSettingHostingViewController.swift */; };
 		5ACE00000000000000000010 /* ProfilesSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ACE0000000000000000000D /* ProfilesSettingsView.swift */; };
+		5ACE00000000000000000012 /* ThemeOpacitySlider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ACE00000000000000000011 /* ThemeOpacitySlider.swift */; };
 		5EA17ABC0000000000000100 /* SearchTabsModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5EA17ABC0000000000000110 /* SearchTabsModels.swift */; };
 		5EA17ABC0000000000000101 /* SearchTabsQueryMatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5EA17ABC0000000000000111 /* SearchTabsQueryMatcher.swift */; };
 		5EA17ABC0000000000000102 /* SearchTabsChromiumProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5EA17ABC0000000000000112 /* SearchTabsChromiumProvider.swift */; };
@@ -369,6 +367,11 @@
 		CCAA00012F00010000000001 /* PinnedSplitItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCAA00012F00010000000002 /* PinnedSplitItem.swift */; };
 		CCAA00062F00010000000001 /* TabDataModelSchemaV7.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCAA00062F00010000000002 /* TabDataModelSchemaV7.swift */; };
 		CCAA00082F00010000000001 /* TabDataModelSchemaV8.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCAA00082F00010000000002 /* TabDataModelSchemaV8.swift */; };
+		CCAA000A2F00010000000001 /* TabDataModelSchemaV9.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCAA000A2F00010000000002 /* TabDataModelSchemaV9.swift */; };
+		CCAA000B2F00010000000001 /* LocalStore+PinnedTabScope.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCAA000B2F00010000000002 /* LocalStore+PinnedTabScope.swift */; };
+		CCAA000C2F00010000000001 /* BrowserState+PinnedTabScope.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCAA000C2F00010000000002 /* BrowserState+PinnedTabScope.swift */; };
+		CCAA000D2F00010000000001 /* LocalStore+PinnedTabTransfer.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCAA000D2F00010000000002 /* LocalStore+PinnedTabTransfer.swift */; };
+		CCAA000E2F00010000000001 /* BrowserState+PinnedTabTransfer.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCAA000E2F00010000000002 /* BrowserState+PinnedTabTransfer.swift */; };
 		CCB53DC32E6EBF68004BF233 /* OmniBoxViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCB53DC22E6EBF68004BF233 /* OmniBoxViewController.swift */; };
 		CCB53DCB2E6EC437004BF233 /* OmniBoxSuggestionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCB53DC72E6EC437004BF233 /* OmniBoxSuggestionView.swift */; };
 		CCB53DCC2E6EC437004BF233 /* OmniBoxViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCB53DCA2E6EC437004BF233 /* OmniBoxViewModel.swift */; };
@@ -433,6 +436,8 @@
 		DEBE00000000000000000005 /* DeveloperSettingViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEBE00000000000000000002 /* DeveloperSettingViewController.swift */; };
 		DEBE00000000000000000006 /* DeveloperSettingHostingViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEBE00000000000000000003 /* DeveloperSettingHostingViewController.swift */; };
 		DEBE00000000000000000007 /* DeveloperSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEBE00000000000000000004 /* DeveloperSettingsView.swift */; };
+		F01D3A000000000000000001 /* bookmark-folder-open.svg in Resources */ = {isa = PBXBuildFile; fileRef = F01D3A000000000000000011 /* bookmark-folder-open.svg */; };
+		F01D3A000000000000000002 /* bookmark-folder-closed.svg in Resources */ = {isa = PBXBuildFile; fileRef = F01D3A000000000000000012 /* bookmark-folder-closed.svg */; };
 		FBD200012FD0000000000001 /* FeedbackOutbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBD200012FD0000000000002 /* FeedbackOutbox.swift */; };
 		FBD200012FD0000000000003 /* FeedbackV2.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBD200012FD0000000000004 /* FeedbackV2.swift */; };
 /* End PBXBuildFile section */
@@ -518,8 +523,6 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
-		F01D3A000000000000000011 /* bookmark-folder-open.svg */ = {isa = PBXFileReference; lastKnownFileType = image.svg; path = "bookmark-folder-open.svg"; sourceTree = "<group>"; };
-		F01D3A000000000000000012 /* bookmark-folder-closed.svg */ = {isa = PBXFileReference; lastKnownFileType = image.svg; path = "bookmark-folder-closed.svg"; sourceTree = "<group>"; };
 		3703C88B2F68F78500E7CF6D /* AISettingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AISettingView.swift; sourceTree = "<group>"; };
 		3703C9812F69558C00E7CF6D /* BrowserState+ToggleAI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "BrowserState+ToggleAI.swift"; sourceTree = "<group>"; };
 		3703C9832F6956E600E7CF6D /* SentinelHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SentinelHelper.swift; sourceTree = "<group>"; };
@@ -688,10 +691,10 @@
 		5ACE00000000000000000003 /* SpacesSettingHostingViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpacesSettingHostingViewController.swift; sourceTree = "<group>"; };
 		5ACE00000000000000000004 /* SpacesSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpacesSettingsView.swift; sourceTree = "<group>"; };
 		5ACE00000000000000000008 /* SettingsSectionCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsSectionCard.swift; sourceTree = "<group>"; };
-		5ACE00000000000000000011 /* ThemeOpacitySlider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThemeOpacitySlider.swift; sourceTree = "<group>"; };
 		5ACE0000000000000000000B /* ProfilesSettingViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfilesSettingViewController.swift; sourceTree = "<group>"; };
 		5ACE0000000000000000000C /* ProfilesSettingHostingViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfilesSettingHostingViewController.swift; sourceTree = "<group>"; };
 		5ACE0000000000000000000D /* ProfilesSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfilesSettingsView.swift; sourceTree = "<group>"; };
+		5ACE00000000000000000011 /* ThemeOpacitySlider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThemeOpacitySlider.swift; sourceTree = "<group>"; };
 		5EA17ABC0000000000000110 /* SearchTabsModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchTabsModels.swift; sourceTree = "<group>"; };
 		5EA17ABC0000000000000111 /* SearchTabsQueryMatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchTabsQueryMatcher.swift; sourceTree = "<group>"; };
 		5EA17ABC0000000000000112 /* SearchTabsChromiumProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchTabsChromiumProvider.swift; sourceTree = "<group>"; };
@@ -892,6 +895,11 @@
 		CCAA00012F00010000000002 /* PinnedSplitItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PinnedSplitItem.swift; sourceTree = "<group>"; };
 		CCAA00062F00010000000002 /* TabDataModelSchemaV7.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabDataModelSchemaV7.swift; sourceTree = "<group>"; };
 		CCAA00082F00010000000002 /* TabDataModelSchemaV8.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabDataModelSchemaV8.swift; sourceTree = "<group>"; };
+		CCAA000A2F00010000000002 /* TabDataModelSchemaV9.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabDataModelSchemaV9.swift; sourceTree = "<group>"; };
+		CCAA000B2F00010000000002 /* LocalStore+PinnedTabScope.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "LocalStore+PinnedTabScope.swift"; sourceTree = "<group>"; };
+		CCAA000C2F00010000000002 /* BrowserState+PinnedTabScope.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "BrowserState+PinnedTabScope.swift"; sourceTree = "<group>"; };
+		CCAA000D2F00010000000002 /* LocalStore+PinnedTabTransfer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "LocalStore+PinnedTabTransfer.swift"; sourceTree = "<group>"; };
+		CCAA000E2F00010000000002 /* BrowserState+PinnedTabTransfer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "BrowserState+PinnedTabTransfer.swift"; sourceTree = "<group>"; };
 		CCB53DC22E6EBF68004BF233 /* OmniBoxViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OmniBoxViewController.swift; sourceTree = "<group>"; };
 		CCB53DC62E6EC437004BF233 /* OmniBoxModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OmniBoxModels.swift; sourceTree = "<group>"; };
 		CCB53DC72E6EC437004BF233 /* OmniBoxSuggestionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OmniBoxSuggestionView.swift; sourceTree = "<group>"; };
@@ -960,6 +968,8 @@
 		DEBE00000000000000000003 /* DeveloperSettingHostingViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeveloperSettingHostingViewController.swift; sourceTree = "<group>"; };
 		DEBE00000000000000000004 /* DeveloperSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeveloperSettingsView.swift; sourceTree = "<group>"; };
 		E10000000000000000000001 /* PhiBrowser-OpenSource.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "PhiBrowser-OpenSource.entitlements"; sourceTree = "<group>"; };
+		F01D3A000000000000000011 /* bookmark-folder-open.svg */ = {isa = PBXFileReference; lastKnownFileType = image.svg; path = "bookmark-folder-open.svg"; sourceTree = "<group>"; };
+		F01D3A000000000000000012 /* bookmark-folder-closed.svg */ = {isa = PBXFileReference; lastKnownFileType = image.svg; path = "bookmark-folder-closed.svg"; sourceTree = "<group>"; };
 		FBD200012FD0000000000002 /* FeedbackOutbox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedbackOutbox.swift; sourceTree = "<group>"; };
 		FBD200012FD0000000000004 /* FeedbackV2.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedbackV2.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -1322,6 +1332,7 @@
 				37E9E91E2FC84DEA00815832 /* TabDataModelSchemaV6.swift */,
 				CCAA00062F00010000000002 /* TabDataModelSchemaV7.swift */,
 				CCAA00082F00010000000002 /* TabDataModelSchemaV8.swift */,
+				CCAA000A2F00010000000002 /* TabDataModelSchemaV9.swift */,
 			);
 			path = TabDataModel;
 			sourceTree = "<group>";
@@ -1833,6 +1844,8 @@
 			isa = PBXGroup;
 			children = (
 				CC2708A22E7A65E500B65AB8 /* LocalStore.swift */,
+				CCAA000B2F00010000000002 /* LocalStore+PinnedTabScope.swift */,
+				CCAA000D2F00010000000002 /* LocalStore+PinnedTabTransfer.swift */,
 				CCD87CC32EC2E7E000148E3F /* LocalStore+Bookmark.swift */,
 				CCD87CC52EC2E7E000148E3F /* LocalStore+Space.swift */,
 				CC4F00010000000000000002 /* LocalStore+SpaceURLRule.swift */,
@@ -2139,6 +2152,8 @@
 				CCBF8FA42E69915200B9A99E /* ApplicationState.swift */,
 				D10000000000000000000011 /* BrowserImagePreviewState.swift */,
 				CCBF8FA62E69948D00B9A99E /* BrowserState.swift */,
+				CCAA000C2F00010000000002 /* BrowserState+PinnedTabScope.swift */,
+				CCAA000E2F00010000000002 /* BrowserState+PinnedTabTransfer.swift */,
 				AB1000000000000000000FA2 /* TabMultiSelection.swift */,
 				CC59CE000003000000000002 /* ProfileManager.swift */,
 				376581F62EEA845700D3E031 /* BrowserState+Bookmark.swift */,
@@ -2520,6 +2535,8 @@
 				CCBF8F4C2E6543E800B9A99E /* BookmarkSectionController.swift in Sources */,
 				CC71BAB92E9E2E74006C7238 /* EventBlockBgView.swift in Sources */,
 				CCBF8FA72E69948D00B9A99E /* BrowserState.swift in Sources */,
+				CCAA000C2F00010000000001 /* BrowserState+PinnedTabScope.swift in Sources */,
+				CCAA000E2F00010000000001 /* BrowserState+PinnedTabTransfer.swift in Sources */,
 				AB1000000000000000000FA1 /* TabMultiSelection.swift in Sources */,
 				AB1000000000000000000FB1 /* TabMultiSelectionMenu.swift in Sources */,
 				AB1000000000000000000FC1 /* TabDragCountBadge.swift in Sources */,
@@ -2605,6 +2622,7 @@
 				37DEB42F2F67C0F000129429 /* TabDataModelSchemaV3.swift in Sources */,
 				CCAA00062F00010000000001 /* TabDataModelSchemaV7.swift in Sources */,
 				CCAA00082F00010000000001 /* TabDataModelSchemaV8.swift in Sources */,
+				CCAA000A2F00010000000001 /* TabDataModelSchemaV9.swift in Sources */,
 				CC4F00010000000000000001 /* LocalStore+SpaceURLRule.swift in Sources */,
 				CC4F00020000000000000001 /* URLRouter.swift in Sources */,
 				CC4F00030000000000000001 /* SpaceURLRulesEditor.swift in Sources */,
@@ -2632,6 +2650,8 @@
 				8E762CC62F16531A00631087 /* TabStripAnimation.swift in Sources */,
 				37C1B0DE2ED8081400DD4496 /* ShortcutsSettingsView.swift in Sources */,
 				CC2708A52E7A65E500B65AB8 /* LocalStore.swift in Sources */,
+				CCAA000B2F00010000000001 /* LocalStore+PinnedTabScope.swift in Sources */,
+				CCAA000D2F00010000000001 /* LocalStore+PinnedTabTransfer.swift in Sources */,
 				37FA01022FDA000100000002 /* LocalStoreBackupPolicy.swift in Sources */,
 				37FA01032FDA000100000003 /* LocalStoreCompatibilityConfiguration.swift in Sources */,
 				37FA01042FDA000100000004 /* LocalStoreCompatibilityController.swift in Sources */,

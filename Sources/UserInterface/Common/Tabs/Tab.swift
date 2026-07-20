@@ -154,6 +154,9 @@ class Tab: WebContentRepresentable {
     let subTabs: [Tab] = []
     var guid: Int
     var guidInLocalDB: String? = nil
+    /// Stable logical identity retained when a pinned record is copied to a
+    /// different scope and receives a new physical database guid.
+    var pinnedLineageId: String?
     var profileId: String?
     var windowId: Int = 0
     var isOpenned = true
@@ -558,6 +561,7 @@ extension Tab {
         self.isPinned = (dbModel.dataType == .pinnedTab)
         self.storedTitle = dbModel.title
         if dbModel.dataType == .pinnedTab {
+            self.pinnedLineageId = dbModel.pinLineageId ?? dbModel.guid
             self.pinnedUrl = dbModel.url.absoluteString
             self.splitPartnerGuid = dbModel.splitPartnerGuid
             self.lastSeen = dbModel.lastSeen

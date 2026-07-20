@@ -5023,19 +5023,38 @@ extension TabStrip: TabStripDragDelegate {
     private func handleExternalDrop(tab: Tab, context: TabDragContext, target: ExternalDropTarget) -> Bool {
         let targetState = target.windowController.browserState
         let clampedNormalIndex = min(max(0, target.index), targetState.normalTabs.count)
-        let clampedPinnedIndex = min(max(0, target.index), browserState.pinnedTabs.count)
+        let clampedPinnedIndex = min(max(0, target.index), targetState.pinnedTabs.count)
 
         switch target.zone {
         case .pinned:
             if context.sourceContainerType == .pinned {
-                if let guid = tab.guidInLocalDB,
-                   let pinnedTab = browserState.pinnedTabs.first(where: { $0.guidInLocalDB == guid }) {
-                    browserState.movePinnedTab(tab: pinnedTab, to: clampedPinnedIndex, selectAfterMove: tab.isActive)
+                guard let guid = tab.guidInLocalDB else { return false }
+                Task { @MainActor in
+                    do {
+                        try await browserState.commitCrossWindowPinnedDrop(
+                            pinnedGuid: guid,
+                            to: targetState,
+                            destinationIndex: clampedPinnedIndex,
+                            destinationIndexIncludesSourceUnit: true
+                        )
+                    } catch {
+                        AppLogError("[PinnedTabDrag] Horizontal pinned transfer failed: \(error)")
+                    }
                 }
             } else {
-                browserState.moveNormalTab(tabId: tab.guid, toPinnd: clampedPinnedIndex, selectAfterMove: tab.isActive)
+                Task { @MainActor in
+                    do {
+                        try await browserState.commitCrossWindowNormalTabDropToPinned(
+                            tabId: tab.guid,
+                            to: targetState,
+                            destinationIndex: clampedPinnedIndex
+                        )
+                    } catch {
+                        AppLogError("[PinnedTabDrag] Horizontal normal-tab pin failed: \(error)")
+                    }
+                }
             }
-            return moveTabToWindow(tab, targetState: targetState, scheduleNormalInsertion: false, index: clampedPinnedIndex)
+            return true
         case .normal:
             if context.sourceContainerType == .pinned, let guid = tab.guidInLocalDB {
                 browserState.movePinnedTabOut(pinnedGuid: guid, to: clampedNormalIndex, selectAfterMove: tab.isActive)

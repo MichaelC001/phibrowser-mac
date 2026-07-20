@@ -1259,10 +1259,17 @@ struct SpacesStripView: View {
             format: NSLocalizedString("Delete \u{201C}%@\u{201D}?", comment: "Title of the delete-Space confirmation"),
             space.name
         )
-        alert.informativeText = NSLocalizedString(
-            "Bookmarks belonging to this Space will also be removed. This action cannot be undone.",
-            comment: "Body of the delete-Space confirmation"
-        )
+        if AccountController.shared.account?.localStorage.pinnedTabScope() == .space {
+            alert.informativeText = NSLocalizedString(
+                "Bookmarks and pinned tabs belonging to this Space will also be removed. This action cannot be undone.",
+                comment: "Body of the delete-Space confirmation with Space-scoped pinned tabs"
+            )
+        } else {
+            alert.informativeText = NSLocalizedString(
+                "Bookmarks belonging to this Space will also be removed. This action cannot be undone.",
+                comment: "Body of the delete-Space confirmation"
+            )
+        }
         alert.alertStyle = .warning
         alert.addButton(withTitle: NSLocalizedString("Delete", comment: "Destructive button"))
         alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Cancel button"))

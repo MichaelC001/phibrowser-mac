@@ -18,13 +18,26 @@ actor LocalStoreActor {
             AppLogError("[LocalStore] save error: \(error)")
         }
     }
+
+    func performThrowing<Result: Sendable>(
+        _ block: (ModelContext) throws -> Result
+    ) throws -> Result {
+        do {
+            let result = try block(modelContext)
+            try modelContext.save()
+            return result
+        } catch {
+            modelContext.rollback()
+            throw error
+        }
+    }
 }
 
 class LocalStore {
     static let defaultProfileId = "Default"
     static let compatibilityConfiguration = LocalStoreCompatibilityConfiguration(
-        currentStoreFormatVersion: 8,
-        readableStoreFormatVersions: 1...8,
+        currentStoreFormatVersion: 9,
+        readableStoreFormatVersions: 1...9,
         storeFilename: "LocalStore.sqlite"
     )
 
@@ -112,6 +125,7 @@ class LocalStore {
                 ProfileModel.self,
                 SpaceModel.self,
                 SpaceURLRule.self,
+                BrowserDataSettingsModel.self,
                 migrationPlan: TabDataModelMigrationPlan.self,
                 configurations: configuration
             )
@@ -223,21 +237,20 @@ extension LocalStore {
 
 extension LocalStore {
     @MainActor
-    func getAllPinnedTabs(for profileId: String) -> [TabDataModel] {
+    func getAllPinnedTabs(
+        for profileId: String,
+        spaceId: String = LocalStore.defaultSpaceId
+    ) -> [TabDataModel] {
         guard let context = mainContext else { return [] }
         do {
-            let pinnedRaw = TabDataType.pinnedTab.rawValue
-            let sortBy: [SortDescriptor<TabDataModel>] = [SortDescriptor(\.index)]
-            let descriptor = FetchDescriptor<TabDataModel>(
-                predicate: #Predicate<TabDataModel> { tab in
-                    tab.type == pinnedRaw &&
-                    tab.profile?.profileId == profileId
-                },
-                sortBy: sortBy
+            return try pinnedTabs(
+                profileId: profileId,
+                spaceId: spaceId,
+                scope: pinnedTabScope(in: context),
+                in: context
             )
-            return try context.fetch(descriptor)
         } catch {
-            AppLogError("Failed to fetch pinned tabs for profile \(profileId): \(error)")
+            AppLogError("Failed to fetch pinned tabs for profile \(profileId), Space \(spaceId): \(error)")
             return []
         }
     }
@@ -457,6 +470,24 @@ extension LocalStore {
             }
         }
     }
+
+    func performBackgroundWriteAndWaitThrowing<Result: Sendable>(
+        _ block: @escaping (ModelContext) throws -> Result
+    ) async throws -> Result {
+        guard let writeActor, let writeJobContinuation else {
+            throw LocalStoreWriteError.storeUnavailable
+        }
+        return try await withCheckedThrowingContinuation { continuation in
+            writeJobContinuation.yield {
+                do {
+                    let result = try await writeActor.performThrowing(block)
+                    continuation.resume(returning: result)
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
     
     // Exposes the main context for UI-bound consumers.
     @MainActor
@@ -488,7 +519,10 @@ extension LocalStore {
     }
 
     @MainActor
-    func pinnedTabsPublisher(for profileID: String) -> AnyPublisher<[TabDataModel], Never> {
+    func pinnedTabsPublisher(
+        for profileID: String,
+        spaceId: String = LocalStore.defaultSpaceId
+    ) -> AnyPublisher<[TabDataModel], Never> {
         guard mainContext != nil else {
             return Just([]).eraseToAnyPublisher()
         }
@@ -496,7 +530,7 @@ extension LocalStore {
         let subject = CurrentValueSubject<[TabDataModel], Never>([])
 
         let fetchPinnedTabs = {
-            self.getAllPinnedTabs(for: profileID)
+            self.getAllPinnedTabs(for: profileID, spaceId: spaceId)
         }
 
         // Dedup must compare value snapshots, not the fetched objects: a
@@ -514,8 +548,13 @@ extension LocalStore {
             .filter {
                 Self.notificationContainsChanges(
                     $0,
-                    matching: { $0.entity.name == TabDataModel.entityName &&
-                        Self.tabType(from: $0) == TabDataType.pinnedTab.rawValue }
+                    matching: {
+                        if $0.entity.name == BrowserDataSettingsModel.entityName {
+                            return true
+                        }
+                        return $0.entity.name == TabDataModel.entityName &&
+                            Self.tabType(from: $0) == TabDataType.pinnedTab.rawValue
+                    }
                 )
             }
             .receive(on: DispatchQueue.main)
@@ -545,6 +584,9 @@ private struct PinnedTabSnapshot: Equatable {
     let lastSeen: Date?
     let updatedDate: Date
     let splitPartnerGuid: String?
+    let lineageId: String?
+    let profileId: String?
+    let spaceId: String?
 
     init(_ model: TabDataModel) {
         guid = model.guid
@@ -554,6 +596,9 @@ private struct PinnedTabSnapshot: Equatable {
         lastSeen = model.lastSeen
         updatedDate = model.updatedDate
         splitPartnerGuid = model.splitPartnerGuid
+        lineageId = model.pinLineageId
+        profileId = model.profileId
+        spaceId = model.spaceId
     }
 }
 
@@ -589,12 +634,28 @@ extension LocalStore {
         }
     }
 
-    func removePinnedTab(_ tab: Tab) {
-        guard let guid = tab.guidInLocalDB else {
-            return
+    func removePinnedTab(
+        _ tab: Tab,
+        profileId: String,
+        spaceId: String = LocalStore.defaultSpaceId
+    ) {
+        guard let guid = tab.guidInLocalDB else { return }
+        performBackgroundWrite { context in
+            do {
+                guard let activeTab = try self.activePinnedTab(
+                    resolving: guid,
+                    profileId: profileId,
+                    spaceId: spaceId,
+                    in: context
+                ) else {
+                    AppLogWarn("[LocalStore] Active pinned tab not found for removal: \(guid)")
+                    return
+                }
+                context.delete(activeTab)
+            } catch {
+                AppLogError("[LocalStore] Failed to remove pinned tab: \(error)")
+            }
         }
-        deleteTab(guid)
-        
     }
     
     func deleteTab(_ localGuid: String) {
@@ -614,13 +675,14 @@ extension LocalStore {
     
     /// Creates a pinned-tab record directly from a URL — the headless
     /// counterpart of `moveOrCreatePinnedTab`, which needs a live `Tab`.
-    /// The record lands at `index` (clamped; appended when nil) among the
-    /// profile's pinned tabs and reaches every open window of that profile
-    /// via `pinnedTabsPublisher`, where it shows as a closed pinned tab.
+    /// The record lands at `index` (clamped; appended when nil) in the active
+    /// pinned-tab scope and reaches every covered window through
+    /// `pinnedTabsPublisher`, where it shows as a closed pinned tab.
     func createPinnedTab(guid: String,
                          url: String,
                          title: String,
                          profileId: String,
+                         spaceId: String = LocalStore.defaultSpaceId,
                          index: Int? = nil) {
         guard let parsedURL = URL(string: url.trimmingCharacters(in: .whitespacesAndNewlines)) else {
             AppLogWarn("[LocalStore] createPinnedTab: invalid URL \(url)")
@@ -628,20 +690,13 @@ extension LocalStore {
         }
         performBackgroundWrite { context in
             do {
-                guard let profile = try self.profile(with: profileId, in: context, createIfNeeded: true) else {
-                    AppLogError("[LocalStore] Missing profile for pinned tab write: \(profileId)")
-                    return
-                }
-                let pinnedRaw = TabDataType.pinnedTab.rawValue
-                let pinnedPredicate = #Predicate<TabDataModel> {
-                    $0.type == pinnedRaw &&
-                    $0.profile?.profileId == profileId
-                }
-                let descriptor = FetchDescriptor<TabDataModel>(
-                    predicate: pinnedPredicate,
-                    sortBy: [SortDescriptor(\.index)]
+                let scope = try self.pinnedTabScope(in: context)
+                var pinnedTabs = try self.pinnedTabs(
+                    profileId: profileId,
+                    spaceId: spaceId,
+                    scope: scope,
+                    in: context
                 )
-                var pinnedTabs = try context.fetch(descriptor)
                 let now = Date()
                 let model = TabDataModel(
                     title: title,
@@ -654,8 +709,13 @@ extension LocalStore {
                 )
                 model.dataType = .pinnedTab
                 model.isCreatedByChromium = false
-                model.profile = profile
-                model.profileId = profileId
+                model.pinLineageId = guid
+                try self.applyCurrentPinnedTabOwner(
+                    profileId: profileId,
+                    spaceId: spaceId,
+                    to: model,
+                    in: context
+                )
                 context.insert(model)
                 let insertIndex = min(max(index ?? pinnedTabs.count, 0), pinnedTabs.count)
                 pinnedTabs.insert(model, at: insertIndex)
@@ -672,33 +732,53 @@ extension LocalStore {
     func moveOrCreatePinnedTab(_ tab: Tab,
                                after afterGuid: String?,
                                profileId: String,
+                               spaceId: String = LocalStore.defaultSpaceId,
                                newGuid: String? = nil) {
         let tabGuid = tab.guidInLocalDB ?? UUID().uuidString
+        let tabLineageId = tab.pinnedLineageId
         let tabTitle = tab.title
         let tabURL = tab.url
         performBackgroundWrite { context in
             do {
-                guard let profile = try self.profile(with: profileId, in: context, createIfNeeded: true) else {
-                    AppLogError("[LocalStore] Missing profile for pinned tab write: \(profileId)")
-                    return
-                }
-                let pinnedRaw = TabDataType.pinnedTab.rawValue
-                let pinnedPredicate = #Predicate<TabDataModel> {
-                    $0.type == pinnedRaw &&
-                    $0.profile?.profileId == profileId
-                }
-                let sortBy: [SortDescriptor<TabDataModel>] = [SortDescriptor(\.index)]
-                let descriptor = FetchDescriptor<TabDataModel>(
-                    predicate: pinnedPredicate,
-                    sortBy: sortBy
+                let scope = try self.pinnedTabScope(in: context)
+                var pinnedTabs = try self.pinnedTabs(
+                    profileId: profileId,
+                    spaceId: spaceId,
+                    scope: scope,
+                    in: context
                 )
-                var pinnedTabs = try context.fetch(descriptor)
+                let resolvedTabGuid = try self.activePinnedTab(
+                    resolving: tabGuid,
+                    profileId: profileId,
+                    spaceId: spaceId,
+                    in: context
+                )?.guid
+                let resolvedAfterGuid: String?
+                if let afterGuid {
+                    guard let activeAfterTab = try self.activePinnedTab(
+                        resolving: afterGuid,
+                        profileId: profileId,
+                        spaceId: spaceId,
+                        in: context
+                    ) else {
+                        AppLogWarn("[LocalStore] Active after tab not found: \(afterGuid)")
+                        return
+                    }
+                    resolvedAfterGuid = activeAfterTab.guid
+                } else {
+                    resolvedAfterGuid = nil
+                }
                 
                 var tabToMove: TabDataModel
                 let now = Date()
-                if let tabToMoveIndex = pinnedTabs.firstIndex(where: { $0.guid == tabGuid }) {
+                if let resolvedTabGuid,
+                   let tabToMoveIndex = pinnedTabs.firstIndex(where: { $0.guid == resolvedTabGuid }) {
                     tabToMove = pinnedTabs.remove(at: tabToMoveIndex)
                 } else {
+                    guard tabLineageId == nil else {
+                        AppLogWarn("[LocalStore] Active pinned tab not found for move: \(tabGuid)")
+                        return
+                    }
                     guard let urlStr = tabURL, let url = URL(string: urlStr) else {
                         AppLogWarn("[LocalStore] Invalid URL for new tab: \(tabURL ?? "nil")")
                         return
@@ -715,21 +795,27 @@ extension LocalStore {
                     )
                     tabToMove.dataType = .pinnedTab
                     tabToMove.isCreatedByChromium = false
-                    tabToMove.profile = profile
-                    tabToMove.profileId = profileId
+                    tabToMove.pinLineageId = tabLineageId ?? tabToMove.guid
                     context.insert(tabToMove)
                     AppLogInfo("[LocalStore] Created new pinned tab with guid: \(tabGuid)")
                 }
 
-                tabToMove.profile = profile
-                tabToMove.profileId = profileId
+                if tabToMove.pinLineageId == nil {
+                    tabToMove.pinLineageId = tabToMove.guid
+                }
+                try self.applyCurrentPinnedTabOwner(
+                    profileId: profileId,
+                    spaceId: spaceId,
+                    to: tabToMove,
+                    in: context
+                )
                 
                 let insertIndex: Int
-                if let afterGuid = afterGuid {
-                    if let afterIndex = pinnedTabs.firstIndex(where: { $0.guid == afterGuid }) {
+                if let resolvedAfterGuid {
+                    if let afterIndex = pinnedTabs.firstIndex(where: { $0.guid == resolvedAfterGuid }) {
                         insertIndex = afterIndex + 1
                     } else {
-                        AppLogWarn("[LocalStore] After tab not found: \(afterGuid)")
+                        AppLogWarn("[LocalStore] After tab not found: \(resolvedAfterGuid)")
                         return
                     }
                 } else {

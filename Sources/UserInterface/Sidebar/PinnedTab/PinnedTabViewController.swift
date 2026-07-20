@@ -306,7 +306,7 @@ class PinnedTabViewController: NSViewController {
     }
 
     private func setupDragDestination() {
-        view.registerForDraggedTypes([.normalTab, .phiBookmark, .bookmarks])
+        view.registerForDraggedTypes([.pinnedTab, .normalTab, .phiBookmark, .bookmarks])
         view.wantsLayer = true
     }
 
@@ -1448,24 +1448,37 @@ extension PinnedTabViewController {
     
     private func handleCrossWindowPinnedDrop(pinnedGuid: String, sourceState: BrowserState, destinationIndex: Int) -> Bool {
         guard let targetState = browserState else { return false }
-        if let targetPinned = targetState.pinnedTabs.first(where: { $0.guidInLocalDB == pinnedGuid }),
-           let sourceIndex = targetState.pinnedTabs.firstIndex(of: targetPinned) {
-            var adjustedDestinationIndex = destinationIndex
-            if sourceIndex < destinationIndex {
-                adjustedDestinationIndex += pinnedReorderStepSize(for: targetPinned, in: targetState)
+        Task { @MainActor in
+            do {
+                try await sourceState.commitCrossWindowPinnedDrop(
+                    pinnedGuid: pinnedGuid,
+                    to: targetState,
+                    destinationIndex: destinationIndex
+                )
+            } catch {
+                AppLogError("[PinnedTabDrag] Cross-window pinned transfer failed: \(error)")
             }
-            targetState.movePinnedTab(tab: targetPinned, to: adjustedDestinationIndex, selectAfterMove: targetPinned.isActive)
-        }
-        if let openTab = findOpenTab(in: sourceState, matchingLocalGuid: pinnedGuid) {
-            return moveTabToTargetWindow(openTab)
         }
         return true
     }
     
     private func handleCrossWindowNormalTabDropToFavorites(tabGuid: Int, sourceState: BrowserState, destinationIndex: Int) -> Bool {
-        guard let tab = sourceState.tabs.first(where: { $0.guid == tabGuid }) else { return false }
-        sourceState.moveNormalTab(tabId: tabGuid, toPinnd: destinationIndex)
-        return moveTabToTargetWindow(tab)
+        guard let targetState = browserState,
+              sourceState.tabs.contains(where: { $0.guid == tabGuid }) else {
+            return false
+        }
+        Task { @MainActor in
+            do {
+                try await sourceState.commitCrossWindowNormalTabDropToPinned(
+                    tabId: tabGuid,
+                    to: targetState,
+                    destinationIndex: destinationIndex
+                )
+            } catch {
+                AppLogError("[PinnedTabDrag] Cross-window normal-tab pin failed: \(error)")
+            }
+        }
+        return true
     }
     
     private func handleCrossWindowBookmarkDropToFavorites(bookmarkGuid: String, sourceState: BrowserState, destinationIndex: Int) -> Bool {
@@ -1638,8 +1651,11 @@ extension PinnedTabViewController: NSDraggingDestination {
             return .copy
         }
         
-        // Accept normal tabs.
-        if pasteboard.string(forType: .normalTab) != nil {
+        // Accept pinned and normal tabs. Pinned drags also publish a normal-tab
+        // id for legacy destinations, so the commit path must inspect pinned
+        // payloads first.
+        if pasteboard.string(forType: .pinnedTab) != nil ||
+            pasteboard.string(forType: .normalTab) != nil {
             // Add visual feedback for the empty drop target.
             emptyView.layer?.backgroundColor = NSColor.selectedControlColor.withAlphaComponent(0.4).cgColor
             return .copy
@@ -1706,6 +1722,16 @@ extension PinnedTabViewController: NSDraggingDestination {
         if batchTabIds.count > 1 {
             return browserState?.moveNormalTabs(tabIds: batchTabIds,
                                                 toPinnedTabs: 0) ?? false
+        }
+
+        if isCrossWindowDrag(pasteboard),
+           let pinnedGuid = pasteboard.string(forType: .pinnedTab),
+           let sourceState = sourceBrowserState(for: pasteboard) {
+            return handleCrossWindowPinnedDrop(
+                pinnedGuid: pinnedGuid,
+                sourceState: sourceState,
+                destinationIndex: 0
+            )
         }
 
         if let guidString = pasteboard.string(forType: .normalTab),

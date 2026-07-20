@@ -498,14 +498,14 @@ extension Tab: ContextMenuRepresentable {
                 secondaryUrlString: rightURL,
                 secondaryTitleString: rightTitle,
                 from: windowController.window
-            ) { [weak windowController] result in
-                guard let windowController else { return }
+            ) { [weak windowController, weak leftTab, weak rightTab] result in
+                guard let windowController, let leftTab, let rightTab else { return }
                 let state = windowController.browserState
-                Self.applyPinnedTabEdit(pinnedGuid: leftDB,
+                Self.applyPinnedTabEdit(targetTab: leftTab,
                                         url: result.url,
                                         title: result.title,
                                         in: state)
-                Self.applyPinnedTabEdit(pinnedGuid: rightDB,
+                Self.applyPinnedTabEdit(targetTab: rightTab,
                                         url: result.secondaryUrl,
                                         title: result.secondaryTitle,
                                         in: state)
@@ -513,18 +513,19 @@ extension Tab: ContextMenuRepresentable {
             return
         }
 
-        let pinnedTab = state.pinnedTabs.first(where: { $0.guidInLocalDB == guid })
+        guard let pinnedTab = state.pinnedTabs.first(where: { $0.guidInLocalDB == guid }) else {
+            return
+        }
         let initialURL = state.pinnedTabEditingURL(for: guid, fallbackURL: url)
-        let initialTitle = pinnedTab?.storedTitle ?? pinnedTab?.title ?? ""
-        let pinnedGuid = guid
+        let initialTitle = pinnedTab.storedTitle ?? pinnedTab.title
 
         EditPinnedTabPresenter.presentModal(mode: .pin,
                                             title: initialTitle,
                                             urlString: initialURL,
-                                            from: windowController.window) { [weak windowController] result in
-            guard let windowController else { return }
+                                            from: windowController.window) { [weak windowController, weak pinnedTab] result in
+            guard let windowController, let pinnedTab else { return }
             let state = windowController.browserState
-            Self.applyPinnedTabEdit(pinnedGuid: pinnedGuid,
+            Self.applyPinnedTabEdit(targetTab: pinnedTab,
                                     url: result.url,
                                     title: result.title,
                                     in: state)
@@ -532,34 +533,41 @@ extension Tab: ContextMenuRepresentable {
     }
 
     @MainActor
-    private static func applyPinnedTabEdit(pinnedGuid: String,
-                                           url rawURL: String?,
-                                           title newTitle: String?,
-                                           in state: BrowserState) {
-        guard let rawURL,
+    static func applyPinnedTabEdit(targetTab: Tab,
+                                   url rawURL: String?,
+                                   title newTitle: String?,
+                                   in state: BrowserState) {
+        // The edit sheet can stay open while a scope migration replaces the
+        // physical database guid. Scope sync retains and rebinds this Tab
+        // object, so resolve its current guid only when Save is pressed.
+        guard state.pinnedTabs.contains(where: { $0 === targetTab }),
+              let pinnedGuid = targetTab.guidInLocalDB,
+              !pinnedGuid.isEmpty,
+              let rawURL,
               let normalizedURL = state.localStore.normalizedURL(from: rawURL) else { return }
 
         let normalizedString = normalizedURL.absoluteString
-        state.localStore.updateTabURL(pinnedGuid, url: normalizedURL)
+        state.localStore.updatePinnedTab(
+            resolving: pinnedGuid,
+            profileId: state.profileId,
+            spaceId: state.spaceId,
+            url: normalizedURL,
+            title: newTitle
+        )
 
-        if let newTitle {
-            state.localStore.updateTabTitle(pinnedGuid, title: newTitle)
+        targetTab.pinnedUrl = normalizedString
+        if targetTab.url != normalizedString {
+            targetTab.url = normalizedString
         }
-
-        if let targetTab = state.pinnedTabs.first(where: { $0.guidInLocalDB == pinnedGuid }) {
-            targetTab.pinnedUrl = normalizedString
-            if targetTab.url != normalizedString {
-                targetTab.url = normalizedString
-            }
-            if let newTitle {
-                targetTab.applyStoredTitle(newTitle)
-            }
-            if targetTab.isOpenned, let wrapper = targetTab.webContentWrapper {
-                wrapper.updateTabCustomValue("")
-                wrapper.navigate(toURL: normalizedString)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                    wrapper.updateTabCustomValue(pinnedGuid)
-                }
+        if let newTitle {
+            targetTab.applyStoredTitle(newTitle)
+        }
+        if targetTab.isOpenned, let wrapper = targetTab.webContentWrapper {
+            wrapper.updateTabCustomValue("")
+            wrapper.navigate(toURL: normalizedString)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak targetTab] in
+                guard let currentGuid = targetTab?.guidInLocalDB else { return }
+                wrapper.updateTabCustomValue(currentGuid)
             }
         }
     }

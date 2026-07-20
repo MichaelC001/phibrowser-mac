@@ -1553,10 +1553,26 @@ extension AppController {
             format: NSLocalizedString("Change Profile to \u{201C}%@\u{201D}?", comment: "Title of the change-Space-profile confirmation"),
             profile.displayName
         )
-        alert.informativeText = NSLocalizedString(
-            "This Space's window will be reopened with the new profile and its open tabs will be reloaded there. Site logins won't carry over. Bookmarks stay with the Space; pinned tabs will be the new profile's.",
-            comment: "Body of the change-Space-profile confirmation"
-        )
+        let pinnedTabScope = MainActor.assumeIsolated {
+            AccountController.shared.account?.localStorage.pinnedTabScope() ?? .profile
+        }
+        switch pinnedTabScope {
+        case .space:
+            alert.informativeText = NSLocalizedString(
+                "This Space's window will be reopened with the new profile and its open tabs will be reloaded there. Site logins won't carry over. Bookmarks and pinned tabs stay with the Space.",
+                comment: "Body of the change-Space-profile confirmation with Space-scoped pinned tabs"
+            )
+        case .profile:
+            alert.informativeText = NSLocalizedString(
+                "This Space's window will be reopened with the new profile and its open tabs will be reloaded there. Site logins won't carry over. Bookmarks stay with the Space; pinned tabs will be the new profile's.",
+                comment: "Body of the change-Space-profile confirmation with Profile-scoped pinned tabs"
+            )
+        case .app:
+            alert.informativeText = NSLocalizedString(
+                "This Space's window will be reopened with the new profile and its open tabs will be reloaded there. Site logins won't carry over. Bookmarks stay with the Space; pinned tabs remain shared across the app.",
+                comment: "Body of the change-Space-profile confirmation with App-scoped pinned tabs"
+            )
+        }
         alert.addButton(withTitle: NSLocalizedString("Change Profile", comment: "Confirm button of the change-Space-profile confirmation"))
         alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Cancel button"))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
@@ -1571,10 +1587,20 @@ extension AppController {
             format: NSLocalizedString("Delete \u{201C}%@\u{201D}?", comment: "Title of the delete-Space confirmation"),
             space.name
         )
-        alert.informativeText = NSLocalizedString(
-            "Pinned tabs and bookmarks belonging to this Space will also be removed. This action cannot be undone.",
-            comment: "Body of the delete-Space confirmation"
-        )
+        let usesSpaceScopedPinnedTabs = MainActor.assumeIsolated {
+            AccountController.shared.account?.localStorage.pinnedTabScope() == .space
+        }
+        if usesSpaceScopedPinnedTabs {
+            alert.informativeText = NSLocalizedString(
+                "Bookmarks and pinned tabs belonging to this Space will also be removed. This action cannot be undone.",
+                comment: "Body of the delete-Space confirmation with Space-scoped pinned tabs"
+            )
+        } else {
+            alert.informativeText = NSLocalizedString(
+                "Bookmarks belonging to this Space will also be removed. This action cannot be undone.",
+                comment: "Body of the delete-Space confirmation"
+            )
+        }
         alert.alertStyle = .warning
         alert.addButton(withTitle: NSLocalizedString("Delete", comment: "Destructive button"))
         alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Cancel button"))

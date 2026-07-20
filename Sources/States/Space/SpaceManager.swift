@@ -1558,10 +1558,10 @@ final class SpaceManager: ObservableObject {
             return
         }
         AppLogInfo("[SpaceManager] changeProfile: \(spaceId) \(space.profileId) → \(newProfileId)")
-        // Capture before closing anything. Pinned tabs are excluded — they
-        // are per-profile by design, so the respawned window shows the new
-        // profile's pinned set — and so are new-tab pages. keySlot first so
-        // the focused window's tabs lead the reopened order.
+        // Capture before closing anything. Pinned tabs are excluded because
+        // they are restored from their configured Space/Profile/App scope;
+        // new-tab pages are excluded as well. keySlot first so the focused
+        // window's tabs lead the reopened order.
         var reopenURLs: [String] = []
         var respawnSlot: SpaceWindowSlot?
         var orderedSlots: [SpaceWindowSlot] = []

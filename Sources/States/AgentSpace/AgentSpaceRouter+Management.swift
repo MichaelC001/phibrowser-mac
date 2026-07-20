@@ -693,10 +693,25 @@ extension AgentSpaceRouter {
         return profiles.first?.profileId ?? LocalStore.defaultProfileId
     }
 
-    /// `agentSpace.pinnedTabs.list` — the profile's pinned-tab records
-    /// (pinned tabs are per-profile, shared by all of its Spaces).
+    private static func resolvePinnedTabSpaceId(_ requested: String?, profileId: String) -> String {
+        let manager = SpaceManager.shared
+        if let requested,
+           manager.spaces.contains(where: { $0.spaceId == requested && $0.profileId == profileId }) {
+            return requested
+        }
+        if let activeSpaceId = manager.activeSpaceId,
+           manager.spaces.contains(where: { $0.spaceId == activeSpaceId && $0.profileId == profileId }) {
+            return activeSpaceId
+        }
+        return manager.spaces.first(where: { $0.profileId == profileId })?.spaceId
+            ?? LocalStore.defaultSpaceId
+    }
+
+    /// `agentSpace.pinnedTabs.list` — pinned-tab records visible in the
+    /// requested profile and Space under the user's configured scope.
     static func handlePinnedTabsList(context: ExtensionMessageContext) -> String? {
-        let requested = json(context.payload)?["profileId"] as? String
+        let object = json(context.payload)
+        let requested = object?["profileId"] as? String
         return MainActor.assumeIsolated {
             guard let store = AccountController.shared.account?.localStorage else {
                 return failure("no_account")
@@ -704,13 +719,15 @@ extension AgentSpaceRouter {
             guard let profileId = resolveProfileId(requested) else {
                 return failure("unknown_profile")
             }
-            let pinned = store.getAllPinnedTabs(for: profileId).map { model -> [String: Any] in
+            let spaceId = resolvePinnedTabSpaceId(object?["spaceId"] as? String, profileId: profileId)
+            let pinned = store.getAllPinnedTabs(for: profileId, spaceId: spaceId).map { model -> [String: Any] in
                 [
                     "guid": model.guid,
                     "url": model.url.absoluteString,
                     "title": model.title,
                     "index": model.index,
                     "profileId": profileId,
+                    "spaceId": spaceId,
                 ]
             }
             return encode(["ok": true, "pinnedTabs": pinned])
@@ -718,8 +735,8 @@ extension AgentSpaceRouter {
     }
 
     /// `agentSpace.pinnedTabs.add` — create a pinned-tab record from a URL.
-    /// It appears in the sidebar of every window of that profile as a closed
-    /// pinned tab (clicking it opens the page). Optional `index` positions it.
+    /// It appears in every window covered by the configured pinned-tab scope.
+    /// Optional `index` positions it.
     static func handlePinnedTabsAdd(context: ExtensionMessageContext) -> String? {
         guard let obj = json(context.payload),
               let url = obj["url"] as? String,
@@ -732,13 +749,15 @@ extension AgentSpaceRouter {
             guard let profileId = resolveProfileId(obj["profileId"] as? String) else {
                 return failure("unknown_profile")
             }
+            let spaceId = resolvePinnedTabSpaceId(obj["spaceId"] as? String, profileId: profileId)
             let guid = UUID().uuidString
             store.createPinnedTab(guid: guid,
                                   url: url,
                                   title: (obj["title"] as? String) ?? "",
                                   profileId: profileId,
+                                  spaceId: spaceId,
                                   index: (obj["index"] as? NSNumber)?.intValue)
-            return encode(["ok": true, "guid": guid, "profileId": profileId])
+            return encode(["ok": true, "guid": guid, "profileId": profileId, "spaceId": spaceId])
         }
     }
 
@@ -755,15 +774,19 @@ extension AgentSpaceRouter {
             guard let store = AccountController.shared.account?.localStorage else {
                 return failure("no_account")
             }
-            guard let model = store.getTab(by: guid), model.dataType == .pinnedTab else {
+            guard let model = store.getTab(by: guid),
+                  model.dataType == .pinnedTab,
+                  store.isPinnedTabInActiveScope(model) else {
                 return failure("unknown_pinned_tab")
             }
-            if let url = obj["url"] as? String {
-                store.updateTabURL(guid, urlString: url)
+            let url = (obj["url"] as? String).flatMap {
+                URL(string: $0.trimmingCharacters(in: .whitespacesAndNewlines))
             }
-            if let title = obj["title"] as? String {
-                store.updateTabTitle(guid, title: title)
-            }
+            store.updateActivePinnedTab(
+                guid: guid,
+                url: url,
+                title: obj["title"] as? String
+            )
             return ok()
         }
     }
@@ -776,10 +799,12 @@ extension AgentSpaceRouter {
             guard let store = AccountController.shared.account?.localStorage else {
                 return failure("no_account")
             }
-            guard let model = store.getTab(by: guid), model.dataType == .pinnedTab else {
+            guard let model = store.getTab(by: guid),
+                  model.dataType == .pinnedTab,
+                  store.isPinnedTabInActiveScope(model) else {
                 return failure("unknown_pinned_tab")
             }
-            store.deleteTab(guid)
+            store.removeActivePinnedTab(guid: guid)
             return ok()
         }
     }

@@ -18,6 +18,8 @@ struct SpacesSettingsView: View {
     @ObservedObject private var profileManager = ProfileManager.shared
 
     @State private var selectedSpaceId: String?
+    @State private var pinnedTabScope: PinnedTabScope = .profile
+    @State private var isChangingPinnedTabScope = false
     /// Resolved theme id and opacity slider position for the selected Space,
     /// loaded on selection and updated optimistically (setTheme /
     /// setOverlayOpacity write to stores that don't republish `spaces`, so
@@ -34,24 +36,32 @@ struct SpacesSettingsView: View {
     @State private var orderedIds: [String] = []
 
     var body: some View {
-        VStack(spacing: 16) {
-            HStack(alignment: .top, spacing: 16) {
-                spaceListPanel
-                    .frame(width: 300, alignment: .top)
-                    .frame(maxHeight: .infinity)
-                detailPanel
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        ScrollView(.vertical) {
+            VStack(spacing: 16) {
+                HStack(alignment: .top, spacing: 16) {
+                    spaceListPanel
+                        .frame(width: 300, alignment: .top)
+                        .frame(maxHeight: .infinity)
+                    detailPanel
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                }
+                .frame(height: 431)
+                SettingsDetailCard {
+                    pinnedTabScopeRow
+                }
+                // The URL Rules editor lists every Space's rules, so it sits below
+                // the master-detail split as a pane-wide jump-off rather than a
+                // per-Space control.
+                SettingsDetailCard {
+                    urlRulesRow
+                }
             }
-            // The URL Rules editor lists every Space's rules, so it sits below
-            // the master-detail split as a pane-wide jump-off rather than a
-            // per-Space control.
-            SettingsDetailCard {
-                urlRulesRow
-            }
+            .frame(maxWidth: .infinity, alignment: .top)
+            .padding(20)
         }
-        .padding(20)
         .onAppear {
             profileManager.refresh()
+            pinnedTabScope = AccountController.shared.account?.localStorage.pinnedTabScope() ?? .profile
             orderedIds = listedSpaces.map(\.spaceId)
             if selectedSpaceId == nil { selectInitialSpace() }
         }
@@ -384,6 +394,138 @@ struct SpacesSettingsView: View {
                                 comment: "Spaces settings - tooltip for the URL rules button"))
     }
 
+    private var pinnedTabScopeRow: some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(NSLocalizedString(
+                    "Pinned tab scope",
+                    comment: "Spaces settings - pinned-tab scope row label"
+                ))
+                .font(.system(size: 13))
+                .themedForeground(.textPrimary)
+
+                Text(pinnedTabScopeDescription)
+                    .font(.system(size: 11))
+                    .themedForeground(.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 12)
+
+            Picker(
+                "",
+                selection: Binding(
+                    get: { pinnedTabScope },
+                    set: { requestPinnedTabScopeChange(to: $0) }
+                )
+            ) {
+                ForEach(PinnedTabScope.allCases) { scope in
+                    Text(pinnedTabScopeName(scope)).tag(scope)
+                }
+            }
+            .labelsHidden()
+            .frame(width: 120)
+            .disabled(isChangingPinnedTabScope)
+        }
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var pinnedTabScopeDescription: String {
+        switch pinnedTabScope {
+        case .space:
+            return NSLocalizedString(
+                "Each Space has its own pinned tabs.",
+                comment: "Spaces settings - description of Space pinned-tab scope"
+            )
+        case .profile:
+            return NSLocalizedString(
+                "Spaces using the same profile share pinned tabs.",
+                comment: "Spaces settings - description of Profile pinned-tab scope"
+            )
+        case .app:
+            return NSLocalizedString(
+                "Pinned tabs are shared across all profiles and Spaces.",
+                comment: "Spaces settings - description of App pinned-tab scope"
+            )
+        }
+    }
+
+    private func pinnedTabScopeName(_ scope: PinnedTabScope) -> String {
+        switch scope {
+        case .space:
+            return NSLocalizedString("Space", comment: "Spaces settings - Space pinned-tab scope option")
+        case .profile:
+            return NSLocalizedString("Profile", comment: "Spaces settings - Profile pinned-tab scope option")
+        case .app:
+            return NSLocalizedString("App", comment: "Spaces settings - App pinned-tab scope option")
+        }
+    }
+
+    private func requestPinnedTabScopeChange(to newScope: PinnedTabScope) {
+        guard newScope != pinnedTabScope,
+              !isChangingPinnedTabScope else { return }
+
+        let previousScope = pinnedTabScope
+        let isCopy = newScope.hierarchyLevel < previousScope.hierarchyLevel
+        pinnedTabScope = newScope
+
+        guard let store = AccountController.shared.account?.localStorage else {
+            pinnedTabScope = previousScope
+            return
+        }
+
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = NSLocalizedString(
+            "Change Pinned Tab Scope?",
+            comment: "Spaces settings - title of pinned-tab scope migration confirmation"
+        )
+        alert.informativeText = isCopy
+            ? NSLocalizedString(
+                "Your current pinned tabs will be copied into each existing destination. The copies can then be changed independently.",
+                comment: "Spaces settings - confirmation body for narrowing pinned-tab scope"
+            )
+            : NSLocalizedString(
+                "Pinned tabs from the existing destinations will be merged. Unchanged copies will be combined, while different versions will be kept.",
+                comment: "Spaces settings - confirmation body for broadening pinned-tab scope"
+            )
+        alert.addButton(withTitle: NSLocalizedString("Change Scope", comment: "Spaces settings - confirm pinned-tab scope change"))
+        alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Cancel button"))
+        guard alert.runModal() == .alertFirstButtonReturn else {
+            pinnedTabScope = previousScope
+            return
+        }
+
+        let preferredSpaceId = spaceManager.activeSpaceId ?? selectedSpaceId
+        let preferredProfileId = preferredSpaceId.flatMap { spaceId in
+            spaceManager.spaces.first(where: { $0.spaceId == spaceId })?.profileId
+        }
+        isChangingPinnedTabScope = true
+        Task { @MainActor in
+            do {
+                try await store.changePinnedTabScope(
+                    to: newScope,
+                    preferredProfileId: preferredProfileId,
+                    preferredSpaceId: preferredSpaceId
+                )
+                pinnedTabScope = newScope
+            } catch {
+                pinnedTabScope = previousScope
+                let errorAlert = NSAlert()
+                errorAlert.alertStyle = .critical
+                errorAlert.messageText = NSLocalizedString(
+                    "Pinned Tab Scope Wasn’t Changed",
+                    comment: "Spaces settings - pinned-tab scope migration error title"
+                )
+                errorAlert.informativeText = error.localizedDescription
+                errorAlert.addButton(withTitle: NSLocalizedString("OK", comment: "Dismiss button"))
+                errorAlert.runModal()
+            }
+            isChangingPinnedTabScope = false
+        }
+    }
+
     // MARK: - Selection
 
     private var selectedSpace: SpaceModel? {
@@ -574,10 +716,7 @@ struct SpacesSettingsView: View {
             format: NSLocalizedString("Change Profile to \u{201C}%@\u{201D}?", comment: "Title of the change-Space-profile confirmation"),
             profile.displayName
         )
-        alert.informativeText = NSLocalizedString(
-            "This Space's window will be reopened with the new profile and its open tabs will be reloaded there. Site logins won't carry over. Bookmarks stay with the Space; pinned tabs will be the new profile's.",
-            comment: "Body of the change-Space-profile confirmation"
-        )
+        alert.informativeText = changeProfileConfirmationBody
         alert.addButton(withTitle: NSLocalizedString("Change Profile", comment: "Confirm button of the change-Space-profile confirmation"))
         alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Cancel button"))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
@@ -591,15 +730,45 @@ struct SpacesSettingsView: View {
             format: NSLocalizedString("Delete \u{201C}%@\u{201D}?", comment: "Title of the delete-Space confirmation"),
             space.name
         )
-        alert.informativeText = NSLocalizedString(
-            "Bookmarks belonging to this Space will also be removed. This action cannot be undone.",
-            comment: "Body of the delete-Space confirmation"
-        )
+        alert.informativeText = deleteSpaceConfirmationBody
         alert.alertStyle = .warning
         alert.addButton(withTitle: NSLocalizedString("Delete", comment: "Destructive button"))
         alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Cancel button"))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         spaceManager.deleteSpace(spaceId: space.spaceId)
+    }
+
+    private var changeProfileConfirmationBody: String {
+        switch pinnedTabScope {
+        case .space:
+            return NSLocalizedString(
+                "This Space's window will be reopened with the new profile and its open tabs will be reloaded there. Site logins won't carry over. Bookmarks and pinned tabs stay with the Space.",
+                comment: "Body of the change-Space-profile confirmation with Space-scoped pinned tabs"
+            )
+        case .profile:
+            return NSLocalizedString(
+                "This Space's window will be reopened with the new profile and its open tabs will be reloaded there. Site logins won't carry over. Bookmarks stay with the Space; pinned tabs will be the new profile's.",
+                comment: "Body of the change-Space-profile confirmation with Profile-scoped pinned tabs"
+            )
+        case .app:
+            return NSLocalizedString(
+                "This Space's window will be reopened with the new profile and its open tabs will be reloaded there. Site logins won't carry over. Bookmarks stay with the Space; pinned tabs remain shared across the app.",
+                comment: "Body of the change-Space-profile confirmation with App-scoped pinned tabs"
+            )
+        }
+    }
+
+    private var deleteSpaceConfirmationBody: String {
+        if pinnedTabScope == .space {
+            return NSLocalizedString(
+                "Bookmarks and pinned tabs belonging to this Space will also be removed. This action cannot be undone.",
+                comment: "Body of the delete-Space confirmation with Space-scoped pinned tabs"
+            )
+        }
+        return NSLocalizedString(
+            "Bookmarks belonging to this Space will also be removed. This action cannot be undone.",
+            comment: "Body of the delete-Space confirmation"
+        )
     }
 }
 
