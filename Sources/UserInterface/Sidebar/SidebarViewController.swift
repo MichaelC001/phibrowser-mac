@@ -9,6 +9,19 @@ import SwiftUI
 import Combine
 
 final class SpacesStripHostingView: ThemedHostingView {
+    /// Converts wheel scrolling over the strip row into pip viewport steps for
+    /// the hosted SpacesStripView (see SpacesStripWheelTracker), assigned by
+    /// the controller that builds the strip. Vertical scrolling is consumed
+    /// here so an overflowing row can be scrolled in place; horizontal
+    /// trackpad gestures fall through to the sidebar controller's
+    /// swipe-to-switch-Space handler up the responder chain.
+    var wheelTracker: SpacesStripWheelTracker?
+
+    override func scrollWheel(with event: NSEvent) {
+        if wheelTracker?.handle(event) == true { return }
+        super.scrollWheel(with: event)
+    }
+
     // Native AppKit tab groups can temporarily adjust titlebar/safe-area metrics
     // while their NSTabView/NSTabBar accessory is created or hidden. The Space
     // row is already positioned by SidebarHeaderView's fixed constraints, so its
@@ -141,15 +154,18 @@ class SidebarViewController: NSViewController {
         ?? SpaceManager.shared.createSlot(initialSpaceId: nil)
 
     private lazy var spacesStripHostingView: SpacesStripHostingView = {
+        let wheelTracker = SpacesStripWheelTracker()
         let hostingView = SpacesStripHostingView(
             rootView: SpacesStripView(
                 manager: SpaceManager.shared,
                 slot: spacesStripSlot,
                 rowHeight: SpacesStripView.sidebarHeight,
-                resolveOwnerController: { [weak state] in state?.windowController }
+                resolveOwnerController: { [weak state] in state?.windowController },
+                wheelTracker: wheelTracker
             ),
             themeSource: state.themeContext
         )
+        hostingView.wheelTracker = wheelTracker
         if #available(macOS 13.0, *) {
             hostingView.sizingOptions = []
         }

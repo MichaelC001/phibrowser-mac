@@ -51,15 +51,18 @@ class FloatingSidebarViewController: NSViewController {
     /// nav row, above the address bar — mirroring the docked sidebar so the
     /// floating panel offers the same Space switching.
     private lazy var spacesStripHostingView: SpacesStripHostingView = {
+        let wheelTracker = SpacesStripWheelTracker()
         let hostingView = SpacesStripHostingView(
             rootView: SpacesStripView(
                 manager: SpaceManager.shared,
                 slot: spacesStripSlot,
                 rowHeight: SpacesStripView.sidebarHeight,
-                resolveOwnerController: { [weak state] in state?.windowController }
+                resolveOwnerController: { [weak state] in state?.windowController },
+                wheelTracker: wheelTracker
             ),
             themeSource: state.themeContext
         )
+        hostingView.wheelTracker = wheelTracker
         if #available(macOS 13.0, *) {
             hostingView.sizingOptions = []
         }

@@ -4,6 +4,7 @@
 // found in the LICENSE file.
 
 import AppKit
+import Combine
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -65,6 +66,85 @@ final class SpaceSwipeTracker {
     }
 }
 
+/// Turns wheel scrolling over the sidebar Spaces strip into whole-pip viewport
+/// steps, so an overflowing row can be scrolled directly instead of only
+/// sliding when the active Space changes. The strip's AppKit hosting view
+/// (SpacesStripHostingView) feeds every wheel event through `handle(_:)`;
+/// consumed events emit steps on `pipSteps`, which the SwiftUI strip receives
+/// to slide its clipped pip window (see `SpacesStripView.stepViewport`).
+///
+/// Axis handling mirrors `SpaceSwipeTracker`: a trackpad gesture latches its
+/// axis on the first non-zero delta and holds it through momentum, and
+/// horizontal gestures are NOT consumed here — they bubble up the responder
+/// chain to the sidebar's swipe-to-switch-Space handler.
+final class SpacesStripWheelTracker {
+    /// Emits viewport steps: positive slides toward the end of the row.
+    let pipSteps = PassthroughSubject<Int, Never>()
+
+    private enum Axis { case undecided, horizontal, vertical }
+    private var axis: Axis = .undecided
+    private var accumulated: CGFloat = 0
+    /// Scroll travel per pip for precise deltas — one strip item plus its gap,
+    /// so the row tracks the gesture roughly 1:1.
+    private static let stepDistance: CGFloat =
+        SpacesStripView.stripItemWidth + SpacesStripView.stripSpacing
+
+    /// Routes one wheel event. Returns true when the event was consumed (the
+    /// caller must not forward it to super), false when it should continue up
+    /// the responder chain.
+    func handle(_ event: NSEvent) -> Bool {
+        // Legacy wheel events (a physical mouse wheel — no gesture phases).
+        // The row is horizontal, so a tilt wheel's sideways notches mean the
+        // same thing as vertical ones: scroll toward the row's end.
+        guard event.phase != [] || event.momentumPhase != [] else {
+            let delta = abs(event.scrollingDeltaY) >= abs(event.scrollingDeltaX)
+                ? event.scrollingDeltaY : event.scrollingDeltaX
+            guard delta != 0 else { return false }
+            if event.hasPreciseScrollingDeltas {
+                // Continuous phase-less scrolling (Magic Mouse style):
+                // accumulate real travel like a trackpad gesture.
+                accumulate(delta)
+            } else {
+                // A classic wheel notch is a discrete event whose delta unit
+                // varies by device/acceleration — step exactly one pip per
+                // notch, in the direction a vertical list would scroll.
+                pipSteps.send(delta < 0 ? 1 : -1)
+            }
+            return true
+        }
+
+        // Trackpad gesture: latch the axis once and hold it through momentum
+        // (see SpaceSwipeTracker); only vertical gestures scroll the row.
+        if event.phase == .mayBegin || event.phase == .began {
+            axis = .undecided
+            accumulated = 0
+        }
+        if axis == .undecided {
+            let dx = abs(event.scrollingDeltaX)
+            let dy = abs(event.scrollingDeltaY)
+            if dx > dy {
+                axis = .horizontal
+            } else if dy > dx {
+                axis = .vertical
+            }
+        }
+        guard axis == .vertical else { return false }
+        accumulate(event.scrollingDeltaY)
+        return true
+    }
+
+    /// Adds precise scroll travel and emits one viewport step per
+    /// `stepDistance` points, keeping the sub-step remainder. Positive travel
+    /// (scroll up / left) reveals earlier pips, so steps are sent negated.
+    private func accumulate(_ delta: CGFloat) {
+        accumulated += delta
+        let steps = Int((accumulated / Self.stepDistance).rounded(.towardZero))
+        guard steps != 0 else { return }
+        accumulated -= CGFloat(steps) * Self.stepDistance
+        pipSteps.send(-steps)
+    }
+}
+
 /// Compact active-Space header that sits between the pinned-tab strip and
 /// the regular tab list. Shows the active Space's icon + name on the left
 /// and an ellipsis affordance on the right that opens a popover listing
@@ -94,6 +174,10 @@ struct SpacesStripView: View {
     /// request only in the window currently on screen. Nil (previews) means the
     /// strip always treats itself as the owner. See `openActiveIconPicker`.
     var resolveOwnerController: () -> MainBrowserWindowController? = { nil }
+    /// Wheel-to-pip-step feed from the strip's AppKit hosting view (see
+    /// SpacesStripWheelTracker), letting the user scroll an overflowing row
+    /// directly. Nil for the horizontal chip, which renders no pip row.
+    var wheelTracker: SpacesStripWheelTracker? = nil
     @ObservedObject private var profileManager: ProfileManager = .shared
     @ObservedObject private var agentSpaceManager: AgentSpaceManager = .shared
     @Environment(\.phiAppearance) private var windowAppearance: Appearance
@@ -194,9 +278,10 @@ struct SpacesStripView: View {
     private static let iconHitSize: CGFloat = 22
     /// Uniform hit-target width of every item in the single-row strip — pips,
     /// the "…" overflow affordance, and the add button — and the gap between
-    /// them. Drives the fit arithmetic in `visiblePipCount`.
-    private static let stripItemWidth: CGFloat = 24
-    private static let stripSpacing: CGFloat = 4
+    /// them. Drives the fit arithmetic in `visiblePipCount` and the wheel
+    /// tracker's per-pip scroll distance (hence fileprivate).
+    fileprivate static let stripItemWidth: CGFloat = 24
+    fileprivate static let stripSpacing: CGFloat = 4
     /// How long a pip must stay hovered before its card appears, so brushing
     /// the cursor across the strip doesn't flash cards.
     private static let hoverCardDelay: TimeInterval = 0.3
@@ -456,6 +541,9 @@ struct SpacesStripView: View {
                 guard stripDraggingId == nil else { return }
                 ensureActivePipVisible(availableWidth: geo.size.width, animated: false)
             }
+            .onReceive(wheelStepPublisher) { step in
+                stepViewport(by: step, availableWidth: geo.size.width)
+            }
         }
         .frame(height: rowHeight)
         // Reset a drag that ends off every pip (Spacer / add button / "…" /
@@ -609,6 +697,30 @@ struct SpacesStripView: View {
             }
         } else {
             stripStartIndex = start
+        }
+    }
+
+    /// The hosting view's wheel-step feed, or a never-firing publisher for the
+    /// horizontal chip and previews, which have no wheel tracker.
+    private var wheelStepPublisher: AnyPublisher<Int, Never> {
+        wheelTracker?.pipSteps.eraseToAnyPublisher() ?? Empty<Int, Never>().eraseToAnyPublisher()
+    }
+
+    /// Slides the viewport by whole pips in response to wheel scrolling over
+    /// the strip (see SpacesStripWheelTracker), clamped at the row's ends.
+    /// Purely a manual peek at off-screen pips: the next Space switch
+    /// re-anchors the window on the active pip via `ensureActivePipVisible`.
+    /// Ignored mid-drag, where the row's arrangement is transient and sliding
+    /// it under the drop targets would scramble the reorder.
+    private func stepViewport(by step: Int, availableWidth: CGFloat) {
+        guard step != 0, stripDraggingId == nil else { return }
+        let visibleCount = visiblePipCount(availableWidth: availableWidth)
+        let maxStart = max(0, stripOrderedSpaces.count - visibleCount)
+        guard maxStart > 0 else { return }
+        let next = max(0, min(clampedStripStart(visibleCount: visibleCount) + step, maxStart))
+        guard next != stripStartIndex else { return }
+        withAnimation(.easeOut(duration: 0.15)) {
+            stripStartIndex = next
         }
     }
 
