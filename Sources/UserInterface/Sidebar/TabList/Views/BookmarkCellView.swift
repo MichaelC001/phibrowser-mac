@@ -1022,15 +1022,38 @@ private struct BookmarkFolderIconPalette {
 
     init(theme: Theme, appearance: Appearance) {
         let accent = theme.color(for: .themeColor, appearance: appearance)
+        let hsb = accent.toHSBComponents()
+
         if appearance.isDark {
-            backFill = accent.blended(withFraction: 0.25, of: .white) ?? accent
-            frontFill = accent.blended(withFraction: 0.45, of: .white) ?? accent
-            stroke = accent.blended(withFraction: 0.15, of: .black) ?? accent
+            backFill = theme.color(for: .windowBackground, appearance: appearance)
+            frontFill = Self.makeColor(
+                hue: hsb.h,
+                saturation: hsb.s + 0.07,
+                brightness: hsb.b - 0.24
+            )
+            stroke = .white
         } else {
-            backFill = accent.blended(withFraction: 0.35, of: .white) ?? accent
-            frontFill = accent.blended(withFraction: 0.65, of: .white) ?? accent
-            stroke = accent.blended(withFraction: 0.25, of: .black) ?? accent
+            backFill = Self.makeColor(
+                hue: hsb.h,
+                saturation: 0.65,
+                brightness: hsb.b - 0.15
+            )
+            frontFill = Self.makeColor(hue: hsb.h, saturation: 0.20, brightness: 1.00)
+            stroke = Self.makeColor(hue: hsb.h, saturation: 0.65, brightness: 0.30)
         }
+    }
+
+    private static func makeColor(
+        hue: CGFloat,
+        saturation: CGFloat,
+        brightness: CGFloat
+    ) -> NSColor {
+        NSColor(
+            calibratedHue: hue,
+            saturation: min(max(saturation, 0), 1),
+            brightness: min(max(brightness, 0), 1),
+            alpha: 1
+        )
     }
 }
 
