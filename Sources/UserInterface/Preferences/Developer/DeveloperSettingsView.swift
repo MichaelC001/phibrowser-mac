@@ -9,9 +9,9 @@ import SwiftUI
 /// Settings pane content for developer tooling, moved out of the General pane
 /// into its own tab. The "Allow agents to control Phi (CDP)" switch is the
 /// pane's master gate: while it is off only that card shows; turning it on
-/// reveals the allowed-agent list, the phi-browser skill installer, and the
-/// agent permissions section. Sections use the shared `SettingsDetailCard`
-/// chrome so the pane reads like General's cards.
+/// reveals the phi-browser skill installer and the allowed-agent list right
+/// under it, plus the agent permissions section. Sections use the shared
+/// `SettingsDetailCard` chrome so the pane reads like General's cards.
 struct DeveloperSettingsView: View {
     // Master switch state lives here (not in the remote-debugging section) so
     // the sibling sections can gate on it.
@@ -23,7 +23,6 @@ struct DeveloperSettingsView: View {
             VStack(alignment: .leading, spacing: 24) {
                 RemoteDebuggingSectionView(agentAccessEnabled: $agentAccessEnabled)
                 if agentAccessEnabled {
-                    SkillInstallSectionView()
                     AgentPermissionsSectionView()
                 }
             }
@@ -69,6 +68,7 @@ private struct RemoteDebuggingSectionView: View {
             VStack(alignment: .leading, spacing: 16) {
                 enableCard
                 if agentAccessEnabled {
+                    SkillInstallCardView()
                     grantsCard
                 }
             }
@@ -270,7 +270,7 @@ private struct AgentPermissionsSectionView: View {
 
 // MARK: - phi-browser skill installer
 
-private struct SkillInstallSectionView: View {
+private struct SkillInstallCardView: View {
     // A coding agent that loads skills from a folder.
     // "Install" links this app's bundled phi-browser skill into
     // <skillsDirectory>/phi-browser so the agent can drive Phi over CDP.
@@ -338,55 +338,53 @@ private struct SkillInstallSectionView: View {
     }
 
     // IDs of agents whose skills folder already links to *this* app's bundle.
-    @State private var installedTargets: Set<String> = SkillInstallSectionView.installedTargetIDs()
+    @State private var installedTargets: Set<String> = SkillInstallCardView.installedTargetIDs()
 
     var body: some View {
-        DeveloperSectionView(title: NSLocalizedString("Agent skill", comment: "Developer settings - phi-browser skill section title")) {
-            SettingsDetailCard {
-                HStack(alignment: .top, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(NSLocalizedString("Install the phi-browser skill", comment: "Developer settings - Title for installing the phi-browser agent skill"))
-                            .font(.system(size: 13))
-                            .themedForeground(.textPrimary)
-                        Text(NSLocalizedString("Links the skill bundled in this app into an AI coding agent’s skills folder so it can drive Phi over the DevTools Protocol. Pi also gets a companion extension that wakes idle sessions from Agent Transcript commands. Requires Node 22+.", comment: "Developer settings - Explanation for the phi-browser skill installer"))
-                            .font(.system(size: 11))
-                            .themedForeground(.textTertiary)
-                            .fixedSize(horizontal: false, vertical: true)
+        SettingsDetailCard {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(NSLocalizedString("Install the phi-browser skill", comment: "Developer settings - Title for installing the phi-browser agent skill"))
+                        .font(.system(size: 13))
+                        .themedForeground(.textPrimary)
+                    Text(NSLocalizedString("Links the skill bundled in this app into an AI coding agent’s skills folder so it can drive Phi over the DevTools Protocol. Pi also gets a companion extension that wakes idle sessions from Agent Transcript commands. Requires Node 22+.", comment: "Developer settings - Explanation for the phi-browser skill installer"))
+                        .font(.system(size: 11))
+                        .themedForeground(.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 12)
+                Menu {
+                    Button(NSLocalizedString("All agents", comment: "Developer settings - Menu item installing the skill for every agent")) {
+                        installAll()
                     }
-                    Spacer(minLength: 12)
-                    Menu {
-                        Button(NSLocalizedString("All agents", comment: "Developer settings - Menu item installing the skill for every agent")) {
-                            installAll()
-                        }
-                        Divider()
-                        ForEach(Self.skillTargets) { target in
-                            Button {
-                                installSkill(for: target)
-                            } label: {
-                                // The agent's brand icon leads each row; a
-                                // trailing ✓ marks agents whose skills folder
-                                // already links to THIS app's bundle (picking
-                                // one again reinstalls / refreshes the link).
-                                Label {
-                                    Text("\(target.name)  \(Self.displayPath(target.skillsDirectory))"
-                                         + (installedTargets.contains(target.id) ? "  ✓" : ""))
-                                } icon: {
-                                    Image(target.iconAsset)
-                                        .resizable()
-                                        .scaledToFit()
-                                        .frame(width: 15, height: 15)
-                                }
+                    Divider()
+                    ForEach(Self.skillTargets) { target in
+                        Button {
+                            installSkill(for: target)
+                        } label: {
+                            // The agent's brand icon leads each row; a
+                            // trailing ✓ marks agents whose skills folder
+                            // already links to THIS app's bundle (picking
+                            // one again reinstalls / refreshes the link).
+                            Label {
+                                Text("\(target.name)  \(Self.displayPath(target.skillsDirectory))"
+                                     + (installedTargets.contains(target.id) ? "  ✓" : ""))
+                            } icon: {
+                                Image(target.iconAsset)
+                                    .resizable()
+                                    .scaledToFit()
+                                    .frame(width: 15, height: 15)
                             }
                         }
-                    } label: {
-                        Text(NSLocalizedString("Add skill to…", comment: "Developer settings - Dropdown button installing the phi-browser skill for an agent"))
                     }
-                    .controlSize(.small)
-                    .fixedSize()
+                } label: {
+                    Text(NSLocalizedString("Add skill to…", comment: "Developer settings - Dropdown button installing the phi-browser skill for an agent"))
                 }
-                .padding(.vertical, 12)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .controlSize(.small)
+                .fixedSize()
             }
+            .padding(.vertical, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 

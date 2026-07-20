@@ -299,9 +299,6 @@
     "Agent permissions" : {
       "comment" : "Developer settings - Agent permissions section title"
     },
-    "Agent skill" : {
-      "comment" : "Developer settings - phi-browser skill section title"
-    },
     "Agent Transcript" : {
       "comment" : "Agent console panel - window title\nView menu - Toggle for the console mirroring the driving agent's session"
     },
