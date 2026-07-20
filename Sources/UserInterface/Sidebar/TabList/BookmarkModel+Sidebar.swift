@@ -278,7 +278,7 @@ extension Bookmark: ContextMenuRepresentable {
            state.splitGroup(forTabId: partnerTabId) == nil {
             state.formSplitFromBookmark(bookmarkGuid: guid,
                                         partnerTabId: partnerTabId,
-                                        newTabSlot: .left)
+                                        newTabSlot: .right)
             return
         }
         state.openURLAsSplit(url: url)
