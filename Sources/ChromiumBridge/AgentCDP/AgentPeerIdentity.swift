@@ -121,24 +121,71 @@ enum AgentPeerIdentity {
     /// note), not a security boundary.
     static func resolveClaimed(pid: pid_t) -> AgentIdentity? {
         guard pid > 0, processUID(pid) == getuid() else { return nil }
-        return resolve(pid: pid)
+        return resolve(pid: pid, claimed: true)
     }
 
     /// Identity of an arbitrary same-user process — the socket peer, or a
-    /// pid the peer claims to act for.
-    private static func resolve(pid peerPID: pid_t) -> AgentIdentity? {
+    /// pid the peer claims to act for (`claimed`).
+    private static func resolve(pid peerPID: pid_t, claimed: Bool = false) -> AgentIdentity? {
         let responsible = responsiblePID(startingAt: peerPID)
         let path = executablePath(responsible) ?? "pid-\(responsible)"
         let signed = signingIdentity(pid: responsible, executablePath: path)
         // A bare interpreter (e.g. a `node` CLI agent with no signed-app
         // ancestor) resolves to a per-build ad-hoc id like "node-<cdhash>",
-        // which is meaningless and brittle. Name it by the script it runs.
+        // which is meaningless and brittle. Name it by its argv[0] brand or
+        // the script it runs.
         let exeName = (path as NSString).lastPathComponent
         if scriptInterpreters.contains(exeName),
            let scripted = scriptIdentity(startingAt: peerPID) {
             return scripted
         }
+        // Pi running under a launcher (herdr, tmux, a supervisor daemon) the
+        // responsible-process walk stops on, masking pi behind the launcher's
+        // identity. Recover pi SPECIFICALLY from its self-brand, so this can
+        // only ever yield pi — never override another agent's signed grant.
+        if let pi = piIdentity(startingAt: peerPID, claimed: claimed) {
+            return pi
+        }
         return signed
+    }
+
+    /// Pi identity when this connection belongs to a pi coding-agent session
+    /// masked by a non-passthrough launcher, else nil. Pi self-identifies two
+    /// ways, and which is visible depends on the process being resolved:
+    ///   • It exports PI_CODING_AGENT=true, then spawns its tools — so every
+    ///     child that connects (the mirror heredoc, the tool shell, the
+    ///     detached daemon) inherits the marker at exec. But pi's OWN environ
+    ///     snapshot lacks it: pi sets it at runtime, after exec, and
+    ///     KERN_PROCARGS2 reflects only the exec-time environment. So the
+    ///     marker proves a pi session from the CONNECTING PEER, never from pi.
+    ///   • It rewrites argv[0] to its app name ("pi"), visible on the pi
+    ///     process itself — how we locate pi in the ancestry, and how we accept
+    ///     a detached daemon's claim of pi's pid (`claimed`, its own environ
+    ///     carrying the marker but out of reach behind the pid).
+    /// Requiring the "pi" brand on the located process keeps an unrelated
+    /// process that merely inherited the marker from being taken for pi.
+    private static func piIdentity(startingAt peerPID: pid_t,
+                                   claimed: Bool) -> AgentIdentity? {
+        guard let piPid = piBrandedAncestor(startingAt: peerPID),
+              environHasPiMarker(peerPID) || (claimed && piPid == peerPID) else {
+            return nil
+        }
+        return unsignedIdentity(name: "pi", path: "pi",
+                                exe: executablePath(piPid) ?? "pi", pid: piPid)
+    }
+
+    /// The nearest ancestor (from the peer up) that is a pi process — a script
+    /// interpreter branded argv[0]=="pi" — or nil.
+    private static func piBrandedAncestor(startingAt peerPID: pid_t) -> pid_t? {
+        var pid = peerPID
+        var guardCount = 0
+        while pid > 1 && guardCount < 32 {
+            guardCount += 1
+            if isPiBranded(pid) { return pid }
+            guard let parent = parentPID(pid), parent != pid else { break }
+            pid = parent
+        }
+        return nil
     }
 
     /// Walks the ancestry for the nearest interpreter that identifies a real
@@ -269,10 +316,41 @@ enum AgentPeerIdentity {
         return stem.isEmpty ? base : stem
     }
 
-    /// A process's argv via `KERN_PROCARGS2` (same-uid processes only, which
-    /// the ancestry always is). Layout: Int32 argc, exec_path, null padding,
-    /// then argc null-terminated argument strings.
+    /// A process's argv (see processArgsAndEnv).
     private static func processArgv(_ pid: pid_t) -> [String]? {
+        processArgsAndEnv(pid)?.argv
+    }
+
+    /// True when `pid`'s exec-time environment carries pi's session marker
+    /// (`PI_CODING_AGENT=true`). Pi sets it at runtime, so it is ABSENT from
+    /// pi's own snapshot but inherited by every child pi spawns — read it from
+    /// the connecting peer, not from pi (see piIdentity).
+    private static func environHasPiMarker(_ pid: pid_t) -> Bool {
+        processArgsAndEnv(pid)?.env.contains("PI_CODING_AGENT=true") ?? false
+    }
+
+    /// True when `pid` is a pi process: a script interpreter that rewrote its
+    /// argv[0] to the bare name "pi" (pi's `process.title = APP_NAME`, whose
+    /// default is "pi"). The brand is visible on pi itself, so this identifies
+    /// the pi pid a detached daemon claims, where the env marker is not (see
+    /// piIdentity).
+    private static func isPiBranded(_ pid: pid_t) -> Bool {
+        guard let exe = executablePath(pid),
+              scriptInterpreters.contains((exe as NSString).lastPathComponent),
+              let arg0 = processArgsAndEnv(pid)?.argv.first,
+              !arg0.contains("/") else { return false }
+        return (arg0 as NSString).lastPathComponent == "pi"
+    }
+
+    /// A process's argv and environment via `KERN_PROCARGS2` (same-uid
+    /// processes only, which the ancestry always is). Layout: Int32 argc,
+    /// exec_path, null padding, argc null-terminated argv strings, then the
+    /// null-terminated environment strings ("KEY=VALUE"). The environment is
+    /// the EXEC-time one: a variable a process sets on itself after exec is
+    /// absent, but everything it inherited (and hands to its children) is
+    /// present. Nil when unreadable — a process that exited, or a sandboxed
+    /// peer whose seatbelt denies the sysctl.
+    private static func processArgsAndEnv(_ pid: pid_t) -> (argv: [String], env: [String])? {
         var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
         var size = 0
         guard sysctl(&mib, UInt32(mib.count), nil, &size, nil, 0) == 0, size > 4 else {
@@ -302,7 +380,11 @@ enum AgentPeerIdentity {
             guard let s = nextString() else { break }
             args.append(s)
         }
-        return args
+        var env: [String] = []
+        while let s = nextString() {
+            if !s.isEmpty { env.append(s) }
+        }
+        return (args, env)
     }
 
     /// True when the socket peer runs under the same uid as this process. The
