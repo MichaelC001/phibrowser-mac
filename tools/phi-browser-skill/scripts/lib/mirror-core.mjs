@@ -162,9 +162,11 @@ export async function openPhiChannel({ agentPid = null } = {}) {
 }
 
 /**
- * Sends `entries` ([{kind, text, detail?, ts?, agent?}], oldest first — the
+ * Sends `entries` ([{kind, text, detail?, ts?, agent?, sourceId?,
+ * toolState?}], oldest first — the
  * optional `agent` names the origin CLI whose visual style the console
- * renders the line in) to the task's
+ * renders the line in; Codex's `kind: activity` updates its transient
+ * Working/Waiting tail row instead of appending history) to the task's
  * console as ONE batched agentSpace.log call, so delivery is all-or-nothing:
  * a failure re-tries the whole batch on the next tick instead of duplicating
  * an already-delivered prefix. `touch: false` marks this as mirror traffic —
@@ -183,9 +185,18 @@ export async function forwardEntries(taskId, entries, channel = null) {
       entries: entries.map((e) => ({
         kind: e.kind,
         text: String(e.text).slice(0, 4000),
-        ...(e.detail ? { detail: String(e.detail).slice(0, 500) } : {}),
+        // Pi's collapsed tool cards deliberately retain short multiline
+        // output/diff previews; every other adapter keeps the original tight
+        // secondary-line cap.
+        ...(e.detail ? { detail: String(e.detail).slice(
+          0, e.agent === 'pi' && e.kind === 'tool' ? 4000 : 500) } : {}),
         ...(e.ts ? { ts: e.ts } : {}),
         ...(e.agent ? { agent: String(e.agent).slice(0, 16) } : {}),
+        ...(e.agent === 'pi' && e.kind === 'tool' && e.sourceId
+          ? { sourceId: String(e.sourceId).slice(0, 128) } : {}),
+        ...(e.agent === 'pi' && e.kind === 'tool'
+          && ['pending', 'success', 'error'].includes(e.toolState)
+          ? { toolState: e.toolState } : {}),
       })),
     })
     if (res && res.ok === false) {

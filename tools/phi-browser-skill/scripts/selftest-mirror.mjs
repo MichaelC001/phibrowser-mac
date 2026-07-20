@@ -82,6 +82,18 @@ const sql = (db, stmt) => execFileSync('/usr/bin/sqlite3', [db, stmt], { encodin
   const a = codexToEntry({ type: 'event_msg',
                            payload: { type: 'agent_message', message: 'reply' } })
   check('codex: event_msg agent', a?.kind === 'assistant' && a.text === 'reply')
+  const started = codexToEntry({ type: 'event_msg',
+    payload: { type: 'task_started', turn_id: 'turn-1' } })
+  check('codex: task start becomes transient working state',
+        started?.kind === 'activity' && started.text === 'working')
+  const completed = codexToEntry({ type: 'event_msg',
+    payload: { type: 'task_complete', turn_id: 'turn-1' } })
+  check('codex: task completion becomes transient waiting state',
+        completed?.kind === 'activity' && completed.text === 'waiting')
+  const aborted = codexToEntry({ type: 'event_msg',
+    payload: { type: 'turn_aborted', turn_id: 'turn-1' } })
+  check('codex: aborted turn returns to waiting state',
+        aborted?.kind === 'activity' && aborted.text === 'waiting')
   check('codex: response_item message skipped (no duplicates)', codexToEntry({
     type: 'response_item', payload: { role: 'user', content: 'x' } }) === null)
   check('codex: [phi-console] echo suppressed', codexToEntry({ type: 'event_msg',
@@ -98,6 +110,36 @@ const sql = (db, stmt) => execFileSync('/usr/bin/sqlite3', [db, stmt], { encodin
   check('codex: wait call is machinery', codexToEntry({ type: 'response_item',
     payload: { type: 'function_call', name: 'wait',
       arguments: '{"cell_id":"2"}' } }) === null)
+  check('codex: wait_agent call defers to structured events', codexToEntry({
+    type: 'response_item', payload: { type: 'function_call', name: 'wait_agent',
+      arguments: '{"timeout_ms":30000}' } }) === null)
+  const waitingOne = codexToEntry({ type: 'event_msg', payload: {
+    type: 'collab_waiting_begin', receiver_thread_ids: ['thread-a'],
+    receiver_agents: [{ thread_id: 'thread-a', agent_nickname: 'Newton',
+      agent_role: 'worker' }] } })
+  check('codex: single-agent wait matches the TUI title',
+        waitingOne?.kind === 'tool' && waitingOne.text === 'Waiting for Newton [worker]'
+        && waitingOne.detail === undefined)
+  const waitingMany = codexToEntry({ type: 'event_msg', payload: {
+    type: 'collab_waiting_begin', receiver_thread_ids: ['thread-a', 'thread-b'],
+    receiver_agents: [
+      { thread_id: 'thread-a', agent_nickname: 'Newton', agent_role: 'worker' },
+      { thread_id: 'thread-b', agent_nickname: 'Kepler', agent_role: 'explorer' },
+    ] } })
+  check('codex: multi-agent wait includes indented agent details',
+        waitingMany?.text === 'Waiting for 2 agents'
+        && waitingMany.detail === 'Newton [worker]\nKepler [explorer]')
+  const finishedWaiting = codexToEntry({ type: 'event_msg', payload: {
+    type: 'collab_waiting_end', agent_statuses: [
+      { thread_id: 'thread-a', agent_nickname: 'Newton', agent_role: 'worker',
+        status: { completed: 'done' } },
+      { thread_id: 'thread-b', agent_nickname: 'Kepler', agent_role: 'explorer',
+        status: { errored: 'tool timeout' } },
+    ], statuses: {} } })
+  check('codex: wait completion includes final agent statuses',
+        finishedWaiting?.kind === 'tool' && finishedWaiting.text === 'Finished waiting'
+        && finishedWaiting.detail === 'Newton [worker]: Completed - done\n'
+          + 'Kepler [explorer]: Error - tool timeout')
   check('codex: phi heredoc suppressed', codexToEntry({ type: 'response_item',
     payload: { type: 'custom_tool_call', name: 'exec',
       input: 'const r = await tools.exec_command({ cmd: "node /x/runner.mjs" })' },
@@ -136,11 +178,70 @@ const sql = (db, stmt) => execFileSync('/usr/bin/sqlite3', [db, stmt], { encodin
   check('pi: skill-only turn is machinery', piToEntry({ type: 'message',
     message: { role: 'user', content: [{ type: 'text', text: '<skill>doc</skill>' }] },
   }) === null)
-  const a = piToEntry({ type: 'message', message: { role: 'assistant',
-    content: [{ type: 'text', text: 'reply' }] } })
-  check('pi: assistant text', a?.kind === 'assistant' && a.text === 'reply')
-  check('pi: toolResult skipped', piToEntry({ type: 'message',
-    message: { role: 'toolResult', content: [{ type: 'text', text: 'x' }] } }) === null)
+  const a = piToEntry({ type: 'message', timestamp: '2026-07-17T03:00:00Z',
+    message: { role: 'assistant', content: [
+      { type: 'thinking', thinking: 'first thought' },
+      { type: 'thinking', thinking: 'second thought' },
+      { type: 'text', text: 'reply' },
+      { type: 'toolCall', id: 'pi-bash-1', name: 'bash',
+        arguments: { command: 'printf "1\\n2\\n3\\n4\\n5\\n6\\n7\\n"', timeout: 5 } },
+    ] } })
+  check('pi: assistant preserves native block order', Array.isArray(a) && a.length === 3
+        && a[0].kind === 'thinking'
+        && a[0].text === 'first thought\n\nsecond thought'
+        && a[1].kind === 'assistant' && a[1].text === 'reply'
+        && a[2].kind === 'tool')
+  check('pi: bash call uses native title and pending card metadata',
+        a[2].text === '$ printf "1\\n2\\n3\\n4\\n5\\n6\\n7\\n" (timeout 5s)'
+        && a[2].sourceId === 'pi-bash-1' && a[2].toolState === 'pending')
+  const bashResult = piToEntry({ type: 'message', timestamp: '2026-07-17T03:00:01.200Z',
+    message: { role: 'toolResult', toolCallId: 'pi-bash-1', toolName: 'bash',
+      isError: false, content: [{ type: 'text', text: '1\n2\n3\n4\n5\n6\n7' }] } })
+  check('pi: bash result settles same card with collapsed tail and duration',
+        bashResult?.sourceId === 'pi-bash-1' && bashResult.toolState === 'success'
+        && bashResult.text.startsWith('$ printf')
+        && bashResult.detail === '... (2 earlier lines, to expand)\n3\n4\n5\n6\n7\nTook 1.2s')
+
+  const read = piToEntry({ type: 'message', message: { role: 'assistant', content: [
+    { type: 'toolCall', id: 'pi-read-1', name: 'read',
+      arguments: { path: 'src/app.ts', offset: 11, limit: 20 } }] } })
+  check('pi: read call includes native line range', read?.text === 'read src/app.ts:11-30')
+  const readResult = piToEntry({ type: 'message', message: { role: 'toolResult',
+    toolCallId: 'pi-read-1', toolName: 'read', isError: false,
+    content: [{ type: 'text', text: 'file contents stay collapsed' }] } })
+  check('pi: successful read stays collapsed', readResult?.toolState === 'success'
+        && readResult.detail === undefined)
+
+  const write = piToEntry({ type: 'message', message: { role: 'assistant', content: [
+    { type: 'toolCall', id: 'pi-write-1', name: 'write', arguments: {
+      path: 'notes.txt', content: Array.from({ length: 12 }, (_, i) => `line ${i + 1}`).join('\n'),
+    } }] } })
+  check('pi: write card previews ten lines like Pi', write?.text === 'write notes.txt'
+        && write.detail.includes('line 10\n... (2 more lines, 12 total, to expand)'))
+
+  const edit = piToEntry({ type: 'message', message: { role: 'assistant', content: [
+    { type: 'toolCall', id: 'pi-edit-1', name: 'edit',
+      arguments: { path: 'src/app.ts', edits: [{ oldText: 'old', newText: 'new' }] } }] } })
+  const editResult = piToEntry({ type: 'message', message: { role: 'toolResult',
+    toolCallId: 'pi-edit-1', toolName: 'edit', isError: false, content: [],
+    details: { diff: '  same\n-old\n+new' } } })
+  check('pi: edit result settles card with native diff', edit?.text === 'edit src/app.ts'
+        && editResult?.sourceId === 'pi-edit-1'
+        && editResult.detail === '  same\n-old\n+new')
+
+  const plumbing = piToEntry({ type: 'message', message: { role: 'assistant', content: [
+    { type: 'toolCall', id: 'pi-phi-1', name: 'bash',
+      arguments: { command: 'node tools/phi-browser-skill/scripts/runner.mjs' } }] } })
+  check('pi: phi browser plumbing call is suppressed', plumbing === null)
+  check('pi: matching plumbing result is suppressed', piToEntry({ type: 'message',
+    message: { role: 'toolResult', toolCallId: 'pi-phi-1', toolName: 'bash',
+      isError: false, content: [{ type: 'text', text: 'machinery' }] } }) === null)
+
+  const length = piToEntry({ type: 'message', message: { role: 'assistant',
+    content: [{ type: 'text', text: 'partial' }], stopReason: 'length' } })
+  check('pi: length stop matches native error', Array.isArray(length)
+        && length[0].kind === 'assistant' && length[1].kind === 'error'
+        && length[1].text.includes('maximum output token limit'))
 }
 
 // --- toEntry: Hermes -----------------------------------------------------------

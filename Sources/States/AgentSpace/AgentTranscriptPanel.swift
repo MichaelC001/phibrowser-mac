@@ -548,6 +548,26 @@ struct AgentTranscriptPanelView: View {
         static let error = adaptive(
             light: NSColor(red: 0.8, green: 0.22, blue: 0.17, alpha: 1),
             dark: NSColor(red: 1.0, green: 0.48, blue: 0.42, alpha: 1))
+        // Pi's built-in light/dark theme surfaces. Keep them separate from
+        // Phi's console chrome: they are used only by mirrored Pi rows.
+        static let piUserBackground = adaptive(
+            light: NSColor(red: 0.91, green: 0.91, blue: 0.91, alpha: 1),
+            dark: NSColor(red: 0.204, green: 0.208, blue: 0.255, alpha: 1))
+        static let piToolPendingBackground = adaptive(
+            light: NSColor(red: 0.91, green: 0.91, blue: 0.94, alpha: 1),
+            dark: NSColor(red: 0.157, green: 0.157, blue: 0.196, alpha: 1))
+        static let piToolSuccessBackground = adaptive(
+            light: NSColor(red: 0.91, green: 0.94, blue: 0.91, alpha: 1),
+            dark: NSColor(red: 0.157, green: 0.196, blue: 0.157, alpha: 1))
+        static let piToolErrorBackground = adaptive(
+            light: NSColor(red: 0.94, green: 0.91, blue: 0.91, alpha: 1),
+            dark: NSColor(red: 0.235, green: 0.157, blue: 0.157, alpha: 1))
+        static let piDiffAddition = adaptive(
+            light: NSColor(red: 0.345, green: 0.518, blue: 0.345, alpha: 1),
+            dark: NSColor(red: 0.71, green: 0.74, blue: 0.41, alpha: 1))
+        static let piDiffDeletion = adaptive(
+            light: NSColor(red: 0.667, green: 0.333, blue: 0.333, alpha: 1),
+            dark: NSColor(red: 0.8, green: 0.4, blue: 0.4, alpha: 1))
         /// Transcript content is monospaced; the chrome around it (header,
         /// status pill, hints) uses the UI font so controls read as controls,
         /// not as more console output.
@@ -594,6 +614,30 @@ struct AgentTranscriptPanelView: View {
     }
 
     private var showTaskTags: Bool { liveTasks.count > 1 && model.taskFilter == nil }
+
+    /// Codex tasks with a mirrored turn edge. Other agents keep their existing
+    /// transcript UI; browser-run state is deliberately not used as fallback.
+    private var codexActivityTasks: [AgentTask] {
+        let tasks: [AgentTask]
+        if let filter = model.taskFilter {
+            tasks = liveTasks[filter].map { [$0] } ?? []
+        } else {
+            tasks = Array(liveTasks.values)
+        }
+        return tasks.filter { codexActivity(for: $0) != nil }
+            .sorted { $0.number < $1.number }
+    }
+
+    private func codexActivity(for task: AgentTask) -> CodexTranscriptActivity? {
+        store.codexActivityByTaskId[task.taskId]
+    }
+
+    private var codexActivitySignature: String {
+        codexActivityTasks.compactMap { task -> String? in
+            guard let state = codexActivity(for: task) else { return nil }
+            return "\(task.taskId):\(state.rawValue)"
+        }.joined(separator: "|")
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -652,9 +696,9 @@ struct AgentTranscriptPanelView: View {
 
             Button {
                 if let filter = model.taskFilter {
-                    AgentTranscriptStore.shared.clear(taskId: filter)
+                    AgentTranscriptStore.shared.clearEntries(taskId: filter)
                 } else {
-                    AgentTranscriptStore.shared.clearAll(except: [])
+                    AgentTranscriptStore.shared.clearAllEntries()
                 }
             } label: {
                 headerIcon("trash")
@@ -821,7 +865,7 @@ struct AgentTranscriptPanelView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 4) {
-                    if entries.isEmpty {
+                    if entries.isEmpty && codexActivityTasks.isEmpty {
                         VStack(spacing: 8) {
                             Image(systemName: "sparkles")
                                 .font(.system(size: 18))
@@ -840,6 +884,14 @@ struct AgentTranscriptPanelView: View {
                         entryRow(entry)
                             .id(entry.id)
                     }
+                    ForEach(codexActivityTasks, id: \.taskId) { task in
+                        if let state = codexActivity(for: task) {
+                            codexActivityRow(task: task, state: state)
+                        }
+                    }
+                    if !codexActivityTasks.isEmpty {
+                        Color.clear.frame(height: 1).id("codex-transcript-activity-tail")
+                    }
                 }
                 .padding(12)
             }
@@ -848,12 +900,26 @@ struct AgentTranscriptPanelView: View {
                 // Stick to the tail unless the user is reading (pointer in
                 // the feed) — then the pill below jumps on demand.
                 guard let lastId, !feedHovered else { return }
-                proxy.scrollTo(lastId, anchor: .bottom)
+                if codexActivityTasks.isEmpty {
+                    proxy.scrollTo(lastId, anchor: .bottom)
+                } else {
+                    proxy.scrollTo("codex-transcript-activity-tail", anchor: .bottom)
+                }
+            }
+            .onChange(of: codexActivitySignature) { signature in
+                guard !signature.isEmpty, !feedHovered else { return }
+                proxy.scrollTo("codex-transcript-activity-tail", anchor: .bottom)
             }
             .overlay(alignment: .bottom) {
-                if feedHovered, let lastId = entries.last?.id {
+                if feedHovered, (!entries.isEmpty || !codexActivityTasks.isEmpty) {
                     Button {
-                        proxy.scrollTo(lastId, anchor: .bottom)
+                        if codexActivityTasks.isEmpty {
+                            if let lastId = entries.last?.id {
+                                proxy.scrollTo(lastId, anchor: .bottom)
+                            }
+                        } else {
+                            proxy.scrollTo("codex-transcript-activity-tail", anchor: .bottom)
+                        }
                     } label: {
                         Text(NSLocalizedString(
                             "Jump to latest", comment: "Agent console - scroll to newest line"))
@@ -872,18 +938,42 @@ struct AgentTranscriptPanelView: View {
         }
     }
 
+    /// Codex-style transient activity at the tail. The pulse changes opacity
+    /// in place, making the state visibly live without adding repeated rows.
+    private func codexActivityRow(task: AgentTask, state: CodexTranscriptActivity) -> some View {
+        TimelineView(.periodic(from: .now, by: 0.55)) { context in
+            let bright = Int(context.date.timeIntervalSinceReferenceDate / 0.55)
+                .isMultiple(of: 2)
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                if showTaskTags { taskTag(task.number) }
+                Text("•")
+                    .font(Palette.font)
+                    .foregroundStyle(Palette.prompt)
+                    .opacity(bright ? 1 : 0.2)
+                Text(verbatim: state == .working ? "Working…" : "Waiting…")
+                    .font(Palette.font)
+                    .foregroundStyle(Palette.dim)
+                    .opacity(bright ? 1 : 0.5)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(Text(verbatim:
+                state == .working ? "Working" : "Waiting"))
+        }
+    }
+
     /// The origin-CLI dialect of a mirrored line — which visual language the
     /// row borrows so the console reads like the driving agent's own UI.
     /// nil (app/skill-authored) keeps Phi's console style; unrecognized
     /// agents get a neutral CLI look.
     private enum Flavor {
-        case claude, codex, generic
+        case claude, codex, pi, generic
 
         init?(_ agent: String?) {
             switch agent {
             case nil: return nil
             case "claude": self = .claude
             case "codex": self = .codex
+            case "pi": self = .pi
             default: self = .generic
             }
         }
@@ -914,15 +1004,21 @@ struct AgentTranscriptPanelView: View {
             // own transcript instead of a wall of literal markup. Claude Code
             // opens every reply block with its ⏺ bullet; the other CLIs set
             // prose plain.
-            HStack(alignment: .top, spacing: 6) {
-                if showTaskTags { taskTag(entry.taskNumber) }
-                if entry.kind == .assistant, Flavor(entry.agent) == .claude {
-                    Text("⏺")
-                        .font(Palette.font)
-                        .foregroundStyle(Palette.text)
+            Group {
+                if entry.kind == .assistant, Flavor(entry.agent) == .pi {
+                    piAssistantRow(entry)
+                } else {
+                    HStack(alignment: .top, spacing: 6) {
+                        if showTaskTags { taskTag(entry.taskNumber) }
+                        if entry.kind == .assistant, Flavor(entry.agent) == .claude {
+                            Text("⏺")
+                                .font(Palette.font)
+                                .foregroundStyle(Palette.text)
+                        }
+                        markdownBlock(entry.text, baseColor: color(for: entry.kind))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
-                markdownBlock(entry.text, baseColor: color(for: entry.kind))
-                    .frame(maxWidth: .infinity, alignment: .leading)
             }
             .textSelection(.enabled)
         case .thinking:
@@ -930,42 +1026,133 @@ struct AgentTranscriptPanelView: View {
             // thinking apart from the real reply. Inline markdown only:
             // Codex headlines arrive as **bold** runs and lose nothing
             // without block structure.
-            HStack(alignment: .top, spacing: 6) {
-                if showTaskTags { taskTag(entry.taskNumber) }
-                if Flavor(entry.agent) == .claude {
-                    Text("✻")
-                        .font(Palette.font)
-                        .foregroundStyle(Palette.faint)
-                }
-                inlineText(entry.text)
-                    .font(Palette.font.italic())
-                    .foregroundStyle(Palette.faint)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .textSelection(.enabled)
-        case .action, .status, .error, .tool:
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                if showTaskTags { taskTag(entry.taskNumber) }
-                if let glyph = glyph(for: entry) {
-                    Text(glyph.symbol)
-                        .font(Palette.font)
-                        .foregroundStyle(glyph.color)
-                }
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(entry.text)
-                        .font(Palette.font)
-                        .foregroundStyle(color(for: entry.kind))
-                        .fixedSize(horizontal: false, vertical: true)
-                    // Detail hangs under its own line inside the column, so
-                    // it stays aligned whether or not task tags are shown.
-                    if let detail = entry.detail {
-                        detailRow(detail, elbow: Flavor(entry.agent) == .codex ? "└" : "⎿")
+            Group {
+                if Flavor(entry.agent) == .pi {
+                    piThinkingRow(entry)
+                } else {
+                    HStack(alignment: .top, spacing: 6) {
+                        if showTaskTags { taskTag(entry.taskNumber) }
+                        if Flavor(entry.agent) == .claude {
+                            Text("✻")
+                                .font(Palette.font)
+                                .foregroundStyle(Palette.faint)
+                        }
+                        inlineText(entry.text)
+                            .font(Palette.font.italic())
+                            .foregroundStyle(Palette.faint)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
             }
             .textSelection(.enabled)
+        case .action, .status, .error, .tool:
+            if entry.kind == .tool, Flavor(entry.agent) == .pi {
+                piToolRow(entry)
+            } else {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    if showTaskTags { taskTag(entry.taskNumber) }
+                    if let glyph = glyph(for: entry) {
+                        Text(glyph.symbol)
+                            .font(Palette.font)
+                            .foregroundStyle(glyph.color)
+                    }
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(entry.text)
+                            .font(Palette.font)
+                            .foregroundStyle(color(for: entry.kind))
+                            .fixedSize(horizontal: false, vertical: true)
+                        // Detail hangs under its own line inside the column,
+                        // so it stays aligned with or without task tags.
+                        if let detail = entry.detail {
+                            detailRow(
+                                detail,
+                                elbow: Flavor(entry.agent) == .codex ? "└" : "⎿")
+                        }
+                    }
+                }
+                .textSelection(.enabled)
+            }
         }
+    }
+
+    /// Pi renders assistant Markdown without a bullet or frame, indented by
+    /// its output padding and separated from the preceding block.
+    private func piAssistantRow(_ entry: AgentTranscriptEntry) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            if showTaskTags { taskTag(entry.taskNumber) }
+            markdownBlock(entry.text, baseColor: Palette.text)
+                .padding(.horizontal, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.top, 6)
+    }
+
+    /// Pi's visible reasoning is an indented, italic Markdown section with
+    /// its muted thinking color and no leading glyph.
+    private func piThinkingRow(_ entry: AgentTranscriptEntry) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            if showTaskTags { taskTag(entry.taskNumber) }
+            markdownBlock(entry.text, baseColor: Palette.faint)
+                .italic()
+                .padding(.horizontal, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.top, 6)
+    }
+
+    /// Pi's tool execution is one full-width card. Its background moves from
+    /// pending to success/error when the paired tool-result record arrives.
+    private func piToolRow(_ entry: AgentTranscriptEntry) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            if showTaskTags { taskTag(entry.taskNumber) }
+            VStack(alignment: .leading, spacing: 5) {
+                Text(entry.text)
+                    .font(Palette.font.weight(.semibold))
+                    .foregroundStyle(Palette.text)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let detail = entry.detail, !detail.isEmpty {
+                    piToolDetail(detail)
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 7)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(piToolBackground(entry.piToolState),
+                        in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+        }
+        .textSelection(.enabled)
+    }
+
+    private func piToolBackground(_ state: PiTranscriptToolState?) -> Color {
+        switch state {
+        case .success: return Palette.piToolSuccessBackground
+        case .error: return Palette.piToolErrorBackground
+        case .pending, nil: return Palette.piToolPendingBackground
+        }
+    }
+
+    private func piToolDetail(_ detail: String) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(detail.split(separator: "\n", omittingEmptySubsequences: false)
+                .enumerated()), id: \.offset) { _, line in
+                let text = String(line)
+                Text(verbatim: text.isEmpty ? " " : text)
+                    .font(Palette.fontSmall)
+                    .foregroundStyle(piToolDetailColor(text))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func piToolDetailColor(_ line: String) -> Color {
+        if line.hasPrefix("+") && !line.hasPrefix("+++") {
+            return Palette.piDiffAddition
+        }
+        if line.hasPrefix("-") && !line.hasPrefix("---") {
+            return Palette.piDiffDeletion
+        }
+        return Palette.dim
     }
 
     /// A command typed into THIS console: the tinted block is the visual
@@ -997,12 +1184,19 @@ struct AgentTranscriptPanelView: View {
 
     /// A prompt mirrored from the driving agent's own session, in the origin
     /// CLI's look: Claude Code prefixes prompts with `>`, Codex quotes them
-    /// behind a ▌ bar. The tinted block stays reserved for commands typed
-    /// into this console.
+    /// behind a ▌ bar, and Pi uses its padded user-message surface.
     private func mirroredUserRow(_ entry: AgentTranscriptEntry, flavor: Flavor) -> some View {
         HStack(alignment: .top, spacing: 6) {
             if showTaskTags { taskTag(entry.taskNumber) }
-            if flavor == .codex {
+            if flavor == .pi {
+                markdownBlock(entry.text, baseColor: Palette.text)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 7)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Palette.piUserBackground,
+                                in: RoundedRectangle(cornerRadius: 5,
+                                                     style: .continuous))
+            } else if flavor == .codex {
                 markdownBlock(entry.text, baseColor: Palette.text)
                     .padding(.leading, 9)
                     .overlay(alignment: .leading) {

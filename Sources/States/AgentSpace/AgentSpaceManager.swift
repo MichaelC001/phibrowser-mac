@@ -954,11 +954,15 @@ final class AgentSpaceManager: ObservableObject {
     /// time so backfilled prose sorts into its true place.
     func appendTranscript(taskId: String, kind: AgentTranscriptEntry.Kind,
                           text: String, detail: String? = nil,
-                          agent: String? = nil, timestamp: Date = Date()) {
+                          agent: String? = nil,
+                          piToolCallId: String? = nil,
+                          piToolState: PiTranscriptToolState? = nil,
+                          timestamp: Date = Date()) {
         guard let spaceId = spaceIdByTaskId[taskId],
               let task = tasksBySpaceId[spaceId] else { return }
         AgentTranscriptStore.shared.append(
             taskId: taskId, kind: kind, text: text, detail: detail, agent: agent,
+            piToolCallId: piToolCallId, piToolState: piToolState,
             taskNumber: task.number, timestamp: timestamp)
     }
 

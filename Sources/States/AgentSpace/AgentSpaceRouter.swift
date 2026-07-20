@@ -317,16 +317,39 @@ enum AgentSpaceRouter {
         MainActor.assumeIsolated {
             for item in items {
                 guard let text = item["text"] as? String else { continue }
+                // Mirror turn edges drive a live tail row; they replace one
+                // another and deliberately never enter transcript history.
+                if item["kind"] as? String == "activity" {
+                    if item["agent"] as? String == "codex",
+                       let activity = CodexTranscriptActivity(rawValue: text) {
+                        AgentTranscriptStore.shared.setCodexActivity(
+                            taskId: taskId, activity: activity)
+                    }
+                    // Activity is a Codex-only control record. Drop the
+                    // reserved kind for every other origin instead of
+                    // degrading it into a visible action line.
+                    continue
+                }
                 var kind = AgentTranscriptEntry.Kind(rawValue: item["kind"] as? String ?? "")
                     ?? .action
                 // `status` and `round` are app lifecycle lines (ownership
                 // flips, round edges) — reserved so a driver cannot forge
                 // "You took control"-style entries in its console.
                 if kind == .status || kind == .round { kind = .action }
+                let agent = item["agent"] as? String
+                // Pairing metadata is reserved for Pi tool cards. Other
+                // agents retain append-only transcript semantics even if a
+                // caller sends similarly named fields.
+                let isPiTool = agent == "pi" && kind == .tool
                 AgentSpaceManager.shared.appendTranscript(
                     taskId: taskId, kind: kind, text: text,
                     detail: item["detail"] as? String,
-                    agent: item["agent"] as? String,
+                    agent: agent,
+                    piToolCallId: isPiTool ? item["sourceId"] as? String : nil,
+                    piToolState: isPiTool
+                        ? (item["toolState"] as? String).flatMap(
+                            PiTranscriptToolState.init(rawValue:))
+                        : nil,
                     timestamp: Self.clampedLogTimestamp(item["ts"] as? Double))
             }
         }

@@ -52,10 +52,29 @@ struct AgentTranscriptEntry: Identifiable, Equatable {
     /// >/⏺/⎿ beats vs Codex's ▌/•/└ cells). nil for app- and skill-authored
     /// lines, which keep Phi's own console style.
     let agent: String?
+    /// Pi emits a tool call and its result as separate session records. These
+    /// Pi-only fields let the result settle the original card in place,
+    /// matching Pi's live transcript instead of adding a duplicate row.
+    let piToolCallId: String?
+    let piToolState: PiTranscriptToolState?
     /// The task's pip ordinal at append time, so the merged feed can tag
     /// lines "R1"/"R2" when several tasks are live without re-resolving
     /// tasks that have since completed.
     let taskNumber: Int
+}
+
+enum PiTranscriptToolState: String {
+    case pending
+    case success
+    case error
+}
+
+/// Ephemeral Codex state displayed at the transcript tail. Unlike an
+/// `AgentTranscriptEntry`, this is replaced in place and never becomes part
+/// of transcript history; no other mirrored agent uses this channel.
+enum CodexTranscriptActivity: String {
+    case working
+    case waiting
 }
 
 /// Bounded per-task transcript buffers, separate from `AgentTask` on purpose:
@@ -78,8 +97,10 @@ final class AgentTranscriptStore: ObservableObject {
     static let maxTerseChars = 300
     static let maxProseChars = 4000
     static let maxDetailChars = 500
+    static let maxPiToolDetailChars = 4000
 
     @Published private(set) var entriesByTaskId: [String: [AgentTranscriptEntry]] = [:]
+    @Published private(set) var codexActivityByTaskId: [String: CodexTranscriptActivity] = [:]
 
     /// Wall-clock of the last append per task — the continuity signal for
     /// task re-creates (see `AgentSpaceManager.beginTranscript`). Kept apart
@@ -96,23 +117,69 @@ final class AgentTranscriptStore: ObservableObject {
     /// place in the feed rather than after the actions it introduced.
     func append(taskId: String, kind: AgentTranscriptEntry.Kind,
                 text: String, detail: String? = nil, agent: String? = nil,
+                piToolCallId: String? = nil,
+                piToolState: PiTranscriptToolState? = nil,
                 taskNumber: Int, timestamp: Date = Date()) {
-        nextSeq += 1
+        let sourceAgent = agent.map { String($0.prefix(16)) }
+        let isPiTool = kind == .tool && sourceAgent == "pi"
+        let sourceId = isPiTool
+            ? piToolCallId.map {
+                Self.sanitize($0, cap: 128, keepBreaks: false)
+            }.flatMap { $0.isEmpty ? nil : $0 }
+            : nil
         // Conversation lines keep their paragraph shape; terse lines collapse
-        // to one line.
+        // to one line. Pi's tool title may itself be a multiline shell command.
         let multiline = kind == .assistant || kind == .user || kind == .narration
-            || kind == .thinking
+            || kind == .thinking || isPiTool
+        let sanitizedText = Self.sanitize(
+            text, cap: multiline ? Self.maxProseChars : Self.maxTerseChars,
+            keepBreaks: multiline)
+        let sanitizedDetail = detail.map {
+            Self.sanitize(
+                $0,
+                cap: isPiTool ? Self.maxPiToolDetailChars : Self.maxDetailChars,
+                keepBreaks: kind == .tool && (sourceAgent == "codex" || isPiTool))
+        }
+        var entries = entriesByTaskId[taskId] ?? []
+
+        // A Pi tool result replaces its pending call card. Preserve identity,
+        // ordering, and the authored-at time so the card never jumps in a
+        // merged multi-task feed when it settles.
+        if let sourceId,
+           let index = entries.lastIndex(where: {
+               $0.agent == "pi" && $0.piToolCallId == sourceId && $0.kind == .tool
+           }) {
+            let old = entries[index]
+            entries[index] = AgentTranscriptEntry(
+                id: old.id, timestamp: old.timestamp, seq: old.seq,
+                kind: kind,
+                // The result record does not repeat arguments. Preserve the
+                // pending card's native title even if the mirror daemon was
+                // restarted and lost its in-memory call-display cache.
+                text: piToolState == .pending ? sanitizedText : old.text,
+                detail: sanitizedDetail,
+                agent: sourceAgent, piToolCallId: sourceId,
+                piToolState: piToolState, taskNumber: old.taskNumber)
+            entriesByTaskId[taskId] = entries
+            lastAppendByTaskId[taskId] = Date()
+            return
+        }
+
+        nextSeq += 1
         let entry = AgentTranscriptEntry(
             id: UUID(),
             timestamp: timestamp,
             seq: nextSeq,
             kind: kind,
-            text: Self.sanitize(text, cap: multiline ? Self.maxProseChars : Self.maxTerseChars,
-                                keepBreaks: multiline),
-            detail: detail.map { Self.sanitize($0, cap: Self.maxDetailChars, keepBreaks: false) },
-            agent: agent.map { String($0.prefix(16)) },
+            text: sanitizedText,
+            // Codex collaboration cells carry one indented agent/status per
+            // line; Pi tool cards carry multiline output and diffs. Preserve
+            // breaks only for those two origin-specific representations.
+            detail: sanitizedDetail,
+            agent: sourceAgent,
+            piToolCallId: sourceId,
+            piToolState: isPiTool ? piToolState : nil,
             taskNumber: taskNumber)
-        var entries = entriesByTaskId[taskId] ?? []
         entries.append(entry)
         if entries.count > Self.maxEntriesPerTask {
             entries.removeFirst(entries.count - Self.maxEntriesPerTask)
@@ -126,9 +193,25 @@ final class AgentTranscriptStore: ObservableObject {
         lastAppendByTaskId[taskId]
     }
 
-    func clear(taskId: String) {
+    func setCodexActivity(taskId: String, activity: CodexTranscriptActivity) {
+        codexActivityByTaskId[taskId] = activity
+    }
+
+    /// User-facing feed clear: Codex's live activity row is state, not
+    /// history, so it stays visible while stored lines are removed.
+    func clearEntries(taskId: String) {
         entriesByTaskId[taskId] = nil
         lastAppendByTaskId[taskId] = nil
+    }
+
+    func clearAllEntries() {
+        entriesByTaskId = [:]
+        lastAppendByTaskId = [:]
+    }
+
+    func clear(taskId: String) {
+        clearEntries(taskId: taskId)
+        codexActivityByTaskId[taskId] = nil
     }
 
     /// Frees buffers of tasks no longer alive — called when the console
@@ -136,6 +219,7 @@ final class AgentTranscriptStore: ObservableObject {
     /// outlives the last reader.
     func clearAll(except liveTaskIds: Set<String>) {
         entriesByTaskId = entriesByTaskId.filter { liveTaskIds.contains($0.key) }
+        codexActivityByTaskId = codexActivityByTaskId.filter { liveTaskIds.contains($0.key) }
         lastAppendByTaskId = lastAppendByTaskId.filter { liveTaskIds.contains($0.key) }
     }
 

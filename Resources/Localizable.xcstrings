@@ -236,7 +236,13 @@
     "© %d Phinomenon. All rights reserved." : {
       "comment" : "About window - Copyright notice at bottom"
     },
-    "⎿" : {
+    ">" : {
+
+    },
+    "⏺" : {
+
+    },
+    "✻" : {
 
     },
     "A new version of Phi is available" : {
