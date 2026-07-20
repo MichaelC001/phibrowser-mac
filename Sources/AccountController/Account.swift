@@ -26,13 +26,6 @@ class Account {
     init(userID: String, userInfo: User? = nil) {
         self.userID = userID
         self.userInfo = userInfo
-        if let userInfo {
-            if let sub = userInfo.sub {
-                PostHogSDK.shared.identify(sub)
-            }
-        }
-        
-        SentryService.configureUser(self)
     }
     
     var userDataStorage: URL {
@@ -68,6 +61,7 @@ class AccountController {
     static let shared = AccountController()
     var account: Account? {
         didSet {
+            syncTelemetryIdentity(for: account)
             NotificationCenter.default.post(name: .mainAccountChanged, object: account)
             /// FIXME: Chromium builds the main menu before the account exists, but shortcut overrides
             /// are account-scoped. Reloading here works, but this probably deserves a cleaner hook.
@@ -75,6 +69,22 @@ class AccountController {
             AppLogInfo("account controller created: \(String(describing: account?.userID))")
             prefetchProfile(for: account)
         }
+    }
+
+    private func syncTelemetryIdentity(for account: Account?) {
+        SentryService.configureUser(account)
+
+        guard let bridge = ChromiumLauncher.sharedInstance().bridge,
+              bridge.isMetricsReportingEnabled(),
+              let sub = account?.userInfo?.sub else {
+            PostHogSDK.shared.reset()
+            return
+        }
+
+        let properties = bridge.getMetricsClientId().map {
+            ["chromium_metrics_client_id": $0] as [String: Any]
+        }
+        PostHogSDK.shared.identify(sub, userProperties: properties)
     }
 
     /// Best-effort refresh of the existing per-account profile cache. The

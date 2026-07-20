@@ -8,7 +8,6 @@ import Cocoa
 import SwiftUI
 import Auth0
 import WebKit
-import PostHog
 
 extension Notification.Name {
     static let loginStatusRefreshCompleted = Notification.Name("LoginStatusRefreshCompleted")
@@ -132,12 +131,6 @@ class LoginController {
         let user = AuthManager.retriveUserInfo(from: credentials)
         let userID = user.sub ?? Account.defaultUid
         AppLogDebug("🔐 [Login] Retrieved user info - userID: \(userID), name: \(user.name ?? "nil"), email: \(user.email ?? "nil")")
-
-        // Restore PostHog identity for returning users — covers session
-        // recovery on launch, where no explicit login event fires.
-        if let sub = user.sub {
-            PostHogSDK.shared.identify(sub)
-        }
 
         if let current = AccountController.shared.account {
             AppLogDebug("🔐 [Login] Current account exists: \(current.userID)")
