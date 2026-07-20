@@ -83,6 +83,16 @@ it drives a throwaway hidden Space against a local HTTP server, ~60s:
 node ~/.claude/skills/phi-browser/scripts/selftest.mjs
 ```
 
+For an eyes-on check of what a WATCHING user sees — the handoff prompt and
+the mirrored input animations (cursor glides, click ripples, paced typing,
+scrolling) — run the interactive demo and follow its terminal instructions:
+it hands you control, and performs every input primitive on a local demo
+page once you click "Hand back" (~2 min of your attention):
+
+```bash
+node ~/.claude/skills/phi-browser/scripts/selftest-animations.mjs
+```
+
 ## 4. Session mirror (automatic, two-way)
 
 The Agent Transcript panel (View ▸ Agent Transcript) always shows the browser
