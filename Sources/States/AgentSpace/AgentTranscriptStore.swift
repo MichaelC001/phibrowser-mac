@@ -71,10 +71,49 @@ enum PiTranscriptToolState: String {
 
 /// Ephemeral Codex state displayed at the transcript tail. Unlike an
 /// `AgentTranscriptEntry`, this is replaced in place and never becomes part
-/// of transcript history; no other mirrored agent uses this channel.
+/// of transcript history.
 enum CodexTranscriptActivity: String {
     case working
     case waiting
+}
+
+/// Ephemeral Claude Code state displayed at the transcript tail — the
+/// terminal's spinner status line ("✽ Mulling… (6s · thinking with xhigh
+/// effort)") while a turn runs, and its resting past-tense summary
+/// ("Cogitated for 28s · 1 shell still running") once it ends. Replaced in
+/// place like Codex's working/waiting row; never part of history. Parsed
+/// from the mirror daemon's JSON activity payload (see mirror-claude.mjs
+/// turnActivity).
+struct ClaudeTranscriptActivity: Equatable {
+    enum Phase: String {
+        case working
+        case idle
+    }
+
+    let phase: Phase
+    /// Turn start (epoch ms). Drives the live elapsed readout and seeds the
+    /// turn's whimsical verb, so the spinner and the later summary conjugate
+    /// the SAME verb. nil when the mirror missed the turn's start (daemon
+    /// restarted mid-turn).
+    let startTimestampMs: Double?
+    /// Claude Code's configured reasoning effort ("xhigh"), or nil.
+    let effort: String?
+    /// Total turn duration from the session's turn_duration record (idle).
+    let durationMs: Double?
+    /// Background shells still running when the turn ended (idle).
+    let shellsRunning: Int
+
+    init?(payloadText: String) {
+        guard let data = payloadText.data(using: .utf8),
+              let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let phase = (obj["phase"] as? String).flatMap(Phase.init(rawValue:))
+        else { return nil }
+        self.phase = phase
+        self.startTimestampMs = (obj["startTs"] as? NSNumber)?.doubleValue
+        self.effort = (obj["effort"] as? String).map { String($0.prefix(16)) }
+        self.durationMs = (obj["durationMs"] as? NSNumber)?.doubleValue
+        self.shellsRunning = max(0, (obj["shellsRunning"] as? NSNumber)?.intValue ?? 0)
+    }
 }
 
 /// Bounded per-task transcript buffers, separate from `AgentTask` on purpose:
@@ -101,6 +140,7 @@ final class AgentTranscriptStore: ObservableObject {
 
     @Published private(set) var entriesByTaskId: [String: [AgentTranscriptEntry]] = [:]
     @Published private(set) var codexActivityByTaskId: [String: CodexTranscriptActivity] = [:]
+    @Published private(set) var claudeActivityByTaskId: [String: ClaudeTranscriptActivity] = [:]
 
     /// Wall-clock of the last append per task — the continuity signal for
     /// task re-creates (see `AgentSpaceManager.beginTranscript`). Kept apart
@@ -197,8 +237,12 @@ final class AgentTranscriptStore: ObservableObject {
         codexActivityByTaskId[taskId] = activity
     }
 
-    /// User-facing feed clear: Codex's live activity row is state, not
-    /// history, so it stays visible while stored lines are removed.
+    func setClaudeActivity(taskId: String, activity: ClaudeTranscriptActivity) {
+        claudeActivityByTaskId[taskId] = activity
+    }
+
+    /// User-facing feed clear: the mirrored live activity rows are state, not
+    /// history, so they stay visible while stored lines are removed.
     func clearEntries(taskId: String) {
         entriesByTaskId[taskId] = nil
         lastAppendByTaskId[taskId] = nil
@@ -212,6 +256,7 @@ final class AgentTranscriptStore: ObservableObject {
     func clear(taskId: String) {
         clearEntries(taskId: taskId)
         codexActivityByTaskId[taskId] = nil
+        claudeActivityByTaskId[taskId] = nil
     }
 
     /// Frees buffers of tasks no longer alive — called when the console
@@ -220,6 +265,7 @@ final class AgentTranscriptStore: ObservableObject {
     func clearAll(except liveTaskIds: Set<String>) {
         entriesByTaskId = entriesByTaskId.filter { liveTaskIds.contains($0.key) }
         codexActivityByTaskId = codexActivityByTaskId.filter { liveTaskIds.contains($0.key) }
+        claudeActivityByTaskId = claudeActivityByTaskId.filter { liveTaskIds.contains($0.key) }
         lastAppendByTaskId = lastAppendByTaskId.filter { liveTaskIds.contains($0.key) }
     }
 

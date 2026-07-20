@@ -112,6 +112,32 @@ export function pidAlive(pid) {
   }
 }
 
+/**
+ * Marks the session's control file with a deferred-completion intent (see
+ * helpers.complete): the tailer keeps mirroring until the driving session's
+ * final reply has landed in the console, then sends agentSpace.complete
+ * itself and exits — so the transcript carries the answer BEFORE the "Task
+ * completed" line. Returns true when a live daemon holds this task (the
+ * intent will be honored), false when there is nothing to defer to — the
+ * caller must complete directly.
+ */
+export function requestDeferredComplete(sessionKey, taskId, completion) {
+  const ctl = readDaemonControl(sessionKey)
+  if (!ctl || ctl.taskId !== taskId || !ctl.pid || !pidAlive(ctl.pid)) return false
+  writeDaemonControl(sessionKey, {
+    ...ctl,
+    // Refresh the control TTL: the grace window must not race the
+    // stale-control exit.
+    ts: Date.now(),
+    completing: {
+      status: completion.status === 'failure' ? 'failure' : 'success',
+      ...(completion.message ? { message: String(completion.message) } : {}),
+      ts: Date.now(),
+    },
+  })
+  return true
+}
+
 // --- per-session transcript cursor ------------------------------------------
 
 // The cursor is a count of non-empty lines into the session's append-only
@@ -165,8 +191,9 @@ export async function openPhiChannel({ agentPid = null } = {}) {
  * Sends `entries` ([{kind, text, detail?, ts?, agent?, sourceId?,
  * toolState?}], oldest first — the
  * optional `agent` names the origin CLI whose visual style the console
- * renders the line in; Codex's `kind: activity` updates its transient
- * Working/Waiting tail row instead of appending history) to the task's
+ * renders the line in; `kind: activity` updates the origin CLI's transient
+ * tail row — Codex's Working/Waiting, Claude Code's spinner/summary status
+ * line — instead of appending history) to the task's
  * console as ONE batched agentSpace.log call, so delivery is all-or-nothing:
  * a failure re-tries the whole batch on the next tick instead of duplicating
  * an already-delivered prefix. `touch: false` marks this as mirror traffic —

@@ -2928,6 +2928,14 @@ final class SpaceWindowSlot: ObservableObject {
             // would keep resolving the previously-visible window for a now-hidden
             // Space and surface it directly instead of routing through the slot.
             manager?.pushSpaceStateToChromium()
+            // Followers of "which window is the slot showing" (the docked
+            // agent console re-homes on this) need a signal that also covers
+            // PROGRAMMATIC switches: while Phi is inactive (the user is in
+            // their terminal and the code agent switches Spaces),
+            // makeKeyAndOrderFront cannot make the window key, so
+            // didBecomeKey-based following never fires.
+            NotificationCenter.default.post(
+                name: .spaceSlotVisibleWindowDidChange, object: self)
         }
     }
 
@@ -6421,4 +6429,13 @@ private final class SidebarSwapOverlay: NSView {
         enteringImageView.layer?.removeAllAnimations()
         removeFromSuperview()
     }
+}
+
+extension Notification.Name {
+    /// Posted by a `SpaceWindowSlot` (as the notification object) whenever the
+    /// window it shows on screen changes — user switches and programmatic ones
+    /// alike. Unlike `NSWindow.didBecomeKeyNotification`, this also fires while
+    /// the app is inactive, where an ordered-front window cannot become key.
+    static let spaceSlotVisibleWindowDidChange =
+        Notification.Name("PhiSpaceSlotVisibleWindowDidChange")
 }

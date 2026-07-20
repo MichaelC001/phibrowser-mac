@@ -21,7 +21,12 @@
 // ensureAgentSpace spawns it detached (arg: session key) after writing the
 // session's daemon control file. Lifetime is bounded by construction —
 // every exit path is deliberate:
-//   - control file deleted (complete() ran) or claimed by another pid
+//   - control file deleted (a mirrorless complete() ran) or claimed by
+//     another pid
+//   - a deferred completion finished: complete() marks the control file
+//     `completing`, this daemon mirrors until the driver's final reply has
+//     landed, then sends agentSpace.complete itself and exits — so the
+//     console reads the answer BEFORE its "Task completed" line
 //   - control ts stale: no heredoc refreshed it for CONTROL_TTL_MS
 //   - the driving agent process died (control.agentPid gone)
 //   - the task is unknown to the app (ended); a later round respawns us
@@ -68,6 +73,14 @@ const MAX_PENDING = 500
 // Delivery attempts per console command before giving up with a console
 // error line (gateway unreachable and the like).
 const MAX_DELIVER_ATTEMPTS = 5
+// Deferred completion (helpers.complete wrote ctl.completing): the daemon
+// keeps mirroring so the driver's final reply lands in the console, then
+// finishes the task itself. "The reply has landed" = a turn-end record
+// arrived after the intent (Claude's turn_duration / Codex's waiting edge),
+// or the transcript stayed quiet this long — capped so a session that never
+// goes quiet can't hold the Space open forever.
+const COMPLETE_QUIET_MS = 8 * 1000
+const COMPLETE_MAX_WAIT_MS = 90 * 1000
 
 const sessionKey = process.argv[2]
 process.title = 'phi-mirror-tailer'
@@ -118,6 +131,12 @@ async function main() {
   // First heartbeat after one interval — the round that spawned us is live
   // and already refreshing the clock itself.
   let lastHeartbeat = Date.now()
+  // Deferred-completion state: when the last transcript line arrived (the
+  // quiet-window clock) and whether a turn-end record has been seen since
+  // the completion intent was written.
+  let lastMirrorActivity = Date.now()
+  let sawTurnEndAfterComplete = false
+
   const ensureChannel = async () => {
     if (channel) return channel
     // Name the driving agent session on the connection: this daemon is
@@ -133,15 +152,38 @@ async function main() {
   }
   const dropChannel = () => { try { channel?.close() } catch {}; channel = null }
 
+  // Best-effort completion for exit paths while a deferred-complete intent
+  // is pending: the agent asked for it before the session closed, and
+  // without this the task would linger to TTL expiry with no "Task
+  // completed" line at all.
+  const finalizeDeferredComplete = async (control) => {
+    try {
+      await (await ensureChannel()).send('agentSpace.complete', {
+        taskId: control.taskId,
+        status: control.completing.status === 'failure' ? 'failure' : 'success',
+        ...(control.completing.message
+          ? { message: String(control.completing.message) } : {}),
+      })
+    } catch {}
+    clearDaemonControl(sessionKey)
+  }
+
   for (;;) {
     ctl = readDaemonControl(sessionKey)
     if (!ctl || ctl.pid !== process.pid) return       // dismissed or superseded
     if (Date.now() - (ctl.ts || 0) > CONTROL_TTL_MS) return
-    if (ctl.agentPid && !pidAlive(ctl.agentPid)) return  // session closed
+    if (ctl.agentPid && !pidAlive(ctl.agentPid)) {    // session closed
+      if (ctl.completing && ctl.taskId) await finalizeDeferredComplete(ctl)
+      return
+    }
 
     // session → console
     let fresh
-    try { fresh = tail.readNew() } catch { return }   // transcript gone
+    try { fresh = tail.readNew() } catch {            // transcript gone
+      if (ctl.completing && ctl.taskId) await finalizeDeferredComplete(ctl)
+      return
+    }
+    if (fresh.length) lastMirrorActivity = Date.now()
     pending.push(...fresh)
     while (pending.length && pending[0].index < cursor) pending.shift()
     if (pending.length > MAX_PENDING) pending.splice(0, pending.length - MAX_PENDING)
@@ -157,6 +199,17 @@ async function main() {
         // Codex's ▌/•/└ cells).
         for (const one of Array.isArray(e) ? e : [e]) {
           entries.push({ ...one, agent: ctl.format || 'claude' })
+          // A turn-end record authored AFTER the deferred-complete intent
+          // means the driver's final reply is fully written — the signal to
+          // finish the task without waiting out the quiet window. Claude's
+          // idle activity carries a JSON payload; Codex's is the literal
+          // "waiting".
+          if (ctl.completing && one.kind === 'activity'
+              && (one.ts || 0) >= (Number(ctl.completing.ts) || 0)
+              && (one.text === 'waiting'
+                  || String(one.text).includes('"phase":"idle"'))) {
+            sawTurnEndAfterComplete = true
+          }
         }
       }
       if (!known) {
@@ -175,6 +228,32 @@ async function main() {
       } catch (err) {
         if (String(err && err.message).includes('unknown_task')) return
         dropChannel()  // transient (Phi restarting): retry next tick
+      }
+    }
+
+    // Deferred completion: once the final reply has landed (turn end seen,
+    // quiet window elapsed, or the hard cap) and every mirrored line is
+    // flushed, finish the task and exit. A failed send retries next tick.
+    if (ctl.completing && ctl.taskId && pending.length === 0) {
+      const intentTs = Number(ctl.completing.ts) || lastMirrorActivity
+      const quiet = Date.now() - Math.max(lastMirrorActivity, intentTs)
+        >= COMPLETE_QUIET_MS
+      const capped = Date.now() - intentTs >= COMPLETE_MAX_WAIT_MS
+      if (sawTurnEndAfterComplete || quiet || capped) {
+        try {
+          // Any response settles it: ok means completed, not-ok means the
+          // task is already gone — either way the daemon's work is done.
+          await (await ensureChannel()).send('agentSpace.complete', {
+            taskId: ctl.taskId,
+            status: ctl.completing.status === 'failure' ? 'failure' : 'success',
+            ...(ctl.completing.message
+              ? { message: String(ctl.completing.message) } : {}),
+          })
+          clearDaemonControl(sessionKey)
+          return
+        } catch {
+          dropChannel()  // transient (Phi restarting): retry next tick
+        }
       }
     }
 

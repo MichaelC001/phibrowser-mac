@@ -106,6 +106,15 @@ final class AgentTranscriptPanelController: NSObject {
         NotificationCenter.default.addObserver(
             self, selector: #selector(handleWindowDidBecomeKey(_:)),
             name: NSWindow.didBecomeKeyNotification, object: nil)
+        // …and must ALSO follow programmatic switches. When the code agent
+        // surfaces its Space (autoview, handoff) the user is typically in the
+        // terminal, so Phi is inactive and the ordered-front window can NOT
+        // become key — no didBecomeKey ever fires, and the dock would stay
+        // stranded in the now-hidden window until the user's next click. The
+        // slot posts this on every visible-window repoint.
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleVisibleWindowChanged(_:)),
+            name: .spaceSlotVisibleWindowDidChange, object: nil)
     }
 
     var isVisible: Bool {
@@ -254,6 +263,19 @@ final class AgentTranscriptPanelController: NSObject {
         MainActor.assumeIsolated {
             guard (notification.object as? NSWindow)?.windowController
                     is MainBrowserWindowController else { return }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    AgentTranscriptPanelController.shared.reconcileFrontWindow()
+                }
+            }
+        }
+    }
+
+    /// A slot repointed its visible window (see the init observer). Same
+    /// one-turn deferral as the key-window path so the swap's attach-side
+    /// state has settled before the dock re-homes.
+    @objc private nonisolated func handleVisibleWindowChanged(_ notification: Notification) {
+        MainActor.assumeIsolated {
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     AgentTranscriptPanelController.shared.reconcileFrontWindow()
@@ -512,6 +534,85 @@ final class AgentTranscriptDockView: NSView {
     }
 }
 
+// MARK: - Selectable transcript feed
+
+/// The feed's renderer: a read-only NSTextView holding the transcript as one
+/// attributed document, so text selection is the native kind — a drag can
+/// cross every line, ⌘A/⌘C work, and selection survives appends. SwiftUI's
+/// `.textSelection` cannot select across separate Text views, which is why
+/// the feed is not a stack of row views.
+private struct TranscriptTextFeed: NSViewRepresentable {
+    let entries: [AgentTranscriptEntry]
+    let showTaskTags: Bool
+    /// Builds the attributed document (see
+    /// `AgentTranscriptPanelView.attributedTranscript`). Called only when
+    /// `entries`/`showTaskTags` actually changed — unrelated view updates
+    /// (prompt keystrokes, activity ticks) skip the rebuild.
+    let build: () -> NSAttributedString
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scroll = NSTextView.scrollableTextView()
+        scroll.drawsBackground = false
+        scroll.hasHorizontalScroller = false
+        if let textView = scroll.documentView as? NSTextView {
+            textView.isEditable = false
+            textView.isSelectable = true
+            textView.drawsBackground = false
+            textView.textContainerInset = NSSize(width: 8, height: 12)
+            textView.textContainer?.widthTracksTextView = true
+            context.coordinator.textView = textView
+        }
+        return scroll
+    }
+
+    func updateNSView(_ scroll: NSScrollView, context: Context) {
+        let coordinator = context.coordinator
+        guard let textView = coordinator.textView else { return }
+        guard entries != coordinator.renderedEntries
+                || showTaskTags != coordinator.renderedTags else { return }
+        coordinator.renderedEntries = entries
+        coordinator.renderedTags = showTaskTags
+
+        // Stick to the tail on appends — unless the user scrolled up to
+        // read, in which case new lines must not yank the view.
+        let wasAtBottom = coordinator.isAtBottom(scroll)
+        let selections = textView.selectedRanges
+        let document = build()
+        textView.textStorage?.setAttributedString(document)
+
+        // Restore a still-valid selection; the transcript is append-mostly,
+        // so an in-progress selection keeps its place across new lines.
+        let length = document.length
+        let clamped = selections.compactMap { value -> NSValue? in
+            let range = value.rangeValue
+            guard range.location != NSNotFound, range.location <= length else { return nil }
+            return NSValue(range: NSRange(
+                location: range.location,
+                length: min(range.length, length - range.location)))
+        }
+        if !clamped.isEmpty { textView.selectedRanges = clamped }
+
+        if wasAtBottom || coordinator.firstRender {
+            textView.scrollToEndOfDocument(nil)
+        }
+        coordinator.firstRender = false
+    }
+
+    final class Coordinator {
+        weak var textView: NSTextView?
+        var renderedEntries: [AgentTranscriptEntry] = []
+        var renderedTags = false
+        var firstRender = true
+
+        func isAtBottom(_ scroll: NSScrollView) -> Bool {
+            guard let document = scroll.documentView else { return true }
+            return scroll.contentView.documentVisibleRect.maxY >= document.frame.height - 40
+        }
+    }
+}
+
 // MARK: - Console view
 
 /// The console: terminal-styled transcript feed + command prompt. The
@@ -523,7 +624,8 @@ struct AgentTranscriptPanelView: View {
     @ObservedObject private var manager = AgentSpaceManager.shared
 
     @State private var draft = ""
-    @State private var feedHovered = false
+    /// Brief checkmark feedback after Copy Transcript lands on the pasteboard.
+    @State private var justCopiedTranscript = false
     @FocusState private var promptFocused: Bool
 
     private enum Palette {
@@ -533,39 +635,52 @@ struct AgentTranscriptPanelView: View {
         static let chrome = adaptive(
             light: NSColor(red: 0.915, green: 0.92, blue: 0.935, alpha: 1),
             dark: NSColor(red: 0.12, green: 0.125, blue: 0.155, alpha: 1))
-        static let text = adaptive(
+        // The transcript body renders through an NSTextView (see
+        // TranscriptTextFeed), so its colors are sourced as dynamic NSColors
+        // with the SwiftUI Color derived — one value, both worlds.
+        static let textNS = adaptiveNS(
             light: NSColor.black.withAlphaComponent(0.85),
             dark: NSColor.white.withAlphaComponent(0.92))
-        static let dim = adaptive(
+        static let text = Color(nsColor: textNS)
+        static let dimNS = adaptiveNS(
             light: NSColor.black.withAlphaComponent(0.55),
             dark: NSColor.white.withAlphaComponent(0.55))
-        static let faint = adaptive(
+        static let dim = Color(nsColor: dimNS)
+        static let faintNS = adaptiveNS(
             light: NSColor.black.withAlphaComponent(0.32),
             dark: NSColor.white.withAlphaComponent(0.35))
-        static let prompt = adaptive(
+        static let faint = Color(nsColor: faintNS)
+        static let promptNS = adaptiveNS(
             light: NSColor(red: 0.05, green: 0.5, blue: 0.24, alpha: 1),
             dark: NSColor(red: 0.42, green: 0.85, blue: 0.55, alpha: 1))
-        static let error = adaptive(
+        static let prompt = Color(nsColor: promptNS)
+        static let errorNS = adaptiveNS(
             light: NSColor(red: 0.8, green: 0.22, blue: 0.17, alpha: 1),
             dark: NSColor(red: 1.0, green: 0.48, blue: 0.42, alpha: 1))
+        static let error = Color(nsColor: errorNS)
+        // Claude Code's brand rust, used only by the mirrored Claude Code
+        // status line (spinner + verb).
+        static let claudeAccent = adaptive(
+            light: NSColor(red: 0.78, green: 0.40, blue: 0.27, alpha: 1),
+            dark: NSColor(red: 0.855, green: 0.467, blue: 0.337, alpha: 1))
         // Pi's built-in light/dark theme surfaces. Keep them separate from
         // Phi's console chrome: they are used only by mirrored Pi rows.
-        static let piUserBackground = adaptive(
+        static let piUserBackgroundNS = adaptiveNS(
             light: NSColor(red: 0.91, green: 0.91, blue: 0.91, alpha: 1),
             dark: NSColor(red: 0.204, green: 0.208, blue: 0.255, alpha: 1))
-        static let piToolPendingBackground = adaptive(
+        static let piToolPendingBackgroundNS = adaptiveNS(
             light: NSColor(red: 0.91, green: 0.91, blue: 0.94, alpha: 1),
             dark: NSColor(red: 0.157, green: 0.157, blue: 0.196, alpha: 1))
-        static let piToolSuccessBackground = adaptive(
+        static let piToolSuccessBackgroundNS = adaptiveNS(
             light: NSColor(red: 0.91, green: 0.94, blue: 0.91, alpha: 1),
             dark: NSColor(red: 0.157, green: 0.196, blue: 0.157, alpha: 1))
-        static let piToolErrorBackground = adaptive(
+        static let piToolErrorBackgroundNS = adaptiveNS(
             light: NSColor(red: 0.94, green: 0.91, blue: 0.91, alpha: 1),
             dark: NSColor(red: 0.235, green: 0.157, blue: 0.157, alpha: 1))
-        static let piDiffAddition = adaptive(
+        static let piDiffAdditionNS = adaptiveNS(
             light: NSColor(red: 0.345, green: 0.518, blue: 0.345, alpha: 1),
             dark: NSColor(red: 0.71, green: 0.74, blue: 0.41, alpha: 1))
-        static let piDiffDeletion = adaptive(
+        static let piDiffDeletionNS = adaptiveNS(
             light: NSColor(red: 0.667, green: 0.333, blue: 0.333, alpha: 1),
             dark: NSColor(red: 0.8, green: 0.4, blue: 0.4, alpha: 1))
         /// Transcript content is monospaced; the chrome around it (header,
@@ -575,11 +690,23 @@ struct AgentTranscriptPanelView: View {
         static let fontSmall = Font.system(size: 10, design: .monospaced)
         static let fontUI = Font.system(size: 11)
         static let fontUISmall = Font.system(size: 10)
+        // NSFont twins for the attributed transcript document.
+        static let nsFont = NSFont.monospacedSystemFont(ofSize: 11.5, weight: .regular)
+        static let nsFontBold = NSFont.monospacedSystemFont(ofSize: 11.5, weight: .bold)
+        static let nsFontSemibold = NSFont.monospacedSystemFont(ofSize: 11.5, weight: .semibold)
+        static let nsFontSmall = NSFont.monospacedSystemFont(ofSize: 10, weight: .regular)
+        static let nsFontSmallBold = NSFont.monospacedSystemFont(ofSize: 10, weight: .bold)
+        static let nsFontHeading = NSFont.monospacedSystemFont(ofSize: 13, weight: .bold)
+        static let nsFontSubheading = NSFont.monospacedSystemFont(ofSize: 12.5, weight: .bold)
 
         /// Appearance-tracking color (`ThemedColor.dynamicColor`) so the
         /// console re-renders when the system or window theme flips.
         private static func adaptive(light: NSColor, dark: NSColor) -> Color {
-            Color(nsColor: ThemedColor(light: light, dark: dark).dynamicColor())
+            Color(nsColor: adaptiveNS(light: light, dark: dark))
+        }
+
+        private static func adaptiveNS(light: NSColor, dark: NSColor) -> NSColor {
+            ThemedColor(light: light, dark: dark).dynamicColor()
         }
     }
 
@@ -615,16 +742,18 @@ struct AgentTranscriptPanelView: View {
 
     private var showTaskTags: Bool { liveTasks.count > 1 && model.taskFilter == nil }
 
-    /// Codex tasks with a mirrored turn edge. Other agents keep their existing
-    /// transcript UI; browser-run state is deliberately not used as fallback.
-    private var codexActivityTasks: [AgentTask] {
+    /// Tasks with a mirrored turn edge — Codex's working/waiting row or
+    /// Claude Code's spinner/summary status line. Other agents keep their
+    /// existing transcript UI; browser-run state is deliberately not used as
+    /// fallback.
+    private var activityTasks: [AgentTask] {
         let tasks: [AgentTask]
         if let filter = model.taskFilter {
             tasks = liveTasks[filter].map { [$0] } ?? []
         } else {
             tasks = Array(liveTasks.values)
         }
-        return tasks.filter { codexActivity(for: $0) != nil }
+        return tasks.filter { codexActivity(for: $0) != nil || claudeActivity(for: $0) != nil }
             .sorted { $0.number < $1.number }
     }
 
@@ -632,8 +761,23 @@ struct AgentTranscriptPanelView: View {
         store.codexActivityByTaskId[task.taskId]
     }
 
-    private var codexActivitySignature: String {
-        codexActivityTasks.compactMap { task -> String? in
+    private func claudeActivity(for task: AgentTask) -> ClaudeTranscriptActivity? {
+        guard let state = store.claudeActivityByTaskId[task.taskId] else { return nil }
+        // A sub-second idle turn with nothing still running has no story to
+        // tell — Claude Code's terminal shows no resting line for the tiny
+        // turns its harness records around slash commands and notifications.
+        if state.phase == .idle, state.shellsRunning == 0,
+           (state.durationMs ?? 0) < 1000 { return nil }
+        return state
+    }
+
+    private var activitySignature: String {
+        activityTasks.compactMap { task -> String? in
+            if let state = claudeActivity(for: task) {
+                return "\(task.taskId):claude:\(state.phase.rawValue)"
+                    + ":\(state.startTimestampMs ?? 0):\(state.durationMs ?? 0)"
+                    + ":\(state.shellsRunning)"
+            }
             guard let state = codexActivity(for: task) else { return nil }
             return "\(task.taskId):\(state.rawValue)"
         }.joined(separator: "|")
@@ -693,6 +837,19 @@ struct AgentTranscriptPanelView: View {
             Spacer(minLength: 8)
 
             statusPill
+
+            // One-click whole-feed copy, serialized in the console's own
+            // notation. Partial ranges copy natively: the feed is a real
+            // text view, so drag-select plus ⌘C works anywhere in it.
+            Button {
+                copyTranscript()
+            } label: {
+                headerIcon(justCopiedTranscript ? "checkmark" : "doc.on.doc")
+            }
+            .buttonStyle(.plain)
+            .disabled(entries.isEmpty)
+            .help(NSLocalizedString(
+                "Copy transcript", comment: "Agent console - copy the visible feed as text"))
 
             Button {
                 if let filter = model.taskFilter {
@@ -861,79 +1018,329 @@ struct AgentTranscriptPanelView: View {
             liveTasks.count, runningCount)
     }
 
+    /// Puts the visible feed on the pasteboard as plain text. SwiftUI's
+    /// per-row `.textSelection` cannot select across rows, so this is the
+    /// console's way to copy more than one line at a time.
+    private func copyTranscript() {
+        let text = transcriptText()
+        guard !text.isEmpty else { return }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+        justCopiedTranscript = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+            justCopiedTranscript = false
+        }
+    }
+
+    /// The visible feed serialized in the console's own notation — one row
+    /// per entry with its glyph, hanging detail lines under their ⎿ elbow —
+    /// so the clipboard reads like the panel looks.
+    private func transcriptText() -> String {
+        entries.map { entry in
+            var line = ""
+            if showTaskTags {
+                line += "[\(AgentSpaceManager.agentSpaceName(entry.taskNumber))] "
+            }
+            line += serializedRow(entry)
+            if let detail = entry.detail, !detail.isEmpty {
+                let detailLines = detail.split(
+                    separator: "\n", omittingEmptySubsequences: false)
+                for (index, raw) in detailLines.enumerated() {
+                    line += index == 0 ? "\n  ⎿ \(raw)" : "\n    \(raw)"
+                }
+            }
+            return line
+        }.joined(separator: "\n")
+    }
+
+    private func serializedRow(_ entry: AgentTranscriptEntry) -> String {
+        switch entry.kind {
+        case .user: return "> \(entry.text)"
+        case .assistant, .narration:
+            return Flavor(entry.agent) == .claude ? "⏺ \(entry.text)" : entry.text
+        case .thinking: return "✻ \(entry.text)"
+        case .tool: return "\(Flavor(entry.agent) == .codex ? "•" : "⏺") \(entry.text)"
+        case .action: return "⏺ \(entry.text)"
+        case .error: return "✗ \(entry.text)"
+        case .status: return entry.text
+        case .round: return "── \(entry.text) ──"
+        }
+    }
+
+    // MARK: - Attributed transcript document
+
+    /// The whole feed as one attributed string — the NSTextView twin of the
+    /// per-row SwiftUI styling, keeping its visual language: per-agent glyphs
+    /// and colors, dim `⎿` details, italic thinking, Pi card tints, and
+    /// markdown structure (headings, bullets, code, inline emphasis).
+    private func attributedTranscript() -> NSAttributedString {
+        let out = NSMutableAttributedString()
+        for (index, entry) in entries.enumerated() {
+            if index > 0 { out.append(atr("\n", font: Palette.nsFont, color: Palette.textNS)) }
+            out.append(attributedRow(entry))
+        }
+        return out
+    }
+
+    private func attributedRow(_ entry: AgentTranscriptEntry) -> NSAttributedString {
+        let row = NSMutableAttributedString()
+        if showTaskTags {
+            row.append(atr("[\(AgentSpaceManager.agentSpaceName(entry.taskNumber))] ",
+                           font: Palette.nsFontSmall, color: Palette.dimNS))
+        }
+        let flavor = Flavor(entry.agent)
+        switch entry.kind {
+        case .round:
+            row.append(atr("── \(entry.text) ──",
+                           font: Palette.nsFontSmall, color: Palette.faintNS))
+        case .user:
+            switch flavor {
+            case nil:
+                // A command typed into THIS console.
+                row.append(atr("❯ ", font: Palette.nsFontBold, color: Palette.promptNS))
+                row.append(markdownRuns(entry.text, color: Palette.textNS))
+                if let detail = entry.detail, !detail.isEmpty {
+                    appendDetail(row, detail, elbow: "⎿")
+                }
+            case .codex:
+                row.append(atr("▌ ", font: Palette.nsFont, color: Palette.promptNS))
+                row.append(markdownRuns(entry.text, color: Palette.textNS))
+            case .pi:
+                let start = row.length
+                row.append(markdownRuns(entry.text, color: Palette.textNS))
+                row.addAttribute(.backgroundColor, value: Palette.piUserBackgroundNS,
+                                 range: NSRange(location: start, length: row.length - start))
+            default:
+                row.append(atr("> ", font: Palette.nsFontBold, color: Palette.dimNS))
+                row.append(markdownRuns(entry.text, color: Palette.textNS))
+            }
+        case .assistant, .narration:
+            if entry.kind == .assistant, flavor == .claude {
+                row.append(atr("⏺ ", font: Palette.nsFont, color: Palette.textNS))
+            }
+            row.append(markdownRuns(entry.text, color: Palette.textNS))
+        case .thinking:
+            if flavor == .claude {
+                row.append(atr("✻ ", font: Palette.nsFont, color: Palette.faintNS))
+            }
+            row.append(atr(entry.text, font: Palette.nsFont, color: Palette.faintNS,
+                           oblique: true))
+        case .action, .status, .error, .tool:
+            if entry.kind == .tool, flavor == .pi {
+                appendPiToolCard(entry, to: row)
+            } else {
+                if let glyph = glyphNS(for: entry) {
+                    row.append(atr("\(glyph.symbol) ", font: Palette.nsFont,
+                                   color: glyph.color))
+                }
+                row.append(atr(entry.text, font: Palette.nsFont,
+                               color: kindColorNS(entry.kind)))
+                if let detail = entry.detail, !detail.isEmpty {
+                    appendDetail(row, detail, elbow: flavor == .codex ? "└" : "⎿")
+                }
+            }
+        }
+        let style = NSMutableParagraphStyle()
+        style.paragraphSpacing = 3
+        style.lineSpacing = 1
+        row.addAttribute(.paragraphStyle, value: style,
+                         range: NSRange(location: 0, length: row.length))
+        return row
+    }
+
+    /// Pi's tool execution keeps its card reading: semibold title, output and
+    /// diff lines under it, the pending/success/error tint carried as a run
+    /// background.
+    private func appendPiToolCard(_ entry: AgentTranscriptEntry,
+                                  to row: NSMutableAttributedString) {
+        let start = row.length
+        row.append(atr(entry.text, font: Palette.nsFontSemibold, color: Palette.textNS))
+        if let detail = entry.detail, !detail.isEmpty {
+            for line in detail.split(separator: "\n", omittingEmptySubsequences: false) {
+                let text = String(line)
+                let color: NSColor
+                if text.hasPrefix("+") && !text.hasPrefix("+++") {
+                    color = Palette.piDiffAdditionNS
+                } else if text.hasPrefix("-") && !text.hasPrefix("---") {
+                    color = Palette.piDiffDeletionNS
+                } else {
+                    color = Palette.dimNS
+                }
+                row.append(atr("\n\(text)", font: Palette.nsFontSmall, color: color))
+            }
+        }
+        let background: NSColor
+        switch entry.piToolState {
+        case .success: background = Palette.piToolSuccessBackgroundNS
+        case .error: background = Palette.piToolErrorBackgroundNS
+        case .pending, nil: background = Palette.piToolPendingBackgroundNS
+        }
+        row.addAttribute(.backgroundColor, value: background,
+                         range: NSRange(location: start, length: row.length - start))
+    }
+
+    private func appendDetail(_ row: NSMutableAttributedString, _ detail: String,
+                              elbow: String) {
+        for (index, line) in detail
+            .split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
+            row.append(atr(index == 0 ? "\n  \(elbow) \(line)" : "\n     \(line)",
+                           font: Palette.nsFontSmall, color: Palette.faintNS))
+        }
+    }
+
+    /// Markdown at block level, reusing the same parser as before the
+    /// text-view feed: headings, bullets, numbered lists, code, tables (as
+    /// monospace-aligned columns), and inline emphasis inside each.
+    private func markdownRuns(_ text: String, color: NSColor) -> NSAttributedString {
+        let out = NSMutableAttributedString()
+        var first = true
+        for block in parseMarkdown(text) {
+            if !first { out.append(atr("\n", font: Palette.nsFont, color: color)) }
+            first = false
+            switch block {
+            case .blank:
+                break
+            case .heading(let level, let text):
+                out.append(inlineRuns(
+                    text,
+                    font: level <= 1 ? Palette.nsFontHeading : Palette.nsFontSubheading,
+                    color: Palette.textNS))
+            case .bullet(let text):
+                out.append(atr("• ", font: Palette.nsFont, color: Palette.dimNS))
+                out.append(inlineRuns(text, font: Palette.nsFont, color: color))
+            case .numbered(let marker, let text):
+                out.append(atr("\(marker) ", font: Palette.nsFont, color: Palette.dimNS))
+                out.append(inlineRuns(text, font: Palette.nsFont, color: color))
+            case .code(let line):
+                out.append(atr("    \(line)", font: Palette.nsFontSmall,
+                               color: Palette.dimNS))
+            case .paragraph(let text):
+                out.append(inlineRuns(text, font: Palette.nsFont, color: color))
+            case .table(let rows):
+                out.append(tableRuns(rows, color: color))
+            }
+        }
+        return out
+    }
+
+    /// Inline markdown (**bold**, *italic*, `code`) mapped onto attributed
+    /// runs; falls back to the literal string when parsing fails.
+    private func inlineRuns(_ text: String, font: NSFont, color: NSColor) -> NSAttributedString {
+        guard let parsed = try? AttributedString(
+            markdown: text,
+            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))
+        else { return atr(text, font: font, color: color) }
+        let out = NSMutableAttributedString()
+        for run in parsed.runs {
+            let piece = String(parsed[run.range].characters)
+            let intent = run.inlinePresentationIntent ?? []
+            var pieceFont = font
+            var pieceColor = color
+            if intent.contains(.stronglyEmphasized) {
+                pieceFont = NSFont.monospacedSystemFont(ofSize: font.pointSize, weight: .bold)
+            }
+            if intent.contains(.code) { pieceColor = Palette.dimNS }
+            out.append(atr(piece, font: pieceFont, color: pieceColor,
+                           oblique: intent.contains(.emphasized)))
+        }
+        return out
+    }
+
+    /// A GFM table as monospace-aligned columns: cells padded to their
+    /// column's width, header row bold.
+    private func tableRuns(_ rows: [[String]], color: NSColor) -> NSAttributedString {
+        var widths: [Int] = []
+        for row in rows {
+            for (index, cell) in row.enumerated() {
+                if index == widths.count { widths.append(0) }
+                widths[index] = max(widths[index], cell.count)
+            }
+        }
+        let out = NSMutableAttributedString()
+        for (index, row) in rows.enumerated() {
+            if index > 0 { out.append(atr("\n", font: Palette.nsFontSmall, color: color)) }
+            let padded = row.enumerated().map { column, cell in
+                cell.padding(toLength: widths[column], withPad: " ", startingAt: 0)
+            }.joined(separator: "  ")
+            out.append(atr(padded,
+                           font: index == 0 ? Palette.nsFontSmallBold : Palette.nsFontSmall,
+                           color: index == 0 ? Palette.textNS : color))
+        }
+        return out
+    }
+
+    private func glyphNS(for entry: AgentTranscriptEntry) -> (symbol: String, color: NSColor)? {
+        switch entry.kind {
+        case .action: return ("⏺", Palette.promptNS)
+        case .error: return ("✗", Palette.errorNS)
+        case .tool: return (Flavor(entry.agent) == .codex ? "•" : "⏺", Palette.promptNS)
+        case .user, .assistant, .narration, .status, .round, .thinking: return nil
+        }
+    }
+
+    private func kindColorNS(_ kind: AgentTranscriptEntry.Kind) -> NSColor {
+        switch kind {
+        case .action, .status: return Palette.dimNS
+        case .error: return Palette.errorNS
+        default: return Palette.textNS
+        }
+    }
+
+    /// `.obliqueness` stands in for italics: the monospaced system font has
+    /// no true italic face.
+    private func atr(_ text: String, font: NSFont, color: NSColor,
+                     oblique: Bool = false) -> NSAttributedString {
+        var attributes: [NSAttributedString.Key: Any] = [
+            .font: font, .foregroundColor: color,
+        ]
+        if oblique { attributes[.obliqueness] = 0.18 }
+        return NSAttributedString(string: text, attributes: attributes)
+    }
+
+    @ViewBuilder
+    /// The transcript body: ONE AppKit text view holding the whole feed as an
+    /// attributed document, because native text selection is the only kind
+    /// that can drag across lines — SwiftUI's per-view selection stops at
+    /// each row's edge. The transient activity rows (spinners, resting
+    /// summaries) stay SwiftUI, pinned under the scroll like the terminals
+    /// they mirror pin their status line; they are state, not copyable text.
     private var feed: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 4) {
-                    if entries.isEmpty && codexActivityTasks.isEmpty {
-                        VStack(spacing: 8) {
-                            Image(systemName: "sparkles")
-                                .font(.system(size: 18))
-                                .foregroundStyle(Palette.faint)
-                            Text(NSLocalizedString(
-                                "Nothing yet — agent activity appears here live.",
-                                comment: "Agent console - empty feed placeholder"))
-                                .font(Palette.fontUISmall)
-                                .foregroundStyle(Palette.faint)
-                                .multilineTextAlignment(.center)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.top, 48)
+        VStack(alignment: .leading, spacing: 0) {
+            ZStack {
+                TranscriptTextFeed(entries: entries, showTaskTags: showTaskTags,
+                                   build: { attributedTranscript() })
+                if entries.isEmpty && activityTasks.isEmpty {
+                    VStack(spacing: 8) {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 18))
+                            .foregroundStyle(Palette.faint)
+                        Text(NSLocalizedString(
+                            "Nothing yet — agent activity appears here live.",
+                            comment: "Agent console - empty feed placeholder"))
+                            .font(Palette.fontUISmall)
+                            .foregroundStyle(Palette.faint)
+                            .multilineTextAlignment(.center)
                     }
-                    ForEach(entries) { entry in
-                        entryRow(entry)
-                            .id(entry.id)
-                    }
-                    ForEach(codexActivityTasks, id: \.taskId) { task in
-                        if let state = codexActivity(for: task) {
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 48)
+                    .frame(maxHeight: .infinity, alignment: .top)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if !activityTasks.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(activityTasks, id: \.taskId) { task in
+                        if let state = claudeActivity(for: task) {
+                            claudeActivityRow(task: task, state: state)
+                        } else if let state = codexActivity(for: task) {
                             codexActivityRow(task: task, state: state)
                         }
                     }
-                    if !codexActivityTasks.isEmpty {
-                        Color.clear.frame(height: 1).id("codex-transcript-activity-tail")
-                    }
                 }
-                .padding(12)
-            }
-            .onHover { feedHovered = $0 }
-            .onChange(of: entries.last?.id) { lastId in
-                // Stick to the tail unless the user is reading (pointer in
-                // the feed) — then the pill below jumps on demand.
-                guard let lastId, !feedHovered else { return }
-                if codexActivityTasks.isEmpty {
-                    proxy.scrollTo(lastId, anchor: .bottom)
-                } else {
-                    proxy.scrollTo("codex-transcript-activity-tail", anchor: .bottom)
-                }
-            }
-            .onChange(of: codexActivitySignature) { signature in
-                guard !signature.isEmpty, !feedHovered else { return }
-                proxy.scrollTo("codex-transcript-activity-tail", anchor: .bottom)
-            }
-            .overlay(alignment: .bottom) {
-                if feedHovered, (!entries.isEmpty || !codexActivityTasks.isEmpty) {
-                    Button {
-                        if codexActivityTasks.isEmpty {
-                            if let lastId = entries.last?.id {
-                                proxy.scrollTo(lastId, anchor: .bottom)
-                            }
-                        } else {
-                            proxy.scrollTo("codex-transcript-activity-tail", anchor: .bottom)
-                        }
-                    } label: {
-                        Text(NSLocalizedString(
-                            "Jump to latest", comment: "Agent console - scroll to newest line"))
-                            .font(Palette.fontUISmall)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3)
-                            .background(Palette.chrome, in: Capsule())
-                            .overlay(Capsule().strokeBorder(Palette.faint.opacity(0.3),
-                                                            lineWidth: 1))
-                            .foregroundStyle(Palette.dim)
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.bottom, 6)
-                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 12)
+                .padding(.bottom, 8)
             }
         }
     }
@@ -961,6 +1368,113 @@ struct AgentTranscriptPanelView: View {
         }
     }
 
+    /// Claude Code's spinner glyphs, cycled the way the terminal breathes
+    /// them: grow to the full asterisk, then shrink back.
+    private static let claudeSpinnerFrames = ["·", "✢", "✳", "✶", "✻", "✽", "✻", "✶", "✳", "✢"]
+
+    /// Whimsical turn verbs in Claude Code's voice, as gerund/past pairs so
+    /// the live spinner ("Mulling…") and the resting summary ("Mulled for
+    /// 28s") conjugate the same verb.
+    private static let claudeVerbs: [(gerund: String, past: String)] = [
+        ("Mulling", "Mulled"), ("Cogitating", "Cogitated"), ("Pondering", "Pondered"),
+        ("Musing", "Mused"), ("Ruminating", "Ruminated"), ("Noodling", "Noodled"),
+        ("Percolating", "Percolated"), ("Brewing", "Brewed"), ("Simmering", "Simmered"),
+        ("Crunching", "Crunched"), ("Deliberating", "Deliberated"), ("Tinkering", "Tinkered"),
+    ]
+
+    /// The turn's verb, seeded by the turn's start time — stable across
+    /// re-renders and shared by the working spinner and its later summary.
+    private static func claudeVerb(seedMs: Double?) -> (gerund: String, past: String) {
+        guard let seedMs, seedMs.isFinite, seedMs > 0, seedMs < 1e15 else {
+            return ("Working", "Worked")
+        }
+        return claudeVerbs[Int(seedMs) % claudeVerbs.count]
+    }
+
+    /// Elapsed/duration readout in Claude Code's terminal shape: "6s",
+    /// "1m 43s", "2h 5m".
+    private static func claudeDuration(_ seconds: Int) -> String {
+        let s = max(0, seconds)
+        if s < 60 { return "\(s)s" }
+        let m = s / 60
+        if m < 60 {
+            let rs = s % 60
+            return rs == 0 ? "\(m)m" : "\(m)m \(rs)s"
+        }
+        let h = m / 60
+        let rm = m % 60
+        return rm == 0 ? "\(h)h" : "\(h)h \(rm)m"
+    }
+
+    /// Claude Code's terminal status line, mirrored at the transcript tail:
+    /// the animated "✽ Mulling… (6s · thinking with xhigh effort)" while a
+    /// turn runs, and the resting "Cogitated for 28s · 1 shell still running"
+    /// summary once it ends — until the next turn replaces it.
+    @ViewBuilder
+    private func claudeActivityRow(task: AgentTask, state: ClaudeTranscriptActivity) -> some View {
+        switch state.phase {
+        case .working:
+            claudeWorkingRow(task: task, state: state)
+        case .idle:
+            claudeIdleRow(task: task, state: state)
+        }
+    }
+
+    private func claudeWorkingRow(task: AgentTask,
+                                  state: ClaudeTranscriptActivity) -> some View {
+        let verb = Self.claudeVerb(seedMs: state.startTimestampMs)
+        return TimelineView(.periodic(from: .now, by: 0.15)) { context in
+            let tick = Int(context.date.timeIntervalSinceReferenceDate / 0.15)
+            let frame = Self.claudeSpinnerFrames[
+                abs(tick) % Self.claudeSpinnerFrames.count]
+            var suffixParts: [String] = []
+            if let startMs = state.startTimestampMs {
+                let elapsed = Int(context.date.timeIntervalSince1970 - startMs / 1000)
+                suffixParts.append(Self.claudeDuration(elapsed))
+            }
+            if let effort = state.effort {
+                suffixParts.append("thinking with \(effort) effort")
+            }
+            return HStack(alignment: .firstTextBaseline, spacing: 6) {
+                if showTaskTags { taskTag(task.number) }
+                Text(verbatim: frame)
+                    .font(Palette.font)
+                    .foregroundStyle(Palette.claudeAccent)
+                Text(verbatim: "\(verb.gerund)…")
+                    .font(Palette.font)
+                    .foregroundStyle(Palette.claudeAccent)
+                if !suffixParts.isEmpty {
+                    Text(verbatim: "(\(suffixParts.joined(separator: " · ")))")
+                        .font(Palette.font)
+                        .foregroundStyle(Palette.faint)
+                }
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(Text(verbatim: "Working"))
+        }
+    }
+
+    private func claudeIdleRow(task: AgentTask,
+                               state: ClaudeTranscriptActivity) -> some View {
+        let verb = Self.claudeVerb(seedMs: state.startTimestampMs)
+        var parts: [String] = []
+        if let ms = state.durationMs, ms >= 1000 {
+            parts.append("\(verb.past) for \(Self.claudeDuration(Int(ms / 1000)))")
+        }
+        if state.shellsRunning > 0 {
+            parts.append(state.shellsRunning == 1
+                ? "1 shell still running"
+                : "\(state.shellsRunning) shells still running")
+        }
+        return HStack(alignment: .firstTextBaseline, spacing: 6) {
+            if showTaskTags { taskTag(task.number) }
+            Text(verbatim: parts.joined(separator: " · "))
+                .font(Palette.font)
+                .foregroundStyle(Palette.dim)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
     /// The origin-CLI dialect of a mirrored line — which visual language the
     /// row borrows so the console reads like the driving agent's own UI.
     /// nil (app/skill-authored) keeps Phi's console style; unrecognized
@@ -976,256 +1490,6 @@ struct AgentTranscriptPanelView: View {
             case "pi": self = .pi
             default: self = .generic
             }
-        }
-    }
-
-    @ViewBuilder
-    private func entryRow(_ entry: AgentTranscriptEntry) -> some View {
-        switch entry.kind {
-        case .round:
-            HStack(spacing: 6) {
-                Rectangle().fill(Palette.faint.opacity(0.4)).frame(height: 1)
-                Text(entry.text)
-                    .font(Palette.fontUISmall)
-                    .foregroundStyle(Palette.faint)
-                    .fixedSize()
-                Rectangle().fill(Palette.faint.opacity(0.4)).frame(height: 1)
-            }
-            .padding(.vertical, 4)
-        case .user:
-            if let flavor = Flavor(entry.agent) {
-                mirroredUserRow(entry, flavor: flavor)
-            } else {
-                consoleUserRow(entry)
-            }
-        case .assistant, .narration:
-            // Mirrored conversation — render markdown (headings, bullets,
-            // **bold**, `code`) so a structured reply reads like the agent's
-            // own transcript instead of a wall of literal markup. Claude Code
-            // opens every reply block with its ⏺ bullet; the other CLIs set
-            // prose plain.
-            Group {
-                if entry.kind == .assistant, Flavor(entry.agent) == .pi {
-                    piAssistantRow(entry)
-                } else {
-                    HStack(alignment: .top, spacing: 6) {
-                        if showTaskTags { taskTag(entry.taskNumber) }
-                        if entry.kind == .assistant, Flavor(entry.agent) == .claude {
-                            Text("⏺")
-                                .font(Palette.font)
-                                .foregroundStyle(Palette.text)
-                        }
-                        markdownBlock(entry.text, baseColor: color(for: entry.kind))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                }
-            }
-            .textSelection(.enabled)
-        case .thinking:
-            // Reasoning summaries — dim italic, the way both CLIs set
-            // thinking apart from the real reply. Inline markdown only:
-            // Codex headlines arrive as **bold** runs and lose nothing
-            // without block structure.
-            Group {
-                if Flavor(entry.agent) == .pi {
-                    piThinkingRow(entry)
-                } else {
-                    HStack(alignment: .top, spacing: 6) {
-                        if showTaskTags { taskTag(entry.taskNumber) }
-                        if Flavor(entry.agent) == .claude {
-                            Text("✻")
-                                .font(Palette.font)
-                                .foregroundStyle(Palette.faint)
-                        }
-                        inlineText(entry.text)
-                            .font(Palette.font.italic())
-                            .foregroundStyle(Palette.faint)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                }
-            }
-            .textSelection(.enabled)
-        case .action, .status, .error, .tool:
-            if entry.kind == .tool, Flavor(entry.agent) == .pi {
-                piToolRow(entry)
-            } else {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    if showTaskTags { taskTag(entry.taskNumber) }
-                    if let glyph = glyph(for: entry) {
-                        Text(glyph.symbol)
-                            .font(Palette.font)
-                            .foregroundStyle(glyph.color)
-                    }
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(entry.text)
-                            .font(Palette.font)
-                            .foregroundStyle(color(for: entry.kind))
-                            .fixedSize(horizontal: false, vertical: true)
-                        // Detail hangs under its own line inside the column,
-                        // so it stays aligned with or without task tags.
-                        if let detail = entry.detail {
-                            detailRow(
-                                detail,
-                                elbow: Flavor(entry.agent) == .codex ? "└" : "⎿")
-                        }
-                    }
-                }
-                .textSelection(.enabled)
-            }
-        }
-    }
-
-    /// Pi renders assistant Markdown without a bullet or frame, indented by
-    /// its output padding and separated from the preceding block.
-    private func piAssistantRow(_ entry: AgentTranscriptEntry) -> some View {
-        HStack(alignment: .top, spacing: 6) {
-            if showTaskTags { taskTag(entry.taskNumber) }
-            markdownBlock(entry.text, baseColor: Palette.text)
-                .padding(.horizontal, 8)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .padding(.top, 6)
-    }
-
-    /// Pi's visible reasoning is an indented, italic Markdown section with
-    /// its muted thinking color and no leading glyph.
-    private func piThinkingRow(_ entry: AgentTranscriptEntry) -> some View {
-        HStack(alignment: .top, spacing: 6) {
-            if showTaskTags { taskTag(entry.taskNumber) }
-            markdownBlock(entry.text, baseColor: Palette.faint)
-                .italic()
-                .padding(.horizontal, 8)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .padding(.top, 6)
-    }
-
-    /// Pi's tool execution is one full-width card. Its background moves from
-    /// pending to success/error when the paired tool-result record arrives.
-    private func piToolRow(_ entry: AgentTranscriptEntry) -> some View {
-        HStack(alignment: .top, spacing: 6) {
-            if showTaskTags { taskTag(entry.taskNumber) }
-            VStack(alignment: .leading, spacing: 5) {
-                Text(entry.text)
-                    .font(Palette.font.weight(.semibold))
-                    .foregroundStyle(Palette.text)
-                    .fixedSize(horizontal: false, vertical: true)
-                if let detail = entry.detail, !detail.isEmpty {
-                    piToolDetail(detail)
-                }
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 7)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(piToolBackground(entry.piToolState),
-                        in: RoundedRectangle(cornerRadius: 5, style: .continuous))
-        }
-        .textSelection(.enabled)
-    }
-
-    private func piToolBackground(_ state: PiTranscriptToolState?) -> Color {
-        switch state {
-        case .success: return Palette.piToolSuccessBackground
-        case .error: return Palette.piToolErrorBackground
-        case .pending, nil: return Palette.piToolPendingBackground
-        }
-    }
-
-    private func piToolDetail(_ detail: String) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            ForEach(Array(detail.split(separator: "\n", omittingEmptySubsequences: false)
-                .enumerated()), id: \.offset) { _, line in
-                let text = String(line)
-                Text(verbatim: text.isEmpty ? " " : text)
-                    .font(Palette.fontSmall)
-                    .foregroundStyle(piToolDetailColor(text))
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-    }
-
-    private func piToolDetailColor(_ line: String) -> Color {
-        if line.hasPrefix("+") && !line.hasPrefix("+++") {
-            return Palette.piDiffAddition
-        }
-        if line.hasPrefix("-") && !line.hasPrefix("---") {
-            return Palette.piDiffDeletion
-        }
-        return Palette.dim
-    }
-
-    /// A command typed into THIS console: the tinted block is the visual
-    /// boundary the eye scans for, so the command itself stays in the plain
-    /// text color rather than shouting in green too.
-    private func consoleUserRow(_ entry: AgentTranscriptEntry) -> some View {
-        HStack(alignment: .top, spacing: 6) {
-            if showTaskTags { taskTag(entry.taskNumber) }
-            Text("❯")
-                .font(Palette.font.weight(.bold))
-                .foregroundStyle(Palette.prompt)
-            VStack(alignment: .leading, spacing: 1) {
-                markdownBlock(entry.text, baseColor: Palette.text)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                // The idle-session delivery warning (see sendUserMessage)
-                // hangs under the command it describes.
-                if let detail = entry.detail {
-                    detailRow(detail, elbow: "⎿")
-                }
-            }
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .background(Palette.prompt.opacity(0.09),
-                    in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-        .padding(.top, 6)
-        .textSelection(.enabled)
-    }
-
-    /// A prompt mirrored from the driving agent's own session, in the origin
-    /// CLI's look: Claude Code prefixes prompts with `>`, Codex quotes them
-    /// behind a ▌ bar, and Pi uses its padded user-message surface.
-    private func mirroredUserRow(_ entry: AgentTranscriptEntry, flavor: Flavor) -> some View {
-        HStack(alignment: .top, spacing: 6) {
-            if showTaskTags { taskTag(entry.taskNumber) }
-            if flavor == .pi {
-                markdownBlock(entry.text, baseColor: Palette.text)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 7)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Palette.piUserBackground,
-                                in: RoundedRectangle(cornerRadius: 5,
-                                                     style: .continuous))
-            } else if flavor == .codex {
-                markdownBlock(entry.text, baseColor: Palette.text)
-                    .padding(.leading, 9)
-                    .overlay(alignment: .leading) {
-                        RoundedRectangle(cornerRadius: 1.5)
-                            .fill(Palette.prompt)
-                            .frame(width: 3)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            } else {
-                Text(">")
-                    .font(Palette.font.weight(.bold))
-                    .foregroundStyle(Palette.dim)
-                markdownBlock(entry.text, baseColor: Palette.text)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        }
-        .padding(.top, 6)
-        .textSelection(.enabled)
-    }
-
-    private func detailRow(_ detail: String, elbow: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 4) {
-            Text(elbow)
-                .font(Palette.fontSmall)
-                .foregroundStyle(Palette.faint)
-            Text(detail)
-                .font(Palette.fontSmall)
-                .foregroundStyle(Palette.faint)
-                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -1251,102 +1515,6 @@ struct AgentTranscriptPanelView: View {
         /// A GFM table; first row is the header (the separator row that
         /// declared it a table is consumed by the parser, not stored).
         case table([[String]])
-    }
-
-    /// Renders a markdown string as a stack of styled lines. Kept monospaced
-    /// to match the console, but with block structure (headings, lists, code)
-    /// and inline emphasis so a structured reply is scannable.
-    @ViewBuilder
-    private func markdownBlock(_ text: String, baseColor: Color) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            ForEach(Array(parseMarkdown(text).enumerated()), id: \.offset) { _, block in
-                blockView(block, baseColor: baseColor)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func blockView(_ block: MDBlock, baseColor: Color) -> some View {
-        switch block {
-        case .blank:
-            Color.clear.frame(height: 3)
-        case .heading(let level, let text):
-            inlineText(text)
-                .font(.system(size: level <= 1 ? 13 : 12.5, weight: .bold,
-                              design: .monospaced))
-                .foregroundStyle(Palette.text)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, 2)
-        case .bullet(let text):
-            HStack(alignment: .top, spacing: 6) {
-                Text("•").font(Palette.font).foregroundStyle(Palette.dim)
-                inlineText(text).font(Palette.font).foregroundStyle(baseColor)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        case .numbered(let marker, let text):
-            HStack(alignment: .top, spacing: 6) {
-                Text(marker).font(Palette.font).foregroundStyle(Palette.dim)
-                inlineText(text).font(Palette.font).foregroundStyle(baseColor)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        case .code(let line):
-            Text(line)
-                .font(Palette.fontSmall)
-                .foregroundStyle(Palette.dim)
-                .padding(.leading, 8)
-                .fixedSize(horizontal: false, vertical: true)
-        case .paragraph(let text):
-            inlineText(text).font(Palette.font).foregroundStyle(baseColor)
-                .fixedSize(horizontal: false, vertical: true)
-        case .table(let rows):
-            tableView(rows, baseColor: baseColor)
-        }
-    }
-
-    /// A markdown table as a real grid: bold header, hairline under it, cells
-    /// wrapping within their columns so a wide table compresses instead of
-    /// overflowing the narrow console.
-    @ViewBuilder
-    private func tableView(_ rows: [[String]], baseColor: Color) -> some View {
-        let columns = rows.map(\.count).max() ?? 0
-        Grid(alignment: .topLeading, horizontalSpacing: 12, verticalSpacing: 3) {
-            if let header = rows.first {
-                GridRow {
-                    ForEach(0..<columns, id: \.self) { col in
-                        inlineText(col < header.count ? header[col] : "")
-                            .font(Palette.font.weight(.semibold))
-                            .foregroundStyle(Palette.text)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-                Divider().overlay(Palette.faint)
-            }
-            ForEach(Array(rows.dropFirst().enumerated()), id: \.offset) { _, row in
-                GridRow {
-                    ForEach(0..<columns, id: \.self) { col in
-                        inlineText(col < row.count ? row[col] : "")
-                            .font(Palette.font)
-                            .foregroundStyle(baseColor)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-            }
-        }
-        .padding(.vertical, 2)
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    /// Inline markdown (bold/italic/`code`/links) → styled Text; bold and
-    /// italic runs render even against the monospaced base font. Falls back to
-    /// the raw string if it doesn't parse.
-    private func inlineText(_ s: String) -> Text {
-        if let attr = try? AttributedString(
-            markdown: s,
-            options: AttributedString.MarkdownParsingOptions(
-                interpretedSyntax: .inlineOnlyPreservingWhitespace)) {
-            return Text(attr)
-        }
-        return Text(s)
     }
 
     private func parseMarkdown(_ text: String) -> [MDBlock] {
@@ -1418,32 +1586,6 @@ struct AgentTranscriptPanelView: View {
         if cells.first?.isEmpty == true { cells.removeFirst() }
         if cells.last?.isEmpty == true { cells.removeLast() }
         return cells
-    }
-
-    /// Leading glyph of a terse line — accent-colored so the glyph column,
-    /// not the text, carries the row's role. Mirrored tool calls use the
-    /// origin CLI's bullet: Claude Code's ⏺, Codex's •.
-    private func glyph(for entry: AgentTranscriptEntry) -> (symbol: String, color: Color)? {
-        switch entry.kind {
-        case .action: return ("⏺", Palette.prompt)
-        case .error: return ("✗", Palette.error)
-        case .tool: return (Flavor(entry.agent) == .codex ? "•" : "⏺", Palette.prompt)
-        case .user, .assistant, .narration, .status, .round, .thinking: return nil
-        }
-    }
-
-    private func color(for kind: AgentTranscriptEntry.Kind) -> Color {
-        switch kind {
-        case .action: return Palette.dim
-        case .assistant: return Palette.text
-        case .narration: return Palette.text
-        case .user: return Palette.prompt
-        case .status: return Palette.dim
-        case .error: return Palette.error
-        case .round: return Palette.faint
-        case .thinking: return Palette.faint
-        case .tool: return Palette.text
-        }
     }
 
     private var promptRow: some View {

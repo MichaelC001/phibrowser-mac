@@ -523,6 +523,19 @@ in the switcher with only its window closed (see "Persistent Spaces"). If the
 user needs a live page left open in an ephemeral Space, hand it to them with
 `handOff()` before completing.
 
+**Deliver the result BEFORE completing.** A user watching the Space reads
+the transcript console, not your chat — so the user-facing result belongs in
+the transcript before the task ends. Write it as your normal reply prose
+BEFORE running the `complete()` heredoc (the mirror forwards it
+automatically; `narrate(...)` also works), never just "the summary is in
+chat", then complete with a short status: `complete({success, message})`.
+Safety net: when a session mirror is live, `complete()` defers the actual
+completion until your final reply has been mirrored (turn end or a short
+quiet window, ~90s cap) — the console then still reads answer first, "Task
+completed" last, and the Space lingers a few extra seconds while that
+drains. Mirrorless sessions complete immediately, so the rule above is the
+only thing standing between the user and an answerless console.
+
 Keep the user informed while working: call `setStatus('Reading results…')`
 (or its alias `narrate(...)`) before long steps — it is displayed in the
 overlay pill AND appears as narration in the live transcript console (View ▸
@@ -738,7 +751,9 @@ hand off or ask. A plain "we use cookies" notice is not one of them.
    `observe({diff: true})` / `snapshotText({diff: true})` keeps that cheap:
    print what changed, not the whole page.
 5. Extract data with `js` returning JSON-serializable values.
-6. Finish with a dedicated `complete({success})` round.
+6. Report the result — as reply prose (or `narrate`) BEFORE completing, so
+   it lands in the transcript console (see "Deliver the result BEFORE
+   completing") — then finish with a dedicated `complete({success})` round.
 
 ## Caveats
 

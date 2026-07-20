@@ -236,15 +236,6 @@
     "© %d Phinomenon. All rights reserved." : {
       "comment" : "About window - Copyright notice at bottom"
     },
-    ">" : {
-
-    },
-    "⏺" : {
-
-    },
-    "✻" : {
-
-    },
     "A new version of Phi is available" : {
       "comment" : "Sparkle update window - Title"
     },
@@ -664,6 +655,9 @@
     },
     "Copy Right URL" : {
       "comment" : "Bookmark context menu - Copy the right (secondary) URL of a split-view bookmark\nTab context menu - Copy the right pane's URL for a split"
+    },
+    "Copy transcript" : {
+      "comment" : "Agent console - copy the visible feed as text"
     },
     "Copy URL" : {
       "comment" : "Copy URL shortcut tooltip title\nEdit menu - Copy the selected tab URL to the clipboard"
@@ -1129,9 +1123,6 @@
     },
     "Item 2" : {
 
-    },
-    "Jump to latest" : {
-      "comment" : "Agent console - scroll to newest line"
     },
     "Just now" : {
       "comment" : "Download item row - Relative time when download completed less than a minute ago"

@@ -325,9 +325,15 @@ enum AgentSpaceRouter {
                         AgentTranscriptStore.shared.setCodexActivity(
                             taskId: taskId, activity: activity)
                     }
-                    // Activity is a Codex-only control record. Drop the
-                    // reserved kind for every other origin instead of
-                    // degrading it into a visible action line.
+                    if item["agent"] as? String == "claude",
+                       let activity = ClaudeTranscriptActivity(payloadText: text) {
+                        AgentTranscriptStore.shared.setClaudeActivity(
+                            taskId: taskId, activity: activity)
+                    }
+                    // Activity is a control record reserved for the mirrored
+                    // CLIs' transient tail rows. Drop the kind for every
+                    // other origin instead of degrading it into a visible
+                    // action line.
                     continue
                 }
                 var kind = AgentTranscriptEntry.Kind(rawValue: item["kind"] as? String ?? "")

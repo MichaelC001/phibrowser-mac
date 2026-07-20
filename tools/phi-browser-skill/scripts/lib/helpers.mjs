@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url'
 import { connectBrowser } from './cdp.mjs'
 import {
   readDaemonControl, writeDaemonControl, clearDaemonControl,
-  pidAlive, agentRootPid,
+  requestDeferredComplete, pidAlive, agentRootPid,
 } from './mirror-core.mjs'
 import { discoverClaudeTranscript } from './mirror-claude.mjs'
 import { discoverCodexTranscript } from './mirror-codex.mjs'
@@ -3531,22 +3531,48 @@ export async function handOffAndWait(message, { timeout = 100 } = {}) {
  * only the task ends and its window closes, and a later
  * ensureAgentSpace(name, {persistent: true}) re-binds to it. If the user
  * needs a live page left open in an ephemeral Space, hand it to them with
- * handOff() BEFORE completing. Run in its own dedicated final heredoc.
+ * handOff() BEFORE completing. Run in its own dedicated final heredoc — and
+ * deliver the user-facing result INTO the transcript first (reply prose
+ * before this heredoc, or narrate).
+ *
+ * When a session mirror is live, completion is DEFERRED to it: the final
+ * reply an agent writes after this call would otherwise never reach the
+ * console, so the tailer keeps mirroring until that reply has landed (the
+ * session's turn end, or a short quiet window) and only then finishes the
+ * task — the transcript reads result first, "Task completed" last. Without
+ * a mirror (unrecognized driver), completion is immediate.
  */
 export async function complete({ success = true, message = undefined } = {}) {
   const task = requireTask()
-  await phiSend('agentSpace.complete', {
-    taskId: task.taskId,
-    status: success ? 'success' : 'failure',
-    ...(message ? { message } : {}),
-  })
-  // The task is over: stop the session mirror — deleting the daemon control
-  // file is the tailer's exit signal.
-  stopSessionMirror(task.taskId)
+  const status = success ? 'success' : 'failure'
+  let deferred = false
+  try {
+    const transcript = discoverSessionTranscript(task.taskId, agentRootPid())
+    if (transcript) {
+      deferred = requestDeferredComplete(transcript.sessionKey, task.taskId,
+                                         { status, message })
+    }
+  } catch {}
+  if (deferred) {
+    // Keep the task alive through the grace window — the round that kept
+    // refreshing its keep-alive is about to exit.
+    await phiSend('agentSpace.ping', {
+      taskId: task.taskId, ttlSeconds: 300,
+    }).catch(() => {})
+  } else {
+    await phiSend('agentSpace.complete', {
+      taskId: task.taskId,
+      status,
+      ...(message ? { message } : {}),
+    })
+    // The task is over: stop the session mirror — deleting the daemon
+    // control file is the tailer's exit signal.
+    stopSessionMirror(task.taskId)
+  }
   state.task = null
   state.sessionId = null
   state.targetId = null
-  return { done: true }
+  return { done: true, ...(deferred ? { deferred: true } : {}) }
 }
 
 // ---------------------------------------------------------------------------

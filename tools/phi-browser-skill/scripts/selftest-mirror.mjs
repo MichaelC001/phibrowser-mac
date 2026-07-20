@@ -27,6 +27,10 @@ import {
   discoverOpenclawTranscript, deliverOpenclaw,
 } from './lib/mirror-openclaw.mjs'
 import { SqliteTail } from './lib/mirror-sqlite.mjs'
+import {
+  readDaemonControl, writeDaemonControl, clearDaemonControl,
+  requestDeferredComplete,
+} from './lib/mirror-core.mjs'
 
 const results = []
 function check(name, ok, detail = '') {
@@ -40,9 +44,26 @@ const sql = (db, stmt) => execFileSync('/usr/bin/sqlite3', [db, stmt], { encodin
 // --- toEntry: Claude Code ------------------------------------------------------
 
 {
-  const e = claudeToEntry({ type: 'user', timestamp: '2026-07-17T03:00:00Z',
-                            message: { content: 'hello there' } })
-  check('claude: user string', e?.kind === 'user' && e.text === 'hello there' && e.ts > 0)
+  // Pin the effort the activity records report to a fixture, independent of
+  // this machine's real ~/.claude/settings.json.
+  const claudeConfig = join(dir, 'claude-config')
+  execFileSync('/bin/mkdir', ['-p', claudeConfig])
+  writeFileSync(join(claudeConfig, 'settings.json'),
+                JSON.stringify({ effortLevel: 'xhigh' }))
+  const savedConfigDir = process.env.CLAUDE_CONFIG_DIR
+  process.env.CLAUDE_CONFIG_DIR = claudeConfig
+
+  const first = claudeToEntry({ type: 'user', timestamp: '2026-07-17T03:00:00Z',
+                                message: { content: 'hello there' } })
+  const opened = Array.isArray(first) && first.length === 2
+    ? { activity: JSON.parse(first[0].text), user: first[1] } : null
+  check('claude: first conversation record opens the turn (working activity + prompt)',
+        opened && first[0].kind === 'activity'
+        && opened.activity.phase === 'working'
+        && opened.activity.startTs === first[0].ts
+        && opened.activity.effort === 'xhigh'
+        && opened.user.kind === 'user' && opened.user.text === 'hello there'
+        && opened.user.ts > 0)
   check('claude: tool_result-only user is machinery', claudeToEntry({
     type: 'user', message: { content: [{ type: 'tool_result', content: 'x' }] },
   }) === null)
@@ -71,6 +92,65 @@ const sql = (db, stmt) => execFileSync('/usr/bin/sqlite3', [db, stmt], { encodin
     message: { content: 'x' } }) === null)
   check('claude: [phi-console] echo suppressed', claudeToEntry({ type: 'user',
     message: { content: '[phi-console] do it' } }) === null)
+
+  // Slash commands arrive as XML-ish markup; the console shows what the
+  // terminal shows — the typed command line and its printed output.
+  const slash = claudeToEntry({ type: 'user', message: { content:
+    '<command-message>phi-browser</command-message>\n'
+    + '<command-name>/phi-browser</command-name>\n'
+    + '<command-args>open wikipedia and hand it to me</command-args>' } })
+  check('claude: slash command rendered as the typed line',
+        slash?.kind === 'user'
+        && slash.text === '/phi-browser open wikipedia and hand it to me')
+  const bare = claudeToEntry({ type: 'user', message: { content:
+    '<command-name>/model</command-name>\n'
+    + '<command-message>model</command-message>\n<command-args></command-args>' } })
+  check('claude: argless command keeps just its name',
+        bare?.kind === 'user' && bare.text === '/model')
+  const stdout = claudeToEntry({ type: 'user', message: { content:
+    '<local-command-stdout>Set model to \u001b[1mFable 5\u001b[22m'
+    + '</local-command-stdout>' } })
+  check('claude: command stdout is a plain line, ANSI stripped',
+        stdout?.kind === 'action' && stdout.text === 'Set model to Fable 5')
+  check('claude: empty command stdout is machinery', claudeToEntry({
+    type: 'user',
+    message: { content: '<local-command-stdout></local-command-stdout>' },
+  }) === null)
+
+  // Turn edges + background shells: a run_in_background Bash opens a shell,
+  // turn_duration closes the turn with the count, the harness's
+  // task-notification (a user record naming the tool-use id) closes the
+  // shell — and is machinery, never a mirrored prompt.
+  const bg = claudeToEntry({ type: 'assistant', message: { content: [
+    { type: 'tool_use', id: 'toolu_bg_1', name: 'Bash',
+      input: { command: 'sleep 5 && echo done', run_in_background: true } }] } })
+  check('claude: background shell still titled like Claude Code',
+        Array.isArray(bg) && bg[0].kind === 'tool'
+        && bg[0].text === 'Bash(sleep 5 && echo done)')
+  const rested = claudeToEntry({ type: 'system', subtype: 'turn_duration',
+    timestamp: '2026-07-17T03:00:28Z', durationMs: 28000 })
+  const restedPayload = rested && !Array.isArray(rested)
+    ? JSON.parse(rested.text) : null
+  check('claude: turn_duration becomes the resting summary activity',
+        rested?.kind === 'activity' && restedPayload?.phase === 'idle'
+        && restedPayload.durationMs === 28000
+        && restedPayload.startTs === Date.parse('2026-07-17T03:00:00Z')
+        && restedPayload.shellsRunning === 1)
+  const woke = claudeToEntry({ type: 'user', timestamp: '2026-07-17T03:01:00Z',
+    message: { content: '<task-notification>\n<task-id>b7c</task-id>\n'
+      + '<tool-use-id>toolu_bg_1</tool-use-id>\n<status>completed</status>\n'
+      + '</task-notification>' } })
+  check('claude: shell notification wakes a turn, never mirrors as a prompt',
+        woke?.kind === 'activity' && JSON.parse(woke.text).phase === 'working')
+  const restedAgain = claudeToEntry({ type: 'system', subtype: 'turn_duration',
+    timestamp: '2026-07-17T03:01:02Z', durationMs: 2000 })
+  check('claude: notification retired its shell',
+        restedAgain?.kind === 'activity'
+        && JSON.parse(restedAgain.text).shellsRunning === 0
+        && JSON.parse(restedAgain.text).startTs === Date.parse('2026-07-17T03:01:00Z'))
+
+  if (savedConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR
+  else process.env.CLAUDE_CONFIG_DIR = savedConfigDir
 }
 
 // --- toEntry: Codex ------------------------------------------------------------
@@ -411,6 +491,31 @@ const sql = (db, stmt) => execFileSync('/usr/bin/sqlite3', [db, stmt], { encodin
       if (v === undefined) delete process.env[k]; else process.env[k] = v
     }
   }
+}
+
+// --- deferred completion (mirror-core) -----------------------------------------
+
+{
+  const key = `selftest-defer-${process.pid}`
+  writeDaemonControl(key, { taskId: 'task-1', transcriptPath: '/tmp/x',
+                            pid: process.pid, ts: Date.now() })
+  const accepted = requestDeferredComplete(key, 'task-1',
+                                           { status: 'failure', message: 'why' })
+  const ctl = readDaemonControl(key)
+  check('defer: live daemon claim accepts the intent', accepted === true
+        && ctl?.completing?.status === 'failure' && ctl.completing.message === 'why'
+        && ctl.completing.ts > 0 && ctl.taskId === 'task-1')
+  check('defer: wrong task is refused',
+        requestDeferredComplete(key, 'task-OTHER', { status: 'success' }) === false)
+  clearDaemonControl(key)
+  check('defer: no control file → complete directly',
+        requestDeferredComplete(key, 'task-1', { status: 'success' }) === false)
+  const deadKey = `selftest-defer-dead-${process.pid}`
+  writeDaemonControl(deadKey, { taskId: 'task-1', transcriptPath: '/tmp/x',
+                                pid: 99999999, ts: Date.now() })
+  check('defer: dead daemon pid → complete directly',
+        requestDeferredComplete(deadKey, 'task-1', { status: 'success' }) === false)
+  clearDaemonControl(deadKey)
 }
 
 // --- summary -------------------------------------------------------------------
