@@ -7,22 +7,30 @@ import AppKit
 import SwiftUI
 
 /// Settings pane content for developer tooling, moved out of the General pane
-/// into its own tab: the remote-debugging (CDP) toggle, the phi-browser skill
-/// installer, and the agent user-space permissions toggle. Sections use the
-/// shared `SettingsDetailCard` chrome so the pane reads like General's cards.
-/// The localized strings keep their original keys from the General pane so
-/// existing translations carry over.
+/// into its own tab. The "Allow agents to control Phi (CDP)" switch is the
+/// pane's master gate: while it is off only that card shows; turning it on
+/// reveals the allowed-agent list, the phi-browser skill installer, and the
+/// agent permissions section. Sections use the shared `SettingsDetailCard`
+/// chrome so the pane reads like General's cards.
 struct DeveloperSettingsView: View {
+    // Master switch state lives here (not in the remote-debugging section) so
+    // the sibling sections can gate on it.
+    @State private var agentAccessEnabled: Bool =
+        PhiPreferences.AgentSpaces.cdpAgentAccessEnabled
+
     var body: some View {
         ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 24) {
-                RemoteDebuggingSectionView()
-                SkillInstallSectionView()
-                AgentPermissionsSectionView()
+                RemoteDebuggingSectionView(agentAccessEnabled: $agentAccessEnabled)
+                if agentAccessEnabled {
+                    SkillInstallSectionView()
+                    AgentPermissionsSectionView()
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, 36)
             .padding(.horizontal, 36)
+            .animation(.easeInOut(duration: 0.2), value: agentAccessEnabled)
         }
         .themedBackground(PhiPreferences.fixedWindowBackground)
         .frame(width: 680, height: 561)
@@ -50,8 +58,7 @@ private struct DeveloperSectionView<Content: View>: View {
 private struct RemoteDebuggingSectionView: View {
     // Live master switch for agent CDP access over the app-owned Unix socket.
     // Flipping it starts/stops the listener immediately — no relaunch.
-    @State private var agentAccessEnabled: Bool =
-        PhiPreferences.AgentSpaces.cdpAgentAccessEnabled
+    @Binding var agentAccessEnabled: Bool
     // Agents currently allowed to connect (persisted "Always Allow" plus this
     // session's "Allow Once"). Read live from the listener on appear.
     @State private var allowedGrants: [AgentGrant] =
@@ -61,7 +68,7 @@ private struct RemoteDebuggingSectionView: View {
         DeveloperSectionView(title: NSLocalizedString("Remote debugging", comment: "Developer settings - Remote debugging section title")) {
             VStack(alignment: .leading, spacing: 16) {
                 enableCard
-                if agentAccessEnabled || !allowedGrants.isEmpty {
+                if agentAccessEnabled {
                     grantsCard
                 }
             }
@@ -341,7 +348,7 @@ private struct SkillInstallSectionView: View {
                         Text(NSLocalizedString("Install the phi-browser skill", comment: "Developer settings - Title for installing the phi-browser agent skill"))
                             .font(.system(size: 13))
                             .themedForeground(.textPrimary)
-                        Text(NSLocalizedString("Links the skill bundled in this app into an AI coding agent’s skills folder so it can drive Phi over the DevTools Protocol. Pi also gets a companion extension that wakes idle sessions from Agent Transcript commands. Requires Node 22+; enable remote debugging above so it can connect.", comment: "Developer settings - Explanation for the phi-browser skill installer"))
+                        Text(NSLocalizedString("Links the skill bundled in this app into an AI coding agent’s skills folder so it can drive Phi over the DevTools Protocol. Pi also gets a companion extension that wakes idle sessions from Agent Transcript commands. Requires Node 22+.", comment: "Developer settings - Explanation for the phi-browser skill installer"))
                             .font(.system(size: 11))
                             .themedForeground(.textTertiary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -400,7 +407,7 @@ private struct SkillInstallSectionView: View {
             presentSkillAlert(
                 title: NSLocalizedString("Skill installed", comment: "Developer settings - Skill install success title"),
                 body: String(
-                    format: NSLocalizedString("%@ can now use the phi-browser skill. Enable remote debugging above if needed. Restart newly configured agents; in Pi, /reload is enough.", comment: "Developer settings - Skill install success body; %@ is the agent name"),
+                    format: NSLocalizedString("%@ can now use the phi-browser skill. Restart newly configured agents; in Pi, /reload is enough.", comment: "Developer settings - Skill install success body; %@ is the agent name"),
                     succeeded.joined(separator: ", ")),
                 style: .informational)
         } else {
@@ -505,7 +512,7 @@ private struct SkillInstallSectionView: View {
             presentSkillAlert(
                 title: NSLocalizedString("Skill installed", comment: "Developer settings - Skill install success title"),
                 body: String(
-                    format: NSLocalizedString("%@ can now use the phi-browser skill. Enable remote debugging above if needed. Restart newly configured agents; in Pi, /reload is enough.", comment: "Developer settings - Skill install success body; %@ is the agent name"),
+                    format: NSLocalizedString("%@ can now use the phi-browser skill. Restart newly configured agents; in Pi, /reload is enough.", comment: "Developer settings - Skill install success body; %@ is the agent name"),
                     target.name),
                 style: .informational)
         case .cancelled:

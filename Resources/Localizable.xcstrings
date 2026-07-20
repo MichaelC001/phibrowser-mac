@@ -154,7 +154,7 @@
         }
       }
     },
-    "%@ can now use the phi-browser skill. Enable remote debugging above if needed. Restart newly configured agents; in Pi, /reload is enough." : {
+    "%@ can now use the phi-browser skill. Restart newly configured agents; in Pi, /reload is enough." : {
       "comment" : "Developer settings - Skill install success body; %@ is the agent name"
     },
     "%@ tab group, %d tabs, collapsed" : {
@@ -1175,7 +1175,7 @@
     "Linking..." : {
       "comment" : "Phi Link - Custom bot linking text"
     },
-    "Links the skill bundled in this app into an AI coding agent’s skills folder so it can drive Phi over the DevTools Protocol. Pi also gets a companion extension that wakes idle sessions from Agent Transcript commands. Requires Node 22+; enable remote debugging above so it can connect." : {
+    "Links the skill bundled in this app into an AI coding agent’s skills folder so it can drive Phi over the DevTools Protocol. Pi also gets a companion extension that wakes idle sessions from Agent Transcript commands. Requires Node 22+." : {
       "comment" : "Developer settings - Explanation for the phi-browser skill installer"
     },
     "Loading image…" : {
