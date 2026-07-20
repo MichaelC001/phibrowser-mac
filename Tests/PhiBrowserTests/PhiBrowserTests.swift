@@ -33,6 +33,33 @@ final class PhiBrowserTests: XCTestCase {
         XCTAssertEqual(shortcut.displayString, "⌥⌃←")
     }
 
+    func testShortcutCaptureNormalizesShiftTabToTabCharacter() throws {
+        let event = try XCTUnwrap(
+            NSEvent.keyEvent(
+                with: .keyDown,
+                location: .zero,
+                modifierFlags: [.control, .shift],
+                timestamp: 0,
+                windowNumber: 0,
+                context: nil,
+                characters: String(format: "%c", NSBackTabCharacter),
+                charactersIgnoringModifiers: String(format: "%c", NSBackTabCharacter),
+                isARepeat: false,
+                keyCode: 48
+            )
+        )
+
+        let keyChord = try XCTUnwrap(KeyChord(fromEvent: event))
+        let shortcut = ShortcutsKey(
+            characters: keyChord.characters,
+            modifiers: keyChord.modifiers
+        )
+
+        XCTAssertEqual(keyChord.characters, "\t")
+        XCTAssertEqual(keyChord.modifiers, [.control, .shift])
+        XCTAssertEqual(shortcut.displayString, "⇧⌃⇥")
+    }
+
     func testThemeSnapshotRoundTripPreservesEditableColorsAndOverlayOpacity() {
         let theme = Theme(id: "theme-snapshot-round-trip", name: "Snapshot")
         theme.setColor(

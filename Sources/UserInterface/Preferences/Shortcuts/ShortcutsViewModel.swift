@@ -165,9 +165,12 @@ struct KeyChord {
             return nil
         }
         
-        // Normalize characters
+        // Shift-Tab may arrive as NSBackTabCharacter. Store every physical Tab
+        // key as "\t" so recording matches CommandDispatcher's event lookup.
         var normalizedChars = chars
-        if chars == String(format: "%c", NSDeleteCharacter) {
+        if event.keyCode == 48 {
+            normalizedChars = "\t"
+        } else if chars == String(format: "%c", NSDeleteCharacter) {
             normalizedChars = String(format: "%c", NSBackspaceCharacter)
         } else if chars.count > 1 {
             normalizedChars = String(chars.prefix(1))
