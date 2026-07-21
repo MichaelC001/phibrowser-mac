@@ -9,8 +9,9 @@
 // Covers: each agent's toEntry parsing
 // (echo suppression, machinery skipping), the SQLite tail source against a
 // throwaway database shaped like Hermes', the env-gated session discovery
-// (Hermes' SQLite state, OpenClaw's JSONL session dir), and OpenClaw's CLI
-// delivery seam. Exits non-zero when any check fails.
+// (Hermes' SQLite state, OpenClaw's JSONL session dir), and the console
+// bridges' CLI delivery seams (OpenClaw's gateway CLI, Hermes's
+// resume-oneshot). Exits non-zero when any check fails.
 
 import {
   mkdtempSync, rmSync, writeFileSync, readFileSync, chmodSync, utimesSync,
@@ -28,6 +29,7 @@ import {
 } from './lib/mirror-pi-bridge.mjs'
 import {
   toEntry as hermesToEntry, hermesQuery, hermesRowToItem, discoverHermesTranscript,
+  deliverHermes, HermesConsoleBridge,
 } from './lib/mirror-hermes.mjs'
 import {
   toEntry as openclawToEntry, discoverOpenclawTranscript, deliverOpenclaw,
@@ -611,6 +613,76 @@ const sql = (db, stmt) => execFileSync('/usr/bin/sqlite3', [db, stmt], { encodin
   tasks = () => []
   check('openclaw bridge: vanished task tells the daemon to exit',
         await bridge.deliverPending(ctl, channel) === true)
+}
+
+// --- Hermes console delivery ----------------------------------------------------
+
+{
+  // Delivery seam: a stub CLI proves argv shape, the HERMES_SESSION_ID env
+  // strip (the daemon inherits the driving session's export; the one-shot
+  // must bind to --resume), the stale-session guard (an unknown --resume
+  // silently starts a NEW session, so delivery must refuse it up front),
+  // and both exit paths.
+  const home = join(dir, 'hermes-deliver-home')
+  execFileSync('/bin/mkdir', ['-p', home])
+  sql(join(home, 'state.db'),
+      `CREATE TABLE sessions (id TEXT PRIMARY KEY);
+       INSERT INTO sessions VALUES ('sess-h');`)
+  const okBin = join(dir, 'hermes-ok')
+  const argsFile = join(dir, 'hermes-args')
+  const envFile = join(dir, 'hermes-env')
+  writeFileSync(okBin, `#!/bin/sh\nprintf '%s\\n' "$@" > ${argsFile}\n`
+    + `printf '%s' "\${HERMES_SESSION_ID-unset}" > ${envFile}\nexit 0\n`)
+  chmodSync(okBin, 0o755)
+  const badBin = join(dir, 'hermes-bad')
+  writeFileSync(badBin, '#!/bin/sh\nexit 3\n')
+  chmodSync(badBin, 0o755)
+  const saved = { HERMES_SESSION_ID: process.env.HERMES_SESSION_ID,
+                  PHI_HERMES_HOME: process.env.PHI_HERMES_HOME }
+  process.env.HERMES_SESSION_ID = 'leaked-from-driver'
+  process.env.PHI_HERMES_HOME = home
+  process.env.PHI_HERMES_BIN = okBin
+  let delivered = false
+  try { await deliverHermes('sess-h', '[phi-console] hi'); delivered = true } catch {}
+  const argv = delivered ? readFileSync(argsFile, 'utf8').trim().split('\n') : []
+  check('hermes delivery: CLI argv', delivered
+        && argv.join(' ') === '--resume sess-h -z [phi-console] hi', argv.join(' '))
+  check('hermes delivery: session env stripped from the one-shot',
+        delivered && readFileSync(envFile, 'utf8') === 'unset')
+  let staleRejected = false
+  try { await deliverHermes('sess-gone', 'x') } catch { staleRejected = true }
+  check('hermes delivery: stale session refused (no silent new-session fork)',
+        staleRejected)
+  process.env.PHI_HERMES_BIN = badBin
+  let rejected = false
+  try { await deliverHermes('sess-h', 'x') } catch { rejected = true }
+  check('hermes delivery: nonzero exit rejects (bridge retries)', rejected)
+  delete process.env.PHI_HERMES_BIN
+  for (const [k, v] of Object.entries(saved)) {
+    if (v === undefined) delete process.env[k]; else process.env[k] = v
+  }
+
+  // The bridge subclass drains through the injected seam like OpenClaw's.
+  const delivered2 = []
+  const hb = new HermesConsoleBridge('sess-h', {
+    deliver: async (sessionId, text) => delivered2.push({ sessionId, text }),
+  })
+  const channel = {
+    async send(type) {
+      if (type === 'agentSpace.list') {
+        return { tasks: [{ taskId: 'h-task', status: 'idle', pendingUserMessages: 1 }] }
+      }
+      if (type === 'agentSpace.readUserMessages') {
+        return { messages: [{ text: 'scroll down' }] }
+      }
+      throw new Error(`unexpected send: ${type}`)
+    },
+  }
+  check('hermes bridge: idle drain delivers through the CLI seam, marked',
+        await hb.deliverPending({ taskId: 'h-task', agentPid: process.pid }, channel)
+          === false
+        && delivered2.length === 1 && delivered2[0].sessionId === 'sess-h'
+        && delivered2[0].text === '[phi-console] scroll down')
 }
 
 // --- discovery: Hermes ---------------------------------------------------------

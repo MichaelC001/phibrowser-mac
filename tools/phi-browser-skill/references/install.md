@@ -124,9 +124,13 @@ The mirror then
   (prefixed `[phi-console]`) where the agent has a delivery transport. Pi's
   installed companion extension calls its supported in-process
   `pi.sendUserMessage()` API, which wakes the session immediately. OpenClaw
-  uses `openclaw agent --session-id … --message …` through its gateway. The
-  remaining terminal agents have no transport, so their commands stay queued
-  until the next round drains them via `readUserMessages()`.
+  uses `openclaw agent --session-id … --message …` through its gateway.
+  Hermes is resumed headless (`hermes --resume <session-id> -z …`) — the
+  woken turn appends to the same session in state.db and mirrors back into
+  the console (an interactive TUI open on that session shows the exchange
+  only after its next reload). The remaining terminal agents have no
+  transport, so their commands stay queued until the next round drains them
+  via `readUserMessages()`.
 
 The daemon exits on its own when the task completes, when the session goes
 quiet for 30 minutes, when the agent process exits, or when the task
@@ -165,6 +169,9 @@ needed): `node scripts/selftest-mirror.mjs`.
   the `openclaw` CLI — it must be installed (PATH, `~/.local/bin`, or set
   `PHI_OPENCLAW_BIN`) and able to reach your gateway. Check
   `openclaw agent --session-id <id> --message test` by hand.
+- **Under Hermes: console commands stay queued**: the daemon delivers via
+  the `hermes` CLI — it must be installed (PATH, `~/.local/bin`, or set
+  `PHI_HERMES_BIN`). Check `hermes --resume <session-id> -z test` by hand.
 - **Access denied**: you (or a stale *Always Allow*) denied this agent. Approve
   the next prompt, or remove the agent under Settings ▸ Developer ▸ Remote
   debugging ▸ Remembered agents and reconnect to be asked again.

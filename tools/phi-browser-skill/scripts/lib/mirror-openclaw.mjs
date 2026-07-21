@@ -33,10 +33,9 @@
 import {
   existsSync, readdirSync, statSync, openSync, readSync, closeSync,
 } from 'node:fs'
-import { spawn } from 'node:child_process'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { forwardEntries } from './mirror-core.mjs'
+import { ConsoleCommandBridge, deliverViaAgentCLI } from './mirror-core.mjs'
 
 // A transcript not written to for this long belongs to an ended/parked run.
 const SESSION_MAX_AGE_MS = 30 * 60 * 1000
@@ -47,9 +46,6 @@ const EVIDENCE_TAIL_BYTES = 256 * 1024
 // within a moment; a healthy call may keep streaming the run's output far
 // longer than the daemon can block.
 const ACCEPT_WAIT_MS = 15 * 1000
-// Delivery attempts per console command before giving up with a console
-// error line (gateway unreachable and the like).
-const MAX_DELIVER_ATTEMPTS = 5
 
 /**
  * The driving OpenClaw session's transcript, or null. Returns
@@ -112,91 +108,21 @@ export function toEntry(obj) {
 }
 
 /**
- * Sends a console command into the session through the openclaw CLI.
- * Resolves when the CLI exits cleanly or is still running after
- * ACCEPT_WAIT_MS (the run outlives our patience — the message was
- * accepted); rejects on a prompt nonzero exit or a missing binary, which
- * the bridge turns into its usual retry.
+ * Sends a console command into the session through the openclaw CLI, with
+ * the shared accepted-or-rejected semantics of deliverViaAgentCLI.
  */
 export function deliverOpenclaw(sessionId, text) {
-  return new Promise((resolve, reject) => {
-    let child
-    try {
-      child = spawn(openclawBin(),
-                    ['agent', '--session-id', String(sessionId), '--message', text],
-                    { stdio: 'ignore' })
-    } catch (err) { reject(err); return }
-    const timer = setTimeout(() => { child.unref() ; resolve() }, ACCEPT_WAIT_MS)
-    child.once('error', (err) => { clearTimeout(timer); reject(err) })
-    child.once('exit', (code) => {
-      clearTimeout(timer)
-      if (code === 0) resolve()
-      else reject(new Error(`openclaw agent exited ${code}`))
-    })
-  })
+  return deliverViaAgentCLI(
+    openclawBin(),
+    ['agent', '--session-id', String(sessionId), '--message', text],
+    { acceptWaitMs: ACCEPT_WAIT_MS })
 }
 
-/**
- * The console → session direction, driven by the tailer's sweep tick (the
- * daemon instantiates one per session for format 'openclaw' only — every
- * other terminal agent has no delivery transport and its commands stay
- * queued until the driver's next round). Drains the app's queued console
- * commands and delivers them into the driving session, ONLY when the task
- * is idle: a live round is expected to drain the queue itself, and racing
- * it would strand a waitForUserMessage on an empty queue. Commands are
- * delivered with a "[phi-console]" prefix: the agent sees the provenance
- * (answer via narrate/console, not just its own surface), and toEntry
- * suppresses the echoed transcript line (the app already echoed the command
- * at enqueue).
- */
-export class OpenclawConsoleBridge {
+/** The shared console bridge over the openclaw gateway CLI. */
+export class OpenclawConsoleBridge extends ConsoleCommandBridge {
   // `deliver` is a seam for fixture tests; the daemon uses the real CLI.
   constructor(sessionKey, { deliver = deliverOpenclaw } = {}) {
-    this.sessionKey = sessionKey
-    this.deliver = deliver
-    this.undelivered = []     // [{text, attempts}] retrying across ticks
-  }
-
-  /** True means the task no longer exists — the daemon should exit. */
-  async deliverPending(ctl, channel) {
-    if (!ctl.taskId || !ctl.agentPid) return false
-    const { tasks } = await channel.send('agentSpace.list', {})
-    const task = (tasks || []).find((t) => t.taskId === ctl.taskId)
-    if (!task) return true
-    const queued = task.pendingUserMessages || 0
-    if (!queued && !this.undelivered.length) return false
-    // Deliver only between rounds: a live round drains the queue itself
-    // (readUserMessages / waitForUserMessage), and a starting one gets the
-    // count in its ensureAgentSpace return.
-    if (task.status !== 'idle') return false
-
-    if (queued) {
-      const { messages } = await channel.send(
-        'agentSpace.readUserMessages', { taskId: ctl.taskId })
-      for (const m of messages || []) {
-        this.undelivered.push({ text: m.text, attempts: 0 })
-      }
-    }
-    const retry = []
-    for (const item of this.undelivered) {
-      try {
-        await this.deliver(this.sessionKey, `[phi-console] ${item.text}`)
-        await new Promise((r) => setTimeout(r, 300))  // pace successive deliveries
-      } catch {
-        item.attempts += 1
-        if (item.attempts < MAX_DELIVER_ATTEMPTS) {
-          retry.push(item)
-        } else {
-          await forwardEntries(ctl.taskId, [{
-            kind: 'error',
-            text: 'Could not deliver your command to the agent',
-            detail: item.text.slice(0, 200),
-          }], channel).catch(() => {})
-        }
-      }
-    }
-    this.undelivered = retry
-    return false
+    super(sessionKey, deliver)
   }
 }
 

@@ -12,13 +12,14 @@
 //   console → session: listens for the app's agentSpace.userMessage
 //     broadcast; while the task is IDLE (no round live to drain the queue
 //     itself) the driving agent's console bridge drains the user's console
-//     commands into the session — OpenClaw's (lib/mirror-openclaw.mjs's
-//     OpenclawConsoleBridge, via the openclaw CLI) is the only one this
-//     daemon hosts, so a console command wakes an idle OpenClaw session
-//     instead of waiting for its next round. Pi is delivered separately by
-//     its installed in-process extension (mirror-pi-bridge.mjs), the only
-//     layer that can call pi.sendUserMessage(). The remaining terminal
-//     agents queue commands until the driver's next round.
+//     commands into the session — OpenClaw through its gateway CLI
+//     (mirror-openclaw's OpenclawConsoleBridge), Hermes through its
+//     resume-oneshot CLI (mirror-hermes's HermesConsoleBridge) — so a
+//     console command wakes an idle session instead of waiting for its
+//     next round. Pi is delivered separately by its installed in-process
+//     extension (mirror-pi-bridge.mjs), the only layer that can call
+//     pi.sendUserMessage(). The remaining terminal agents queue commands
+//     until the driver's next round.
 //
 // ensureAgentSpace spawns it detached (arg: session key) after writing the
 // session's daemon control file. Lifetime is bounded by construction —
@@ -45,7 +46,7 @@ import { toEntry as claudeToEntry } from './lib/mirror-claude.mjs'
 import { toEntry as codexToEntry } from './lib/mirror-codex.mjs'
 import { toEntry as piToEntry } from './lib/mirror-pi.mjs'
 import {
-  toEntry as hermesToEntry, hermesQuery, hermesRowToItem,
+  toEntry as hermesToEntry, hermesQuery, hermesRowToItem, HermesConsoleBridge,
 } from './lib/mirror-hermes.mjs'
 import {
   toEntry as openclawToEntry, OpenclawConsoleBridge,
@@ -117,7 +118,9 @@ async function main() {
     : claudeToEntry
   const pending = []
   // The console → session transport, when the driving agent has one here.
-  const bridge = ctl.format === 'openclaw' ? new OpenclawConsoleBridge(sessionKey) : null
+  const bridge = ctl.format === 'openclaw' ? new OpenclawConsoleBridge(sessionKey)
+    : ctl.format === 'hermes' ? new HermesConsoleBridge(sessionKey)
+    : null
 
   // Persistent app channel: carries the log forwards, the message drains,
   // and the userMessage broadcast. Marked dead on any send failure and

@@ -563,7 +563,8 @@ the console yourself.
 The transcript console has a prompt where the user can type commands to you
 mid-task. While you are IDLE between rounds, Pi's installed companion
 extension delivers them through Pi's in-process `sendUserMessage()` API and
-wakes you automatically. OpenClaw uses its gateway transport. Delivered
+wakes you automatically. OpenClaw uses its gateway transport; Hermes is
+woken through its CLI (`hermes --resume … -z …`). Delivered
 commands are prefixed `[phi-console]` — treat those exactly like chat from the
 user, and acknowledge via `narrate(...)` (the user is watching the console,
 not your terminal). While a round is live — or when a delivery transport is

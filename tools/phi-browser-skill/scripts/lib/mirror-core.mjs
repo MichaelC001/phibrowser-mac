@@ -3,10 +3,12 @@
 // Agent-neutral core of the session mirror: the per-session control file
 // that binds a driving agent session to its browser task and its tailer
 // daemon, the per-session transcript cursor, and the batched forward into
-// the task's console. The per-agent siblings (lib/mirror-claude, -codex,
-// -pi, -hermes, -openclaw) supply only the agent-specific parts — session
-// discovery, record parsing, and (where the agent has a delivery transport)
-// the console-command bridge — and reuse everything here.
+// the task's console — plus the agent-neutral console-command bridge that
+// drains the user's typed commands back into the driving session. The
+// per-agent siblings (lib/mirror-claude, -codex, -pi, -hermes, -openclaw)
+// supply only the agent-specific parts — session discovery, record parsing,
+// and (where the agent has one) the bridge's delivery transport — and reuse
+// everything here.
 //
 // Session binding is explicit, not inferred: the heredoc that starts a task
 // KNOWS its own session (an exported session id, or the evidence heuristics
@@ -18,7 +20,7 @@
 import {
   readFileSync, writeFileSync, unlinkSync, mkdirSync, readdirSync, statSync,
 } from 'node:fs'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join, basename } from 'node:path'
 import { discoverEndpoint, DirectPhiChannel } from './cdp.mjs'
@@ -233,6 +235,100 @@ export async function forwardEntries(taskId, entries, channel = null) {
   } finally {
     if (own) ch.close()
   }
+}
+
+// --- console-command bridge ---------------------------------------------------
+
+// Delivery attempts per console command before giving up with a console
+// error line (agent CLI unreachable and the like).
+const MAX_DELIVER_ATTEMPTS = 5
+
+/**
+ * The console → session direction, driven by the tailer's sweep tick.
+ * Agent-neutral: the per-agent adapters subclass this with their own
+ * `deliver(sessionKey, text)` transport (OpenClaw's gateway CLI, Hermes's
+ * resume-oneshot CLI); agents with no transport get no bridge and their
+ * commands stay queued until the driver's next round. Drains the app's
+ * queued console commands and delivers them into the driving session, ONLY
+ * when the task is idle: a live round is expected to drain the queue itself,
+ * and racing it would strand a waitForUserMessage on an empty queue.
+ * Commands are delivered with a "[phi-console]" prefix: the agent sees the
+ * provenance (answer via narrate/console, not just its own surface), and
+ * the per-agent toEntry suppresses the echoed transcript line (the app
+ * already echoed the command at enqueue).
+ */
+export class ConsoleCommandBridge {
+  constructor(sessionKey, deliver) {
+    this.sessionKey = sessionKey
+    this.deliver = deliver
+    this.undelivered = []     // [{text, attempts}] retrying across ticks
+  }
+
+  /** True means the task no longer exists — the daemon should exit. */
+  async deliverPending(ctl, channel) {
+    if (!ctl.taskId || !ctl.agentPid) return false
+    const { tasks } = await channel.send('agentSpace.list', {})
+    const task = (tasks || []).find((t) => t.taskId === ctl.taskId)
+    if (!task) return true
+    const queued = task.pendingUserMessages || 0
+    if (!queued && !this.undelivered.length) return false
+    // Deliver only between rounds: a live round drains the queue itself
+    // (readUserMessages / waitForUserMessage), and a starting one gets the
+    // count in its ensureAgentSpace return.
+    if (task.status !== 'idle') return false
+
+    if (queued) {
+      const { messages } = await channel.send(
+        'agentSpace.readUserMessages', { taskId: ctl.taskId })
+      for (const m of messages || []) {
+        this.undelivered.push({ text: m.text, attempts: 0 })
+      }
+    }
+    const retry = []
+    for (const item of this.undelivered) {
+      try {
+        await this.deliver(this.sessionKey, `[phi-console] ${item.text}`)
+        await new Promise((r) => setTimeout(r, 300))  // pace successive deliveries
+      } catch {
+        item.attempts += 1
+        if (item.attempts < MAX_DELIVER_ATTEMPTS) {
+          retry.push(item)
+        } else {
+          await forwardEntries(ctl.taskId, [{
+            kind: 'error',
+            text: 'Could not deliver your command to the agent',
+            detail: item.text.slice(0, 200),
+          }], channel).catch(() => {})
+        }
+      }
+    }
+    this.undelivered = retry
+    return false
+  }
+}
+
+/**
+ * Runs an agent CLI that wakes a session with a message. Resolves on
+ * acceptance: a clean exit, or still running after `acceptWaitMs` — CLI
+ * errors (no daemon, bad auth, unknown session) exit within a moment, while
+ * a healthy call may keep streaming the woken run far longer than the
+ * bridge can block. Rejects on a prompt nonzero exit or a missing binary,
+ * which the bridge turns into its usual retry.
+ */
+export function deliverViaAgentCLI(bin, args, { acceptWaitMs = 15000, env } = {}) {
+  return new Promise((resolve, reject) => {
+    let child
+    try {
+      child = spawn(bin, args, { stdio: 'ignore', ...(env ? { env } : {}) })
+    } catch (err) { reject(err); return }
+    const timer = setTimeout(() => { child.unref() ; resolve() }, acceptWaitMs)
+    child.once('error', (err) => { clearTimeout(timer); reject(err) })
+    child.once('exit', (code) => {
+      clearTimeout(timer)
+      if (code === 0) resolve()
+      else reject(new Error(`${basename(bin)} exited ${code}`))
+    })
+  })
 }
 
 // --- housekeeping -------------------------------------------------------------

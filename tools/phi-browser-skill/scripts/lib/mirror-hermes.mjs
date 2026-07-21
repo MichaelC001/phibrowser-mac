@@ -9,13 +9,21 @@
 //
 // Discovery is exact: Hermes exports HERMES_SESSION_ID into every tool
 // subprocess (the strongest binding of all five agents — gate and session
-// key in one). Console commands stay queued for the driver's next round,
-// the standard terminal-agent behavior.
+// key in one).
+//
+// Console→session delivery goes through the hermes CLI's headless one-shot
+// (`hermes --resume <session-id> -z <message>`): sessions live entirely in
+// state.db, so resuming one in a scratch process appends the exchange to
+// the SAME session — the mirror tails those rows straight back into the
+// console. The interactive TUI (if still open on that session) won't show
+// the exchange until its next reload; the transcript console, which is
+// where the user is typing, always does.
 
 import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { sqlString } from './mirror-sqlite.mjs'
+import { queryRows, sqlString } from './mirror-sqlite.mjs'
+import { ConsoleCommandBridge, deliverViaAgentCLI } from './mirror-core.mjs'
 
 /**
  * The driving Hermes session's database, or null. Returns
@@ -65,6 +73,61 @@ export function toEntry(obj) {
     return { kind: 'user', text, ts }
   }
   return { kind: 'assistant', text, ts }
+}
+
+// How long deliverHermes waits for the CLI to fail before calling the
+// command accepted: CLI errors (unknown session, bad config) exit within a
+// moment; a healthy one-shot runs the woken turn to completion, far longer
+// than the bridge can block.
+const ACCEPT_WAIT_MS = 15 * 1000
+
+/**
+ * Sends a console command into the session by resuming it headless
+ * (`hermes --resume <id> -z <text>`), with the shared accepted-or-rejected
+ * semantics of deliverViaAgentCLI. HERMES_SESSION_ID is stripped from the
+ * child's environment — this daemon inherited the driving session's export,
+ * and the one-shot must bind to `--resume`, not to an env leak.
+ */
+export function deliverHermes(sessionId, text) {
+  // `--resume` with an unknown id does NOT fail — it silently starts a NEW
+  // session and burns the turn there. Guard with an existence check so a
+  // stale session key surfaces as a delivery error, not a silent fork.
+  if (!hermesSessionExists(sessionId)) {
+    return Promise.reject(new Error(`hermes session ${sessionId} not found`))
+  }
+  const env = { ...process.env }
+  delete env.HERMES_SESSION_ID
+  return deliverViaAgentCLI(
+    hermesBin(),
+    ['--resume', String(sessionId), '-z', text],
+    { acceptWaitMs: ACCEPT_WAIT_MS, env })
+}
+
+/** True when the session row exists — or the db is unreadable (a transient
+ * lock must not block delivery; the CLI is then the arbiter). */
+function hermesSessionExists(sessionId) {
+  try {
+    return queryRows(join(hermesHome(), 'state.db'),
+      `SELECT 1 AS ok FROM sessions WHERE id = ${sqlString(sessionId)} LIMIT 1`
+    ).length > 0
+  } catch { return true }
+}
+
+/** The shared console bridge over the hermes resume-oneshot CLI. */
+export class HermesConsoleBridge extends ConsoleCommandBridge {
+  // `deliver` is a seam for fixture tests; the daemon uses the real CLI.
+  constructor(sessionKey, { deliver = deliverHermes } = {}) {
+    super(sessionKey, deliver)
+  }
+}
+
+function hermesBin() {
+  if (process.env.PHI_HERMES_BIN) return process.env.PHI_HERMES_BIN
+  for (const p of [join(homedir(), '.local', 'bin', 'hermes'),
+                   '/opt/homebrew/bin/hermes', '/usr/local/bin/hermes']) {
+    if (existsSync(p)) return p
+  }
+  return 'hermes'  // PATH
 }
 
 // Hermes content is a plain string, or "\x00json:"-prefixed JSON when the
