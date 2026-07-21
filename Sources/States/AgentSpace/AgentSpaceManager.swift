@@ -119,6 +119,11 @@ struct AgentDriverBadge {
                                     symbol: "chevron.left.forwardslash.chevron.right",
                                     label: "OpenClaw")
         }
+        if lower.contains("hermes") {
+            return AgentDriverBadge(assetName: "agent-hermes",
+                                    symbol: "chevron.left.forwardslash.chevron.right",
+                                    label: "Hermes")
+        }
         if lower.contains("cursor") {
             return AgentDriverBadge(assetName: "agent-cursor",
                                     symbol: "chevron.left.forwardslash.chevron.right",

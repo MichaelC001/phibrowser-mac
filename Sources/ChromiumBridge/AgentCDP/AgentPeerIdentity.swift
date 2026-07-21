@@ -86,10 +86,12 @@ struct AgentGrant: Identifiable {
 enum AgentPeerIdentity {
     /// Interpreters and shells that merely *host* an agent — never the
     /// identity we present. The walk skips past these to the real launcher.
+    /// Membership is checked through `canonicalToolName`, so versioned
+    /// binaries ("python3.11") match their base entry.
     private static let passthroughNames: Set<String> = [
         "node", "deno", "bun", "npm", "npx", "pnpm", "yarn", "corepack",
         "tsx", "ts-node", "uv", "uvx",
-        "python", "python2", "python3", "ruby", "perl", "php",
+        "python", "ruby", "perl", "php",
         "sh", "bash", "zsh", "fish", "dash", "ksh", "csh", "tcsh",
         "env", "login", "sudo", "xargs", "timeout",
     ]
@@ -100,8 +102,29 @@ enum AgentPeerIdentity {
     /// than by the interpreter's meaningless ad-hoc signing id ("node-<cdhash>").
     private static let scriptInterpreters: Set<String> = [
         "node", "deno", "bun", "tsx", "ts-node",
-        "python", "python2", "python3", "ruby", "perl", "php", "uv", "uvx",
+        "python", "ruby", "perl", "php", "uv", "uvx",
     ]
+
+    /// Tool names matched with any trailing version stripped: a venv's
+    /// `python3` is a symlink whose process reads back (proc_pidpath) as the
+    /// real versioned binary — a uv-managed python is `python3.11` — and an
+    /// exact-name lookup then mistakes the interpreter for the agent itself.
+    /// "python3.11" → "python", "node18" → "node".
+    private static func canonicalToolName(_ name: String) -> String {
+        var stem = Substring(name.lowercased())
+        while let last = stem.last, last.isNumber || last == "." {
+            stem = stem.dropLast()
+        }
+        return stem.isEmpty ? name.lowercased() : String(stem)
+    }
+
+    private static func isPassthroughName(_ name: String) -> Bool {
+        passthroughNames.contains(canonicalToolName(name))
+    }
+
+    private static func isScriptInterpreterName(_ name: String) -> Bool {
+        scriptInterpreters.contains(canonicalToolName(name))
+    }
 
     /// Resolves the identity of the process connected on `socketFD`, or nil
     /// when the peer pid can't be read. Runs synchronous filesystem and
@@ -129,14 +152,19 @@ enum AgentPeerIdentity {
     private static func resolve(pid peerPID: pid_t, claimed: Bool = false) -> AgentIdentity? {
         let responsible = responsiblePID(startingAt: peerPID)
         let path = executablePath(responsible) ?? "pid-\(responsible)"
-        let signed = signingIdentity(pid: responsible, executablePath: path)
-        // A bare interpreter (e.g. a `node` CLI agent with no signed-app
-        // ancestor) resolves to a per-build ad-hoc id like "node-<cdhash>",
-        // which is meaningless and brittle. Name it by its argv[0] brand or
-        // the script it runs.
         let exeName = (path as NSString).lastPathComponent
-        if scriptInterpreters.contains(exeName),
-           let scripted = scriptIdentity(startingAt: peerPID) {
+        // A script-run agent is named by the interpreter that runs it, found
+        // between the peer and the responsible process: a bare interpreter
+        // agent (responsible falls back to the peer, whose ad-hoc id like
+        // "node-<cdhash>" is meaningless), or a script CLI under a terminal
+        // (hermes is `python3.11 …/venv/bin/hermes` under Terminal.app —
+        // naming the terminal would tell the user nothing). The walk stops
+        // below a real responsible process, so a signed agent app above the
+        // peer is never overridden by its own helper scripts.
+        let responsibleIsInterpreter = isScriptInterpreterName(exeName)
+        if let scripted = scriptIdentity(
+                startingAt: peerPID,
+                stopBefore: responsibleIsInterpreter ? nil : responsible) {
             return scripted
         }
         // Pi running under a launcher (herdr, tmux, a supervisor daemon) the
@@ -146,7 +174,7 @@ enum AgentPeerIdentity {
         if let pi = piIdentity(startingAt: peerPID, claimed: claimed) {
             return pi
         }
-        return signed
+        return signingIdentity(pid: responsible, executablePath: path)
     }
 
     /// Pi identity when this connection belongs to a pi coding-agent session
@@ -189,22 +217,27 @@ enum AgentPeerIdentity {
     }
 
     /// Walks the ancestry for the nearest interpreter that identifies a real
-    /// agent — either by a custom `argv[0]` (an agent that runs `node` but
-    /// renames itself "pi") or by the script it runs — skipping this skill's
-    /// own plumbing. So a `node`-based agent shows as "pi" rather than
-    /// "node". When only the skill's own scripts are found (a detached
-    /// mirror daemon whose spawning session's ancestry is gone), identifies
-    /// the skill itself, stably keyed by its directory, rather than the
-    /// interpreter's meaningless ad-hoc id. Returns nil when nothing better
-    /// than the interpreter is found.
-    private static func scriptIdentity(startingAt peerPID: pid_t) -> AgentIdentity? {
+    /// agent — by a custom `argv[0]` (an agent that runs `node` but renames
+    /// itself "pi"), the script it runs, or the module it runs (`python -m
+    /// hermes_cli.main`) — skipping this skill's own plumbing. So a
+    /// `node`-based agent shows as "pi" rather than "node". `stopBefore`
+    /// bounds the walk below the responsible process (exclusive), keeping a
+    /// launcher's or a signed agent app's own scripts out of consideration;
+    /// nil walks the full ancestry — the bare-interpreter fallback, where a
+    /// walk finding only the skill's own scripts (a detached mirror daemon
+    /// whose spawning session's ancestry is gone) identifies the skill
+    /// itself, stably keyed by its directory, rather than the interpreter's
+    /// meaningless ad-hoc id. Returns nil when nothing better is found.
+    private static func scriptIdentity(startingAt peerPID: pid_t,
+                                       stopBefore boundary: pid_t? = nil) -> AgentIdentity? {
         var pid = peerPID
         var guardCount = 0
         var ownPlumbingExe: String?
         while pid > 1 && guardCount < 32 {
             guardCount += 1
+            if let boundary, pid == boundary { break }
             if let exe = executablePath(pid),
-               scriptInterpreters.contains((exe as NSString).lastPathComponent),
+               isScriptInterpreterName((exe as NSString).lastPathComponent),
                let argv = processArgv(pid) {
                 if let identity = interpreterIdentity(argv: argv, exe: exe, pid: pid) {
                     return identity
@@ -216,7 +249,9 @@ enum AgentPeerIdentity {
             guard let parent = parentPID(pid), parent != pid else { break }
             pid = parent
         }
-        guard let ownPlumbingExe else { return nil }
+        // Below a real responsible process, the launcher above is the better
+        // identity than the skill's own plumbing.
+        guard boundary == nil, let ownPlumbingExe else { return nil }
         // The skill's own plumbing is not an agent — no pid to echo back.
         return unsignedIdentity(name: "phi-browser", path: "phi-browser",
                                 exe: ownPlumbingExe, pid: nil)
@@ -224,8 +259,9 @@ enum AgentPeerIdentity {
 
     /// Identity of one interpreter process: prefers a custom `argv[0]` the
     /// agent branded itself with (e.g. Pi launches `node` with argv[0]="pi"),
-    /// else the script file it runs. Returns nil for a plain interpreter or
-    /// this skill's own plumbing, so the walk keeps looking upward.
+    /// else the script file it runs, else the module it runs. Returns nil for
+    /// a plain interpreter or this skill's own plumbing, so the walk keeps
+    /// looking upward.
     private static func interpreterIdentity(argv: [String], exe: String,
                                             pid: pid_t) -> AgentIdentity? {
         guard let arg0 = argv.first else { return nil }
@@ -235,7 +271,7 @@ enum AgentPeerIdentity {
         // (1) Custom argv[0] branding: a bare name (not a path) that isn't the
         //     interpreter's own — the agent's self-declared identity.
         if !arg0.contains("/"), !arg0Name.isEmpty, arg0Name != interpreterName,
-           !scriptInterpreters.contains(arg0Name) {
+           !isScriptInterpreterName(arg0Name) {
             return unsignedIdentity(name: arg0Name, path: arg0Name, exe: exe, pid: pid)
         }
         // (2) Otherwise the script it runs.
@@ -243,7 +279,38 @@ enum AgentPeerIdentity {
             return unsignedIdentity(
                 name: deriveAgentName(fromPath: script), path: script, exe: exe, pid: pid)
         }
+        // (3) Otherwise a python-style module run (`python -m hermes_cli.main`,
+        //     the hermes gateway) — no script file on disk to name it by.
+        if let module = moduleArgument(in: argv) {
+            let name = moduleAgentName(module)
+            return unsignedIdentity(name: name, path: name, exe: exe, pid: pid)
+        }
         return nil
+    }
+
+    /// The module of a `python -m <module>` invocation: `-m`'s value, but
+    /// only when no positional (script/command) argument precedes it.
+    private static func moduleArgument(in argv: [String]) -> String? {
+        var expectModule = false
+        for arg in argv.dropFirst() {
+            if expectModule { return arg.isEmpty ? nil : arg }
+            if arg == "-m" { expectModule = true; continue }
+            if arg.hasPrefix("-") { continue }
+            return nil
+        }
+        return nil
+    }
+
+    /// A readable agent name from a module path: the top package, shorn of a
+    /// CLI-wrapper suffix. "hermes_cli.main" → "hermes".
+    private static func moduleAgentName(_ module: String) -> String {
+        var name = module.split(separator: ".").first.map(String.init) ?? module
+        for suffix in ["_cli", "-cli", "_agent", "-agent"]
+        where name.hasSuffix(suffix) && name.count > suffix.count {
+            name = String(name.dropLast(suffix.count))
+            break
+        }
+        return name
     }
 
     /// This skill's own plumbing is never presented as the agent. The heredoc
@@ -336,7 +403,7 @@ enum AgentPeerIdentity {
     /// piIdentity).
     private static func isPiBranded(_ pid: pid_t) -> Bool {
         guard let exe = executablePath(pid),
-              scriptInterpreters.contains((exe as NSString).lastPathComponent),
+              isScriptInterpreterName((exe as NSString).lastPathComponent),
               let arg0 = processArgsAndEnv(pid)?.argv.first,
               !arg0.contains("/") else { return false }
         return (arg0 as NSString).lastPathComponent == "pi"
@@ -432,7 +499,7 @@ enum AgentPeerIdentity {
         // A signed application bundle is a strong, verifiable identity.
         if path.contains(".app/Contents/MacOS/") { return true }
         let name = (path as NSString).lastPathComponent
-        return !passthroughNames.contains(name)
+        return !isPassthroughName(name)
     }
 
     private static func parentPID(_ pid: pid_t) -> pid_t? {
@@ -499,7 +566,18 @@ enum AgentPeerIdentity {
             return unsigned
         }
 
-        let signingId = info[kSecCodeInfoIdentifier as String] as? String
+        // An ad-hoc signature attests nothing: any locally built binary
+        // carries one (linker-signed), and uv-managed pythons even share the
+        // literal identifier "-" — presenting that as a verified name would
+        // both mislead the prompt and key one agent's remembered grant to
+        // every other ad-hoc binary. Report it as unsigned instead, keyed by
+        // executable path.
+        if let flags = (info[kSecCodeInfoFlags as String] as? NSNumber)?.uint32Value,
+           SecCodeSignatureFlags(rawValue: flags).contains(.adhoc) {
+            return unsigned
+        }
+        let signingId = (info[kSecCodeInfoIdentifier as String] as? String)
+            .flatMap { $0 == "-" ? nil : $0 }
         let teamId = info[kSecCodeInfoTeamIdentifier as String] as? String
         let key: String
         if let teamId, !teamId.isEmpty, let signingId, !signingId.isEmpty {
