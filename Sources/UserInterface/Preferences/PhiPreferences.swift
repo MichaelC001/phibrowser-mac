@@ -235,7 +235,6 @@ extension PhiPreferences {
 
     enum AgentSpaces {
         private static let autoCloseKey = "PhiAgentSpaceAutoCloseOnSuccess"
-        private static let remoteDebuggingPortKey = "PhiRemoteDebuggingPort"
         private static let cdpAgentAccessKey = "PhiCDPAgentAccessEnabled"
         private static let rememberedAgentGrantsKey = "PhiCDPRememberedAgentGrants"
         private static let autoViewKey = "PhiAgentSpaceAutoView"
@@ -338,8 +337,7 @@ extension PhiPreferences {
         /// access over the app-owned Unix-domain socket (see
         /// `AgentCDPListener`). Read live — flipping it starts or stops the
         /// listener immediately, no relaunch. Default off: while on, an
-        /// approved agent process can drive the browser. Distinct from
-        /// `remoteDebuggingPort`, which is the developer TCP override.
+        /// approved agent process can drive the browser.
         static var cdpAgentAccessEnabled: Bool {
             get { UserDefaults.standard.bool(forKey: cdpAgentAccessKey) }
             set { UserDefaults.standard.set(newValue, forKey: cdpAgentAccessKey) }
@@ -362,27 +360,6 @@ extension PhiPreferences {
             }
         }
 
-        /// Developer TCP override for the CDP endpoint, consumed by
-        /// ChromiumLauncher at process launch (a relaunch is required for
-        /// changes to apply). Mutually exclusive with the injection transport
-        /// behind `cdpAgentAccessEnabled`: when this is set Chromium listens on
-        /// the port instead. nil (key absent) = unset; 0 = ephemeral port
-        /// written to `<user data dir>/DevToolsActivePort`; >0 = fixed port.
-        static var remoteDebuggingPort: Int? {
-            get {
-                guard UserDefaults.standard.object(forKey: remoteDebuggingPortKey) != nil else {
-                    return nil
-                }
-                return UserDefaults.standard.integer(forKey: remoteDebuggingPortKey)
-            }
-            set {
-                if let newValue {
-                    UserDefaults.standard.set(newValue, forKey: remoteDebuggingPortKey)
-                } else {
-                    UserDefaults.standard.removeObject(forKey: remoteDebuggingPortKey)
-                }
-            }
-        }
     }
 
     // MARK: - Theme Settings

@@ -19,8 +19,8 @@ import Foundation
 /// straight into `ExtensionMessageRouter` (as sender "cdp", same as the
 /// tunnel), and `agentSpace.*` broadcasts are pushed back over the same
 /// socket. Page automation (stock CDP) still goes to Chromium untouched; the
-/// tunnel remains only for the `--remote-debugging-port` developer override,
-/// where the app owns no socket.
+/// framework keeps the legacy tunnel command only for older tooling that
+/// still routes `agentSpace.*` through the DevTools server.
 ///
 /// Wire protocol (JSON text frames):
 ///   request  → {"id": N, "type": "agentSpace.…", "payloadJson": "…"}

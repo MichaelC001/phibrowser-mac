@@ -43,13 +43,6 @@ How it works, and why it's safe:
 - Turning the toggle off stops new connections and severs any live ones at
   once.
 
-Developer TCP override: launching the binary with `--remote-debugging-port=0`
-(or `defaults write <bundle id> PhiRemoteDebuggingPort -int 0`, then relaunch)
-still exposes a plain localhost CDP port with no per-agent consent — for raw
-CDP debugging tools (chrome://inspect, Puppeteer). It has no authenticated
-agent-Space surface, so the phi-browser skill does NOT use it: the skill always
-requires the app socket above. Enabling the port does not enable the skill.
-
 ## 3. Verify
 
 After enabling the toggle (no relaunch needed):
@@ -196,13 +189,11 @@ needed): `node scripts/selftest-mirror.mjs`.
 - **Endpoint not responding / first call hangs**: the first connection waits on
   the consent prompt — approve it in Phi. If it's genuinely stuck, toggle
   Remote debugging off and on to restart the listener.
-- **"CDP transport is disabled for this launch" (503) / empty reply from
-  `/json/version`**: the launch carried the developer TCP override
-  (`PhiRemoteDebuggingPort` default or a `--remote-debugging-port` argument),
-  which moves CDP onto TCP and off the app socket. Run
-  `defaults delete <bundle id> PhiRemoteDebuggingPort`, drop the launch
-  argument, and relaunch Phi. (Builds older than the 503 answer drop the
-  connection silently — the "empty reply" case.)
+- **Empty reply from `/json/version` (older builds)**: a lingering
+  `PhiRemoteDebuggingPort` default moved CDP onto its retired TCP transport
+  and off the app socket, so connections were dropped without a reply. Run
+  `defaults delete <bundle id> PhiRemoteDebuggingPort` and relaunch; current
+  builds ignore and purge that default at startup.
 - **Under Codex: "network-disabled sandbox" / endpoint not responding on
   every attempt**: Codex's default seatbelt sandbox denies all network
   syscalls, which includes connecting to Phi's unix socket — Phi is fine and

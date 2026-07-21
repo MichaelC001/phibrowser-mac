@@ -53,6 +53,15 @@
             AppLogWarn(@"Skipping argv[%d]: not valid", i);
             continue;
         }
+        if ([arg hasPrefix:@"--remote-debugging-port"] ||
+            [arg hasPrefix:@"--remote-debugging-pipe"]) {
+            // A TCP/pipe DevTools endpoint would supplant the FD-injection
+            // transport and silently break agent CDP access (see
+            // AgentCDPListener); the app socket is the only supported CDP
+            // surface.
+            AppLogWarn(@"Dropping unsupported argument: %@", arg);
+            continue;
+        }
         [arguments addObject:arg];
     }
 }
@@ -128,17 +137,13 @@
                 [arguments addObject:@"--no-sandbox"];
 #endif
 
-                // Opt-in CDP endpoint for agent tooling (the Claude Code
-                // skill). Key absent = disabled; 0 = ephemeral port written
-                // to <user data dir>/DevToolsActivePort; >0 = fixed port.
-                // See PhiPreferences.AgentSpaces.remoteDebuggingPort.
-                NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
-                if ([defaults objectForKey:@"PhiRemoteDebuggingPort"] != nil) {
-                    NSInteger cdpPort = [defaults integerForKey:@"PhiRemoteDebuggingPort"];
-                    if (cdpPort >= 0 && cdpPort <= 65535) {
-                        [arguments addObject:[NSString stringWithFormat:@"--remote-debugging-port=%ld", (long)cdpPort]];
-                    }
-                }
+                // The retired PhiRemoteDebuggingPort default used to feed
+                // --remote-debugging-port here, silently disabling the agent
+                // CDP transport on every launch until the user deleted it.
+                // The switch is no longer supported (launch arguments are
+                // stripped too); purge stale copies of the default.
+                [[NSUserDefaults standardUserDefaults]
+                    removeObjectForKey:@"PhiRemoteDebuggingPort"];
 
                 [self appendLaunchCommandLineArgc:launchArgc argv:launchArgv toArguments:arguments];
 

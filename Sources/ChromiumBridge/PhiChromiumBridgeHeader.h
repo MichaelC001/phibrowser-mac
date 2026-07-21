@@ -1108,8 +1108,8 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
 /// the Unix-domain listener and vets every peer before it gets here).
 /// Callable from any thread. The browser ALWAYS takes ownership of `fd`:
 /// returns YES when the connection was handed to the DevTools server, NO when
-/// the injection transport is not running (e.g. a --remote-debugging-port
-/// development override) — `fd` is closed either way, never by the caller.
+/// the injection transport is not running (early browser startup, before the
+/// DevTools server registers) — `fd` is closed either way, never by the caller.
 - (BOOL)attachDevToolsConnectionWithFD:(int)fd;
 
 /// Severs every injected CDP connection immediately (the user revoked agent
