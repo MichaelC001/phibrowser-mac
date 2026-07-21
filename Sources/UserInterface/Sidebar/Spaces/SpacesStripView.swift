@@ -1827,7 +1827,7 @@ struct SpaceHoverCard: View {
             HStack(spacing: 5) {
                 SpaceIconView(
                     storedValue: iconStoredValue,
-                    size: 11,
+                    size: 14,
                     symbolWeight: .semibold,
                     tint: iconColor
                 )
