@@ -60,7 +60,8 @@ class PinnedTabViewController: NSViewController {
                 }
                 return pinnedItem
 
-            case .tabItem(let tab):
+            case .tabItem(let snapshotItem):
+                let tab = snapshotItem.tab
                 guard let tabItem = collectionView.makeItem(withIdentifier: PinnedTabItem.reuseIdentifier, for: indexPath) as? PinnedTabItem else {
                     return NSCollectionViewItem()
                 }
@@ -152,29 +153,47 @@ class PinnedTabViewController: NSViewController {
         let rawPinnedIndices: [Int]
     }
 
+    /// Captures a tab's diffable identifier when the snapshot item is built.
+    /// Scope migration preserves the runtime `Tab` object while rebinding its
+    /// physical database GUID, so deriving Hashable identity from the live tab
+    /// would mutate identifiers that AppKit already holds in an old snapshot.
+    struct PinnedTabSnapshotItem: Hashable {
+        let identifier: String
+        let tab: Tab
+
+        init(tab: Tab) {
+            self.tab = tab
+            if let localGuid = tab.guidInLocalDB, localGuid.isEmpty == false {
+                identifier = localGuid
+            } else if tab.guid >= 0 {
+                identifier = "chromium:\(tab.guid)"
+            } else {
+                identifier = "object:\(ObjectIdentifier(tab).hashValue)"
+            }
+        }
+
+        func hash(into hasher: inout Hasher) {
+            hasher.combine(identifier)
+        }
+
+        static func == (lhs: PinnedTabSnapshotItem, rhs: PinnedTabSnapshotItem) -> Bool {
+            lhs.identifier == rhs.identifier
+        }
+    }
+
     private enum Item: Hashable {
         case extensionItem(PinnedTabItemModel)
-        case tabItem(Tab)
+        case tabItem(PinnedTabSnapshotItem)
         case splitItem(PinnedSplitGroupItem)
-
-        private static func stableTabIdentifier(for tab: Tab) -> String {
-            if let localGuid = tab.guidInLocalDB, localGuid.isEmpty == false {
-                return localGuid
-            }
-            if tab.guid >= 0 {
-                return "chromium:\(tab.guid)"
-            }
-            return "object:\(ObjectIdentifier(tab).hashValue)"
-        }
 
         func hash(into hasher: inout Hasher) {
             switch self {
             case .extensionItem(let model):
                 hasher.combine("extension")
                 hasher.combine(model)
-            case .tabItem(let tab):
+            case .tabItem(let snapshotItem):
                 hasher.combine("tab")
-                hasher.combine(Self.stableTabIdentifier(for: tab))
+                hasher.combine(snapshotItem)
             case .splitItem(let group):
                 hasher.combine("split")
                 hasher.combine(group.splitId)
@@ -186,7 +205,7 @@ class PinnedTabViewController: NSViewController {
             case (.extensionItem(let a), .extensionItem(let b)):
                 return a == b
             case (.tabItem(let a), .tabItem(let b)):
-                return stableTabIdentifier(for: a) == stableTabIdentifier(for: b)
+                return a == b
             case (.splitItem(let a), .splitItem(let b)):
                 return a == b
             default:
@@ -590,7 +609,10 @@ class PinnedTabViewController: NSViewController {
     private func buildTabSectionEntries(from sourcePinnedTabs: [Tab]) -> [TabSectionEntry] {
         guard let state = browserState else {
             return sourcePinnedTabs.enumerated().map { index, tab in
-                TabSectionEntry(item: .tabItem(tab), rawPinnedIndices: [index])
+                TabSectionEntry(
+                    item: .tabItem(PinnedTabSnapshotItem(tab: tab)),
+                    rawPinnedIndices: [index]
+                )
             }
         }
         // Pre-compute lookup dictionaries so the per-tab loop runs O(1) per
@@ -682,7 +704,10 @@ class PinnedTabViewController: NSViewController {
                 }
                 entries.append(TabSectionEntry(item: .splitItem(combined), rawPinnedIndices: rawIndices))
             } else {
-                entries.append(TabSectionEntry(item: .tabItem(tab), rawPinnedIndices: [rawIndex]))
+                entries.append(TabSectionEntry(
+                    item: .tabItem(PinnedTabSnapshotItem(tab: tab)),
+                    rawPinnedIndices: [rawIndex]
+                ))
             }
             consumedDBGuids.insert(myDBGuid)
         }
@@ -778,8 +803,8 @@ class PinnedTabViewController: NSViewController {
         }
         let tabItems = dataSource.snapshot().itemIdentifiers(inSection: .tabs)
         guard let itemIndex = tabItems.firstIndex(where: { item in
-            if case .tabItem(let tab) = item {
-                return tab == placeholder
+            if case .tabItem(let snapshotItem) = item {
+                return snapshotItem.tab == placeholder
             }
             return false
         }) else {
@@ -846,9 +871,9 @@ class PinnedTabViewController: NSViewController {
         for (index, item) in tabItems.enumerated() {
             let indexPath = IndexPath(item: index, section: Section.tabs.rawValue)
             switch item {
-            case .tabItem(let tab):
+            case .tabItem(let snapshotItem):
                 if let cell = collectionView.item(at: indexPath) as? PinnedTabItem {
-                    cell.isSelected = tab.guidInLocalDB == focusingDBGuid
+                    cell.isSelected = snapshotItem.tab.guidInLocalDB == focusingDBGuid
                 }
             case .splitItem(let group):
                 if let cell = collectionView.item(at: indexPath) as? PinnedSplitItem {
@@ -1086,8 +1111,8 @@ extension PinnedTabViewController {
         // the whole pair where appropriate.
         let tab: Tab
         switch item {
-        case .tabItem(let t):
-            tab = t
+        case .tabItem(let snapshotItem):
+            tab = snapshotItem.tab
         case .splitItem(let group):
             tab = group.leftTab
         case .extensionItem(let model):
@@ -1135,8 +1160,8 @@ extension PinnedTabViewController {
                 return (nil, nil)
             }
             switch item {
-            case .tabItem(let tab):
-                return (tab, tab.guidInLocalDB)
+            case .tabItem(let snapshotItem):
+                return (snapshotItem.tab, snapshotItem.tab.guidInLocalDB)
             case .splitItem(let group):
                 return (group.leftTab, group.leftTab.guidInLocalDB)
             case .extensionItem:
