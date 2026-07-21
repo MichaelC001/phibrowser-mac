@@ -4,8 +4,9 @@
 // session and its agent Space console, in BOTH directions, with no setup:
 //
 //   session → console: tails the session transcript — the agent's JSONL
-//     file (Claude Code, Codex, Pi, OpenClaw) or its SQLite transcript rows
-//     (Hermes; see lib/mirror-sqlite.mjs) — and forwards new prompt,
+//     file (Claude Code, Codex, Pi, OpenClaw, Cursor) or its SQLite
+//     transcript rows (Hermes; see lib/mirror-sqlite.mjs) — and forwards
+//     new prompt,
 //     prose, reasoning, and tool-call lines (batched, cursor-ordered),
 //     each tagged with the origin agent so the console renders them in
 //     that agent's own visual style.
@@ -39,12 +40,15 @@
 
 import { openSync, readSync, closeSync, statSync } from 'node:fs'
 import {
-  readDaemonControl, writeDaemonControl, readCursor, writeCursor,
-  forwardEntries, openPhiChannel, pidAlive, BACKFILL_GRACE_MS,
+  readDaemonControl, writeDaemonControl, clearDaemonControl, readCursor,
+  writeCursor, forwardEntries, openPhiChannel, pidAlive, BACKFILL_GRACE_MS,
 } from './lib/mirror-core.mjs'
 import { toEntry as claudeToEntry } from './lib/mirror-claude.mjs'
 import { toEntry as codexToEntry } from './lib/mirror-codex.mjs'
 import { toEntry as piToEntry } from './lib/mirror-pi.mjs'
+import {
+  toEntry as cursorToEntry, CursorConsoleNotice,
+} from './lib/mirror-cursor.mjs'
 import {
   toEntry as hermesToEntry, hermesQuery, hermesRowToItem, HermesConsoleBridge,
 } from './lib/mirror-hermes.mjs'
@@ -115,11 +119,16 @@ async function main() {
     : ctl.format === 'pi' ? piToEntry
     : ctl.format === 'hermes' ? hermesToEntry
     : ctl.format === 'openclaw' ? openclawToEntry
+    : ctl.format === 'cursor' ? cursorToEntry
     : claudeToEntry
   const pending = []
   // The console → session transport, when the driving agent has one here.
+  // Cursor's slot is a notice, not a transport: no ingress can wake an
+  // idle Cursor turn, so the user is told their command awaits the next
+  // round instead of watching it vanish (see mirror-cursor.mjs).
   const bridge = ctl.format === 'openclaw' ? new OpenclawConsoleBridge(sessionKey)
     : ctl.format === 'hermes' ? new HermesConsoleBridge(sessionKey)
+    : ctl.format === 'cursor' ? new CursorConsoleNotice()
     : null
 
   // Persistent app channel: carries the log forwards, the message drains,

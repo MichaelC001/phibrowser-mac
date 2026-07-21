@@ -96,9 +96,9 @@ node ~/.claude/skills/phi-browser/scripts/selftest-animations.mjs
 ## 4. Session mirror (automatic, two-way)
 
 The Agent Transcript panel (View ▸ Agent Transcript) always shows the browser
-action steps, narration, rounds, and lifecycle. Under all five supported
-agents — Claude Code, Codex, OpenClaw, Pi, and Hermes — the driving session
-is ALSO mirrored automatically, in both directions, with no setup:
+action steps, narration, rounds, and lifecycle. Under all six supported
+agents — Claude Code, Codex, OpenClaw, Pi, Hermes, and Cursor — the driving
+session is ALSO mirrored automatically, in both directions, with no setup:
 `ensureAgentSpace` locates the session's own transcript and spawns a small
 tailer daemon (`scripts/mirror-tailer.mjs`). Discovery is per agent,
 mirroring nothing rather than guessing wrong:
@@ -115,6 +115,12 @@ mirroring nothing rather than guessing wrong:
   freshly-written transcript whose newest events mention the task. Assumes
   the gateway runs on this Mac.
 - **Pi** — by the same evidence heuristic over its session files.
+- **Cursor** — by the strongest evidence its transcripts offer: the IDE
+  records the agent's Shell command — the skill heredoc itself — in
+  `~/.cursor/projects/<project>/agent-transcripts/<id>/<id>.jsonl` before
+  the shell runs, so the freshly written transcript containing this exact
+  round's script is the session. (Tool outputs are not recorded there, so
+  the task-id evidence the other heuristics use can never appear.)
 
 The mirror then
 
@@ -128,9 +134,11 @@ The mirror then
   Hermes is resumed headless (`hermes --resume <session-id> -z …`) — the
   woken turn appends to the same session in state.db and mirrors back into
   the console (an interactive TUI open on that session shows the exchange
-  only after its next reload). The remaining terminal agents have no
-  transport, so their commands stay queued until the next round drains them
-  via `readUserMessages()`.
+  only after its next reload). The remaining agents — Claude Code, Codex,
+  and Cursor — have no transport, so their commands stay queued until the
+  next round drains them via `readUserMessages()`; under Cursor the console
+  additionally posts a notice saying so, because an ended Cursor turn never
+  runs another round until you prompt Cursor again.
 
 The daemon exits on its own when the task completes, when the session goes
 quiet for 30 minutes, when the agent process exits, or when the task
@@ -152,19 +160,29 @@ needed): `node scripts/selftest-mirror.mjs`.
 - **Console shows browser steps but not the conversation**: the session
   couldn't be identified (Claude Code: update the CLI so it exports
   `CLAUDE_CODE_SESSION_ID`; Hermes: the session must export
-  `HERMES_SESSION_ID` — the classic CLI does; Codex/OpenClaw/Pi: the
+  `HERMES_SESSION_ID` — the classic CLI does; Codex/OpenClaw/Pi/Cursor: the
   evidence heuristic found no match — or use `say()`), the transcript store
   isn't where discovery looks (`PHI_CODEX_SESSIONS_DIR`, `PHI_HERMES_HOME`,
-  `PHI_OPENCLAW_STATE_DIR`, `PI_CODING_AGENT_SESSION_DIR` override the
-  roots), `PHI_NO_SESSION_MIRROR` is set, or the skill running your heredocs
+  `PHI_OPENCLAW_STATE_DIR`, `PHI_CURSOR_STATE_DIR`,
+  `PI_CODING_AGENT_SESSION_DIR` override the roots),
+  `PHI_NO_SESSION_MIRROR` is set, or the skill running your heredocs
   predates the session mirror — rebuild Phi so the bundled skill has it.
 - **Under Pi: console commands wait for “continue”**: the companion extension
   is not loaded. Install Pi again from Phi settings, then run `/reload` in Pi.
   The skill link alone can mirror the transcript but cannot call Pi's
   in-process `sendUserMessage()` API.
 - **Console commands don't reach another terminal agent's idle session**:
-  Claude Code, Codex, and Hermes have no supported delivery transport, so
-  commands are picked up at the next round rather than typed into a terminal.
+  Claude Code, Codex, and Cursor have no supported delivery transport, so
+  commands are picked up at the next round rather than typed into a
+  terminal.
+- **Under Cursor: console commands answer with a "queued" notice**: that is
+  the designed behavior, not a failure. Cursor's IDE agent has no ingress
+  an outside process may use (deeplinks open new chats, its app-control
+  MCP has no message tool, and the cursor-agent CLI keeps a separate
+  session store), so nothing can wake an ended Cursor turn. A command sent
+  while the agent is still working arrives at its next phi-browser step;
+  after the turn ends, send Cursor any message and it will read the queue
+  at the start of that round.
 - **Under OpenClaw: console commands stay queued**: the daemon delivers via
   the `openclaw` CLI — it must be installed (PATH, `~/.local/bin`, or set
   `PHI_OPENCLAW_BIN`) and able to reach your gateway. Check
@@ -178,6 +196,13 @@ needed): `node scripts/selftest-mirror.mjs`.
 - **Endpoint not responding / first call hangs**: the first connection waits on
   the consent prompt — approve it in Phi. If it's genuinely stuck, toggle
   Remote debugging off and on to restart the listener.
+- **"CDP transport is disabled for this launch" (503) / empty reply from
+  `/json/version`**: the launch carried the developer TCP override
+  (`PhiRemoteDebuggingPort` default or a `--remote-debugging-port` argument),
+  which moves CDP onto TCP and off the app socket. Run
+  `defaults delete <bundle id> PhiRemoteDebuggingPort`, drop the launch
+  argument, and relaunch Phi. (Builds older than the 503 answer drop the
+  connection silently — the "empty reply" case.)
 - **Under Codex: "network-disabled sandbox" / endpoint not responding on
   every attempt**: Codex's default seatbelt sandbox denies all network
   syscalls, which includes connecting to Phi's unix socket — Phi is fine and

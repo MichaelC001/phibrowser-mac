@@ -9,9 +9,10 @@
 // Covers: each agent's toEntry parsing
 // (echo suppression, machinery skipping), the SQLite tail source against a
 // throwaway database shaped like Hermes', the env-gated session discovery
-// (Hermes' SQLite state, OpenClaw's JSONL session dir), and the console
-// bridges' CLI delivery seams (OpenClaw's gateway CLI, Hermes's
-// resume-oneshot). Exits non-zero when any check fails.
+// (Hermes' SQLite state, OpenClaw's JSONL session dir, Cursor's
+// agent-transcripts tree), and the console bridges' CLI delivery seams
+// (OpenClaw's gateway CLI, Hermes's resume-oneshot). Exits non-zero when
+// any check fails.
 
 import {
   mkdtempSync, rmSync, writeFileSync, readFileSync, chmodSync, utimesSync,
@@ -35,6 +36,9 @@ import {
   toEntry as openclawToEntry, discoverOpenclawTranscript, deliverOpenclaw,
   OpenclawConsoleBridge,
 } from './lib/mirror-openclaw.mjs'
+import {
+  toEntry as cursorToEntry, discoverCursorTranscript, CursorConsoleNotice,
+} from './lib/mirror-cursor.mjs'
 import { SqliteTail } from './lib/mirror-sqlite.mjs'
 import {
   readDaemonControl, writeDaemonControl, clearDaemonControl,
@@ -706,6 +710,135 @@ const sql = (db, stmt) => execFileSync('/usr/bin/sqlite3', [db, stmt], { encodin
       if (v === undefined) delete process.env[k]; else process.env[k] = v
     }
   }
+}
+
+// --- toEntry + discovery: Cursor -----------------------------------------------
+
+{
+  const line = (o) => JSON.stringify(o) + '\n'
+  const msg = (role, content) => ({ role, message: { role, content } })
+
+  // toEntry: the prompt envelope, machinery skipping, echo suppression.
+  const envelope = '<manually_attached_skills>\n# phi-browser\n…runner.mjs…\n'
+    + '</manually_attached_skills>\n<timestamp>Tuesday, Jul 21, 2026</timestamp>\n'
+    + '<user_query>\nopen wikipedia for me\n</user_query>'
+  const u = cursorToEntry(msg('user', [{ type: 'text', text: envelope }]))
+  check('cursor: user query unwrapped from the prompt envelope',
+        u?.kind === 'user' && u.text === 'open wikipedia for me', JSON.stringify(u))
+  const plain = cursorToEntry(msg('user', [{ type: 'text', text: 'plain follow-up' }]))
+  check('cursor: plain user text passes through',
+        plain?.kind === 'user' && plain.text === 'plain follow-up')
+  check('cursor: all-envelope line skipped', cursorToEntry(msg('user', [{
+    type: 'text', text: '<additional_data>rules</additional_data>' }])) === null)
+  check('cursor: [phi-console] echo suppressed', cursorToEntry(msg('user', [{
+    type: 'text',
+    text: '<user_query>[phi-console] scroll down</user_query>' }])) === null)
+  const a = cursorToEntry(msg('assistant', [
+    { type: 'text', text: 'opening' },
+    { type: 'tool_use', name: 'Shell', input: { command: 'node x.mjs' } },
+    { type: 'text', text: 'now' }]))
+  check('cursor: assistant text blocks joined, tool_use skipped',
+        a?.kind === 'assistant' && a.text === 'opening\n\nnow')
+  check('cursor: turn_ended skipped',
+        cursorToEntry({ type: 'turn_ended', status: 'success' }) === null)
+
+  // Discovery: a state dir with two fresh phi-driving transcripts (the real
+  // session and a marker decoy) plus a stale one. Only the recorded heredoc
+  // source singles out the real session; without it two candidates is a
+  // guess and discovery must decline.
+  const state = join(dir, 'cursor-state')
+  const tdir = (proj, id) => join(state, 'projects', proj, 'agent-transcripts', id)
+  const source = "const task = await ensureAgentSpace('cursor probe')\ncliLog(task)\n"
+  const command = "node /Users/u/.cursor/skills/phi-browser/scripts/runner.mjs "
+    + `<<'EOF'\n${source}EOF`
+  execFileSync('/bin/mkdir', ['-p', tdir('proj-a', 'sess-cur-fresh'),
+                              tdir('proj-b', 'sess-cur-decoy'),
+                              tdir('proj-a', 'sess-cur-stale')])
+  const transcript = join(tdir('proj-a', 'sess-cur-fresh'), 'sess-cur-fresh.jsonl')
+  writeFileSync(transcript,
+    line(msg('user', [{ type: 'text', text: envelope }]))
+    + line({ role: 'assistant', message: { role: 'assistant', content: [
+        { type: 'text', text: 'running it' },
+        { type: 'tool_use', name: 'Shell', input: { command } }] } })
+    + line({ type: 'turn_ended', status: 'success' }))
+  const decoy = join(tdir('proj-b', 'sess-cur-decoy'), 'sess-cur-decoy.jsonl')
+  writeFileSync(decoy, line(msg('user', [{ type: 'text',
+    text: 'ran phi-browser via scripts/runner.mjs earlier' }])))
+  const stale = join(tdir('proj-a', 'sess-cur-stale'), 'sess-cur-stale.jsonl')
+  writeFileSync(stale, line(msg('user', [{ type: 'text',
+    text: 'phi-browser runner.mjs long ago' }])))
+  const old = (Date.now() - 2 * 60 * 60 * 1000) / 1000
+  utimesSync(stale, old, old)
+
+  const saved = {}
+  for (const k of ['PHI_CURSOR_STATE_DIR', 'CURSOR_AGENT', 'CURSOR_TRACE_ID',
+                   '__CFBundleIdentifier']) {
+    saved[k] = process.env[k]
+    delete process.env[k]
+  }
+  process.env.PHI_CURSOR_STATE_DIR = state
+  process.env.CURSOR_TRACE_ID = 'trace-1'
+  try {
+    const hit = discoverCursorTranscript(source)
+    check('cursor discovery: recorded heredoc source singles out the session',
+          hit?.sessionKey === 'sess-cur-fresh'
+          && hit.path === transcript && hit.format === 'cursor', JSON.stringify(hit))
+    check('cursor discovery: two marked candidates without source → no mirror',
+          discoverCursorTranscript('') === null)
+    utimesSync(decoy, old, old)
+    check('cursor discovery: sole fresh marked transcript is the fallback',
+          discoverCursorTranscript('')?.sessionKey === 'sess-cur-fresh')
+    delete process.env.CURSOR_TRACE_ID
+    check('cursor discovery: env gate', discoverCursorTranscript(source) === null)
+  } finally {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k]; else process.env[k] = v
+    }
+    if (saved.PHI_CURSOR_STATE_DIR === undefined) delete process.env.PHI_CURSOR_STATE_DIR
+  }
+}
+
+// --- Cursor console notice ------------------------------------------------------
+
+{
+  // No transport can wake Cursor, so its bridge slot must NEVER drain the
+  // queue (the agent's next round owns it) and must answer each newly
+  // queued command with exactly one console notice.
+  let task = { taskId: 'cur-task', status: 'running', pendingUserMessages: 1 }
+  let tasks = () => [task]
+  const logged = []
+  let drained = 0
+  const channel = {
+    async send(type, params) {
+      if (type === 'agentSpace.list') return { tasks: tasks() }
+      if (type === 'agentSpace.log') { logged.push(...params.entries); return { ok: true } }
+      if (type === 'agentSpace.readUserMessages') { drained += 1; return { messages: [] } }
+      throw new Error(`unexpected send: ${type}`)
+    },
+  }
+  const ctl = { taskId: 'cur-task', agentPid: process.pid }
+  const notice = new CursorConsoleNotice()
+  check('cursor notice: live round keeps the console quiet',
+        await notice.deliverPending(ctl, channel) === false && logged.length === 0)
+  task = { ...task, status: 'idle' }
+  check('cursor notice: idle queued command gets one notice, queue untouched',
+        await notice.deliverPending(ctl, channel) === false
+        && logged.length === 1 && logged[0].kind === 'error'
+        && logged[0].text.includes('queued') && drained === 0)
+  check('cursor notice: no repeat for the same queue',
+        await notice.deliverPending(ctl, channel) === false && logged.length === 1)
+  task = { ...task, pendingUserMessages: 2 }
+  check('cursor notice: a further command notices again',
+        await notice.deliverPending(ctl, channel) === false && logged.length === 2)
+  task = { ...task, pendingUserMessages: 0 }
+  await notice.deliverPending(ctl, channel)
+  task = { ...task, pendingUserMessages: 1 }
+  check('cursor notice: drained queue re-arms the notice',
+        await notice.deliverPending(ctl, channel) === false
+        && logged.length === 3 && drained === 0)
+  tasks = () => []
+  check('cursor notice: vanished task tells the daemon to exit',
+        await notice.deliverPending(ctl, channel) === true)
 }
 
 // --- deferred completion (mirror-core) -----------------------------------------

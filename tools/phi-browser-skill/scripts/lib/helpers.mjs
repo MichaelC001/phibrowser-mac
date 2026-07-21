@@ -22,6 +22,7 @@ import { discoverCodexTranscript } from './mirror-codex.mjs'
 import { discoverPiTranscript } from './mirror-pi.mjs'
 import { discoverHermesTranscript } from './mirror-hermes.mjs'
 import { discoverOpenclawTranscript } from './mirror-openclaw.mjs'
+import { discoverCursorTranscript } from './mirror-cursor.mjs'
 
 // Default viewport for the hidden agent window: both dimensions follow the
 // REAL window's web-content panel — window minus sidebar/header, reported by
@@ -577,13 +578,21 @@ function writeLastTargetId(taskId, targetId) {
 // The tailer daemon (scripts/mirror-tailer.mjs): the session mirror. When
 // the driving session's transcript can be located — exactly under Claude
 // Code and Hermes (exported session ids), by thread id or the rollout
-// heuristic under Codex, and by the recorded-toolCall evidence heuristics
-// under OpenClaw and Pi (see the discover* in lib/mirror-*.mjs) — the
-// heredoc writes the daemon control file and spawns a detached tailer; the
-// binding is exact because we TELL the daemon its transcript, format, task,
-// and agent process. A live daemon is re-targeted through the control file
-// instead of respawned; complete() deletes the file, which is also the
-// daemon's exit signal. PHI_NO_SESSION_MIRROR=1 opts out entirely.
+// heuristic under Codex, by the recorded-toolCall evidence heuristics
+// under OpenClaw and Pi, and by the recorded heredoc source under Cursor
+// (see the discover* in lib/mirror-*.mjs) — the heredoc writes the daemon
+// control file and spawns a detached tailer; the binding is exact because
+// we TELL the daemon its transcript, format, task, and agent process. A
+// live daemon is re-targeted through the control file instead of
+// respawned; complete() deletes the file, which is also the daemon's exit
+// signal. PHI_NO_SESSION_MIRROR=1 opts out entirely.
+
+// The script text of the round being executed, stashed by runner.mjs: the
+// discovery evidence for agents that record the spawning shell COMMAND but
+// not its output (Cursor). Empty under embedding callers that aren't the
+// heredoc runner.
+let heredocSource = ''
+export function __setHeredocSource(text) { heredocSource = String(text || '') }
 
 // Exact env-exported session ids first, evidence heuristics after.
 function discoverSessionTranscript(taskId, agentPid) {
@@ -592,6 +601,7 @@ function discoverSessionTranscript(taskId, agentPid) {
     || discoverCodexTranscript(taskId, agentPid)
     || discoverOpenclawTranscript(taskId)
     || discoverPiTranscript(taskId, agentPid)
+    || discoverCursorTranscript(heredocSource)
 }
 
 // The pid of the agent session this round acts for, claimed on every
