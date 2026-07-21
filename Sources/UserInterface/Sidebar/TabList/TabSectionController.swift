@@ -25,6 +25,13 @@ struct TabSectionChange {
     /// the consumer re-binds these rows' cells so titles/favicons/subscriptions
     /// attach to the new Tab.
     let affectedSplitIds: Set<String>
+
+    /// PHI-1099's outer-outline repair is safe only when the root change is
+    /// isolated from group membership and split-pair mutations that the outer
+    /// snapshot intentionally does not represent.
+    var allowsInsertedRootTabLayoutRepair: Bool {
+        rootItemsChanged && affectedGroupTokens.isEmpty && affectedSplitIds.isEmpty
+    }
 }
 
 class TabSectionController: NSObject {

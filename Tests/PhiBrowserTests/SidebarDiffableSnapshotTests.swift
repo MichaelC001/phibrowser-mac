@@ -42,6 +42,17 @@ private final class SnapshotSidebarItem: SidebarItem {
     func performAction(with owner: SidebarTabListItemOwner?) {}
 }
 
+@MainActor
+private final class TabSectionChangeRecorder: TabSectionDelegate {
+    private(set) var changes: [TabSectionChange] = []
+
+    func tabSectionDidUpdate(with change: TabSectionChange) {
+        changes.append(change)
+    }
+
+    func focusingTabChanged(_ tab: Tab?) {}
+}
+
 final class SidebarDiffableSnapshotTests: XCTestCase {
     func testSidebarSnapshotUsesStableItemIDs() {
         let child = SnapshotSidebarItem(id: "child")
@@ -180,6 +191,78 @@ final class SidebarDiffableSnapshotTests: XCTestCase {
         )
     }
 
+    func testSingleRootInsertionIndexFindsOnlyInsertedRoot() {
+        XCTAssertEqual(
+            SidebarTabListViewController.singleRootInsertionIndex(
+                from: ["a", "b", "c"],
+                to: ["a", "inserted", "b", "c"]
+            ),
+            1
+        )
+        XCTAssertEqual(
+            SidebarTabListViewController.singleRootInsertionIndex(
+                from: ["a", "b"],
+                to: ["a", "b", "inserted"]
+            ),
+            2
+        )
+    }
+
+    func testSingleRootInsertionIndexRejectsOtherStructuralChanges() {
+        XCTAssertNil(
+            SidebarTabListViewController.singleRootInsertionIndex(
+                from: ["a", "b"],
+                to: ["b", "a", "inserted"]
+            )
+        )
+        XCTAssertNil(
+            SidebarTabListViewController.singleRootInsertionIndex(
+                from: ["a", "b"],
+                to: ["inserted-1", "a", "inserted-2", "b"]
+            )
+        )
+        XCTAssertNil(
+            SidebarTabListViewController.singleRootInsertionIndex(
+                from: ["a", "b"],
+                to: ["a"]
+            )
+        )
+    }
+
+    func testTabSectionChangeAllowsLayoutRepairForIsolatedRootChange() {
+        XCTAssertTrue(
+            TabSectionChange(
+                rootItemsChanged: true,
+                affectedGroupTokens: [],
+                affectedSplitIds: []
+            ).allowsInsertedRootTabLayoutRepair
+        )
+    }
+
+    func testTabSectionChangeRejectsLayoutRepairForRelatedHiddenChanges() {
+        XCTAssertFalse(
+            TabSectionChange(
+                rootItemsChanged: true,
+                affectedGroupTokens: ["group"],
+                affectedSplitIds: []
+            ).allowsInsertedRootTabLayoutRepair
+        )
+        XCTAssertFalse(
+            TabSectionChange(
+                rootItemsChanged: true,
+                affectedGroupTokens: [],
+                affectedSplitIds: ["split"]
+            ).allowsInsertedRootTabLayoutRepair
+        )
+        XCTAssertFalse(
+            TabSectionChange(
+                rootItemsChanged: false,
+                affectedGroupTokens: [],
+                affectedSplitIds: []
+            ).allowsInsertedRootTabLayoutRepair
+        )
+    }
+
     func testTabSectionRootItemsTreatsRepeatedObjectsAsUnchanged() {
         let first = SnapshotSidebarItem(id: "first")
         let second = SnapshotSidebarItem(id: "second")
@@ -311,6 +394,82 @@ final class SidebarTabSectionFastPathTests: XCTestCase {
         XCTAssertFalse((0..<outlineView.numberOfRows).contains { row in
             (outlineView.item(atRow: row) as? Tab) === oldTab
         })
+    }
+
+    func testPlainTabInsertionProducesIsolatedLayoutRepairProvenance() throws {
+        let state = try makeState()
+        let existingTab = seedActiveTab(in: state, guid: 301)
+        let recorder = TabSectionChangeRecorder()
+        let sectionController = TabSectionController()
+        sectionController.delegate = recorder
+        sectionController.browserState = state
+
+        let insertedTab = Tab(
+            guid: 302,
+            url: "https://inserted.example",
+            isActive: false,
+            index: 1,
+            title: "Inserted"
+        )
+        state.tabs = [existingTab, insertedTab]
+        state.updateNormalTabs()
+
+        guard waitUntil({
+            recorder.changes.contains { $0.rootItemsChanged }
+        }) else { return }
+        let change = try XCTUnwrap(
+            recorder.changes.first { $0.rootItemsChanged }
+        )
+        XCTAssertTrue(change.affectedGroupTokens.isEmpty)
+        XCTAssertTrue(change.affectedSplitIds.isEmpty)
+        XCTAssertTrue(change.allowsInsertedRootTabLayoutRepair)
+    }
+
+    func testLeavingGroupRejectsInsertedRootTabLayoutRepair() throws {
+        let state = try makeState()
+        let first = Tab(
+            guid: 401,
+            url: "https://first.example",
+            isActive: true,
+            index: 0,
+            title: "First"
+        )
+        let second = Tab(
+            guid: 402,
+            url: "https://second.example",
+            isActive: false,
+            index: 1,
+            title: "Second"
+        )
+        state.tabs = [first, second]
+        state.updateNormalTabs()
+        state.handleTabGroupCreated(
+            token: "group",
+            title: "Group",
+            color: .blue,
+            isCollapsed: false,
+            initialTabIds: [first.guid, second.guid]
+        )
+
+        let recorder = TabSectionChangeRecorder()
+        let sectionController = TabSectionController()
+        sectionController.delegate = recorder
+        sectionController.browserState = state
+
+        state.handleTabLeftGroup(tabId: first.guid, token: "group")
+
+        guard waitUntil({
+            recorder.changes.contains {
+                $0.rootItemsChanged && $0.affectedGroupTokens.contains("group")
+            }
+        }) else { return }
+        let change = try XCTUnwrap(
+            recorder.changes.first {
+                $0.rootItemsChanged && $0.affectedGroupTokens.contains("group")
+            }
+        )
+        XCTAssertTrue(change.affectedSplitIds.isEmpty)
+        XCTAssertFalse(change.allowsInsertedRootTabLayoutRepair)
     }
 
     private func makeState() throws -> BrowserState {
