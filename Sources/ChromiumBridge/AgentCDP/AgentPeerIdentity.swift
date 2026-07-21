@@ -478,28 +478,48 @@ enum AgentPeerIdentity {
     /// The responsible process is the nearest ancestor (starting at the peer)
     /// that is either a signed `.app` bundle or a non-interpreter binary — the
     /// launcher (agent CLI, its app, or the terminal running it), not the
-    /// `node`/shell plumbing in between. Falls back to the peer itself.
+    /// `node`/shell plumbing in between. An Electron/Chromium helper bundle
+    /// nested inside another app is plumbing too — passed through to the
+    /// outer app, and used only as the fallback when no real launcher sits
+    /// above it (an orphaned helper). Falls back to the peer itself.
     private static func responsiblePID(startingAt peerPID: pid_t) -> pid_t {
         var pid = peerPID
         var guardCount = 0
+        var helperFallback: pid_t?
         while pid > 1 && guardCount < 32 {
             guardCount += 1
             let path = executablePath(pid)
             if isResponsible(pid: pid, executablePath: path) {
                 return pid
             }
+            if helperFallback == nil, let path, isNestedHelperBundle(path) {
+                helperFallback = pid
+            }
             guard let parent = parentPID(pid), parent != pid else { break }
             pid = parent
         }
-        return peerPID
+        return helperFallback ?? peerPID
     }
 
     private static func isResponsible(pid: pid_t, executablePath path: String?) -> Bool {
         guard let path else { return false }
+        // A helper bundle nested inside another app hosts that app's work —
+        // and Electron builds often leave it generically signed (Cursor's
+        // plugin helper is literally "com.github.Electron.helper"). The outer
+        // app is the identity.
+        if isNestedHelperBundle(path) { return false }
         // A signed application bundle is a strong, verifiable identity.
         if path.contains(".app/Contents/MacOS/") { return true }
         let name = (path as NSString).lastPathComponent
         return !isPassthroughName(name)
+    }
+
+    /// True for an executable whose bundle is nested inside another app
+    /// bundle (…/Cursor.app/Contents/Frameworks/Cursor Helper (Plugin).app/
+    /// Contents/MacOS/…) — the Electron/Chromium helper-process shape.
+    private static func isNestedHelperBundle(_ path: String) -> Bool {
+        guard let outer = path.range(of: ".app/Contents/") else { return false }
+        return path[outer.upperBound...].contains(".app/Contents/MacOS/")
     }
 
     private static func parentPID(_ pid: pid_t) -> pid_t? {
@@ -534,7 +554,14 @@ enum AgentPeerIdentity {
 
     private static func signingIdentity(pid: pid_t,
                                         executablePath path: String) -> AgentIdentity {
-        let fallbackName = (path as NSString).lastPathComponent
+        // Prompts show the app's user-facing bundle name when there is one:
+        // signing identifiers of modern app builds are often opaque ids the
+        // user would not recognize (Cursor's is "com.todesktop.230313…"), and
+        // for a helper-bundle fallback the OUTERMOST bundle is the product
+        // ("Cursor", not "Cursor Helper (Plugin)"). Grant keys stay on the
+        // signature, which is the stable, verifiable part.
+        let bundleName = appBundleName(forExecutablePath: path)
+        let fallbackName = bundleName ?? (path as NSString).lastPathComponent
         let unsigned = AgentIdentity(
             key: "unsigned:\(path)",
             displayName: fallbackName,
@@ -589,10 +616,25 @@ enum AgentPeerIdentity {
         }
         return AgentIdentity(
             key: key,
-            displayName: signingId ?? fallbackName,
+            displayName: bundleName ?? signingId ?? fallbackName,
             teamId: teamId,
             verified: true,
             executablePath: path,
             pid: pid)
+    }
+
+    /// The outermost `.app` bundle's user-facing name for an executable
+    /// inside one ("Cursor", "Terminal"), nil for a bare binary.
+    private static func appBundleName(forExecutablePath path: String) -> String? {
+        guard let range = path.range(of: ".app/") else { return nil }
+        let bundlePath = String(path[..<range.lowerBound]) + ".app"
+        let info = Bundle(path: bundlePath)?.infoDictionary
+        if let name = (info?["CFBundleDisplayName"] as? String)
+            ?? (info?["CFBundleName"] as? String), !name.isEmpty {
+            return name
+        }
+        let dirName = ((bundlePath as NSString).lastPathComponent as NSString)
+            .deletingPathExtension
+        return dirName.isEmpty ? nil : dirName
     }
 }
