@@ -275,6 +275,11 @@ struct SpacesStripView: View {
     /// keep the icon centered between the traffic lights and the first tab.
     private static let compactChipHorizontalPadding: CGFloat = 2
     private static let iconSize: CGFloat = 14
+    /// Phi icon canvas and container size in the strip.
+    private static let phiIconSize: CGFloat = 24
+    /// Produces an approximately 15pt visible emoji inside the strip item.
+    private static let emojiFontSize: CGFloat = 13
+    private static let emojiContainerSize: CGFloat = 18
     private static let iconHitSize: CGFloat = 22
     /// Uniform hit-target width of every item in the single-row strip — pips,
     /// the "…" overflow affordance, and the add button — and the gap between
@@ -454,14 +459,40 @@ struct SpacesStripView: View {
         activeIcon(for: space)
     }
 
+    @ViewBuilder
+    private func stripIcon(storedValue: String?,
+                           symbolWeight: Font.Weight,
+                           tint: Color) -> some View {
+        if let storedValue,
+           let selection = IconPickerSelection.fromStorageValue(storedValue) {
+            switch selection {
+            case .phiIcon:
+                IconPickerSelectionView(selection: selection, size: Self.phiIconSize)
+                    .frame(width: Self.phiIconSize, height: Self.phiIconSize)
+            case .emoji(_, let text):
+                Text(text)
+                    .font(.system(size: Self.emojiFontSize))
+                    .lineLimit(1)
+                    .fixedSize()
+                    .frame(width: Self.emojiContainerSize, height: Self.emojiContainerSize)
+            }
+        } else {
+            SpaceIconView(
+                storedValue: storedValue,
+                size: Self.iconSize,
+                symbolWeight: symbolWeight,
+                tint: tint
+            )
+        }
+    }
+
     /// The active Space's icon. Clicking the chip opens the Space-switcher menu
     /// (popped by the hosting view), not the icon picker — but this view still
     /// hosts the icon-picker popover that the menu's / tab-area "Change Icon…"
     /// entry anchors to.
     private func activeIcon(for space: SpaceModel?) -> some View {
-        SpaceIconView(
+        stripIcon(
             storedValue: space?.iconName,
-            size: Self.iconSize,
             symbolWeight: .semibold,
             tint: space.map(iconColor(for:)) ?? Color.secondary
         )
@@ -822,9 +853,8 @@ struct SpacesStripView: View {
             }
             .foregroundStyle(Color.primary)
         } else {
-            SpaceIconView(
+            stripIcon(
                 storedValue: space.iconName,
-                size: Self.iconSize,
                 symbolWeight: .semibold,
                 tint: Color.primary
             )
@@ -1690,8 +1720,9 @@ private struct SpacePickerRow: View {
 
 struct SpaceIconView: View {
     let storedValue: String?
-    /// Desired emoji/SF Symbol glyph size. Phi icons keep their full canvas and
-    /// use the same 20:16 canvas-to-glyph ratio as IconPicker.
+    /// Base SF Symbol glyph size. Emoji render 2pt smaller for optical balance;
+    /// Phi icons fill the item frame, which grows from this value using the same
+    /// 20:16 canvas-to-glyph ratio as IconPicker.
     let size: CGFloat
     let symbolWeight: Font.Weight
     let tint: Color
@@ -1708,10 +1739,10 @@ struct SpaceIconView: View {
             if let selection = IconPickerSelection.fromStorageValue(storedIconValue) {
                 switch selection {
                 case .phiIcon:
-                    IconPickerSelectionView(selection: selection, size: phiIconCanvasSize)
+                    IconPickerSelectionView(selection: selection, size: contentFrameSize)
                 case .emoji(_, let text):
                     Text(text)
-                        .font(.system(size: size))
+                        .font(.system(size: size - 2))
                         .lineLimit(1)
                         .fixedSize()
                 }
