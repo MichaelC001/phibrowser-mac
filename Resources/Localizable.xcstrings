@@ -980,6 +980,9 @@
     "Failed to load remote image" : {
       "comment" : "Image preview error"
     },
+    "Favorites" : {
+      "comment" : "Bookmark export - name of the exported folder carrying the window's pinned tabs"
+    },
     "Feedback" : {
       "comment" : "Feedback - Sidebar feedback button title\nFeedback - Tooltip text for icon-only feedback button\nHeader more menu - Feedback action"
     },

@@ -533,14 +533,18 @@ extension AppController {
         return bookmarkableTabsCount > 1
     }
 
-    /// Export is meaningful only when the active window's Space has at least
-    /// one bookmark. Incognito windows never load a bookmark tree, so the
-    /// empty-tree check disables them too.
+    /// Export is meaningful only when its output would be non-empty: the
+    /// active Space's bookmark tree or the window's visible pinned
+    /// collection has at least one item. Incognito windows never load a
+    /// bookmark tree and keep `pinnedTabs` empty, so the predicate disables
+    /// them too.
     private func canExportBookmarks() -> Bool {
         guard let state = MainBrowserWindowControllersManager.shared.activeWindowController?.browserState else {
             return false
         }
-        return !state.bookmarkManager.rootFolder.children.isEmpty
+        return BookmarkHTMLExporter.hasExportableContent(
+            bookmarks: state.bookmarkManager.rootFolder.children,
+            pinnedTabs: state.pinnedTabs)
     }
 
     private func installOrUpdateCopyURLMenuItem(in menu: NSMenu) {
@@ -678,15 +682,18 @@ extension AppController {
     static var inFlightBookmarkExportWrites = 0
     static var bookmarkExportTerminationPending = false
 
-    /// Exports the active window's current Space's bookmark tree to a
-    /// Netscape-format HTML file. The system save panel handles the
-    /// same-name replace confirmation; the write is atomic so a mid-write
-    /// failure leaves any existing file intact.
+    /// Exports the active window's current Space's bookmark tree — preceded
+    /// by a Favorites folder carrying the window's visible pinned tabs, when
+    /// it has any — to a Netscape-format HTML file. The system save panel
+    /// handles the same-name replace confirmation; the write is atomic so a
+    /// mid-write failure leaves any existing file intact.
     @objc func exportBookmarks(_ sender: Any?) {
         guard let windowController = MainBrowserWindowControllersManager.shared.activeWindowController,
               let window = windowController.window else { return }
         let state = windowController.browserState
-        guard !state.bookmarkManager.rootFolder.children.isEmpty else { return }
+        guard BookmarkHTMLExporter.hasExportableContent(
+            bookmarks: state.bookmarkManager.rootFolder.children,
+            pinnedTabs: state.pinnedTabs) else { return }
 
         // Menu actions are dispatched on the main thread.
         let spaceName = MainActor.assumeIsolated {
@@ -701,14 +708,22 @@ extension AppController {
                                                                           date: Date())
         panel.beginSheetModal(for: window) { response in
             guard response == .OK, let url = panel.url else { return }
-            // Read the tree at confirmation time, not when the sheet was
-            // presented — edits made while the panel was open must export.
+            // Read the tree and pinned collection at confirmation time, not
+            // when the sheet was presented — edits made while the panel was
+            // open must export.
             let bookmarks = state.bookmarkManager.rootFolder.children
-            guard !bookmarks.isEmpty else { return }
+            let pinnedTabs = state.pinnedTabs
+            guard BookmarkHTMLExporter.hasExportableContent(bookmarks: bookmarks,
+                                                            pinnedTabs: pinnedTabs) else { return }
             // Serialize on the main thread (the Bookmark tree is main-thread
             // state), but write off it — the destination may be a slow
             // network or cloud volume and must not block the UI.
-            let html = BookmarkHTMLExporter.htmlDocument(for: bookmarks)
+            let html = BookmarkHTMLExporter.htmlDocument(
+                for: bookmarks,
+                pinnedTabs: pinnedTabs,
+                favoritesFolderTitle: NSLocalizedString(
+                    "Favorites",
+                    comment: "Bookmark export - name of the exported folder carrying the window's pinned tabs"))
             AppController.inFlightBookmarkExportWrites += 1
             DispatchQueue.global(qos: .userInitiated).async {
                 let result = Result { try Data(html.utf8).write(to: url, options: .atomic) }

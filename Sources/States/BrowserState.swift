@@ -479,6 +479,7 @@ class BrowserState {
     
     private func syncPinnedTabMetadata(_ existing: Tab, from localTab: Tab) {
         existing.pinnedLineageId = localTab.pinnedLineageId
+        existing.pinnedCreatedDate = localTab.pinnedCreatedDate
         let persistedURL = localTab.pinnedUrl ?? localTab.url
         if existing.pinnedUrl != persistedURL {
             existing.pinnedUrl = persistedURL

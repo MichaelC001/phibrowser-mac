@@ -164,6 +164,10 @@ class Tab: WebContentRepresentable {
     var storedTitle: String?
     /// Original URL persisted in the database for pinned tabs, immune to navigation KVO.
     var pinnedUrl: String?
+    /// Creation date persisted on the pinned-tab record, exported as
+    /// ADD_DATE by the Netscape bookmark HTML export. nil for tabs not
+    /// built from a pinned record.
+    var pinnedCreatedDate: Date?
     var lastSeen: Date?
     /// guid of the pinned-tab record that forms the other half of a pinned
     /// split. Mirrors `TabDataModel.splitPartnerGuid` for the in-memory copy
@@ -563,6 +567,7 @@ extension Tab {
         if dbModel.dataType == .pinnedTab {
             self.pinnedLineageId = dbModel.pinLineageId ?? dbModel.guid
             self.pinnedUrl = dbModel.url.absoluteString
+            self.pinnedCreatedDate = dbModel.createdDate
             self.splitPartnerGuid = dbModel.splitPartnerGuid
             self.lastSeen = dbModel.lastSeen
         }
