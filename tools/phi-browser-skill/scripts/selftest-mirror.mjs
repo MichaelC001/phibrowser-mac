@@ -7,12 +7,14 @@
 //
 // Everything runs against fixtures — no Phi and no agents needed.
 // Covers: each agent's toEntry parsing
-// (echo suppression, machinery skipping), the SQLite tail source against
-// throwaway databases shaped like Hermes'/OpenClaw's, the env-gated session
-// discovery for the two SQLite agents, and OpenClaw's CLI delivery seam.
-// Exits non-zero when any check fails.
+// (echo suppression, machinery skipping), the SQLite tail source against a
+// throwaway database shaped like Hermes', the env-gated session discovery
+// (Hermes' SQLite state, OpenClaw's JSONL session dir), and OpenClaw's CLI
+// delivery seam. Exits non-zero when any check fails.
 
-import { mkdtempSync, rmSync, writeFileSync, readFileSync, chmodSync } from 'node:fs'
+import {
+  mkdtempSync, rmSync, writeFileSync, readFileSync, chmodSync, utimesSync,
+} from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -28,8 +30,8 @@ import {
   toEntry as hermesToEntry, hermesQuery, hermesRowToItem, discoverHermesTranscript,
 } from './lib/mirror-hermes.mjs'
 import {
-  toEntry as openclawToEntry, openclawQuery, openclawRowToItem,
-  discoverOpenclawTranscript, deliverOpenclaw,
+  toEntry as openclawToEntry, discoverOpenclawTranscript, deliverOpenclaw,
+  OpenclawConsoleBridge,
 } from './lib/mirror-openclaw.mjs'
 import { SqliteTail } from './lib/mirror-sqlite.mjs'
 import {
@@ -490,44 +492,48 @@ const sql = (db, stmt) => execFileSync('/usr/bin/sqlite3', [db, stmt], { encodin
   check('sqlite tail: missing db throws (transcript gone)', threw)
 }
 
-// --- SqliteTail + discovery + delivery: OpenClaw-shaped state dir ---------------
+// --- Transcript + discovery + delivery: OpenClaw-shaped state dir ---------------
 
 {
   const state = join(dir, 'openclaw-state')
-  const db = join(state, 'agents', 'main', 'agent', 'openclaw-agent.sqlite')
-  execFileSync('/bin/mkdir', ['-p', join(state, 'agents', 'main', 'agent')])
-  sql(db, `CREATE TABLE sessions (session_id TEXT PRIMARY KEY,
-    session_key TEXT NOT NULL, updated_at INTEGER);
-    CREATE TABLE transcript_events (session_id TEXT NOT NULL, seq INTEGER NOT NULL,
-    event_json TEXT NOT NULL, created_at INTEGER NOT NULL,
-    PRIMARY KEY (session_id, seq));`)
-  const now = Date.now()
-  const ev = (o) => JSON.stringify(o).replace(/'/g, "''")
-  sql(db, `INSERT INTO sessions VALUES
-    ('sess-fresh','agent:main:main',${now}),
-    ('sess-stale','agent:main:other',${now - 2 * 60 * 60 * 1000});`)
-  sql(db, `INSERT INTO transcript_events VALUES
-    ('sess-fresh',1,'${ev({ type: 'session', version: 3, id: 'sess-fresh' })}',${now}),
-    ('sess-fresh',2,'${ev({ type: 'message', message: { role: 'user', content: 'open example.com' } })}',${now}),
-    ('sess-fresh',3,'${ev({ type: 'message', message: { role: 'assistant', content: [
-      { type: 'text', text: 'on it' },
-      { type: 'toolCall', id: 't1', name: 'exec', arguments: { command: 'node runner.mjs task-abc123' } }] } })}',${now});`)
-
-  const tail = new SqliteTail(db, (since) => openclawQuery('sess-fresh', since),
-                              openclawRowToItem)
-  const items = tail.readNew()
-  const entries = items.map((i) => openclawToEntry(JSON.parse(i.raw))).filter(Boolean)
-  check('openclaw tail: events → console lines', items.length === 3
-        && entries.length === 2 && entries[0].kind === 'user'
+  const sessions = join(state, 'agents', 'main', 'sessions')
+  execFileSync('/bin/mkdir', ['-p', sessions])
+  const line = (o) => JSON.stringify(o) + '\n'
+  const transcript = join(sessions, 'sess-fresh.jsonl')
+  writeFileSync(transcript,
+    line({ type: 'session', version: 3, id: 'sess-fresh' })
+    + line({ type: 'message', message: { role: 'user', content: 'open example.com' } })
+    + line({ type: 'message', message: { role: 'assistant', content: [
+        { type: 'text', text: 'on it' },
+        { type: 'toolCall', id: 't1', name: 'exec',
+          arguments: { command: 'node runner.mjs task-abc123' } }] } }))
+  const entries = readFileSync(transcript, 'utf8').split('\n').filter(Boolean)
+    .map((l) => openclawToEntry(JSON.parse(l))).filter(Boolean)
+  check('openclaw transcript: events → console lines', entries.length === 2
+        && entries[0].kind === 'user' && entries[0].text === 'open example.com'
         && entries[1].text === 'on it', JSON.stringify(entries))
 
+  // Decoys: an ended session whose transcript also mentions the task id
+  // (stale mtime), and the fresh session's trajectory artifact (fresh AND
+  // evidenced — only the filename filter keeps it out).
+  const stale = join(sessions, 'sess-stale.jsonl')
+  writeFileSync(stale, line({ type: 'message',
+    message: { role: 'user', content: 'node runner.mjs task-abc123' } }))
+  const old = (Date.now() - 2 * 60 * 60 * 1000) / 1000
+  utimesSync(stale, old, old)
+  writeFileSync(join(sessions, 'sess-fresh.trajectory.jsonl'),
+                line({ note: 'node runner.mjs task-abc123' }))
+  writeFileSync(join(sessions, 'sessions.json'), '{}')
+
   const env = { PHI_OPENCLAW_STATE_DIR: state, OPENCLAW_SHELL: 'exec' }
-  const saved = {}
+  const saved = { OPENCLAW_CLI: process.env.OPENCLAW_CLI }
+  delete process.env.OPENCLAW_CLI
   for (const [k, v] of Object.entries(env)) { saved[k] = process.env[k]; process.env[k] = v }
   try {
     const hit = discoverOpenclawTranscript('task-abc123')
-    check('openclaw discovery: evidence match', hit?.sessionKey === 'sess-fresh'
-          && hit.path === db && hit.format === 'openclaw', JSON.stringify(hit))
+    check('openclaw discovery: evidence match (stale + trajectory decoys skipped)',
+          hit?.sessionKey === 'sess-fresh'
+          && hit.path === transcript && hit.format === 'openclaw', JSON.stringify(hit))
     check('openclaw discovery: no evidence → no mirror',
           discoverOpenclawTranscript('task-elsewhere') === null)
     delete process.env.OPENCLAW_SHELL
@@ -558,6 +564,53 @@ const sql = (db, stmt) => execFileSync('/usr/bin/sqlite3', [db, stmt], { encodin
   try { await deliverOpenclaw('sess-fresh', 'x') } catch { rejected = true }
   check('openclaw delivery: nonzero exit rejects (bridge retries)', rejected)
   delete process.env.PHI_OPENCLAW_BIN
+}
+
+// --- OpenClaw console bridge ----------------------------------------------------
+
+{
+  let task = { taskId: 'oc-task', status: 'running', pendingUserMessages: 1 }
+  let tasks = () => [task]
+  let reads = 0
+  const delivered = []
+  const channel = {
+    async send(type) {
+      if (type === 'agentSpace.list') return { tasks: tasks() }
+      if (type === 'agentSpace.readUserMessages') {
+        reads += 1
+        task = { ...task, pendingUserMessages: 0 }
+        return { messages: [{ text: 'open example.com' }] }
+      }
+      throw new Error(`unexpected send: ${type}`)
+    },
+  }
+  const ctl = { taskId: 'oc-task', agentPid: process.pid }
+  let fail = false
+  const bridge = new OpenclawConsoleBridge('sess-fresh', {
+    deliver: async (sessionId, text) => {
+      if (fail) throw new Error('gateway down')
+      delivered.push({ sessionId, text })
+    },
+  })
+  check('openclaw bridge: live browser round keeps authority over its queue',
+        await bridge.deliverPending(ctl, channel) === false
+        && reads === 0 && delivered.length === 0)
+  task = { ...task, status: 'idle' }
+  fail = true
+  check('openclaw bridge: failed delivery holds the command for retry',
+        await bridge.deliverPending(ctl, channel) === false
+        && reads === 1 && delivered.length === 0
+        && bridge.undelivered.length === 1)
+  fail = false
+  check('openclaw bridge: idle drain delivers through the CLI seam, marked',
+        await bridge.deliverPending(ctl, channel) === false
+        && reads === 1 && delivered.length === 1
+        && delivered[0].sessionId === 'sess-fresh'
+        && delivered[0].text === '[phi-console] open example.com'
+        && bridge.undelivered.length === 0)
+  tasks = () => []
+  check('openclaw bridge: vanished task tells the daemon to exit',
+        await bridge.deliverPending(ctl, channel) === true)
 }
 
 // --- discovery: Hermes ---------------------------------------------------------

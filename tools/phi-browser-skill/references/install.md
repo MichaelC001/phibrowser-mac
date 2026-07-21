@@ -110,10 +110,10 @@ mirroring nothing rather than guessing wrong:
 - **Codex** — by thread id when `CODEX_THREAD_ID` is exported, else by a
   rollout heuristic (fresh rollout whose recorded cwd matches and whose tail
   mentions the task).
-- **OpenClaw** — by evidence over the gateway's per-agent SQLite state
-  (`~/.openclaw/agents/*/agent/openclaw-agent.sqlite`): the fresh session
-  whose recent transcript events mention the task. Assumes the gateway runs
-  on this Mac.
+- **OpenClaw** — by evidence over the gateway's per-agent session
+  transcripts (`~/.openclaw/agents/*/sessions/<sessionId>.jsonl`): the
+  freshly-written transcript whose newest events mention the task. Assumes
+  the gateway runs on this Mac.
 - **Pi** — by the same evidence heuristic over its session files.
 
 The mirror then

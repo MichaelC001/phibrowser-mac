@@ -5,7 +5,8 @@
 // daemon, the per-session transcript cursor, and the batched forward into
 // the task's console. The per-agent siblings (lib/mirror-claude, -codex,
 // -pi, -hermes, -openclaw) supply only the agent-specific parts — session
-// discovery and record parsing — and reuse everything here.
+// discovery, record parsing, and (where the agent has a delivery transport)
+// the console-command bridge — and reuse everything here.
 //
 // Session binding is explicit, not inferred: the heredoc that starts a task
 // KNOWS its own session (an exported session id, or the evidence heuristics

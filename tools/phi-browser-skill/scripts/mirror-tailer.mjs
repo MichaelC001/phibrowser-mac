@@ -4,18 +4,20 @@
 // session and its agent Space console, in BOTH directions, with no setup:
 //
 //   session → console: tails the session transcript — the agent's JSONL
-//     file (Claude Code, Codex, Pi) or its SQLite transcript rows (Hermes,
-//     OpenClaw; see lib/mirror-sqlite.mjs) — and forwards new prompt,
+//     file (Claude Code, Codex, Pi, OpenClaw) or its SQLite transcript rows
+//     (Hermes; see lib/mirror-sqlite.mjs) — and forwards new prompt,
 //     prose, reasoning, and tool-call lines (batched, cursor-ordered),
 //     each tagged with the origin agent so the console renders them in
 //     that agent's own visual style.
 //   console → session: listens for the app's agentSpace.userMessage
 //     broadcast; while the task is IDLE (no round live to drain the queue
-//     itself) it drains the user's console commands and hands them to the
-//     openclaw CLI for OpenClaw — so a console command wakes an idle
-//     OpenClaw session instead of waiting for its next round. Pi is delivered
-//     separately by its installed in-process extension (mirror-pi-bridge.mjs),
-//     the only layer that can call pi.sendUserMessage(). The remaining terminal
+//     itself) the driving agent's console bridge drains the user's console
+//     commands into the session — OpenClaw's (lib/mirror-openclaw.mjs's
+//     OpenclawConsoleBridge, via the openclaw CLI) is the only one this
+//     daemon hosts, so a console command wakes an idle OpenClaw session
+//     instead of waiting for its next round. Pi is delivered separately by
+//     its installed in-process extension (mirror-pi-bridge.mjs), the only
+//     layer that can call pi.sendUserMessage(). The remaining terminal
 //     agents queue commands until the driver's next round.
 //
 // ensureAgentSpace spawns it detached (arg: session key) after writing the
@@ -46,7 +48,7 @@ import {
   toEntry as hermesToEntry, hermesQuery, hermesRowToItem,
 } from './lib/mirror-hermes.mjs'
 import {
-  toEntry as openclawToEntry, openclawQuery, openclawRowToItem, deliverOpenclaw,
+  toEntry as openclawToEntry, OpenclawConsoleBridge,
 } from './lib/mirror-openclaw.mjs'
 import { SqliteTail } from './lib/mirror-sqlite.mjs'
 
@@ -70,9 +72,6 @@ const HEARTBEAT_TTL_SECONDS = 300
 // long backlog keeps its newest lines).
 const MAX_LINES_PER_BATCH = 60
 const MAX_PENDING = 500
-// Delivery attempts per console command before giving up with a console
-// error line (gateway unreachable and the like).
-const MAX_DELIVER_ATTEMPTS = 5
 // Deferred completion (helpers.complete wrote ctl.completing): the daemon
 // keeps mirroring so the driver's final reply lands in the console, then
 // finishes the task itself. "The reply has landed" = a turn-end record
@@ -104,23 +103,21 @@ async function main() {
   const startTs = Date.now()
   let { cursor, known } = readCursor(sessionKey)
   // The transcript's shape and dialect, chosen by whoever spawned us (see
-  // the per-agent discover* in lib/mirror-*.mjs). Hermes and OpenClaw keep
-  // transcripts as SQLite rows — for them the session key IS the row
-  // filter's session id; the JSONL agents get the byte-offset tail below.
+  // the per-agent discover* in lib/mirror-*.mjs). Hermes keeps transcripts
+  // as SQLite rows — for it the session key IS the row filter's session id;
+  // the JSONL agents get the byte-offset tail below.
   const tail = ctl.format === 'hermes'
     ? new SqliteTail(ctl.transcriptPath,
                      (since) => hermesQuery(sessionKey, since), hermesRowToItem)
-    : ctl.format === 'openclaw'
-      ? new SqliteTail(ctl.transcriptPath,
-                       (since) => openclawQuery(sessionKey, since), openclawRowToItem)
-      : new TranscriptTail(ctl.transcriptPath)
+    : new TranscriptTail(ctl.transcriptPath)
   const toEntry = ctl.format === 'codex' ? codexToEntry
     : ctl.format === 'pi' ? piToEntry
     : ctl.format === 'hermes' ? hermesToEntry
     : ctl.format === 'openclaw' ? openclawToEntry
     : claudeToEntry
   const pending = []
-  const bridge = new ConsoleCommandBridge()
+  // The console → session transport, when the driving agent has one here.
+  const bridge = ctl.format === 'openclaw' ? new OpenclawConsoleBridge(sessionKey) : null
 
   // Persistent app channel: carries the log forwards, the message drains,
   // and the userMessage broadcast. Marked dead on any send failure and
@@ -258,7 +255,7 @@ async function main() {
     }
 
     // console → session
-    if (bridgeWake || Date.now() - lastSweep >= MESSAGE_SWEEP_MS) {
+    if (bridge && (bridgeWake || Date.now() - lastSweep >= MESSAGE_SWEEP_MS)) {
       bridgeWake = false
       lastSweep = Date.now()
       try {
@@ -283,72 +280,6 @@ async function main() {
     }
 
     await sleep(POLL_MS)
-  }
-}
-
-/**
- * The console → session direction. Drains the app's queued console commands
- * and delivers them into the driving session, ONLY when:
- *   - the task is idle (a live round is expected to drain the queue itself —
- *     racing it would strand a waitForUserMessage on an empty queue), and
- *   - a delivery transport exists here: OpenClaw goes through its gateway CLI.
- *     Pi's in-process extension owns its queue independently; the other
- *     terminal agents have no transport and drain at their next round.
- * Commands are delivered with a "[phi-console]" prefix: the agent sees the
- * provenance (answer via narrate/console, not just its own surface), and the
- * mirror suppresses the echoed transcript line (the app already echoed the
- * command at enqueue).
- */
-class ConsoleCommandBridge {
-  constructor() {
-    this.undelivered = []     // [{text, attempts}] retrying across ticks
-  }
-
-  /** True means the task no longer exists — the daemon should exit. */
-  async deliverPending(ctl, channel) {
-    if (!ctl.taskId || !ctl.agentPid) return false
-    // Pi's companion extension drains its queue in-process. Every other
-    // non-OpenClaw terminal agent leaves the queue for its next round.
-    if (ctl.format !== 'openclaw') return false
-    const { tasks } = await channel.send('agentSpace.list', {})
-    const task = (tasks || []).find((t) => t.taskId === ctl.taskId)
-    if (!task) return true
-    const queued = task.pendingUserMessages || 0
-    if (!queued && !this.undelivered.length) return false
-    // Deliver only between rounds: a live round drains the queue itself
-    // (readUserMessages / waitForUserMessage), and a starting one gets the
-    // count in its ensureAgentSpace return.
-    if (task.status !== 'idle') return false
-
-    const deliver = (text) => deliverOpenclaw(sessionKey, text)
-
-    if (queued) {
-      const { messages } = await channel.send(
-        'agentSpace.readUserMessages', { taskId: ctl.taskId })
-      for (const m of messages || []) {
-        this.undelivered.push({ text: m.text, attempts: 0 })
-      }
-    }
-    const retry = []
-    for (const item of this.undelivered) {
-      try {
-        await deliver(`[phi-console] ${item.text}`)
-        await sleep(300)  // pace successive deliveries
-      } catch {
-        item.attempts += 1
-        if (item.attempts < MAX_DELIVER_ATTEMPTS) {
-          retry.push(item)
-        } else {
-          await forwardEntries(ctl.taskId, [{
-            kind: 'error',
-            text: 'Could not deliver your command to the agent',
-            detail: item.text.slice(0, 200),
-          }], channel).catch(() => {})
-        }
-      }
-    }
-    this.undelivered = retry
-    return false
   }
 }
 
