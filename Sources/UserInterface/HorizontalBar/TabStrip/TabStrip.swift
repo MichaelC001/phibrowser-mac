@@ -83,17 +83,30 @@ private final class DragOverlayView: NSView {
 }
 
 final class TabStrip: NSView, TitlebarAwareHitTestable {
+    private weak var controlClickHitView: NSView?
+
     func shouldConsumeHitTest(at point: NSPoint) -> Bool {
         guard let event = NSApp.currentEvent else { return false }
-        // Right-clicks open the strip context menu; scroll gestures scroll
+        // Contextual clicks open a tab or strip menu; scroll gestures scroll
         // the strip or feed the swipe-to-switch-Space handler up the chain
         // (TabStripBarView.scrollWheel) and play no part in window
         // drag/zoom. Everything else falls through to the system titlebar.
-        return event.type == .rightMouseDown || event.type == .scrollWheel
+        return ContextMenuEvent.isMouseDown(event) || event.type == .scrollWheel
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
         let hit = super.hitTest(point)
+        // Tab items and group chips own custom left-click/drag state machines.
+        // Keep Control-click on the strip so those state machines never start;
+        // menu(for:) resolves the original hit view back to its contextual menu.
+        if ContextMenuEvent.isControlClick(NSApp.currentEvent) {
+            controlClickHitView = hit
+            if hit != nil {
+                return self
+            }
+        } else {
+            controlClickHitView = nil
+        }
         // When the hit lands on empty container space (no tab item or button),
         // return self so TitlebarTransparentView recognises TitlebarAwareHitTestable
         // and passes the event to the system for window operations (double-click zoom, drag, etc.).
@@ -101,6 +114,36 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
             return self
         }
         return hit
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard ContextMenuEvent.isControlClick(event) else {
+            super.mouseDown(with: event)
+            return
+        }
+        guard let menu = menu(for: event) else { return }
+        NSMenu.popUpContextMenu(menu, with: event, for: self)
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        guard ContextMenuEvent.isControlClick(event) else {
+            return super.menu(for: event)
+        }
+
+        // Reuse AppKit's first hit-test result so menu routing stays in the
+        // same coordinate pass as the original click.
+        var candidate = controlClickHitView
+        controlClickHitView = nil
+        while let view = candidate, view !== self {
+            if let tabView = view as? TabItemView {
+                return tabView.menu(for: event)
+            }
+            if let chipView = view as? TabGroupChipView {
+                return chipView.menu(for: event)
+            }
+            candidate = view.superview
+        }
+        return super.menu(for: event)
     }
 
     private struct ExternalDropTarget {

@@ -241,6 +241,10 @@ class SideBarOutlineView: DiffableOutlineView {
 
     var dragAutoscrollTopObstructionHeight: CGFloat = 0
 
+    /// Keeps contextual clicks on the outline view so AppKit asks this view for
+    /// its menu before any row-level click or drag handling begins.
+    var capturesContextMenuClicks = false
+
     private(set) var rightClickedRow: Int?
     /// Click location in outline-view coordinates, set together with
     /// `rightClickedRow` when the context menu is requested.
@@ -256,6 +260,30 @@ class SideBarOutlineView: DiffableOutlineView {
     private var tabDragThresholdPassed = false
     private var tabDragBelowThresholdLogged = false
     private var dragAutoscrollCueViews: [SidebarDragAutoscrollCueView.Edge: SidebarDragAutoscrollCueView] = [:]
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let defaultHitTarget = super.hitTest(point)
+        guard capturesContextMenuClicks,
+              ContextMenuEvent.isMouseDown(NSApp.currentEvent),
+              !isHidden,
+              alphaValue > 0,
+              let defaultHitTarget else {
+            return defaultHitTarget
+        }
+        return contextMenuHitTarget(from: defaultHitTarget)
+    }
+
+    func contextMenuHitTarget(from defaultHitTarget: NSView) -> NSView {
+        var candidate: NSView? = defaultHitTarget
+        while let current = candidate, current !== self {
+            if current is NSTextView
+                || (current as? NSTextField)?.isEditable == true {
+                return defaultHitTarget
+            }
+            candidate = current.superview
+        }
+        return self
+    }
 
     override func setFrameSize(_ newSize: NSSize) {
         var adjusted = newSize

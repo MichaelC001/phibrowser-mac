@@ -7,6 +7,43 @@ import Cocoa
 import SnapKit
 import SwiftUI
 
+final class PinnedExtensionContextView: HoverableView {
+    var handlesControlClick = false
+    private var consumesControlClick = false
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let defaultHitTarget = super.hitTest(point)
+        guard handlesControlClick,
+              ContextMenuEvent.isMouseDown(NSApp.currentEvent),
+              !isHidden,
+              alphaValue > 0,
+              defaultHitTarget != nil else {
+            return defaultHitTarget
+        }
+        return self
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard handlesControlClick,
+              ContextMenuEvent.isControlClick(event),
+              let secondaryClickAction else {
+            consumesControlClick = false
+            super.mouseDown(with: event)
+            return
+        }
+        consumesControlClick = true
+        secondaryClickAction()
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        guard consumesControlClick else {
+            super.mouseUp(with: event)
+            return
+        }
+        consumesControlClick = false
+    }
+}
+
 struct PinnedTabItemModel: Hashable {
     let id: String
     let title: String
@@ -74,6 +111,11 @@ class PinnedExtensionItem: NSCollectionViewItem {
         }
     }
 
+    func setContextMenuClickRoutingEnabled(_ enabled: Bool) {
+        _ = view
+        (backgroundView as? PinnedExtensionContextView)?.handlesControlClick = enabled
+    }
+
     private func installBadgeOverlay(manager: ExtensionManager, extensionId: String) {
         let root = BadgeCornerOverlay(manager: manager,
                                       extensionId: extensionId,
@@ -109,7 +151,7 @@ private extension PinnedExtensionItem {
     func setupUI() {
         view.wantsLayer = true
 
-        backgroundView = HoverableView()
+        backgroundView = PinnedExtensionContextView()
         backgroundView.wantsLayer = true
         backgroundView.layer?.cornerRadius = 6
         backgroundView.backgroundColor = .sidebarTabHovered

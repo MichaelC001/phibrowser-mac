@@ -51,6 +51,7 @@ class PinnedTabViewController: NSViewController {
                                      icon: manager?.iconImage(extensionId: model.id,
                                                               staticIcon: model.icon),
                                      manager: manager)
+                pinnedItem.setContextMenuClickRoutingEnabled(self.contextMenuClickRoutingEnabled)
                 pinnedItem.itemClicked = { [weak self] model, view in
                     self?.handleExtensionClicked(model, anchor: view)
                 }
@@ -250,6 +251,7 @@ class PinnedTabViewController: NSViewController {
     private var isShowingMultiSelectionPlaceholderDragImage = false
     private var hasAppliedInitialContentSnapshot = false
     private var isActive = false
+    private var contextMenuClickRoutingEnabled = false
     /// Last applied left|right DB-guid pair per splitId. `PinnedSplitGroupItem`
     /// hashes on `splitId` alone (so a Tab-instance churn doesn't recycle the
     /// cell), which means `apply()` skips items whose pair flipped via
@@ -310,6 +312,16 @@ class PinnedTabViewController: NSViewController {
         view.wantsLayer = true
     }
 
+    /// Enables native right-click and Control-click equivalence for pinned
+    /// items in sidebar hosts.
+    func enableContextMenuClickRouting() {
+        _ = view
+        contextMenuClickRoutingEnabled = true
+        collectionView.capturesContextMenuClicks = true
+        for case let item as PinnedExtensionItem in collectionView.visibleItems() {
+            item.setContextMenuClickRoutingEnabled(true)
+        }
+    }
 
     func setActive(_ active: Bool) {
         if active {

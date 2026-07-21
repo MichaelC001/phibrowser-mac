@@ -257,6 +257,7 @@ class FloatingSidebarViewController: NSViewController {
         // whose writes land in the default Space. Skip it entirely, matching
         // the docked sidebar (see SidebarViewController.setupStackView).
         if !state.isIncognito {
+            pinnedTabViewController.enableContextMenuClickRouting()
             pinnedTabsContainerView.addSubview(pinnedTabViewController.view)
             pinnedTabViewController.view.snp.makeConstraints { make in
                 make.edges.equalToSuperview()
@@ -272,6 +273,7 @@ class FloatingSidebarViewController: NSViewController {
         }
 
         // 5. Tab list
+        tabList.enableContextMenuClickRouting()
         mainStackView.addArrangedSubview(tabList.view)
         tabList.view.snp.makeConstraints { make in
             make.leading.trailing.equalToSuperview()

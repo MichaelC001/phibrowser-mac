@@ -453,6 +453,7 @@ class SidebarViewController: NSViewController {
             spacesStripRowView = spacesStripHostingView
         }
 
+        tabList.enableContextMenuClickRouting()
         mainStackView.addArrangedSubview(tabList.view)
         tabList.view.snp.makeConstraints { make in
             make.leading.trailing.equalToSuperview()
@@ -494,6 +495,7 @@ class SidebarViewController: NSViewController {
     }
     
     private func setupFavoriteContainer() {
+        pinnedTabViewController.enableContextMenuClickRouting()
         pinnedTabContainerView.addSubview(pinnedTabViewController.view)
         pinnedTabViewController.view.snp.makeConstraints { make in
             make.edges.equalToSuperview()

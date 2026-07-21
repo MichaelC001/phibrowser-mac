@@ -295,7 +295,6 @@ class SidebarTabListViewController: NSViewController {
         scrollView.hasHorizontalScroller = false
         scrollView.autohidesScrollers = true
         scrollView.drawsBackground = false
-        scrollView.menu = contextMenu
         scrollView.contentView.postsBoundsChangedNotifications = true
         scrollView.contentView.postsFrameChangedNotifications = true
 
@@ -317,6 +316,11 @@ class SidebarTabListViewController: NSViewController {
         outlineView.action = #selector(outlineViewClicked(_:))
         outlineView.doubleAction = #selector(outlineViewDoubleClicked(_:))
 //        outlineView.draggingDestinationFeedbackStyle = .gap
+
+        // Keep the physical right-click menu available for every host of this
+        // controller, including the floating sidebar. Control-click capture is
+        // enabled explicitly by each sidebar host below.
+        outlineView.menu = contextMenu
         
         outlineView.setDraggingSourceOperationMask([.move, .copy], forLocal: true)
         outlineView.setDraggingSourceOperationMask([.move, .copy], forLocal: false)
@@ -340,6 +344,13 @@ class SidebarTabListViewController: NSViewController {
             scrollView.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor)
         ])
+    }
+
+    /// Enables native right-click and Control-click equivalence for a sidebar
+    /// host without changing how the shared context menu is populated.
+    func enableContextMenuClickRouting() {
+        _ = view
+        outlineView.capturesContextMenuClicks = true
     }
     
     private func setupAppearance() {
