@@ -562,6 +562,12 @@ private struct TranscriptTextFeed: NSViewRepresentable {
             textView.drawsBackground = false
             textView.textContainerInset = NSSize(width: 8, height: 12)
             textView.textContainer?.widthTracksTextView = true
+            textView.delegate = context.coordinator
+            textView.linkTextAttributes = [
+                .foregroundColor: NSColor.linkColor,
+                .underlineStyle: NSUnderlineStyle.single.rawValue,
+                .cursor: NSCursor.pointingHand,
+            ]
             context.coordinator.textView = textView
         }
         return scroll
@@ -600,7 +606,7 @@ private struct TranscriptTextFeed: NSViewRepresentable {
         coordinator.firstRender = false
     }
 
-    final class Coordinator {
+    final class Coordinator: NSObject, NSTextViewDelegate {
         weak var textView: NSTextView?
         var renderedEntries: [AgentTranscriptEntry] = []
         var renderedTags = false
@@ -609,6 +615,24 @@ private struct TranscriptTextFeed: NSViewRepresentable {
         func isAtBottom(_ scroll: NSScrollView) -> Bool {
             guard let document = scroll.documentView else { return true }
             return scroll.contentView.documentVisibleRect.maxY >= document.frame.height - 40
+        }
+
+        /// A transcript link opens as a tab in Phi itself — the default
+        /// NSTextView behavior would bounce it out to the OS default browser.
+        func textView(_ textView: NSTextView, clickedOnLink link: Any,
+                      at charIndex: Int) -> Bool {
+            let url: URL?
+            if let u = link as? URL {
+                url = u
+            } else if let s = link as? String {
+                url = URL(string: s)
+            } else {
+                url = nil
+            }
+            guard let url else { return false }
+            MainBrowserWindowControllersManager.shared.activeWindowController?
+                .browserState.openTab(url.absoluteString)
+            return true
         }
     }
 }
@@ -1080,7 +1104,28 @@ struct AgentTranscriptPanelView: View {
             if index > 0 { out.append(atr("\n", font: Palette.nsFont, color: Palette.textNS)) }
             out.append(attributedRow(entry))
         }
+        linkifyBareURLs(out)
         return out
+    }
+
+    /// Makes pasted-style URLs clickable wherever they appear in the feed
+    /// (narration, tool lines, ⎿ details). Explicit-scheme matches only:
+    /// agent transcripts are full of file names ("main.rs", "script.py")
+    /// whose extensions double as country TLDs, and the data detector would
+    /// happily linkify those without the `://` requirement.
+    private func linkifyBareURLs(_ document: NSMutableAttributedString) {
+        guard let detector = try? NSDataDetector(
+            types: NSTextCheckingResult.CheckingType.link.rawValue) else { return }
+        let text = document.string as NSString
+        let matches = detector.matches(
+            in: document.string, range: NSRange(location: 0, length: text.length))
+        for match in matches {
+            guard let url = match.url,
+                  text.substring(with: match.range).contains("://"),
+                  document.attribute(.link, at: match.range.location,
+                                     effectiveRange: nil) == nil else { continue }
+            document.addAttribute(.link, value: url, range: match.range)
+        }
     }
 
     private func attributedRow(_ entry: AgentTranscriptEntry) -> NSAttributedString {
@@ -1241,8 +1286,15 @@ struct AgentTranscriptPanelView: View {
                 pieceFont = NSFont.monospacedSystemFont(ofSize: font.pointSize, weight: .bold)
             }
             if intent.contains(.code) { pieceColor = Palette.dimNS }
-            out.append(atr(piece, font: pieceFont, color: pieceColor,
-                           oblique: intent.contains(.emphasized)))
+            let attributed = NSMutableAttributedString(
+                attributedString: atr(piece, font: pieceFont, color: pieceColor,
+                                      oblique: intent.contains(.emphasized)))
+            if let link = run.link {
+                attributed.addAttribute(
+                    .link, value: link,
+                    range: NSRange(location: 0, length: attributed.length))
+            }
+            out.append(attributed)
         }
         return out
     }
