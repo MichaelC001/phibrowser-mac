@@ -5155,8 +5155,10 @@ final class SpaceWindowSlot: ObservableObject {
     /// leftover swap overlay". No-op while a swap animates (the push-in draws on
     /// the still-front leaving window, and its overlay is legitimately live) or
     /// in a shared fullscreen Space (ordering a tab out flashes a blank
-    /// workspace). Keyed on `activeSpaceId` — the slot's source of truth — not
-    /// `visibleController`, which rapid switching can leave transiently stale.
+    /// workspace). A miniaturized active window still gets its surfaced siblings
+    /// hidden, but is not brought back on screen. Keyed on `activeSpaceId` — the
+    /// slot's source of truth — not `visibleController`, which rapid switching
+    /// can leave transiently stale.
     private func enforceSlotSingleWindowInvariant() {
         guard !isSwitchAnimationInFlight, !slotHasFullScreenWindow else { return }
         guard let activeId = activeSpaceId,
@@ -5169,9 +5171,10 @@ final class SpaceWindowSlot: ObservableObject {
             orderOutRearmingMoveToActiveSpace(window)
             hidCount += 1
         }
-        // Re-front the active window if anything was hidden or it somehow fell
-        // off screen; the guard keeps a settled slot from stealing focus.
-        if hidCount > 0 || !activeWindow.isVisible {
+        // A miniaturized active window is a valid zero-visible-window state for
+        // the slot. Keep sweeping surfaced siblings, but do not re-front the
+        // active window and undo the user's minimize action.
+        if !activeWindow.isMiniaturized && (hidCount > 0 || !activeWindow.isVisible) {
             makeKeyAndOrderFrontHidingSlotTabBar(activeWindow)
         }
         visibleController = activeController
