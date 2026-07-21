@@ -27,12 +27,12 @@ struct ProfilesSettingsView: View {
     var body: some View {
         HStack(alignment: .top, spacing: 16) {
             profileListPanel
-                .frame(width: 210)
                 .frame(maxHeight: .infinity)
             detailPanel
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .frame(maxHeight: .infinity, alignment: .top)
         }
-        .padding(20)
+        .padding(.vertical, 36)
+        .padding(.horizontal, 36)
         .onAppear {
             profileManager.refresh()
             if selectedProfileId == nil { selectInitialProfile() }

@@ -40,10 +40,9 @@ struct SpacesSettingsView: View {
             VStack(spacing: 16) {
                 HStack(alignment: .top, spacing: 16) {
                     spaceListPanel
-                        .frame(width: 300, alignment: .top)
                         .frame(maxHeight: .infinity)
                     detailPanel
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                        .frame(maxHeight: .infinity, alignment: .top)
                 }
                 .frame(height: 431)
                 SettingsDetailCard {
@@ -57,7 +56,8 @@ struct SpacesSettingsView: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .top)
-            .padding(20)
+            .padding(.vertical, 36)
+            .padding(.horizontal, 36)
         }
         .onAppear {
             profileManager.refresh()
@@ -185,6 +185,7 @@ struct SpacesSettingsView: View {
                         .font(.system(size: 13))
                         .themedForeground(isSelected ? ThemedColor(.white) : .textPrimary)
                         .lineLimit(1)
+                        .customTooltip(space.name)
                     if isDefault {
                         SettingsDefaultBadge(onAccent: isSelected)
                     }
@@ -200,7 +201,10 @@ struct SpacesSettingsView: View {
             }
             .labelsHidden()
             .pickerStyle(.menu)
-            .fixedSize()
+            // Keep long profile names from expanding the surrounding list layout.
+            .lineLimit(1)
+            .frame(maxWidth: 100, alignment: .trailing)
+            .fixedSize(horizontal: false, vertical: true)
             .disabled(isDefault)
         }
         .padding(.horizontal, 8)
@@ -284,9 +288,9 @@ struct SpacesSettingsView: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
-        // The list panel is 300 wide and the row stack is inset by 6 on each
-        // side, so the row — and therefore this preview — is 288 wide.
-        .frame(width: 288, alignment: .leading)
+        // The list panel is 280 wide and the row stack is inset by 6 on each
+        // side, so the row — and therefore this preview — is 268 wide.
+        .frame(width: 268, alignment: .leading)
         // The lifted Space is selected the moment it's grabbed, so the preview
         // carries the same solid accent highlight a selected row shows.
         .background(Color.accentColor)
