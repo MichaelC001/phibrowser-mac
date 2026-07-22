@@ -14,7 +14,6 @@
  View hierarchy:
  
  view (ColoredVisualEffectView)
- ├── titleAwareArea                  // Titlebar-aware region (handles double-click maximize, etc.)
  └── splitViewContainer              // SplitView container (rounded corners, background)
      └── contentSplitViewController.view
          ├── [Left] leftContainerWrapper
@@ -52,6 +51,12 @@ enum WebContentConstant {
     static let topBarHeight: CGFloat = TabStripMetrics.Strip.height  // horizontal tab strip
     static let bookmarkBarHeight: CGFloat = 32
     static let contentEdgeSpacing = 4
+
+    static func titleAwareAreaHeight(for layoutMode: LayoutMode) -> CGFloat {
+        // Performance content reaches the window top, so keep the draggable
+        // strip aligned with the panel's standard outer edge spacing.
+        layoutMode == .performance ? edgesSpacing : 12
+    }
 }
 
 
@@ -147,7 +152,6 @@ class WebContentViewController: NSViewController {
     /// WebContents over CDP is polluted by native-NTP shell tabs.
     var webPanelSize: CGSize { hostView.bounds.size }
 
-    private var titleAwareArea = TitlebarAwareView()
     private var headerHeightConstraint: Constraint?
 
     private var bookmarkBarHeightConstraint: Constraint?
@@ -879,12 +883,6 @@ class WebContentViewController: NSViewController {
     private func setupView() {
         // Build the split view that hosts web content and optional AI Chat.
         setupContentSplitView()
-
-        view.addSubview(titleAwareArea)
-        titleAwareArea.snp.makeConstraints { make in
-            make.leading.trailing.top.equalToSuperview()
-            make.height.equalTo(12)
-        }
 
         // Set initial visibility state
         updateHeaderVisibility()
@@ -2191,20 +2189,14 @@ class WebContentViewController: NSViewController {
         if traditionalLayout {
             // Traditional layout shows the header and optional bookmark bar.
             // topBar is now managed by WebContentContainerViewController
-            titleAwareArea.isHidden = true // Avoid interfering with tab dragging.
-
             headerView.isHidden = false
             headerHeightConstraint?.update(offset: WebContentConstant.headerHeight)
         } else if navigationAtTop {
             // Navigation-at-top mode shows only the header.
-            titleAwareArea.isHidden = false
-
             headerView.isHidden = false
             headerHeightConstraint?.update(offset: WebContentConstant.headerHeight)
         } else {
             // Default sidebar layout hides the top header.
-            titleAwareArea.isHidden = false
-
             headerView.isHidden = true
             headerHeightConstraint?.update(offset: 0)
         }
@@ -2717,11 +2709,5 @@ class WebContentHostView: NSView {
         for subview in subviews where subview.translatesAutoresizingMaskIntoConstraints {
             subview.frame = target
         }
-    }
-}
-
-class TitlebarAwareView: NSView, TitlebarAwareHitTestable {
-    func shouldConsumeHitTest(at point: NSPoint) -> Bool {
-        return false
     }
 }

@@ -11,6 +11,12 @@ import SwiftUI
 /// Container for managing multiple WebContentViewController instances (one per tab)
 /// Also manages the global topBarView (TabStrip) for traditional layout mode
 class WebContentContainerViewController: NSViewController {
+    private final class TitlebarAwareView: NSView, TitlebarAwareHitTestable {
+        func shouldConsumeHitTest(at point: NSPoint) -> Bool {
+            false
+        }
+    }
+
     weak var browserState: BrowserState?
     private var cancellables = Set<AnyCancellable>()
     private var isSubscriptionsSetup = false
@@ -213,8 +219,11 @@ class WebContentContainerViewController: NSViewController {
         static let floatingSidebar: CGFloat = 1100
     }
     
-    /// Titlebar aware area for handling double-click on titlebar
+    /// Single window-level region for titlebar drag and double-click handling.
+    /// Child tab and placeholder controllers must not add their own copies:
+    /// those overlays stack above the page when performance mode hides its header.
     private var titleAwareArea = TitlebarAwareView()
+    private var titleAwareAreaHeightConstraint: Constraint?
     
     /// Left-edge hover trigger for showing floating sidebar when main sidebar is collapsed.
     lazy var floatingSidebarTriggerView = MouseTrackingAreaView()
@@ -349,7 +358,11 @@ class WebContentContainerViewController: NSViewController {
         view.addSubview(titleAwareArea)
         titleAwareArea.snp.makeConstraints { make in
             make.leading.trailing.top.equalToSuperview()
-            make.height.equalTo(12)
+            titleAwareAreaHeightConstraint = make.height.equalTo(
+                WebContentConstant.titleAwareAreaHeight(
+                    for: PhiPreferences.GeneralSettings.loadLayoutMode()
+                )
+            ).constraint
         }
         
         // Observe configuration changes
@@ -1411,7 +1424,12 @@ class WebContentContainerViewController: NSViewController {
     // MARK: - Layout Mode
     
     private func updateLayoutForMode() {
-        let traditionalLayout = PhiPreferences.GeneralSettings.loadLayoutMode().isTraditional
+        let layoutMode = PhiPreferences.GeneralSettings.loadLayoutMode()
+        let traditionalLayout = layoutMode.isTraditional
+
+        titleAwareAreaHeightConstraint?.update(
+            offset: WebContentConstant.titleAwareAreaHeight(for: layoutMode)
+        )
         
         if traditionalLayout {
             // Traditional layout (horizontal tabs): show topBar
