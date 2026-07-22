@@ -256,7 +256,7 @@ class PinnedSplitItem: NSCollectionViewItem, NSMenuDelegate {
         handle = ProfileScopedFaviconRepository.shared.loadFavicon(for: request) { [weak imageView, weak tab] result in
             imageView?.image = result.image
             if result.source == .chromium, let data = result.data {
-                tab?.updateCachedFaviconData(data)
+                tab?.updateProfileScopedFaviconData(data)
             }
         }
     }
