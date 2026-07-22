@@ -296,7 +296,7 @@ class AccountSettingViewController: NSViewController, SettingsPane {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor [weak self] in
-                self?.accountViewModel.cancelOngoingLogoutSession(reason: "settings_window_closed")
+                self?.accountViewModel.cancelOngoingLogoutSession(reason: .settingsWindowClosed)
             }
         }
     }
@@ -369,6 +369,16 @@ class DefaultBrowserViewModel: ObservableObject {
 class AccountViewModel: ObservableObject {
     private static let logoutTimeoutSeconds = 90
 
+    /// Why an in-flight logout attempt was cancelled. The two carry opposite
+    /// intents: a closed settings window abandons the logout, while the
+    /// timeout only gives up on the remote callback — the logout itself must
+    /// still complete locally, because with the external-browser flow an
+    /// unreachable Auth0 never errors out, it simply never calls back.
+    enum LogoutCancelReason: String {
+        case timeout
+        case settingsWindowClosed = "settings_window_closed"
+    }
+
     @Published var userName: String = ""
     @Published var userEmail: String = ""
     @Published var avatarURL: String = ""
@@ -379,7 +389,7 @@ class AccountViewModel: ObservableObject {
     var cancellables = Set<AnyCancellable>()
     private var activeLogoutAttemptID: UUID?
     private var logoutTimeoutWorkItem: DispatchWorkItem?
-    private var cancelledLogoutAttemptIDs = Set<UUID>()
+    private var cancelledLogoutAttempts: [UUID: LogoutCancelReason] = [:]
     
     /// Loads the cached profile from user defaults.
     private func loadCachedProfile() -> Profile? {
@@ -501,27 +511,41 @@ class AccountViewModel: ObservableObject {
         // Step 3: clear the Auth0 session and credentials.
         AppLogDebug("🚪 [Logout] Step 3: Clearing Auth0 session and credentials")
         let success = await AuthManager.shared.logOut()
-        let wasCancelled = finishLogoutAttempt(logoutAttemptID)
-        guard success else {
-            if wasCancelled {
+        let cancelReason = finishLogoutAttempt(logoutAttemptID)
+        if !success {
+            switch cancelReason {
+            case .timeout:
+                // Our own timeout gave up waiting for the Auth0 callback,
+                // which is how an unreachable Auth0 presents itself here.
+                // Giving up on the network must not leave the user logged
+                // in: run the local half and carry on with the teardown.
+                AppLogWarn("🚪 [Logout] Timed out waiting for Auth0, continuing with local logout")
+                await AuthManager.shared.completeLogoutLocally()
+            case .settingsWindowClosed:
                 AppLogWarn("🚪 [Logout] Auth0 logout was cancelled")
                 return
+            case nil:
+                // Not cancelled by us: the external browser could not be
+                // launched, or another web auth transaction holds Auth0's
+                // barrier. Nothing was cleared; report and abandon.
+                AppLogError("🚪 [Logout] Auth0 logout failed")
+                showLogoutFailedAlert()
+                return
             }
-            AppLogError("🚪 [Logout] Auth0 logout failed")
-            showLogoutFailedAlert()
-            return
+        } else if cancelReason != nil {
+            // The cancel landed after the logout had already gone through. Local
+            // credentials and the account reference are gone by now, so bailing
+            // out here would leave the browser running account-less with its
+            // Space slots torn down; carry on to the login window instead.
+            AppLogWarn("🚪 [Logout] Cancellation arrived after logout completed, continuing teardown")
         }
-        guard !wasCancelled else {
-            AppLogWarn("🚪 [Logout] Ignoring logout completion after cancellation")
-            return
-        }
-        AppLogDebug("🚪 [Logout] Auth0 session cleared")
+        // Not "Auth0 session cleared": the remote teardown is best effort, so
+        // this point is reached even when it failed.
+        AppLogDebug("🚪 [Logout] Auth0 logout returned")
         
-        // Step 4: clear local account state.
-        AppLogDebug("🚪 [Logout] Step 4: Clearing account controller state")
-        let previousAccount = AccountController.shared.account?.userID
-        AccountController.shared.account = nil
-        AppLogDebug("🚪 [Logout] Account state cleared (was: \(previousAccount ?? "nil"))")
+        // Step 4: local account state — credentials, cached profile and avatar,
+        // and the account reference — was cleared by `AuthManager.logOut()`.
+        AppLogDebug("🚪 [Logout] Step 4: Local account state cleared")
         
         // Step 5: close the settings window.
         AppLogDebug("🚪 [Logout] Step 5: Closing settings window")
@@ -549,20 +573,20 @@ class AccountViewModel: ObservableObject {
         let timeoutWorkItem = DispatchWorkItem { [weak self] in
             guard let self, self.activeLogoutAttemptID == attemptID else { return }
             AppLogWarn("🚪 [Logout] Auth0 logout timed out after \(Self.logoutTimeoutSeconds)s")
-            self.cancelOngoingLogoutSession(reason: "timeout")
+            self.cancelOngoingLogoutSession(reason: .timeout)
         }
         logoutTimeoutWorkItem = timeoutWorkItem
         DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(Self.logoutTimeoutSeconds), execute: timeoutWorkItem)
     }
 
     @MainActor
-    func cancelOngoingLogoutSession(reason: String) {
+    func cancelOngoingLogoutSession(reason: LogoutCancelReason) {
         guard let attemptID = activeLogoutAttemptID else {
             return
         }
 
-        AppLogDebug("🚪 [Logout] Cancelling pending logout session reason=\(reason)")
-        cancelledLogoutAttemptIDs.insert(attemptID)
+        AppLogDebug("🚪 [Logout] Cancelling pending logout session reason=\(reason.rawValue)")
+        cancelledLogoutAttempts[attemptID] = reason
         logoutTimeoutWorkItem?.cancel()
         logoutTimeoutWorkItem = nil
         activeLogoutAttemptID = nil
@@ -570,17 +594,19 @@ class AccountViewModel: ObservableObject {
         AuthManager.shared.cancelOngoingWebAuthentication()
     }
 
+    /// Ends the bookkeeping for `attemptID` and answers why it was cancelled,
+    /// nil meaning it was not.
     @MainActor
-    private func finishLogoutAttempt(_ attemptID: UUID) -> Bool {
-        let wasCancelled = cancelledLogoutAttemptIDs.remove(attemptID) != nil
+    private func finishLogoutAttempt(_ attemptID: UUID) -> LogoutCancelReason? {
+        let cancelReason = cancelledLogoutAttempts.removeValue(forKey: attemptID)
         guard activeLogoutAttemptID == attemptID else {
-            return wasCancelled
+            return cancelReason
         }
         logoutTimeoutWorkItem?.cancel()
         logoutTimeoutWorkItem = nil
         activeLogoutAttemptID = nil
         isLogoutInProgress = false
-        return wasCancelled
+        return cancelReason
     }
 
     func updateUserName(_ newName: String) async {
@@ -1158,7 +1184,7 @@ class AccountCardView: SettingItemBackgroundView {
                 let placeholder = self.avatarImageView.image
                     ?? NSImage(systemSymbolName: "person.crop.circle.fill", accessibilityDescription: "Avatar")?
                         .withSymbolConfiguration(.init(pointSize: 28, weight: .regular))
-                let processor = RoundCornerImageProcessor(radius: .widthFraction(0.5))
+                let processor = AccountController.avatarImageProcessor
 
                 // Show cached version immediately (or keep current image if no cache)
                 self.avatarImageView.kf.setImage(
@@ -1239,7 +1265,7 @@ class AccountCardView: SettingItemBackgroundView {
 
         avatarRevalidateTask?.cancel()
 
-        let processor = RoundCornerImageProcessor(radius: .widthFraction(0.5))
+        let processor = AccountController.avatarImageProcessor
         avatarRevalidateTask = KingfisherManager.shared.retrieveImage(
             with: url,
             options: [

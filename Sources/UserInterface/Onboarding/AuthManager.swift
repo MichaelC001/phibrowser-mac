@@ -253,7 +253,39 @@ class AuthManager {
         }
     }
     
-    func logOut() async -> Bool {
+    /// Outcome of the network half of a logout.
+    enum RemoteWebSessionClearOutcome {
+        case cleared
+        /// The logout page never ran at all; whether that abandons the logout
+        /// is the caller's decision. Three ways to get here: the settings pane
+        /// cancelled the transaction (its window was closed — an abandonment —
+        /// or its wait timed out, which the pane compensates by finishing the
+        /// logout locally: with the external-browser flow an unreachable Auth0
+        /// never surfaces as an error here, it simply never calls back), the
+        /// external browser could not be launched, or another Web Auth
+        /// transaction holds Auth0's process-wide barrier.
+        ///
+        /// A failure to launch the browser is a genuine failure rather than an
+        /// abandoned attempt, and it is deliberately treated the same: nothing
+        /// was cleared remotely and nothing is in flight, so the honest answer
+        /// is to abort and let the settings pane report it.
+        ///
+        /// The barrier case is why this is not merely "no worse than doing
+        /// nothing": the transaction still holding the barrier is a login or a
+        /// reauthentication, and its callback stores credentials and rebuilds
+        /// the account. Clearing local state underneath it would be undone the
+        /// moment the user finishes in the browser.
+        case notPerformed
+        /// The call failed. No local state was touched.
+        case failed
+    }
+
+    /// Tears down the Auth0 web session. This is the only network-dependent
+    /// half of a logout: it opens the logout URL in the external browser and
+    /// waits for the callback, so it can fail, stall, or be cancelled. It
+    /// touches no local state, which is cleared separately by
+    /// `clearLocalAccountData()`.
+    func clearRemoteWebSession() async -> RemoteWebSessionClearOutcome {
         do {
             // Google does not support the federated logout flow we want here, so keep it disabled
             // and clear local web state instead.
@@ -261,26 +293,80 @@ class AuthManager {
                 .webAuth(clientId: clicentId, domain: domain)
                 .provider(makeExternalBrowserAuthProvider())
                 .clearSession(federated: false)
-            recordTrace("user-logout-started")
-            _ = credentialManager.clear()
-            lastRenewAttemptAt = nil
-            lastSuccessfulSyncAt = nil
-            reauthenticationState = .normal
-            clearPersistedReauthenticationState()
-            currentCredentials = nil
-            SharedAuthTokenStore.shared.clear()
-            await stopRenewTimer()
-            stopHeartbeat()
-            recordTrace("user-logout-succeeded")
-            // PostHog: Capture logout event and reset analytics identity
-            PostHogSDK.shared.capture("user_logged_out")
-            PostHogSDK.shared.reset()
-            return true
+            return .cleared
+        } catch WebAuthError.userCancelled {
+            recordTrace("remote-web-session-clear-cancelled")
+            return .notPerformed
+        } catch WebAuthError.transactionActiveAlready {
+            recordTrace("remote-web-session-clear-blocked-by-active-transaction")
+            AppLogWarn("clearing the auth0 web session was blocked by an active web auth transaction")
+            return .notPerformed
         } catch {
-            recordTrace("user-logout-failed", details: ["error": error.localizedDescription])
-            AppLogError("logout with auth0 failed: \(error.localizedDescription)")
+            recordTrace("remote-web-session-clear-failed", details: ["error": error.localizedDescription])
+            AppLogError("clearing the auth0 web session failed: \(error.localizedDescription)")
+            return .failed
         }
-        return false
+    }
+
+    /// Clears every piece of local account state: the stored credentials, the
+    /// cross-process token store, the cached account identity (profile, avatar
+    /// bytes, current account reference) and the timers that assume a live
+    /// session.
+    ///
+    /// Nothing here depends on the network, so it cannot fail for connectivity
+    /// reasons and callers can run it on its own, without
+    /// `clearRemoteWebSession()`. Order matters at the end: the persisted
+    /// reauthentication state lives in the account's defaults, so it has to be
+    /// dropped while the account reference is still around.
+    @MainActor
+    func clearLocalAccountData() {
+        _ = credentialManager.clear()
+        SharedAuthTokenStore.shared.clear()
+        currentCredentials = nil
+        lastRenewAttemptAt = nil
+        lastSuccessfulSyncAt = nil
+        reauthenticationState = .normal
+        clearPersistedReauthenticationState()
+        stopRenewTimer()
+        stopHeartbeat()
+        AccountController.shared.clearCachedAccount()
+    }
+
+    /// User-initiated logout: best-effort remote session teardown followed by
+    /// the local clear.
+    ///
+    /// Every remote failure past a started attempt is logged and ignored,
+    /// because the local clear is what actually ends the session and it must
+    /// not depend on the network. (It used to: the remote step shared a `do`
+    /// block with the local clear, so any remote failure skipped the clear and
+    /// left the user logged in.)
+    ///
+    /// Returns false when the remote step never ran. Whether that abandons the
+    /// logout is the settings pane's decision: window-close cancellation and
+    /// launch/barrier failures abandon it, while the pane's own timeout gives
+    /// up on the network only and continues via `completeLogoutLocally()`.
+    func logOut() async -> Bool {
+        if case .notPerformed = await clearRemoteWebSession() {
+            return false
+        }
+        await completeLogoutLocally()
+        return true
+    }
+
+    /// The local half of a user-initiated logout: the analytics capture, the
+    /// local clear, and the logout traces. Called by `logOut()` after the
+    /// remote attempt, and directly by the settings pane when its timeout
+    /// gives up waiting for the Auth0 callback — an unreachable Auth0 must
+    /// not leave the user logged in.
+    @MainActor
+    func completeLogoutLocally() {
+        recordTrace("user-logout-started")
+        // PostHog: capture the logout event before the clear, which drops the
+        // account reference and with it the analytics identity.
+        PostHogSDK.shared.capture("user_logged_out")
+        clearLocalAccountData()
+        recordTrace("user-logout-succeeded")
+        PostHogSDK.shared.reset()
     }
     
     func refreshAuthStatus() async {
@@ -839,17 +925,8 @@ class AuthManager {
         Task { @MainActor [weak self] in
             guard let self else { return }
             AppLogInfo("transition auth state to login: clearing local credentials after unrecoverable session loss")
-            _ = self.credentialManager.clear()
-            SharedAuthTokenStore.shared.clear()
-            self.currentCredentials = nil
-            self.lastRenewAttemptAt = nil
-            self.lastSuccessfulSyncAt = nil
-            self.reauthenticationState = .normal
-            self.clearPersistedReauthenticationState()
-            self.stopRenewTimer()
-            self.stopHeartbeat()
+            self.clearLocalAccountData()
             LoginController.shared.phase = .login
-            AccountController.shared.account = nil
             MainBrowserWindowControllersManager.shared.closeAllWindows()
             LoginController.shared.showLoginWindow()
         }
