@@ -3,6 +3,7 @@
 // Use of this source code is governed by an Apache license that can be
 // found in the LICENSE file.
 
+import AppKit
 import Foundation
 import Combine
 import Settings
@@ -73,10 +74,35 @@ extension AppController {
         }
     }
     
+    /// Shows the settings window, optionally jumping to a specific pane.
+    ///
+    /// `SettingsWindowController.show(pane:)` re-centers the window and then
+    /// restores the autosaved frame on every call. When the window is already
+    /// on screen that discards any position the user dragged it to (the frame
+    /// autosave can lag behind the move), so the popup visibly jumps. Capture
+    /// the current top-left before showing and put it back afterwards; the
+    /// top-left anchor keeps pane-switch height changes looking native.
+    @discardableResult
+    func showSettings(pane paneIdentifier: Settings.PaneIdentifier? = nil) -> SettingsWindowController {
+        let controller = ensureSettingsWindowController()
+
+        let visibleTopLeft: NSPoint? = {
+            guard let window = controller.window, window.isVisible else { return nil }
+            return NSPoint(x: window.frame.minX, y: window.frame.maxY)
+        }()
+
+        controller.show(pane: paneIdentifier)
+
+        if let visibleTopLeft {
+            controller.window?.setFrameTopLeftPoint(visibleTopLeft)
+        }
+
+        return controller
+    }
+
     @MainActor
     @objc func showPreferences(_ sender: Any?) {
-        let controller = ensureSettingsWindowController()
-        controller.show()
+        let controller = showSettings()
         controller.window?.orderFront(self)
     }
     

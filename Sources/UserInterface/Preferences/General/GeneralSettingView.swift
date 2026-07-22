@@ -165,7 +165,7 @@ private struct ThemeSectionView: View {
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 12)
             Button {
-                AppController.shared?.ensureSettingsWindowController().show(pane: .spaces)
+                AppController.shared?.showSettings(pane: .spaces)
             } label: {
                 Text(NSLocalizedString("Edit in Spaces settings\u{2026}", comment: "General settings - Link that jumps to the Spaces settings pane"))
                     .font(.system(size: 12))
