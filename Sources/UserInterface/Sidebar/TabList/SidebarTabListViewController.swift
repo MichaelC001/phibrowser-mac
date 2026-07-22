@@ -779,9 +779,27 @@ class SidebarTabListViewController: NSViewController {
             return
         }
 
-        let modifierFlags = NSApp.currentEvent?.modifierFlags ?? []
+        let modifierFlags = (sender as? SideBarOutlineView)?.consumeMouseDownModifierFlags()
+            ?? NSApp.currentEvent?.modifierFlags
+            ?? []
         let isCommandClick = modifierFlags.contains(.command)
         let isShiftClick = modifierFlags.contains(.shift)
+        if modifierFlags.isPureOptionClick,
+           let bookmark = bookmarkForRow(clickedRow) {
+            let didPerformSplit = MainActor.assumeIsolated {
+                bookmark.performSplitAction(in: browserState)
+            }
+            if didPerformSplit {
+                cancelPendingBookmarkRenameClick()
+                endBookmarkEditing(except: bookmark)
+                multiSelectionRangeAnchor = nil
+                if browserState.multiSelection.isActive {
+                    browserState.clearMultiSelection()
+                }
+                return
+            }
+        }
+
         if !isCommandClick,
            !isShiftClick,
            let bookmark = bookmarkForRow(clickedRow), !bookmark.isFolder {
@@ -5067,13 +5085,27 @@ extension SidebarTabListViewController: SideBarOutlineViewDelegate {
         )
     }
 
-    func outlineView(_ outlineView: SideBarOutlineView, didClickRow row: Int) {
+    func outlineView(_ outlineView: SideBarOutlineView,
+                     didClickRow row: Int,
+                     modifierFlags: NSEvent.ModifierFlags) {
         guard row >= 0 else {
             handleSidebarBlankAreaClick()
             return
         }
         guard let item = outlineView.item(atRow: row) as? SidebarItem else {
             return
+        }
+        if let tab = item as? Tab, modifierFlags.isPureOptionClick {
+            let didPerformSplit = MainActor.assumeIsolated {
+                tab.performSplitAction(in: browserState)
+            }
+            if didPerformSplit {
+                multiSelectionRangeAnchor = nil
+                if browserState.multiSelection.isActive {
+                    browserState.clearMultiSelection()
+                }
+                return
+            }
         }
         // In an agent Space the user may click tabs to look around while the
         // agent keeps control: switching does NOT take over. `focuseTab` moves
@@ -5083,7 +5115,6 @@ extension SidebarTabListViewController: SideBarOutlineViewDelegate {
         // Normal tab rows are delivered here (the outline view's standard
         // action never fires for them), so multi-selection must be handled
         // on this path rather than `outlineViewClicked`.
-        let modifierFlags = NSApp.currentEvent?.modifierFlags ?? []
         if handleModifiedMultiSelectionClick(for: item, modifierFlags: modifierFlags) {
             return
         }

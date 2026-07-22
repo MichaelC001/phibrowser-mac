@@ -215,7 +215,9 @@ protocol SideBarOutlineViewDelegate: AnyObject {
     func outlineView(_ outlineView: SideBarOutlineView,
                      didMiddleClickRow row: Int,
                      at location: NSPoint)
-    func outlineView(_ outlineView: SideBarOutlineView, didClickRow row: Int)
+    func outlineView(_ outlineView: SideBarOutlineView,
+                     didClickRow row: Int,
+                     modifierFlags: NSEvent.ModifierFlags)
     func outlineView(_ outlineView: SideBarOutlineView,
                      beginDraggingTabAtRow row: Int,
                      with mouseDownEvent: NSEvent)
@@ -253,6 +255,12 @@ class SideBarOutlineView: DiffableOutlineView {
     
     /// Delegate for handling middle mouse button click events
     weak var phiOutlineDelegate: SideBarOutlineViewDelegate?
+    private var lastMouseDownModifierFlags: NSEvent.ModifierFlags?
+
+    func consumeMouseDownModifierFlags() -> NSEvent.ModifierFlags? {
+        defer { lastMouseDownModifierFlags = nil }
+        return lastMouseDownModifierFlags
+    }
 
     private var pendingTabDragRow: Int?
     private var pendingTabDragStartPoint: NSPoint?
@@ -405,7 +413,13 @@ class SideBarOutlineView: DiffableOutlineView {
             AppLogDebug(
                 "[SIDEBAR_TAB_DRAG_THRESHOLD] forwarding mouseDown to super row=\(index)"
             )
+            // The row action (`outlineViewClicked`) fires inside super's
+            // tracking loop, which also swallows the matching mouseUp —
+            // scope the exposed mouse-down modifiers to exactly that window
+            // so an unconsumed click can't leak stale flags.
+            lastMouseDownModifierFlags = event.modifierFlags
             super.mouseDown(with: event)
+            lastMouseDownModifierFlags = nil
             AppLogDebug(
                 "[SIDEBAR_TAB_DRAG_THRESHOLD] super mouseDown returned row=\(index)"
             )
@@ -414,7 +428,7 @@ class SideBarOutlineView: DiffableOutlineView {
             AppLogDebug("[SIDEBAR_TAB_DRAG_THRESHOLD] dragging window from empty area")
             window.performDrag(with: event)
             if Self.isBlankAreaClick(from: mouseDownLocation, to: NSEvent.mouseLocation) {
-                phiOutlineDelegate?.outlineView(self, didClickRow: -1)
+                phiOutlineDelegate?.outlineView(self, didClickRow: -1, modifierFlags: [])
             }
         } else {
             super.mouseDown(with: event)
@@ -484,7 +498,12 @@ class SideBarOutlineView: DiffableOutlineView {
                 let point = convert(event.locationInWindow, from: nil)
                 if pendingRow == row(at: point) {
                     AppLogDebug("[SIDEBAR_TAB_DRAG_THRESHOLD] click normal tab row=\(pendingRow)")
-                    phiOutlineDelegate?.outlineView(self, didClickRow: pendingRow)
+                    let modifierFlags = pendingTabMouseDownEvent?.modifierFlags ?? event.modifierFlags
+                    phiOutlineDelegate?.outlineView(
+                        self,
+                        didClickRow: pendingRow,
+                        modifierFlags: modifierFlags
+                    )
                 }
             }
             return
