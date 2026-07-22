@@ -512,8 +512,10 @@ class BrowserState {
             existing.lastSeen = localTab.lastSeen
         }
 
+        existing.allowsProfileScopedFaviconPersistence = localTab.allowsProfileScopedFaviconPersistence
+
         if existing.cachedFaviconData != localTab.cachedFaviconData {
-            existing.updateCachedFaviconData(localTab.cachedFaviconData)
+            existing.hydrateCachedFaviconData(localTab.cachedFaviconData)
         }
 
         if !existing.isOpenned {

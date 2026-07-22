@@ -458,7 +458,7 @@ final class TabViewModel {
             }
             self.profileFaviconImage = result.image
             if result.source == .chromium, let data = result.data {
-                tab?.updateCachedFaviconData(data)
+                tab?.updateProfileScopedFaviconData(data)
             }
         }
     }

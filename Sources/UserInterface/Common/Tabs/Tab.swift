@@ -158,6 +158,10 @@ class Tab: WebContentRepresentable {
     /// different scope and receives a new physical database guid.
     var pinnedLineageId: String?
     var profileId: String?
+    /// Whether a profile-scoped repository result can update this tab's
+    /// persisted favicon snapshot. App-scoped pinned rows have no profile
+    /// owner, so their profile-specific fallback remains display-only.
+    var allowsProfileScopedFaviconPersistence = true
     var windowId: Int = 0
     var isOpenned = true
     /// DB-persisted title that bypasses title KVO from `webContentWrapper`.
@@ -340,6 +344,15 @@ class Tab: WebContentRepresentable {
     }
     
     func setWebContentsWrapper(wrapper: (WebContentWrapper & NSObject)?) {
+        if let currentWrapper = webContentWrapper,
+           let wrapper,
+           currentWrapper === wrapper {
+            return
+        }
+        if webContentWrapper == nil, wrapper == nil {
+            return
+        }
+
         self.webContentWrapper = wrapper
         setupObservers(for: wrapper)
     }
@@ -352,6 +365,16 @@ class Tab: WebContentRepresentable {
         guard let data, cachedFaviconData != data else { return }
         cachedFaviconData = data
         faviconSnapshotUpdater?(data)
+    }
+
+    func hydrateCachedFaviconData(_ data: Data?) {
+        guard let data, cachedFaviconData != data else { return }
+        cachedFaviconData = data
+    }
+
+    func updateProfileScopedFaviconData(_ data: Data?) {
+        guard allowsProfileScopedFaviconPersistence else { return }
+        updateCachedFaviconData(data)
     }
 
     private func clearFaviconDataIfPageURLChanged(from oldURLString: String?, to newURLString: String?) {
@@ -393,11 +416,10 @@ class Tab: WebContentRepresentable {
         return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
     }
     
-    /// Persists a custom title and rebinds observers so KVO no longer overwrites it.
+    /// Applies a stored custom title. The title observer reads this value on every update.
     func applyStoredTitle(_ title: String) {
         storedTitle = title
         self.title = title
-        setWebContentsWrapper(wrapper: webContentWrapper)
     }
 
     /// Placeholder title for native-NTP (off-the-record) new-tab pages.
@@ -563,6 +585,8 @@ extension Tab {
                   faviconData: dbModel.favicon)
         self.isOpenned = false
         self.isPinned = (dbModel.dataType == .pinnedTab)
+        self.allowsProfileScopedFaviconPersistence =
+            dbModel.profile != nil || dbModel.profileId?.isEmpty == false
         self.storedTitle = dbModel.title
         if dbModel.dataType == .pinnedTab {
             self.pinnedLineageId = dbModel.pinLineageId ?? dbModel.guid

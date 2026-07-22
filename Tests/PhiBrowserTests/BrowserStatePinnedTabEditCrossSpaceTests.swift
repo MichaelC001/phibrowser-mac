@@ -15,8 +15,18 @@ import Cocoa
 @MainActor
 final class BrowserStatePinnedTabEditCrossSpaceTests: XCTestCase {
     private var tempDirectories: [URL] = []
+    private var stores: [LocalStore] = []
 
-    override func tearDownWithError() throws {
+    override func tearDown() async throws {
+        for store in stores {
+            await store.performBackgroundWriteAndWait { _ in }
+        }
+        await settleAsyncWork()
+        for store in stores {
+            await store.performBackgroundWriteAndWait { _ in }
+        }
+        stores.removeAll()
+        await settleAsyncWork()
         for directory in tempDirectories {
             try? FileManager.default.removeItem(at: directory)
         }
@@ -83,6 +93,149 @@ final class BrowserStatePinnedTabEditCrossSpaceTests: XCTestCase {
         try waitUntil(otherSpace, describing: "title edit reaches the other Space") {
             otherPinned.storedTitle == "Renamed" && otherPinned.title == "Renamed"
         }
+    }
+
+    func testProfileScopedPinnedFaviconSyncDoesNotFeedBackAcrossSpaces() async throws {
+        try await assertSharedPinnedFaviconSyncDoesNotFeedBack(
+            scope: .profile,
+            secondProfileId: "Default"
+        )
+    }
+
+    func testAppScopedPinnedFaviconSyncDoesNotFeedBackAcrossProfiles() async throws {
+        try await assertSharedPinnedFaviconSyncDoesNotFeedBack(
+            scope: .app,
+            secondProfileId: "Work"
+        )
+    }
+
+    func testAppScopedProfileFaviconFallbackStaysViewOnlyAndMatchingLiveFaviconPersists() async throws {
+        let store = try makeStore()
+        let sharedFavicon = Data([0x10])
+        let defaultProfileFavicon = Data([0x20])
+        let workProfileFavicon = Data([0x30])
+        try seedPinnedTab(
+            in: store,
+            guid: "pinned-guid",
+            url: "https://github.com/example/actions",
+            favicon: sharedFavicon
+        )
+        try await store.changePinnedTabScope(
+            to: .app,
+            preferredProfileId: "Default",
+            preferredSpaceId: "space-a"
+        )
+
+        let defaultState = BrowserState(
+            windowId: 1,
+            localStore: store,
+            profileId: "Default",
+            spaceId: "space-a"
+        )
+        let workState = BrowserState(
+            windowId: 2,
+            localStore: store,
+            profileId: "Work",
+            spaceId: "space-b"
+        )
+        let defaultPinned = try XCTUnwrap(defaultState.pinnedTabs.first)
+        let workPinned = try XCTUnwrap(workState.pinnedTabs.first)
+        let sharedGuid = try XCTUnwrap(defaultPinned.guidInLocalDB)
+        XCTAssertEqual(workPinned.guidInLocalDB, sharedGuid)
+        XCTAssertFalse(defaultPinned.allowsProfileScopedFaviconPersistence)
+        XCTAssertFalse(workPinned.allowsProfileScopedFaviconPersistence)
+
+        defaultPinned.updateProfileScopedFaviconData(defaultProfileFavicon)
+        workPinned.updateProfileScopedFaviconData(workProfileFavicon)
+        await store.performBackgroundWriteAndWait { _ in }
+
+        XCTAssertEqual(defaultPinned.cachedFaviconData, sharedFavicon)
+        XCTAssertEqual(workPinned.cachedFaviconData, sharedFavicon)
+        XCTAssertEqual(store.getTab(by: sharedGuid)?.favicon, sharedFavicon)
+
+        bindOpenPinnedTab(
+            defaultPinned,
+            to: defaultState,
+            chromiumGuid: 101,
+            favicon: defaultProfileFavicon
+        )
+        await store.performBackgroundWriteAndWait { _ in }
+
+        XCTAssertEqual(store.getTab(by: sharedGuid)?.favicon, defaultProfileFavicon)
+    }
+
+    func testProfileScopedProfileFaviconFallbackPersistsSnapshot() async throws {
+        try await assertProfileScopedFaviconFallbackPersists(scope: .profile)
+    }
+
+    func testSpaceScopedProfileFaviconFallbackPersistsSnapshot() async throws {
+        try await assertProfileScopedFaviconFallbackPersists(scope: .space)
+    }
+
+    func testPassiveFaviconSyncUpdatesCacheWithoutPersisting() {
+        let tab = Tab(
+            guid: 1,
+            url: "https://github.com/example/actions",
+            isActive: false,
+            index: 0,
+            faviconData: Data([0x10])
+        )
+        var writeBacks: [Data] = []
+        tab.setFaviconSnapshotUpdater { writeBacks.append($0) }
+
+        tab.hydrateCachedFaviconData(Data([0x20]))
+
+        XCTAssertEqual(tab.cachedFaviconData, Data([0x20]))
+        XCTAssertTrue(writeBacks.isEmpty)
+    }
+
+    func testRebindingSameWrapperDoesNotResampleItsFavicon() {
+        let wrapperFavicon = Data([0x10])
+        let syncedFavicon = Data([0x20])
+        let changedFavicon = Data([0x30])
+        let wrapper = PinnedEditWebContentWrapperSpy(
+            urlString: "https://github.com/example/actions"
+        )
+        wrapper.favIconData = wrapperFavicon
+        let tab = Tab(
+            guid: 1,
+            url: wrapper.urlString,
+            isActive: false,
+            index: 0,
+            webContentView: wrapper
+        )
+        var writeBacks: [Data] = []
+        tab.setFaviconSnapshotUpdater { writeBacks.append($0) }
+        tab.hydrateCachedFaviconData(syncedFavicon)
+
+        tab.setWebContentsWrapper(wrapper: wrapper)
+
+        XCTAssertEqual(tab.cachedFaviconData, syncedFavicon)
+        XCTAssertEqual(tab.liveFaviconData, wrapperFavicon)
+        XCTAssertTrue(writeBacks.isEmpty)
+
+        wrapper.favIconData = changedFavicon
+
+        XCTAssertEqual(tab.cachedFaviconData, changedFavicon)
+        XCTAssertEqual(tab.liveFaviconData, changedFavicon)
+        XCTAssertEqual(writeBacks, [changedFavicon])
+    }
+
+    func testStoredTitleRemainsAuthoritativeWithoutRebindingWrapper() {
+        let wrapper = PinnedEditWebContentWrapperSpy(urlString: "https://example.com")
+        wrapper.title = "Page Title"
+        let tab = Tab(
+            guid: 1,
+            url: wrapper.urlString,
+            isActive: false,
+            index: 0,
+            webContentView: wrapper
+        )
+
+        tab.applyStoredTitle("Custom Title")
+        wrapper.title = "Updated Page Title"
+
+        XCTAssertEqual(tab.title, "Custom Title")
     }
 
     func testPinnedTabOriginNavigationReturnsOpenTabToOriginalURL() throws {
@@ -171,7 +324,14 @@ final class BrowserStatePinnedTabEditCrossSpaceTests: XCTestCase {
 
     func testScopeMigrationRebindsOpenPinnedTabWithoutReplacingRuntimeObject() async throws {
         let store = try makeStore()
-        try seedPinnedTab(in: store, guid: "pinned-guid", url: "https://old.example")
+        let originalFavicon = Data([0x10])
+        let updatedFavicon = Data([0x20])
+        try seedPinnedTab(
+            in: store,
+            guid: "pinned-guid",
+            url: "https://old.example",
+            favicon: originalFavicon
+        )
         let context = try XCTUnwrap(store.getMainContext())
         context.insert(SpaceModel(
             spaceId: "space-a",
@@ -191,13 +351,15 @@ final class BrowserStatePinnedTabEditCrossSpaceTests: XCTestCase {
         )
         let pinnedTab = try XCTUnwrap(state.pinnedTabs.first)
         let wrapper = PinnedEditWebContentWrapperSpy(urlString: "https://old.example")
+        wrapper.favIconData = originalFavicon
         let liveTab = Tab(
             guid: 99,
             url: "https://old.example",
             isActive: true,
             index: 0,
             webContentView: wrapper,
-            customGuid: "pinned-guid"
+            customGuid: "pinned-guid",
+            faviconData: originalFavicon
         )
         state.tabs = [liveTab]
         pinnedTab.isOpenned = true
@@ -220,6 +382,12 @@ final class BrowserStatePinnedTabEditCrossSpaceTests: XCTestCase {
         XCTAssertEqual(liveTab.guidInLocalDB, newGuid)
         XCTAssertEqual(wrapper.customValues.last, newGuid)
         XCTAssertTrue(wrapper.navigatedURLs.isEmpty)
+
+        wrapper.favIconData = updatedFavicon
+        await store.performBackgroundWriteAndWait { _ in }
+
+        XCTAssertEqual(store.getTab(by: newGuid)?.favicon, updatedFavicon)
+        XCTAssertEqual(store.getTab(by: "pinned-guid")?.favicon, originalFavicon)
     }
 
     func testEditOpenedBeforeScopeMigrationWritesReboundActiveGuid() async throws {
@@ -258,7 +426,7 @@ final class BrowserStatePinnedTabEditCrossSpaceTests: XCTestCase {
             in: state
         )
         await store.performBackgroundWriteAndWait { _ in }
-        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        await settleAsyncWork()
 
         let active = try XCTUnwrap(store.getTab(by: reboundGuid))
         XCTAssertEqual(active.url.absoluteString, "https://new.example")
@@ -270,14 +438,30 @@ final class BrowserStatePinnedTabEditCrossSpaceTests: XCTestCase {
     }
 
     private func makeStore() throws -> LocalStore {
+        let directory = try makeStoreDirectory()
+        let store = LocalStore(
+            account: Account(userID: UUID().uuidString),
+            storeDirectoryURL: directory,
+            presentsCompatibilityAlerts: false
+        )
+        stores.append(store)
+        return store
+    }
+
+    private func makeStoreDirectory() throws -> URL {
         let directory = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         tempDirectories.append(directory)
-        return LocalStore(account: Account(userID: UUID().uuidString), storeDirectoryURL: directory)
+        return directory
     }
 
-    private func seedPinnedTab(in store: LocalStore, guid: String, url: String) throws {
+    private func seedPinnedTab(
+        in store: LocalStore,
+        guid: String,
+        url: String,
+        favicon: Data? = nil
+    ) throws {
         let context = try XCTUnwrap(store.getMainContext())
         let profile = ProfileModel(profileId: "Default")
         context.insert(profile)
@@ -287,7 +471,7 @@ final class BrowserStatePinnedTabEditCrossSpaceTests: XCTestCase {
             guid: guid,
             index: 0,
             url: URL(string: url)!,
-            favicon: nil,
+            favicon: favicon,
             createdDate: Date(),
             updatedDate: Date()
         )
@@ -295,6 +479,156 @@ final class BrowserStatePinnedTabEditCrossSpaceTests: XCTestCase {
         pinnedModel.profile = profile
         context.insert(pinnedModel)
         try context.save()
+    }
+
+    private func assertProfileScopedFaviconFallbackPersists(
+        scope: PinnedTabScope
+    ) async throws {
+        let store = try makeStore()
+        let persistedFavicon = Data([0x10])
+        let fallbackFavicon = Data([0x20])
+        try seedPinnedTab(
+            in: store,
+            guid: "pinned-guid",
+            url: "https://github.com/example/actions",
+            favicon: persistedFavicon
+        )
+
+        if scope == .space {
+            let context = try XCTUnwrap(store.getMainContext())
+            context.insert(SpaceModel(
+                spaceId: "space-a",
+                profileId: "Default",
+                name: "A",
+                colorHex: "#000000",
+                iconName: "star",
+                sortOrder: 0
+            ))
+            try context.save()
+            try await store.changePinnedTabScope(
+                to: .space,
+                preferredProfileId: "Default",
+                preferredSpaceId: "space-a"
+            )
+        }
+
+        let state = BrowserState(
+            windowId: 1,
+            localStore: store,
+            profileId: "Default",
+            spaceId: "space-a"
+        )
+        let pinnedTab = try XCTUnwrap(state.pinnedTabs.first)
+        let guid = try XCTUnwrap(pinnedTab.guidInLocalDB)
+        XCTAssertTrue(pinnedTab.allowsProfileScopedFaviconPersistence)
+
+        pinnedTab.updateProfileScopedFaviconData(fallbackFavicon)
+        await store.performBackgroundWriteAndWait { _ in }
+
+        XCTAssertEqual(pinnedTab.cachedFaviconData, fallbackFavicon)
+        XCTAssertEqual(store.getTab(by: guid)?.favicon, fallbackFavicon)
+    }
+
+    private func assertSharedPinnedFaviconSyncDoesNotFeedBack(
+        scope: PinnedTabScope,
+        secondProfileId: String
+    ) async throws {
+        let store = try makeStore()
+        let persistedFavicon = Data([0x10])
+        let firstLiveFavicon = Data([0x20])
+        let secondLiveFavicon = Data([0x30])
+        try seedPinnedTab(
+            in: store,
+            guid: "pinned-guid",
+            url: "https://github.com/example/actions",
+            favicon: persistedFavicon
+        )
+        if scope != .profile {
+            try await store.changePinnedTabScope(
+                to: scope,
+                preferredProfileId: "Default",
+                preferredSpaceId: "space-a"
+            )
+            await settleAsyncWork()
+        }
+
+        let firstState = BrowserState(
+            windowId: 1,
+            localStore: store,
+            profileId: "Default",
+            spaceId: "space-a"
+        )
+        let secondState = BrowserState(
+            windowId: 2,
+            localStore: store,
+            profileId: secondProfileId,
+            spaceId: "space-b"
+        )
+        let firstPinned = try XCTUnwrap(firstState.pinnedTabs.first)
+        let secondPinned = try XCTUnwrap(secondState.pinnedTabs.first)
+        let sharedGuid = try XCTUnwrap(firstPinned.guidInLocalDB)
+        XCTAssertEqual(secondPinned.guidInLocalDB, sharedGuid)
+
+        var firstWriteBacks: [Data] = []
+        var secondWriteBacks: [Data] = []
+        firstPinned.setFaviconSnapshotUpdater { firstWriteBacks.append($0) }
+        secondPinned.setFaviconSnapshotUpdater { secondWriteBacks.append($0) }
+
+        bindOpenPinnedTab(
+            firstPinned,
+            to: firstState,
+            chromiumGuid: 101,
+            favicon: firstLiveFavicon
+        )
+        bindOpenPinnedTab(
+            secondPinned,
+            to: secondState,
+            chromiumGuid: 202,
+            favicon: secondLiveFavicon
+        )
+        firstWriteBacks.removeAll()
+        secondWriteBacks.removeAll()
+
+        store.updateTabFavicon(sharedGuid, favicon: firstLiveFavicon)
+        await store.performBackgroundWriteAndWait { _ in }
+
+        try waitUntil(secondState, describing: "shared favicon update is applied without write-back") {
+            secondPinned.cachedFaviconData == firstLiveFavicon || !secondWriteBacks.isEmpty
+        }
+        XCTAssertTrue(firstWriteBacks.isEmpty)
+        XCTAssertTrue(secondWriteBacks.isEmpty)
+        XCTAssertEqual(secondPinned.cachedFaviconData, firstLiveFavicon)
+        XCTAssertEqual(secondPinned.liveFaviconData, secondLiveFavicon)
+        XCTAssertEqual(store.getTab(by: sharedGuid)?.favicon, firstLiveFavicon)
+    }
+
+    private func bindOpenPinnedTab(
+        _ pinnedTab: Tab,
+        to state: BrowserState,
+        chromiumGuid: Int,
+        favicon: Data
+    ) {
+        let wrapper = PinnedEditWebContentWrapperSpy(urlString: pinnedTab.pinnedUrl)
+        wrapper.favIconData = favicon
+        let liveTab = Tab(
+            guid: chromiumGuid,
+            url: pinnedTab.pinnedUrl,
+            isActive: false,
+            index: 0,
+            webContentView: wrapper,
+            customGuid: pinnedTab.guidInLocalDB,
+            profileId: state.profileId,
+            faviconData: favicon
+        )
+        liveTab.isPinned = true
+        state.tabs = [liveTab]
+        pinnedTab.isOpenned = true
+        pinnedTab.guid = liveTab.guid
+        pinnedTab.setWebContentsWrapper(wrapper: wrapper)
+    }
+
+    private func settleAsyncWork() async {
+        try? await Task.sleep(nanoseconds: 50_000_000)
     }
 
     private func waitUntil(_ state: BrowserState,
