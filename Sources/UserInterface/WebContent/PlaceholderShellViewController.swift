@@ -36,7 +36,6 @@ private final class PlaceholderShellRootView: ColoredVisualEffectView {}
 final class PlaceholderShellViewController: NSViewController {
     private weak var browserState: BrowserState?
 
-    private lazy var titleAwareArea = TitlebarAwareView()
     private lazy var leftContainerWrapper = NSView()
     private lazy var leftContainerView = NSView()
     private lazy var headerView = WebContentHeader(browserState: browserState)
@@ -70,12 +69,6 @@ final class PlaceholderShellViewController: NSViewController {
     }
 
     private func setupView() {
-        view.addSubview(titleAwareArea)
-        titleAwareArea.snp.makeConstraints { make in
-            make.leading.trailing.top.equalToSuperview()
-            make.height.equalTo(12)
-        }
-
         view.addSubview(leftContainerWrapper)
         leftContainerWrapper.snp.makeConstraints { make in
             leftContainerLeadingConstraint = make.leading.equalToSuperview()
@@ -156,13 +149,11 @@ final class PlaceholderShellViewController: NSViewController {
         if traditionalLayout || navigationAtTop {
             headerView.isHidden = false
             headerHeightConstraint?.update(offset: WebContentConstant.headerHeight)
-            titleAwareArea.isHidden = traditionalLayout
         } else {
             // .performance — address bar lives in the sidebar; hide the
             // shell's header (would otherwise duplicate the sidebar address).
             headerView.isHidden = true
             headerHeightConstraint?.update(offset: 0)
-            titleAwareArea.isHidden = false
         }
 
         updateContentLeadingInset()
