@@ -1,0 +1,525 @@
+// Copyright 2026 Phinomenon Inc.
+//
+// Use of this source code is governed by an Apache license that can be
+// found in the LICENSE file.
+
+import SwiftUI
+
+/// Masks an email address for the deletion flow dialog: the local part
+/// collapses to its first character plus "•••" while the domain stays
+/// readable, so the user can tell which inbox received the verification code
+/// without the dialog spelling the address out.
+enum AccountDeletionEmailMasking {
+    static func masked(_ email: String) -> String {
+        guard let at = email.firstIndex(of: "@") else { return "•••" }
+        let domain = email[at...]
+        guard at != email.startIndex else { return "•••\(domain)" }
+        return "\(email[email.startIndex])•••\(domain)"
+    }
+}
+
+/// Normalizes verification-code input to what Oblivion accepts: ASCII digits
+/// only, capped at six. Pasted text keeps its digits instead of being
+/// rejected wholesale, so "123 456" from the email still fills the boxes.
+enum AccountDeletionCodeInput {
+    static let length = 6
+
+    static func sanitized(_ raw: String) -> String {
+        String(raw.filter { $0.isASCII && $0.isNumber }.prefix(length))
+    }
+}
+
+/// Seconds left on the resend cooldown, for the countdown label. Rounds up
+/// so the label never reads 0 while the resend is still locked.
+enum AccountDeletionResendCountdown {
+    static func remainingSeconds(until availableAt: Date?, now: Date) -> Int {
+        guard let availableAt else { return 0 }
+        return max(0, Int(availableAt.timeIntervalSince(now).rounded(.up)))
+    }
+}
+
+/// User-facing copy for deletion flow failures. Two contexts share most
+/// entries but diverge where the meaning depends on where the flow stands:
+/// `inlineMessage` renders in the code-entry dialog, where the request is
+/// still alive, so a rejected request means a mistyped code and an expiry
+/// points at Resend Code; `failureMessage` renders when the first step
+/// failed, where neither reading applies and both collapse to the generic
+/// copy. The generic copy deliberately covers not-found too: it must read
+/// exactly like any other failure so no response reveals whether an
+/// account exists.
+enum AccountDeletionErrorCopy {
+    static func inlineMessage(for error: AccountDeletionFlowError) -> String {
+        switch error {
+        case .service(.invalidRequest):
+            return wrongCodeText
+        case .service(.expired):
+            return codeExpiredText
+        case .service, .network:
+            return failureMessage(for: error)
+        }
+    }
+
+    static func failureMessage(for error: AccountDeletionFlowError) -> String {
+        switch error {
+        case .service(.unauthorized):
+            return signedOutText
+        case .service(.rateLimited):
+            return rateLimitedText
+        case .service(.serverError):
+            return serverErrorText
+        case .service(.invalidRequest), .service(.expired),
+             .service(.notFound), .service(.unexpectedResponse):
+            return genericText
+        case .network:
+            return networkText
+        }
+    }
+
+    private static let wrongCodeText = NSLocalizedString(
+        "That code isn't correct. Check the code from the email and try again.",
+        comment: "Account deletion - Inline error when the submitted verification code is rejected"
+    )
+
+    private static let codeExpiredText = NSLocalizedString(
+        "That code has expired. Click Resend Code to get a new one.",
+        comment: "Account deletion - Inline error when the verification code expired; points at the resend button"
+    )
+
+    private static let rateLimitedText = NSLocalizedString(
+        "Too many attempts for now. Please wait a few minutes and try again.",
+        comment: "Account deletion - Error when the deletion service rate limit is hit"
+    )
+
+    private static let signedOutText = NSLocalizedString(
+        "Your session has expired. Please sign in again, then restart the deletion.",
+        comment: "Account deletion - Error when the access token stays rejected even after renewing it"
+    )
+
+    private static let serverErrorText = NSLocalizedString(
+        "The deletion service is temporarily unavailable. Please try again later.",
+        comment: "Account deletion - Error when the deletion service reports a server error"
+    )
+
+    private static let genericText = NSLocalizedString(
+        "Something went wrong. Please try again later.",
+        comment: "Account deletion - Generic error; deliberately vague so it cannot reveal whether an account exists"
+    )
+
+    private static let networkText = NSLocalizedString(
+        "Couldn't reach the deletion service. Check your internet connection and try again.",
+        comment: "Account deletion - Error when the network request could not complete"
+    )
+}
+
+/// The dialog's live mirror of the coordinator state. The controller forwards
+/// `onStateChange` into it so the sheet content re-renders on every
+/// transition without the coordinator knowing about SwiftUI.
+@MainActor
+final class AccountDeletionFlowViewState: ObservableObject {
+    @Published var state: AccountDeletionCoordinator.State = .idle
+    /// When the resend button unlocks, mirrored from the coordinator on every
+    /// transition; the countdown itself ticks against the wall clock in the
+    /// view.
+    @Published var resendAvailableAt: Date?
+}
+
+/// The live deletion flow dialog, presented after the user confirms the
+/// warning. It renders whatever the coordinator state says — progress while
+/// the deletion request is in flight, the code entry boxes once the
+/// verification code is out — so later steps add states, not dialogs.
+/// Verify hands the entered code to the coordinator; cancelling dismisses
+/// the sheet and the controller abandons the flow, which clears nothing.
+struct AccountDeletionFlowView: View {
+    @ObservedObject var viewState: AccountDeletionFlowViewState
+    let maskedEmail: String
+    let dismiss: PhiAlertDismissAction
+    /// Receives the entered six-digit code when Verify is clicked; the
+    /// controller forwards it to the coordinator.
+    let submit: (String) -> Void
+    /// Asks the coordinator for a fresh verification code; the button only
+    /// enables once the cooldown in `viewState.resendAvailableAt` lapsed.
+    let resend: () -> Void
+    /// Retries a failed first step through the coordinator, which replays
+    /// the original idempotency key after indeterminate failures (so a retry
+    /// cannot double-book) and mints a fresh one after definitive
+    /// rejections.
+    let retry: () -> Void
+
+    @State private var code = ""
+
+    @Environment(\.phiAppearance) private var appearance
+
+    /// Every state renders into the same fixed-height box: the sheet window
+    /// is sized once at presentation and never resized, so the content must
+    /// not change height when the state switches. Sized for the tallest
+    /// state, the code entry (two-line status slot + digit boxes + resend
+    /// line).
+    private static let contentHeight: CGFloat = 144
+
+    /// The status slot above the digit boxes fits two lines of copy, so a
+    /// wrapping error message cannot push the boxes and the resend row down.
+    private static let statusSlotHeight: CGFloat = 34
+
+    var body: some View {
+        PhiAlert(
+            title: NSLocalizedString(
+                "Delete Phi Account",
+                comment: "Account deletion - Title of the deletion flow dialog"
+            )
+        ) {
+            Image(nsImage: .phiAlertIcon)
+                .renderingMode(NSImage.phiAlertIcon.isTemplate ? .template : .original)
+                .foregroundStyle(appearance.isLight ? Color.black : Color.white)
+        } content: {
+            stateContent
+                .frame(
+                    maxWidth: .infinity,
+                    minHeight: Self.contentHeight,
+                    maxHeight: Self.contentHeight,
+                    alignment: .topLeading
+                )
+        } actions: {
+            stateActions
+        }
+        .onChange(of: viewState.state) { oldState, newState in
+            // A failed verification falls back to code entry with the error
+            // copy in the status line. Clear the boxes so the user re-enters
+            // a code instead of resubmitting the rejected one.
+            if case .verifyingCode = oldState,
+               case .awaitingVerificationCode(_, let error) = newState,
+               error != nil {
+                code = ""
+            }
+            // A successful resend lands back in code entry through the
+            // requesting state with a fresh request: whatever was typed
+            // belongs to the superseded code, so start the boxes clean. A
+            // FAILED resend (error inline) keeps the original request — and
+            // any typed digits — usable.
+            if case .requestingDeletion = oldState,
+               case .awaitingVerificationCode(_, let error) = newState,
+               error == nil {
+                code = ""
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var stateContent: some View {
+        switch viewState.state {
+        case .idle, .requestingDeletion:
+            HStack(spacing: 8) {
+                ProgressView()
+                    .controlSize(.small)
+                Text(String(format: Self.requestingFormat, maskedEmail))
+            }
+        case .awaitingVerificationCode, .verifyingCode:
+            VStack(alignment: .leading, spacing: 12) {
+                statusLine
+                AccountDeletionCodeEntry(code: $code, isDisabled: isVerifying)
+                resendRow
+            }
+        case .requestSubmitted:
+            Text(Self.submittedText)
+        case .deletionAlreadyRunning:
+            Text(Self.alreadyRunningText)
+        case .failed(let error):
+            Text(AccountDeletionErrorCopy.failureMessage(for: error))
+        }
+    }
+
+    /// The line above the digit boxes: the entry prompt, the verification
+    /// progress, or — after a rejected code or a failed resend — the error
+    /// copy, all sharing one fixed slot so swapping them never reflows the
+    /// boxes below.
+    private var statusLine: some View {
+        Group {
+            if isVerifying {
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text(Self.verifyingText)
+                }
+            } else if let error = inlineError {
+                Text(AccountDeletionErrorCopy.inlineMessage(for: error))
+                    .foregroundStyle(.red)
+            } else {
+                Text(String(format: Self.enterCodeFormat, maskedEmail))
+            }
+        }
+        .frame(height: Self.statusSlotHeight, alignment: .topLeading)
+    }
+
+    private var inlineError: AccountDeletionFlowError? {
+        if case .awaitingVerificationCode(_, let error) = viewState.state {
+            return error
+        }
+        return nil
+    }
+
+    @ViewBuilder
+    private var stateActions: some View {
+        switch viewState.state {
+        case .idle, .requestingDeletion:
+            // The coordinator ignores cancellation while the request is in
+            // flight, so the button reflects that instead of lying.
+            PhiAlertActions {
+                cancelButton(disabled: true)
+            }
+        case .awaitingVerificationCode, .verifyingCode:
+            PhiAlertActions(
+                secondaryAction: {
+                    cancelButton(disabled: isVerifying)
+                },
+                primaryAction: {
+                    // No Return-key shortcut: like the warning before it,
+                    // the destructive confirmation must be a deliberate
+                    // click, not a reflexive Return.
+                    PhiAlertButton(
+                        NSLocalizedString(
+                            "Verify",
+                            comment: "Account deletion - Button submitting the emailed verification code"
+                        ),
+                        role: .destructive
+                    ) {
+                        submit(code)
+                    }
+                    .disabled(isVerifying || !isCodeComplete)
+                    .opacity(isVerifying || !isCodeComplete ? 0.5 : 1)
+                }
+            )
+        case .requestSubmitted, .deletionAlreadyRunning:
+            PhiAlertActions {
+                closeButton
+            }
+        case .failed(let error):
+            // Sign-in guidance leaves nothing to retry in place; every other
+            // failure stays recoverable through the coordinator, whose key
+            // handling on the retried start depends on how this one failed.
+            if error == .service(.unauthorized) {
+                PhiAlertActions {
+                    closeButton
+                }
+            } else {
+                PhiAlertActions(
+                    secondaryAction: {
+                        closeButton
+                    },
+                    primaryAction: {
+                        // Like Verify, no Return-key shortcut: retrying the
+                        // deletion request must be a deliberate click.
+                        PhiAlertButton(
+                            NSLocalizedString(
+                                "Try Again",
+                                comment: "Account deletion - Button retrying the failed deletion request"
+                            ),
+                            role: .destructive
+                        ) {
+                            retry()
+                        }
+                    }
+                )
+            }
+        }
+    }
+
+    private var closeButton: some View {
+        PhiAlertButton(
+            NSLocalizedString(
+                "Close",
+                comment: "Account deletion - Button closing the deletion flow dialog"
+            )
+        ) {
+            dismiss()
+        }
+        .keyboardShortcut(.cancelAction)
+    }
+
+    private var isVerifying: Bool {
+        if case .verifyingCode = viewState.state { return true }
+        return false
+    }
+
+    private var isCodeComplete: Bool {
+        code.count == AccountDeletionCodeInput.length
+    }
+
+    /// The resend affordance under the digit boxes. The countdown ticks
+    /// against the wall clock: the coordinator only knows the unlock date,
+    /// and re-rendering each second is purely presentational.
+    private var resendRow: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            let remaining = AccountDeletionResendCountdown.remainingSeconds(
+                until: viewState.resendAvailableAt,
+                now: context.date
+            )
+            let isLocked = isVerifying || remaining > 0
+            Button(action: resend) {
+                Text(
+                    remaining > 0
+                        ? String(format: Self.resendCooldownFormat, remaining)
+                        : Self.resendText
+                )
+                .themedForeground(isLocked ? .textSecondary : .themeColor)
+            }
+            .buttonStyle(.plain)
+            .disabled(isLocked)
+        }
+    }
+
+    private func cancelButton(disabled: Bool) -> some View {
+        PhiAlertButton(
+            NSLocalizedString(
+                "Cancel",
+                comment: "Account deletion - Button abandoning the deletion flow without deleting anything"
+            )
+        ) {
+            dismiss()
+        }
+        .keyboardShortcut(.cancelAction)
+        .disabled(disabled)
+        .opacity(disabled ? 0.5 : 1)
+    }
+
+    private static let requestingFormat = NSLocalizedString(
+        "Sending a verification code to %@…",
+        comment: "Account deletion - Progress text while the deletion request is in flight. %@ is the masked account email"
+    )
+
+    private static let enterCodeFormat = NSLocalizedString(
+        "Enter the 6-digit code sent to %@.",
+        comment: "Account deletion - Prompt above the verification code boxes. %@ is the masked account email"
+    )
+
+    private static let verifyingText = NSLocalizedString(
+        "Verifying the code…",
+        comment: "Account deletion - Progress text while the verification code is being checked"
+    )
+
+    private static let resendText = NSLocalizedString(
+        "Resend Code",
+        comment: "Account deletion - Button requesting a fresh verification code"
+    )
+
+    private static let resendCooldownFormat = NSLocalizedString(
+        "Resend Code (%ds)",
+        comment: "Account deletion - Resend button label while the one-minute cooldown runs. %d is the seconds remaining"
+    )
+
+    private static let submittedText = NSLocalizedString(
+        "Your deletion request has been submitted. You will receive an email receipt once the deletion is complete.",
+        comment: "Account deletion - Text shown once the deletion request is queued server-side; the deletion itself has not finished yet"
+    )
+
+    private static let alreadyRunningText = NSLocalizedString(
+        "A deletion request for this account is already being processed.",
+        comment: "Account deletion - Text shown when a previous deletion request is already running server-side"
+    )
+}
+
+/// Six large digit boxes backed by one invisible text field. The field owns
+/// the string, so typing appends (auto-advancing the highlight), backspace
+/// removes the last digit, and Cmd+V pastes a whole code — the boxes only
+/// render the field's characters. The box after the last digit doubles as
+/// the insertion-point highlight.
+private struct AccountDeletionCodeEntry: View {
+    @Binding var code: String
+    let isDisabled: Bool
+
+    @FocusState private var isFocused: Bool
+
+    @Environment(\.phiTheme) private var theme
+    @Environment(\.phiAppearance) private var appearance
+
+    private static let boxHeight: CGFloat = 64
+    // Wider gaps make the flexible boxes narrower: at the alert's 417pt
+    // content width the row solves to 52pt-wide portrait boxes while still
+    // spanning the full width, keeping the right edge on the Verify button.
+    private static let boxSpacing: CGFloat = 21
+    private static let boxCornerRadius: CGFloat = 8
+
+    var body: some View {
+        HStack(spacing: Self.boxSpacing) {
+            ForEach(0..<AccountDeletionCodeInput.length, id: \.self) { index in
+                digitBox(at: index)
+            }
+        }
+        // The boxes are purely visual; hide them from accessibility so the
+        // overlaid text field is the single verification-code element
+        // VoiceOver announces, instead of the code being read twice.
+        .accessibilityHidden(true)
+        .overlay {
+            // The real input: kept at a near-zero opacity instead of zero so
+            // it stays hit-testable — clicking the boxes focuses it, and all
+            // keyboard input and pasting land here.
+            TextField("", text: $code)
+                .textFieldStyle(.plain)
+                .autocorrectionDisabled()
+                .focused($isFocused)
+                .opacity(0.02)
+                .accessibilityLabel(Text(NSLocalizedString(
+                    "Verification code",
+                    comment: "Account deletion - Accessibility label of the verification code input"
+                )))
+        }
+        .disabled(isDisabled)
+        .opacity(isDisabled ? 0.5 : 1)
+        .defaultFocus($isFocused, true)
+        .onAppear {
+            // The flow sheet is a borderless window, where .defaultFocus is
+            // not guaranteed to resolve; nudge focus once the view settles
+            // so typing or pasting works without a click.
+            DispatchQueue.main.async {
+                isFocused = true
+            }
+        }
+        .onChange(of: code) { _, newValue in
+            let sanitized = AccountDeletionCodeInput.sanitized(newValue)
+            if sanitized != newValue {
+                code = sanitized
+            }
+        }
+        .onChange(of: isDisabled) { _, disabled in
+            // Re-enabling means a failed submission fell back to code entry;
+            // put the caret back so the user can just type again.
+            if !disabled {
+                isFocused = true
+            }
+        }
+    }
+
+    private func digitBox(at index: Int) -> some View {
+        let digits = Array(code)
+        let digit = index < digits.count ? String(digits[index]) : ""
+        let isActive = isFocused && !isDisabled && index == digits.count
+        return RoundedRectangle(cornerRadius: Self.boxCornerRadius, style: .continuous)
+            .fill(boxFill)
+            .overlay {
+                RoundedRectangle(cornerRadius: Self.boxCornerRadius, style: .continuous)
+                    .strokeBorder(
+                        isActive ? activeBorder : inactiveBorder,
+                        lineWidth: isActive ? 2 : 1
+                    )
+            }
+            .overlay {
+                Text(digit)
+                    .font(.system(size: 24, weight: .medium, design: .monospaced))
+                    .themedForeground(.textPrimaryStrong)
+            }
+            // Boxes flex to share the alert's content width equally, so the
+            // row's right edge lines up with the Verify button below it.
+            .frame(maxWidth: .infinity)
+            .frame(height: Self.boxHeight)
+    }
+
+    private var boxFill: Color {
+        appearance.isLight ? Color.black.opacity(0.04) : Color.white.opacity(0.06)
+    }
+
+    private var inactiveBorder: Color {
+        appearance.isLight ? Color.black.opacity(0.15) : Color.white.opacity(0.18)
+    }
+
+    private var activeBorder: Color {
+        ThemedColor.themeColor.swiftUIColor(theme: theme, appearance: appearance)
+    }
+}

@@ -241,6 +241,11 @@
 		8E9E96AF2F0F6E64002D0D21 /* TabStrip.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E9E96AA2F0F6E64002D0D21 /* TabStrip.swift */; };
 		8EA1FD942FEA95140060DCFF /* CrashPageData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EA1FD932FEA95140060DCFF /* CrashPageData.swift */; };
 		8EA1FD962FEB74530060DCFF /* RendererCrashViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EA1FD952FEB74530060DCFF /* RendererCrashViewController.swift */; };
+		8EB01BE13010BCED0043E59D /* AccountDeletionController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EB01BDF3010BCED0043E59D /* AccountDeletionController.swift */; };
+		8EB01BE33010BCED0043E59D /* OblivionDeletionAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EB01BE23010BCED0043E59D /* OblivionDeletionAPI.swift */; };
+		8EB01BE53010BCED0043E59D /* AccountDeletionCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EB01BE43010BCED0043E59D /* AccountDeletionCoordinator.swift */; };
+		8EB01BE73010BCED0043E59D /* AccountDeletionFlowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EB01BE63010BCED0043E59D /* AccountDeletionFlowView.swift */; };
+		8EB01BE93010BCED0043E59D /* AccountDeletionFakeResponses.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EB01BE83010BCED0043E59D /* AccountDeletionFakeResponses.swift */; };
 		8EC502132F67AE2300CE7338 /* DownloadSafetyTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EC502122F67AE2300CE7338 /* DownloadSafetyTypes.swift */; };
 		8EC502152F67AF7F00CE7338 /* DownloadSafety.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 8EC502142F67AF7F00CE7338 /* DownloadSafety.xcstrings */; };
 		8EC70DB52F0A5E04009FE2CD /* BookmarkBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EC70DB42F0A5DFD009FE2CD /* BookmarkBar.swift */; };
@@ -808,6 +813,11 @@
 		8E9E96AA2F0F6E64002D0D21 /* TabStrip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabStrip.swift; sourceTree = "<group>"; };
 		8EA1FD932FEA95140060DCFF /* CrashPageData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrashPageData.swift; sourceTree = "<group>"; };
 		8EA1FD952FEB74530060DCFF /* RendererCrashViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RendererCrashViewController.swift; sourceTree = "<group>"; };
+		8EB01BDF3010BCED0043E59D /* AccountDeletionController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountDeletionController.swift; sourceTree = "<group>"; };
+		8EB01BE23010BCED0043E59D /* OblivionDeletionAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OblivionDeletionAPI.swift; sourceTree = "<group>"; };
+		8EB01BE43010BCED0043E59D /* AccountDeletionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountDeletionCoordinator.swift; sourceTree = "<group>"; };
+		8EB01BE63010BCED0043E59D /* AccountDeletionFlowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountDeletionFlowView.swift; sourceTree = "<group>"; };
+		8EB01BE83010BCED0043E59D /* AccountDeletionFakeResponses.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountDeletionFakeResponses.swift; sourceTree = "<group>"; };
 		8EC502122F67AE2300CE7338 /* DownloadSafetyTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadSafetyTypes.swift; sourceTree = "<group>"; };
 		8EC502142F67AF7F00CE7338 /* DownloadSafety.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = DownloadSafety.xcstrings; sourceTree = "<group>"; };
 		8EC70DB42F0A5DFD009FE2CD /* BookmarkBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookmarkBar.swift; sourceTree = "<group>"; };
@@ -1208,6 +1218,7 @@
 			children = (
 				376CE40F2F2897D30093D937 /* Models */,
 				376CE4102F2897D30093D937 /* APIClient.swift */,
+				8EB01BE23010BCED0043E59D /* OblivionDeletionAPI.swift */,
 				54A1001B2FE000000000001B /* TimeMachinePackageDownloader.swift */,
 				AE00FFFE0000000000000001 /* PhiAgentEndpointResolver.swift */,
 			);
@@ -1596,6 +1607,17 @@
 			path = TabStrip;
 			sourceTree = "<group>";
 		};
+		8EB01BE03010BCED0043E59D /* AccountDeletion */ = {
+			isa = PBXGroup;
+			children = (
+				8EB01BDF3010BCED0043E59D /* AccountDeletionController.swift */,
+				8EB01BE43010BCED0043E59D /* AccountDeletionCoordinator.swift */,
+				8EB01BE83010BCED0043E59D /* AccountDeletionFakeResponses.swift */,
+				8EB01BE63010BCED0043E59D /* AccountDeletionFlowView.swift */,
+			);
+			path = AccountDeletion;
+			sourceTree = "<group>";
+		};
 		8EC70DAD2F0A5CFD009FE2CD /* HorizontalBar */ = {
 			isa = PBXGroup;
 			children = (
@@ -1764,6 +1786,7 @@
 		B0F370CC2E432646000B51F9 /* UserInterface */ = {
 			isa = PBXGroup;
 			children = (
+				8EB01BE03010BCED0043E59D /* AccountDeletion */,
 				CC6B000D2E77E03000D4F133 /* AboutWindow */,
 				CCB53DC42E6EBF6E004BF233 /* AddressBar */,
 				CCEF2D982E5F1A6E00FDDEB2 /* Chat */,
@@ -2701,6 +2724,10 @@
 				CC4F00010000000000000001 /* LocalStore+SpaceURLRule.swift in Sources */,
 				CC4F00020000000000000001 /* URLRouter.swift in Sources */,
 				CC4F00030000000000000001 /* SpaceURLRulesEditor.swift in Sources */,
+				8EB01BE13010BCED0043E59D /* AccountDeletionController.swift in Sources */,
+				8EB01BE53010BCED0043E59D /* AccountDeletionCoordinator.swift in Sources */,
+				8EB01BE93010BCED0043E59D /* AccountDeletionFakeResponses.swift in Sources */,
+				8EB01BE73010BCED0043E59D /* AccountDeletionFlowView.swift in Sources */,
 				CC4F00040000000000000001 /* CreateSpacePanel.swift in Sources */,
 				CC4F00050000000000000001 /* SpaceChooserView.swift in Sources */,
 				8E762C1A2F15F5AE00631087 /* TabStripDragController.swift in Sources */,
@@ -2916,6 +2943,7 @@
 				376CE4162F2897D30093D937 /* Response.swift in Sources */,
 				8EF36C032F4E9E7000FCC91E /* TabViewModel.swift in Sources */,
 				376CE4172F2897D30093D937 /* APIClient.swift in Sources */,
+				8EB01BE33010BCED0043E59D /* OblivionDeletionAPI.swift in Sources */,
 				54A1000B2FE000000000000B /* TimeMachinePackageDownloader.swift in Sources */,
 				FBD200012FD0000000000003 /* FeedbackV2.swift in Sources */,
 				AE00FFFE0000000000000002 /* PhiAgentEndpointResolver.swift in Sources */,

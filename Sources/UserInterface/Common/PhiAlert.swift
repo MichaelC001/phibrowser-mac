@@ -273,11 +273,22 @@ struct PhiAlertAppKitConfiguration {
         }
     }
 
+    /// Which button the Return key activates, matching AppKit's notion of a
+    /// default button.
+    enum DefaultButton: Equatable {
+        /// The confirmation button, as in a standard alert.
+        case confirmation
+        /// No button at all. Irreversible confirmations use this so a
+        /// reflexive Return cannot destroy anything; Escape still cancels.
+        case noButton
+    }
+
     let title: String
     let message: String
     let icon: NSImage
     let maximumHeight: CGFloat
     let style: Style
+    let defaultButton: DefaultButton
     let actions: [PhiAlertAppKitAction]
 
     init(
@@ -286,6 +297,7 @@ struct PhiAlertAppKitConfiguration {
         icon: NSImage,
         maximumHeight: CGFloat = PhiAlertLayout.defaultMaximumHeight,
         style: Style = .normal,
+        defaultButton: DefaultButton = .confirmation,
         primaryAction: PhiAlertAppKitAction
     ) {
         self.init(
@@ -294,6 +306,7 @@ struct PhiAlertAppKitConfiguration {
             icon: icon,
             maximumHeight: maximumHeight,
             style: style,
+            defaultButton: defaultButton,
             actions: [primaryAction]
         )
     }
@@ -304,6 +317,7 @@ struct PhiAlertAppKitConfiguration {
         icon: NSImage = .phiAlertIcon,
         maximumHeight: CGFloat = PhiAlertLayout.defaultMaximumHeight,
         style: Style = .normal,
+        defaultButton: DefaultButton = .confirmation,
         secondaryAction: PhiAlertAppKitAction,
         primaryAction: PhiAlertAppKitAction
     ) {
@@ -313,6 +327,7 @@ struct PhiAlertAppKitConfiguration {
             icon: icon,
             maximumHeight: maximumHeight,
             style: style,
+            defaultButton: defaultButton,
             actions: [secondaryAction, primaryAction]
         )
     }
@@ -323,6 +338,7 @@ struct PhiAlertAppKitConfiguration {
         icon: NSImage,
         maximumHeight: CGFloat = PhiAlertLayout.defaultMaximumHeight,
         style: Style = .normal,
+        defaultButton: DefaultButton = .confirmation,
         leadingAction: PhiAlertAppKitAction,
         secondaryAction: PhiAlertAppKitAction,
         primaryAction: PhiAlertAppKitAction
@@ -333,6 +349,7 @@ struct PhiAlertAppKitConfiguration {
             icon: icon,
             maximumHeight: maximumHeight,
             style: style,
+            defaultButton: defaultButton,
             actions: [leadingAction, secondaryAction, primaryAction]
         )
     }
@@ -343,6 +360,7 @@ struct PhiAlertAppKitConfiguration {
         icon: NSImage,
         maximumHeight: CGFloat,
         style: Style,
+        defaultButton: DefaultButton,
         actions: [PhiAlertAppKitAction]
     ) {
         self.title = title
@@ -350,6 +368,7 @@ struct PhiAlertAppKitConfiguration {
         self.icon = icon
         self.maximumHeight = maximumHeight
         self.style = style
+        self.defaultButton = defaultButton
         self.actions = actions
     }
 }
@@ -495,6 +514,7 @@ private struct PhiAlertAppKitContent: View {
             PhiAlertAppKitActions(
                 actions: configuration.actions,
                 confirmationButtonRole: configuration.style.confirmationButtonRole,
+                defaultButton: configuration.defaultButton,
                 dismiss: dismiss
             )
         }
@@ -504,7 +524,14 @@ private struct PhiAlertAppKitContent: View {
 private struct PhiAlertAppKitActions: View {
     let actions: [PhiAlertAppKitAction]
     let confirmationButtonRole: PhiAlertButtonRole
+    let defaultButton: PhiAlertAppKitConfiguration.DefaultButton
     let dismiss: PhiAlertDismissAction
+
+    /// Nil leaves the confirmation button off the Return key, which is what
+    /// `DefaultButton.noButton` asks for.
+    private var confirmationShortcut: KeyboardShortcut? {
+        defaultButton == .confirmation ? .defaultAction : nil
+    }
 
     @ViewBuilder
     var body: some View {
@@ -512,7 +539,7 @@ private struct PhiAlertAppKitActions: View {
         case 1:
             PhiAlertActions {
                 button(for: actions[0], role: confirmationButtonRole)
-                    .keyboardShortcut(.defaultAction)
+                    .keyboardShortcut(confirmationShortcut)
             }
         case 2:
             PhiAlertActions(
@@ -522,7 +549,7 @@ private struct PhiAlertAppKitActions: View {
                 },
                 primaryAction: {
                     button(for: actions[1], role: confirmationButtonRole)
-                        .keyboardShortcut(.defaultAction)
+                        .keyboardShortcut(confirmationShortcut)
                 }
             )
         case 3:
@@ -536,7 +563,7 @@ private struct PhiAlertAppKitActions: View {
                 },
                 primaryAction: {
                     button(for: actions[2], role: confirmationButtonRole)
-                        .keyboardShortcut(.defaultAction)
+                        .keyboardShortcut(confirmationShortcut)
                 }
             )
         default:

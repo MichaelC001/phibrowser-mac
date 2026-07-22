@@ -147,6 +147,37 @@ extension AppController {
         )
         simulateAgentItem.target = self
         debugMenu.addItem(simulateAgentItem)
+
+        let fakeDeletionItem = NSMenuItem(
+            title: "Account Deletion Fake Responses",
+            action: nil,
+            keyEquivalent: ""
+        )
+        let fakeDeletionMenu = NSMenu(title: "Account Deletion Fake Responses")
+
+        let fakeDeletionOffItem = NSMenuItem(
+            title: "Off (Real Network)",
+            action: #selector(selectAccountDeletionFakeScenario(_:)),
+            keyEquivalent: ""
+        )
+        fakeDeletionOffItem.target = self
+        fakeDeletionOffItem.state = .on
+        fakeDeletionMenu.addItem(fakeDeletionOffItem)
+        fakeDeletionMenu.addItem(.separator())
+
+        for scenario in AccountDeletionFakeScenario.allCases {
+            let item = NSMenuItem(
+                title: scenario.menuTitle,
+                action: #selector(selectAccountDeletionFakeScenario(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = scenario
+            fakeDeletionMenu.addItem(item)
+        }
+
+        fakeDeletionItem.submenu = fakeDeletionMenu
+        debugMenu.addItem(fakeDeletionItem)
 #endif
         
         let themeMenuItem = NSMenuItem(title: "Debug Theme", action: nil, keyEquivalent: "")
@@ -531,6 +562,21 @@ extension AppController {
         guard let url = AccountController.shared.account?.userDataStorage else { return }
         NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: url.path)
     }
+
+    #if DEBUG
+    /// Routes the account deletion flow through the selected fake scenario
+    /// (or back to the real network) and moves the checkmark to the pick.
+    /// The selection is in-memory only, so every launch starts on Off.
+    @MainActor
+    @objc func selectAccountDeletionFakeScenario(_ sender: NSMenuItem) {
+        let scenario = sender.representedObject as? AccountDeletionFakeScenario
+        AccountDeletionFakeResponses.scenario = scenario
+        for item in sender.menu?.items ?? [] {
+            item.state = item == sender ? .on : .off
+        }
+        AppLogInfo("🗑️ [AccountDeletion] Fake responses: \(scenario.map { "\($0)" } ?? "off")")
+    }
+    #endif
 
     #if DEBUG
     /// Test harness: spawns a hidden agent Space for the first available profile

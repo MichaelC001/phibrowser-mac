@@ -40,12 +40,21 @@ class APIClient {
             return "https://ai.phibrowser.com/data"
         }
     }
+    private var oblivionBaseURL: String {
+        if AuthManager.useStagingAuth0 {
+            return "https://oblivion.stag.phibrowser.com"
+        } else {
+            return "https://oblivion.phibrowser.com"
+        }
+    }
     #elseif NIGHTLY_BUILD
     private let accountBaseURL = "https://account.stag.phibrowser.com"
     private let connectorBaseURL = "https://ai.stag.phibrowser.com/data"
+    private let oblivionBaseURL = "https://oblivion.stag.phibrowser.com"
     #else
     private let accountBaseURL = "https://account.phibrowser.com"
     private let connectorBaseURL = "https://ai.phibrowser.com/data"
+    private let oblivionBaseURL = "https://oblivion.phibrowser.com"
     #endif
     private var token: String {
         let accessToken = AuthManager.shared.getAccessTokenSyncly()
@@ -671,6 +680,58 @@ class APIClient {
             throw APIError.serverError(message: response.message)
         }
         return response
+    }
+
+    // MARK: - Account Deletion (Oblivion)
+
+    /// Starts an account deletion request. Oblivion answers 202 both for a
+    /// fresh request (a verification code goes out) and for a deletion that
+    /// is already running; `OblivionDeletionAPI` tells the two apart.
+    func requestAccountDeletion(idempotencyKey: String) async throws -> AccountDeletionRequestOutcome {
+        let url = URL(string: "\(oblivionBaseURL)/v1/deletion-requests")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        let token = try await oblivionAccessToken()
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue(idempotencyKey, forHTTPHeaderField: "Idempotency-Key")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw APIError.invalidResponse
+        }
+        return try OblivionDeletionAPI.requestOutcome(statusCode: httpResponse.statusCode, body: data)
+    }
+
+    /// Submits the emailed verification code for a pending deletion request.
+    /// A 202 means the deletion task is queued server-side.
+    func verifyAccountDeletion(requestID: String, code: String) async throws {
+        let encodedID = requestID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? requestID
+        guard let url = URL(string: "\(oblivionBaseURL)/v1/deletion-requests/\(encodedID)/verify") else {
+            throw APIError.invalidRequest(message: "Cannot build deletion verify URL")
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        let token = try await oblivionAccessToken()
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(["code": code])
+
+        let (_, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw APIError.invalidResponse
+        }
+        try OblivionDeletionAPI.verifyOutcome(statusCode: httpResponse.statusCode)
+    }
+
+    /// Deletion calls ride the proactively renewing credential path instead
+    /// of the synchronous cache: the flow spans user think-time, so renewing
+    /// up front avoids a spurious mid-flow 401. Missing credentials map to
+    /// `unauthorized`, which the flow presents as re-login guidance.
+    private func oblivionAccessToken() async throws -> String {
+        guard let token = await AuthManager.shared.getActiveCredentials()?.accessToken else {
+            throw AccountDeletionServiceError.unauthorized
+        }
+        return token
     }
 
     private func executeAccountJSONRequest<T: Codable>(_ request: URLRequest) async throws -> Response<T> {

@@ -362,6 +362,16 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
             LoginController.shared.showLoginWindow()
         }
     }
+
+    /// The settings page asked to delete the Phi account and its data. The
+    /// hop off this call is required: presenting from inside it would run a
+    /// sheet while a Chromium message handler is still on the stack.
+    func startPhiAccountDeletion() {
+        AppLogInfo("🌐 [Chromium] startPhiAccountDeletion called by Chromium")
+        Task { @MainActor in
+            AccountDeletionController.shared.start()
+        }
+    }
     
     func getAuth0AccessTokenSyncly() -> String {
         let token = AuthManager.shared.getAccessTokenSyncly() ?? ""

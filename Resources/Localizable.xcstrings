@@ -289,6 +289,9 @@
     "4 hours" : {
       "comment" : "Bitwarden session timeout - 4 hours"
     },
+    "A deletion request for this account is already being processed." : {
+      "comment" : "Account deletion - Text shown when a previous deletion request is already running server-side"
+    },
     "A new version of Phi is available" : {
       "comment" : "Sparkle update window - Title"
     },
@@ -590,7 +593,7 @@
       "comment" : "Import browser data - Alert title when import is invoked from an incognito window or the Incognito Space"
     },
     "Cancel" : {
-      "comment" : "AI settings - Cancel button in disable-AI confirmation alert\nAI settings - Cancel button in disable-connectors confirmation alert\nAccount settings - Cancel button in logout confirmation dialog\nAccount settings - Cancel button in rename dialog\nApprovals sheet - all-access cancel button\nCancel\nCancel button\nCredential unlock - cancel button\nDebug clear data - Alert button to cancel clearing user data\nDebug import user data - Alert button to cancel importing user data\nDeveloper settings - Skill overwrite cancel button\nDownload item row - Tooltip for cancel button during safety scan\nDownload item row - Tooltip for cancel download button\nEditor - Cancel button title\nGeneric - Cancel button to dismiss an alert\nNew folder dialog cancel button title\nTab group rename alert - Cancel button\nTooltip for cancel button during safety scan in living downloads toast"
+      "comment" : "AI settings - Cancel button in disable-AI confirmation alert\nAI settings - Cancel button in disable-connectors confirmation alert\nAccount deletion - Button abandoning the deletion flow without deleting anything\nAccount deletion - Button dismissing the deletion warning without deleting anything\nAccount settings - Cancel button in logout confirmation dialog\nAccount settings - Cancel button in rename dialog\nApprovals sheet - all-access cancel button\nCancel\nCancel button\nCredential unlock - cancel button\nDebug clear data - Alert button to cancel clearing user data\nDebug import user data - Alert button to cancel importing user data\nDeveloper settings - Skill overwrite cancel button\nDownload item row - Tooltip for cancel button during safety scan\nDownload item row - Tooltip for cancel download button\nEditor - Cancel button title\nGeneric - Cancel button to dismiss an alert\nNew folder dialog cancel button title\nTab group rename alert - Cancel button\nTooltip for cancel button during safety scan in living downloads toast"
     },
     "Canceled" : {
       "comment" : "Download item row - Status label when download was cancelled"
@@ -689,7 +692,7 @@
       "comment" : "Bookmark context menu - Submenu to clone this bookmark or folder to another Space\nTab multi-selection context menu - Submenu to clone selected tabs and bookmarks to another Space"
     },
     "Close" : {
-      "comment" : "Confirm closing an Incognito Space\nSidebar update reminder - Accessibility description for close button\nTab context menu - Menu item to close the selected tab"
+      "comment" : "Account deletion - Button closing the deletion flow dialog\nConfirm closing an Incognito Space\nSidebar update reminder - Accessibility description for close button\nTab context menu - Menu item to close the selected tab"
     },
     "Close Group" : {
       "comment" : "Tab group context menu - Close the group and all its tabs"
@@ -808,6 +811,9 @@
     "Couldn’t install the skill" : {
       "comment" : "Developer settings - Skill install error title"
     },
+    "Couldn't reach the deletion service. Check your internet connection and try again." : {
+      "comment" : "Account deletion - Error when the network request could not complete"
+    },
     "Couldn't rename profile" : {
       "comment" : "Title of the profile-rename error"
     },
@@ -886,6 +892,12 @@
     "Delete %d Items?" : {
       "comment" : "Bookmark multi-selection delete confirmation title"
     },
+    "Delete Account" : {
+      "comment" : "Account deletion - Destructive button confirming the deletion warning"
+    },
+    "Delete Phi Account" : {
+      "comment" : "Account deletion - Title of the deletion flow dialog"
+    },
     "Delete Profile" : {
       "comment" : "Spaces menu - Submenu listing deletable browser profiles"
     },
@@ -900,6 +912,9 @@
     },
     "Delete Space…" : {
       "comment" : "Spaces menu - Delete the active Space"
+    },
+    "Delete your Phi account?" : {
+      "comment" : "Account deletion - Title of the warning shown before deleting the Phi account"
     },
     "Deleted" : {
       "comment" : "Download item row - Status label when downloaded file was deleted"
@@ -1053,6 +1068,9 @@
     },
     "Enter a valid self-hosted server URL." : {
       "comment" : "Bitwarden login sheet - invalid self-hosted URL error"
+    },
+    "Enter the 6-digit code sent to %@." : {
+      "comment" : "Account deletion - Prompt above the verification code boxes. %@ is the masked account email"
     },
     "Enter your email address." : {
       "comment" : "Bitwarden login sheet - missing email error"
@@ -1894,6 +1912,12 @@
     "Replace Top" : {
       "comment" : "Drop-zone hint shown when dragging a tab over the top/primary pane of a horizontal split to replace it"
     },
+    "Resend Code" : {
+      "comment" : "Account deletion - Button requesting a fresh verification code"
+    },
+    "Resend Code (%ds)" : {
+      "comment" : "Account deletion - Resend button label while the one-minute cooldown runs. %d is the seconds remaining"
+    },
     "Restarting Phi..." : {
       "comment" : "Time Machine restore progress stage"
     },
@@ -1984,6 +2008,9 @@
     "Send Feedback to Phi" : {
       "comment" : "Feedback window - Window title for feedback submission"
     },
+    "Sending a verification code to %@…" : {
+      "comment" : "Account deletion - Progress text while the deletion request is in flight. %@ is the masked account email"
+    },
     "Separate From Bookmark" : {
       "comment" : "Bookmark favicon command-hover hint - Preserve the current page as a normal tab and reset the bookmark"
     },
@@ -2062,6 +2089,9 @@
     "Something went wrong when logging out" : {
       "comment" : "Account settings - Alert message when logout fails"
     },
+    "Something went wrong. Please try again later." : {
+      "comment" : "Account deletion - Generic error; deliberately vague so it cannot reveal whether an account exists"
+    },
     "Something went wrong? " : {
       "comment" : "Retry hint prefix text shown when login fails in onboarding"
     },
@@ -2124,6 +2154,12 @@
     "Telegram ID" : {
       "comment" : "Phi Link - Official bot connected label"
     },
+    "That code has expired. Click Resend Code to get a new one." : {
+      "comment" : "Account deletion - Inline error when the verification code expired; points at the resend button"
+    },
+    "That code isn't correct. Check the code from the email and try again." : {
+      "comment" : "Account deletion - Inline error when the submitted verification code is rejected"
+    },
     "The agent handed control back to you to finish a step — for example, signing in." : {
       "comment" : "Agent handoff prompt - default body"
     },
@@ -2141,6 +2177,9 @@
     },
     "The connector authorization URL is invalid." : {
       "comment" : "AI settings - OAuth authorization URL error"
+    },
+    "The deletion service is temporarily unavailable. Please try again later." : {
+      "comment" : "Account deletion - Error when the deletion service reports a server error"
     },
     "The local IM service is unavailable. Check whether Phi Sentinel started normally and the IM service is running." : {
       "comment" : "IM Channels - Message shown when im-server is not connected"
@@ -2168,6 +2207,9 @@
     },
     "This build doesn’t include the Pi companion extension. Rebuild Phi Browser and try again." : {
       "comment" : "Developer settings - Pi companion extension missing"
+    },
+    "This deletes the Phi account %@ and everything Phi has stored on this Mac — browsing history, cookies, passwords, bookmarks, and Spaces. None of it can be recovered.\n\nOnce the deletion request is submitted, Phi signs you out and quits." : {
+      "comment" : "Account deletion - Warning explaining what deleting the Phi account destroys. %@ is the account's email address"
     },
     "This replaces the Phi user data folder with the archive and restarts Phi. Save your work first." : {
       "comment" : "Debug import user data - Confirmation alert body warning data replacement and relaunch"
@@ -2210,6 +2252,12 @@
     },
     "Token verified successfully" : {
       "comment" : "IM Channels - Custom bot verify success"
+    },
+    "Too many attempts for now. Please wait a few minutes and try again." : {
+      "comment" : "Account deletion - Error when the deletion service rate limit is hit"
+    },
+    "Try Again" : {
+      "comment" : "Account deletion - Button retrying the failed deletion request"
     },
     "Turn Off" : {
       "comment" : "AI settings - Destructive button to confirm turning off AI features\nAI settings - Destructive button to confirm turning off connectors"
@@ -2310,6 +2358,9 @@
     "Validating rollback app..." : {
       "comment" : "Time Machine restore progress stage"
     },
+    "Verification code" : {
+      "comment" : "Account deletion - Accessibility label of the verification code input"
+    },
     "Verification failed. Please check the token and try again." : {
       "comment" : "IM Channels - Custom bot verify failure"
     },
@@ -2317,7 +2368,10 @@
       "comment" : "CDP consent - signature verified"
     },
     "Verify" : {
-      "comment" : "IM Channels - Custom bot verify action\nIM Channels - Custom bot verify button"
+      "comment" : "Account deletion - Button submitting the emailed verification code\nIM Channels - Custom bot verify action\nIM Channels - Custom bot verify button"
+    },
+    "Verifying the code…" : {
+      "comment" : "Account deletion - Progress text while the verification code is being checked"
     },
     "Version %@ (%@)" : {
       "comment" : "About window - App version and build number label",
@@ -2384,11 +2438,17 @@
     "Your Data and Settings" : {
       "comment" : "Profiles settings - data & settings section header"
     },
+    "Your deletion request has been submitted. You will receive an email receipt once the deletion is complete." : {
+      "comment" : "Account deletion - Text shown once the deletion request is queued server-side; the deletion itself has not finished yet"
+    },
     "Your Phi session has expired. Please sign in again, then retry Phi Link." : {
       "comment" : "Phi Link - Message shown when phi-agent returns 401 unauthorized"
     },
     "Your Profiles" : {
       "comment" : "Profiles settings - list header"
+    },
+    "Your session has expired. Please sign in again, then restart the deletion." : {
+      "comment" : "Account deletion - Error when the access token stays rejected even after renewing it"
     },
     "Your Spaces" : {
       "comment" : "Spaces settings - list header"
