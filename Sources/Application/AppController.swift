@@ -155,7 +155,7 @@ import PostHog
             postHogConfig.debug = true
             #endif
             postHogConfig.setBeforeSend { event in
-                guard event.event == "$app_opened" else { return event }
+                guard event.event == "Application Opened" else { return event }
                 event.properties["layout_mode"] = PhiPreferences.GeneralSettings.loadLayoutMode().rawValue
                 event.properties["ai_enabled"] = PhiPreferences.AISettings.phiAIEnabled.loadValue()
                 return event
