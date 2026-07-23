@@ -68,6 +68,48 @@ struct SentinelOpenDashboardRequest: Equatable {
     }
 }
 
+/// The Account Deleted Event: a fact broadcast, not a command. Phi announces
+/// that the signed-in account has been deleted and its finalize has begun;
+/// what Sentinel does in response is entirely Sentinel's decision.
+/// Fire-and-forget — no marker, no retry: without a live same-channel
+/// Sentinel observer at post time the event is lost, by design.
+struct SentinelAccountDeletedEvent: Equatable {
+    static let notificationName = Notification.Name("com.phibrowser.sentinel.accountDeleted")
+
+    let requestID: String
+    let sentinelBundleID: String
+    let browserBundleID: String
+    /// The deleted account's Auth0 sub; nil when the shared token was
+    /// unreadable at post time. A nil sub is omitted from `userInfo` —
+    /// handling a missing sub is the receiver's decision.
+    let auth0Sub: String?
+
+    var userInfo: [String: String] {
+        var info = [
+            "requestID": requestID,
+            "browserBundleID": browserBundleID
+        ]
+        if let auth0Sub {
+            info["auth0Sub"] = auth0Sub
+        }
+        return info
+    }
+
+    static func make(
+        sentinelBundleID: String,
+        browserBundleID: String,
+        auth0Sub: String?,
+        requestID: String = UUID().uuidString
+    ) -> SentinelAccountDeletedEvent {
+        SentinelAccountDeletedEvent(
+            requestID: requestID,
+            sentinelBundleID: sentinelBundleID,
+            browserBundleID: browserBundleID,
+            auth0Sub: auth0Sub
+        )
+    }
+}
+
 enum SentinelHelper {
     struct RunningInfo: Equatable {
         let bundleID: String
@@ -217,6 +259,32 @@ enum SentinelHelper {
             userInfo: request.userInfo,
             deliverImmediately: true
         )
+    }
+
+    /// Posts the Account Deleted Event to the same-channel Sentinel, exactly
+    /// once, before Phi's own data wipe begins — the shared token is still
+    /// readable here, so the event can carry the account identifier. No
+    /// launch, no retry: a Sentinel that is not running (typically because
+    /// Phi AI is disabled) never receives the event, and its data for the
+    /// account lingers — accepted residue, logged so the drop is diagnosable.
+    static func postAccountDeletedEvent() {
+        let identifier = loginItemIdentifier()
+        if runningApplication(identifier: identifier) == nil {
+            AppLogWarn("Posting account deleted event while Sentinel is not running; the event will be lost (bundleID \(identifier))")
+        }
+
+        let event = SentinelAccountDeletedEvent.make(
+            sentinelBundleID: identifier,
+            browserBundleID: Bundle.main.bundleIdentifier ?? "",
+            auth0Sub: SharedAuthTokenStore.shared.read()?.auth0Sub
+        )
+        DistributedNotificationCenter.default().postNotificationName(
+            SentinelAccountDeletedEvent.notificationName,
+            object: event.sentinelBundleID,
+            userInfo: event.userInfo,
+            deliverImmediately: true
+        )
+        AppLogInfo("Posted account deleted event (requestID \(event.requestID), bundleID \(identifier))")
     }
 
     static func loginItemIdentifier() -> String {

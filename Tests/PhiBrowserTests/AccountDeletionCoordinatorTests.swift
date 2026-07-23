@@ -10,9 +10,10 @@ import XCTest
 final class AccountDeletionCoordinatorTests: XCTestCase {
     private var recordedStates: [AccountDeletionCoordinator.State] = []
 
-    /// Records every invocation of the destructive edges in order. Only the
-    /// finalize may reach them — exactly once each, quit last — and every
-    /// other path asserts the log stays empty.
+    /// Records every invocation of the finalize edges in order — the
+    /// Sentinel announcement plus the destructive edges. Only the finalize
+    /// may reach them — the announcement strictly first, each clear exactly
+    /// once, quit last — and every other path asserts the log stays empty.
     private var destructiveEdgeEvents: [String] = []
 
     private func makeCoordinator(
@@ -29,6 +30,9 @@ final class AccountDeletionCoordinatorTests: XCTestCase {
             requestDeletion: requestDeletion,
             verifyDeletion: verifyDeletion,
             renewCredentials: renewCredentials,
+            announceAccountDeleted: { [weak self] in
+                self?.destructiveEdgeEvents.append("announceAccountDeleted")
+            },
             clearCredentials: { [weak self] in
                 self?.destructiveEdgeEvents.append("clearCredentials")
                 await clearCredentials?()
@@ -770,7 +774,7 @@ final class AccountDeletionCoordinatorTests: XCTestCase {
 
     // MARK: - Finalize
 
-    func testFinalizeRunsBothClearsOnceThenQuitsLast() async {
+    func testFinalizeAnnouncesThenRunsBothClearsOnceThenQuitsLast() async {
         let coordinator = makeCoordinator()
 
         await coordinator.start()
@@ -778,8 +782,9 @@ final class AccountDeletionCoordinatorTests: XCTestCase {
         await coordinator.finalizeDeletion()
 
         XCTAssertEqual(
-            destructiveEdgeEvents, ["clearLocalData", "clearCredentials", "quit"],
-            "Each clear exactly once; credentials after the local data's long suspensions, and the quit strictly last"
+            destructiveEdgeEvents,
+            ["announceAccountDeleted", "clearLocalData", "clearCredentials", "quit"],
+            "The Sentinel announcement strictly first, before the wipe; each clear exactly once; credentials after the local data's long suspensions, and the quit strictly last"
         )
         XCTAssertEqual(coordinator.state, .finalizing)
     }
@@ -796,8 +801,9 @@ final class AccountDeletionCoordinatorTests: XCTestCase {
 
         XCTAssertEqual(verifyCallCount, 0, "The already-running branch never verifies")
         XCTAssertEqual(
-            destructiveEdgeEvents, ["clearLocalData", "clearCredentials", "quit"],
-            "The already-running branch shares the normal finalize: each clear exactly once, quit last"
+            destructiveEdgeEvents,
+            ["announceAccountDeleted", "clearLocalData", "clearCredentials", "quit"],
+            "The already-running branch shares the normal finalize: announcement first, each clear exactly once, quit last"
         )
         XCTAssertEqual(coordinator.state, .finalizing)
     }
@@ -833,8 +839,9 @@ final class AccountDeletionCoordinatorTests: XCTestCase {
         await firstFinalize.value
 
         XCTAssertEqual(
-            destructiveEdgeEvents, ["clearLocalData", "clearCredentials", "quit"],
-            "A double click on the confirmation must not run the clears twice"
+            destructiveEdgeEvents,
+            ["announceAccountDeleted", "clearLocalData", "clearCredentials", "quit"],
+            "A double click on the confirmation must not announce or run the clears twice"
         )
     }
 

@@ -40,9 +40,9 @@ enum AccountDeletionFlowError: Equatable {
 /// `AccountDeletionFakeResponses` first, so the *DEBUG* menu can play any
 /// server behavior through this same seam without touching the network.
 /// The destructive edges (credential clearing, local data clearing, quit)
-/// are deliberately real even in fake mode: playing the success scenario
-/// end to end exercises the whole finalize — including the startup
-/// takeover — without a deletable account.
+/// and the Sentinel announcement are deliberately real even in fake mode:
+/// playing the success scenario end to end exercises the whole finalize —
+/// including the startup takeover — without a deletable account.
 @MainActor
 final class AccountDeletionCoordinator {
     typealias RequestDeletion = (_ idempotencyKey: String) async throws -> AccountDeletionRequestOutcome
@@ -50,6 +50,10 @@ final class AccountDeletionCoordinator {
     /// Renews the access token after the service rejected it; returns
     /// whether usable credentials came back, deciding the one retry.
     typealias RenewCredentials = () async -> Bool
+    /// Announces the deletion to Sentinel: stops the watchdog (so a
+    /// Sentinel that chooses to exit is not resurrected), then posts the
+    /// Account Deleted Event. Fire-and-forget — no wait, no retry.
+    typealias AnnounceAccountDeleted = @MainActor () -> Void
     typealias ClearCredentials = () async -> Void
     /// Removes everything Phi keeps on this Mac outside the credential
     /// layer. Async because the WKWebView website-data clearing only
@@ -107,6 +111,7 @@ final class AccountDeletionCoordinator {
     private let requestDeletion: RequestDeletion
     private let verifyDeletion: VerifyDeletion
     private let renewCredentials: RenewCredentials
+    private let announceAccountDeleted: AnnounceAccountDeleted
     private let clearCredentials: ClearCredentials
     private let clearLocalData: ClearLocalData
     private let quit: Quit
@@ -177,6 +182,13 @@ final class AccountDeletionCoordinator {
                 renewedAccessToken: renewed?.accessToken
             )
         },
+        announceAccountDeleted: @escaping AnnounceAccountDeleted = {
+            // The watchdog stop must precede the post, following the
+            // intentional-shutdown convention: Sentinel may respond to the
+            // event by exiting, and must not be resurrected when it does.
+            SentinelWatchdog.shared.stop()
+            SentinelHelper.postAccountDeletedEvent()
+        },
         clearCredentials: @escaping ClearCredentials = {
             // Local-only by design (2026-07-23 decision) — unlike logout,
             // no remote Auth0 `clearSession` runs here. The deletion is
@@ -212,6 +224,7 @@ final class AccountDeletionCoordinator {
         self.requestDeletion = requestDeletion
         self.verifyDeletion = verifyDeletion
         self.renewCredentials = renewCredentials
+        self.announceAccountDeleted = announceAccountDeleted
         self.clearCredentials = clearCredentials
         self.clearLocalData = clearLocalData
         self.quit = quit
@@ -366,11 +379,16 @@ final class AccountDeletionCoordinator {
     }
 
     /// Runs the finalize after the user confirmed it on the submitted or
-    /// already-running dialog: the credential layer and the on-disk data
-    /// are each cleared exactly once, then the process force-quits. Only
-    /// valid once the deletion is booked server-side; the immediate
-    /// `.finalizing` transition doubles as the re-entry guard, so a double
-    /// click cannot run the clears twice.
+    /// already-running dialog: the deletion is announced to Sentinel, the
+    /// credential layer and the on-disk data are each cleared exactly once,
+    /// then the process force-quits. Only valid once the deletion is booked
+    /// server-side; the immediate `.finalizing` transition doubles as the
+    /// re-entry guard, so a double click cannot run the clears twice.
+    ///
+    /// The Sentinel announcement runs first, before the wipe: the shared
+    /// token is still readable there (the event carries the account
+    /// identifier), and the local-data clear's long suspensions keep Phi
+    /// alive afterwards, giving Sentinel the longest receive window.
     ///
     /// The credential clear runs last, after the local-data clear's long
     /// suspensions (the WKWebView sweep): an in-flight reauthentication or
@@ -387,6 +405,7 @@ final class AccountDeletionCoordinator {
             return
         }
         state = .finalizing
+        announceAccountDeleted()
         await clearLocalData()
         await clearCredentials()
         quit()
