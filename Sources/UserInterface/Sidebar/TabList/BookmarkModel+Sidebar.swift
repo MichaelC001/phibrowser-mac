@@ -263,6 +263,25 @@ extension Bookmark: ContextMenuRepresentable {
         pb.setString(URLProcessor.phiBrandEnsuredUrlString(raw), forType: .string)
     }
 
+    /// Mirrors `openInSplitView` for Option-click, minus its two-fresh-tabs
+    /// fallback: with no eligible focused partner the click falls back to the
+    /// caller's normal open behavior instead. Split bookmarks (two URLs) keep
+    /// their click-to-restore semantics.
+    @MainActor
+    func performSplitAction(in state: BrowserState) -> Bool {
+        guard !isFolder,
+              let url, !url.isEmpty,
+              (secondaryUrl ?? "").isEmpty,
+              let focusedTab = state.focusingTab,
+              state.tabs.contains(where: { $0.guid == focusedTab.guid }),
+              state.splitGroup(forTabId: focusedTab.guid) == nil else {
+            return false
+        }
+        return state.formSplitFromBookmark(bookmarkGuid: guid,
+                                           partnerTabId: focusedTab.guid,
+                                           newTabSlot: .right)
+    }
+
     @MainActor
     @objc private func openInSplitView() {
         guard let url, !url.isEmpty,
