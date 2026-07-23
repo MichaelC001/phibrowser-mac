@@ -144,13 +144,8 @@ import PostHog
         AppLogInfo("------------------------------  Starting: \(Self.makeClientString())  ------------------------------")
         recordLaunchVersion()
 
-        // Startup fallback for the user-data removal mechanism: delete
-        // moved-aside directories left behind when the detached cleaner never
-        // ran. The leftovers are invisible to the running app, so this can
-        // proceed off the main thread while launch continues.
-        DispatchQueue.global(qos: .utility).async {
-            UserDataRemoval.sweepLeftoverMoveAsideDirectories(for: .currentProduct)
-        }
+        // The startup takeover for the user-data removal mechanism runs in
+        // main() (UserDataRemovalBootstrap), before Chromium reads any state.
 
         // Set up PostHog before `didFinishLaunchingNotification` fires so the
         // SDK can observe the app-opened lifecycle event. If either value is

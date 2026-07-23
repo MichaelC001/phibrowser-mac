@@ -39,9 +39,10 @@ enum AccountDeletionFlowError: Equatable {
 /// In debug builds the Oblivion edges and the credential renewal consult
 /// `AccountDeletionFakeResponses` first, so the *DEBUG* menu can play any
 /// server behavior through this same seam without touching the network.
-/// The credential clearing, local data clearing, and quit edges are
-/// placeholder defaults until the finalize step wires them up; no state
-/// transition reaches them yet.
+/// The destructive edges (credential clearing, local data clearing, quit)
+/// are deliberately real even in fake mode: playing the success scenario
+/// end to end exercises the whole finalize — including the startup
+/// takeover — without a deletable account.
 @MainActor
 final class AccountDeletionCoordinator {
     typealias RequestDeletion = (_ idempotencyKey: String) async throws -> AccountDeletionRequestOutcome
@@ -50,9 +51,10 @@ final class AccountDeletionCoordinator {
     /// whether usable credentials came back, deciding the one retry.
     typealias RenewCredentials = () async -> Bool
     typealias ClearCredentials = () async -> Void
-    /// Synchronous by design: the real implementation is the atomic
-    /// rename-aside of the data root during teardown, not an async job.
-    typealias ClearLocalData = () -> Void
+    /// Removes everything Phi keeps on this Mac outside the credential
+    /// layer. Async because the WKWebView website-data clearing only
+    /// reports completion through a callback.
+    typealias ClearLocalData = () async -> Void
     typealias Quit = () -> Void
 
     enum State: Equatable {
@@ -71,8 +73,14 @@ final class AccountDeletionCoordinator {
         /// comes next; the flow never claims the deletion itself completed.
         case requestSubmitted
         /// A previously accepted deletion is already running server-side, so
-        /// no verification code was sent.
+        /// no verification code was sent. The finalize confirmation comes
+        /// next, exactly as after `requestSubmitted` — the two states share
+        /// one finalize.
         case deletionAlreadyRunning
+        /// The user confirmed the finalize step: both clears are running and
+        /// the process quits once they finish. Terminal — cancel is
+        /// impossible here, and nothing renders after the quit.
+        case finalizing
         /// The first step failed. `start()` may be called again to retry; the
         /// idempotency key is kept across indeterminate failures so a retry
         /// never double-books, and minted fresh after definitive rejections.
@@ -170,20 +178,33 @@ final class AccountDeletionCoordinator {
             )
         },
         clearCredentials: @escaping ClearCredentials = {
-            // Placeholder: the finalize step wires this to the local
-            // credential clearing that was split out of logout. No state
-            // transition reaches this edge yet.
-            AppLogError("🗑️ [AccountDeletion] clearCredentials placeholder invoked; finalize is not wired up yet")
+            // Local-only by design (2026-07-23 decision) — unlike logout,
+            // no remote Auth0 `clearSession` runs here. The deletion is
+            // queued server-side, so the remote web session dies with the
+            // account anyway; the external-browser teardown would flash
+            // the default browser right before the quit, and a callback
+            // arriving after the quit would relaunch the freshly wiped
+            // Phi. A reauthentication still in flight cannot resurrect
+            // credentials either: the finalize runs this clear after its
+            // last long suspension (see `finalizeDeletion`), and the quit
+            // destroys the process holding the pending transaction, so a
+            // later callback is dropped.
+            await AuthManager.shared.clearLocalAccountData()
         },
         clearLocalData: @escaping ClearLocalData = {
-            // Placeholder: the finalize step wires this to the on-disk data
-            // removal mechanism. No state transition reaches this edge yet.
-            AppLogError("🗑️ [AccountDeletion] clearLocalData placeholder invoked; finalize is not wired up yet")
+            await AccountDeletionLocalDataRemoval.removeAll()
         },
         quit: @escaping Quit = {
-            // Placeholder: the finalize step wires this to the forced app
-            // termination. No state transition reaches this edge yet.
-            AppLogError("🗑️ [AccountDeletion] quit placeholder invoked; finalize is not wired up yet")
+            // The quit must be unstoppable: both clears already ran, so a
+            // quit vetoed by a page's beforeunload prompt, the
+            // confirm-to-quit preference, or the downloads-in-progress alert
+            // would strand the user in a signed-out browser whose data is
+            // already moved aside. `NSApp.terminate` walks all three veto
+            // points, so exit the process directly instead. Skipping the
+            // graceful shutdown loses nothing here: everything it would
+            // write lands in the moved-aside directories (or is swept by
+            // the detached cleaner) — it is exactly the data being deleted.
+            exit(0)
         },
         now: @escaping () -> Date = Date.init,
         makeIdempotencyKey: @escaping () -> String = AccountDeletionCoordinator.defaultIdempotencyKey
@@ -226,7 +247,7 @@ final class AccountDeletionCoordinator {
         case .idle, .failed:
             break
         case .requestingDeletion, .awaitingVerificationCode, .verifyingCode,
-             .requestSubmitted, .deletionAlreadyRunning:
+             .requestSubmitted, .deletionAlreadyRunning, .finalizing:
             AppLogInfo("🗑️ [AccountDeletion] Flow already underway, ignoring start")
             return
         }
@@ -327,18 +348,48 @@ final class AccountDeletionCoordinator {
 
     /// Abandons the flow with no side effects: nothing was cleared, so
     /// cancelling is always safe. Ignored while a call is in flight (the UI
-    /// disables cancel there) and once the request was submitted.
+    /// disables cancel there) and once the deletion is booked server-side —
+    /// submitted, or found already running — where the account is going
+    /// away regardless and the only way forward is the finalize.
     func cancel() {
         switch state {
-        case .awaitingVerificationCode, .deletionAlreadyRunning, .failed:
+        case .awaitingVerificationCode, .failed:
             AppLogInfo("🗑️ [AccountDeletion] Flow cancelled")
             idempotencyKey = nil
             pendingResendKey = nil
             resendAvailableAt = nil
             state = .idle
-        case .idle, .requestingDeletion, .verifyingCode, .requestSubmitted:
+        case .idle, .requestingDeletion, .verifyingCode, .requestSubmitted,
+             .deletionAlreadyRunning, .finalizing:
             AppLogInfo("🗑️ [AccountDeletion] Cancel ignored in current state")
         }
+    }
+
+    /// Runs the finalize after the user confirmed it on the submitted or
+    /// already-running dialog: the credential layer and the on-disk data
+    /// are each cleared exactly once, then the process force-quits. Only
+    /// valid once the deletion is booked server-side; the immediate
+    /// `.finalizing` transition doubles as the re-entry guard, so a double
+    /// click cannot run the clears twice.
+    ///
+    /// The credential clear runs last, after the local-data clear's long
+    /// suspensions (the WKWebView sweep): an in-flight reauthentication or
+    /// token renewal landing mid-finalize gets wiped by the clear instead
+    /// of outliving it, and no suspension remains between the clear and
+    /// the quit for a late callback to slip into.
+    func finalizeDeletion() async {
+        switch state {
+        case .requestSubmitted, .deletionAlreadyRunning:
+            break
+        case .idle, .requestingDeletion, .awaitingVerificationCode,
+             .verifyingCode, .finalizing, .failed:
+            AppLogInfo("🗑️ [AccountDeletion] No deletion booked server-side, ignoring finalize")
+            return
+        }
+        state = .finalizing
+        await clearLocalData()
+        await clearCredentials()
+        quit()
     }
 
     /// Runs an Oblivion call and, when the access token is rejected, renews

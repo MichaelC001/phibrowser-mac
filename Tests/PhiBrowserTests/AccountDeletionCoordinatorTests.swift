@@ -10,9 +10,10 @@ import XCTest
 final class AccountDeletionCoordinatorTests: XCTestCase {
     private var recordedStates: [AccountDeletionCoordinator.State] = []
 
-    /// Counts every invocation of the destructive edges. No flow driven by
-    /// this ticket may ever reach them, so tests assert the count stays zero.
-    private var destructiveEdgeInvocations = 0
+    /// Records every invocation of the destructive edges in order. Only the
+    /// finalize may reach them — exactly once each, quit last — and every
+    /// other path asserts the log stays empty.
+    private var destructiveEdgeEvents: [String] = []
 
     private func makeCoordinator(
         requestDeletion: @escaping AccountDeletionCoordinator.RequestDeletion = { _ in
@@ -21,15 +22,19 @@ final class AccountDeletionCoordinatorTests: XCTestCase {
         verifyDeletion: @escaping AccountDeletionCoordinator.VerifyDeletion = { _, _ in },
         renewCredentials: @escaping AccountDeletionCoordinator.RenewCredentials = { false },
         makeIdempotencyKey: @escaping () -> String = { "key-1" },
-        now: @escaping () -> Date = Date.init
+        now: @escaping () -> Date = Date.init,
+        clearCredentials: AccountDeletionCoordinator.ClearCredentials? = nil
     ) -> AccountDeletionCoordinator {
         let coordinator = AccountDeletionCoordinator(
             requestDeletion: requestDeletion,
             verifyDeletion: verifyDeletion,
             renewCredentials: renewCredentials,
-            clearCredentials: { [weak self] in self?.destructiveEdgeInvocations += 1 },
-            clearLocalData: { [weak self] in self?.destructiveEdgeInvocations += 1 },
-            quit: { [weak self] in self?.destructiveEdgeInvocations += 1 },
+            clearCredentials: { [weak self] in
+                self?.destructiveEdgeEvents.append("clearCredentials")
+                await clearCredentials?()
+            },
+            clearLocalData: { [weak self] in self?.destructiveEdgeEvents.append("clearLocalData") },
+            quit: { [weak self] in self?.destructiveEdgeEvents.append("quit") },
             now: now,
             makeIdempotencyKey: makeIdempotencyKey
         )
@@ -41,6 +46,14 @@ final class AccountDeletionCoordinatorTests: XCTestCase {
 
     private func waitForRecordedStates(atLeast count: Int) async {
         for _ in 0..<1_000 where recordedStates.count < count {
+            await Task.yield()
+        }
+    }
+
+    /// Yields until `condition` holds (or the yield budget runs out), for
+    /// tests that must catch a coordinator mid-flight.
+    private func waitUntil(_ condition: () -> Bool) async {
+        for _ in 0..<1_000 where !condition() {
             await Task.yield()
         }
     }
@@ -354,7 +367,7 @@ final class AccountDeletionCoordinatorTests: XCTestCase {
         XCTAssertEqual(requestCallCount, 2, "Exactly one retry after the renewal")
         XCTAssertEqual(renewCallCount, 1, "A second rejection must not renew again")
         XCTAssertEqual(coordinator.state, .failed(.service(.unauthorized)))
-        XCTAssertEqual(destructiveEdgeInvocations, 0)
+        XCTAssertEqual(destructiveEdgeEvents, [])
     }
 
     func testFailedRenewalSkipsTheRetry() async {
@@ -479,7 +492,7 @@ final class AccountDeletionCoordinatorTests: XCTestCase {
 
         XCTAssertEqual(coordinator.state, .idle)
         XCTAssertEqual(
-            destructiveEdgeInvocations, 0,
+            destructiveEdgeEvents, [],
             "Cancelling must clear nothing and quit nothing"
         )
 
@@ -508,9 +521,22 @@ final class AccountDeletionCoordinatorTests: XCTestCase {
 
         XCTAssertEqual(coordinator.state, .requestSubmitted)
         XCTAssertEqual(
-            destructiveEdgeInvocations, 0,
-            "Nothing may be cleared before the finalize step exists"
+            destructiveEdgeEvents, [],
+            "Nothing may be cleared before the finalize is confirmed"
         )
+    }
+
+    func testCancelWhileDeletionAlreadyRunningIsIgnored() async {
+        let coordinator = makeCoordinator(requestDeletion: { _ in .deletionAlreadyRunning })
+
+        await coordinator.start()
+        coordinator.cancel()
+
+        XCTAssertEqual(
+            coordinator.state, .deletionAlreadyRunning,
+            "The deletion is running server-side; like after a submission, the only way forward is the finalize"
+        )
+        XCTAssertEqual(destructiveEdgeEvents, [])
     }
 
     // MARK: - Resend & cooldown
@@ -665,7 +691,7 @@ final class AccountDeletionCoordinatorTests: XCTestCase {
             verifiedRequestIDs, ["req-1"],
             "After a failed resend, verification must still target the original request"
         )
-        XCTAssertEqual(destructiveEdgeInvocations, 0)
+        XCTAssertEqual(destructiveEdgeEvents, [])
     }
 
     func testTimedOutResendIsReplayedUnderItsOwnKey() async {
@@ -740,6 +766,123 @@ final class AccountDeletionCoordinatorTests: XCTestCase {
         XCTAssertEqual(requestCallCount, 0)
         XCTAssertEqual(coordinator.state, .idle)
         XCTAssertEqual(recordedStates, [])
+    }
+
+    // MARK: - Finalize
+
+    func testFinalizeRunsBothClearsOnceThenQuitsLast() async {
+        let coordinator = makeCoordinator()
+
+        await coordinator.start()
+        await coordinator.submitCode("123456")
+        await coordinator.finalizeDeletion()
+
+        XCTAssertEqual(
+            destructiveEdgeEvents, ["clearLocalData", "clearCredentials", "quit"],
+            "Each clear exactly once; credentials after the local data's long suspensions, and the quit strictly last"
+        )
+        XCTAssertEqual(coordinator.state, .finalizing)
+    }
+
+    func testFinalizeFromAlreadyRunningRunsBothClearsOnceThenQuitsLast() async {
+        var verifyCallCount = 0
+        let coordinator = makeCoordinator(
+            requestDeletion: { _ in .deletionAlreadyRunning },
+            verifyDeletion: { _, _ in verifyCallCount += 1 }
+        )
+
+        await coordinator.start()
+        await coordinator.finalizeDeletion()
+
+        XCTAssertEqual(verifyCallCount, 0, "The already-running branch never verifies")
+        XCTAssertEqual(
+            destructiveEdgeEvents, ["clearLocalData", "clearCredentials", "quit"],
+            "The already-running branch shares the normal finalize: each clear exactly once, quit last"
+        )
+        XCTAssertEqual(coordinator.state, .finalizing)
+    }
+
+    func testFinalizeBeforeSubmissionIsIgnored() async {
+        let coordinator = makeCoordinator()
+
+        await coordinator.start()
+        await coordinator.finalizeDeletion()
+
+        XCTAssertEqual(destructiveEdgeEvents, [])
+        XCTAssertEqual(
+            coordinator.state,
+            .awaitingVerificationCode(requestID: "req-1", error: nil)
+        )
+    }
+
+    func testFinalizeWhileFinalizeInFlightIsIgnored() async {
+        var resumeClear: CheckedContinuation<Void, Never>?
+        let coordinator = makeCoordinator(clearCredentials: {
+            await withCheckedContinuation { resumeClear = $0 }
+        })
+
+        await coordinator.start()
+        await coordinator.submitCode("123456")
+
+        let firstFinalize = Task { await coordinator.finalizeDeletion() }
+        await waitUntil { resumeClear != nil }
+
+        await coordinator.finalizeDeletion()
+
+        resumeClear?.resume()
+        await firstFinalize.value
+
+        XCTAssertEqual(
+            destructiveEdgeEvents, ["clearLocalData", "clearCredentials", "quit"],
+            "A double click on the confirmation must not run the clears twice"
+        )
+    }
+
+    func testCancelDuringFinalizeIsIgnored() async {
+        var resumeClear: CheckedContinuation<Void, Never>?
+        let coordinator = makeCoordinator(clearCredentials: {
+            await withCheckedContinuation { resumeClear = $0 }
+        })
+
+        await coordinator.start()
+        await coordinator.submitCode("123456")
+
+        let finalize = Task { await coordinator.finalizeDeletion() }
+        await waitUntil { resumeClear != nil }
+
+        coordinator.cancel()
+        XCTAssertEqual(coordinator.state, .finalizing)
+
+        resumeClear?.resume()
+        await finalize.value
+
+        XCTAssertEqual(destructiveEdgeEvents.last, "quit")
+    }
+
+    func testStartDuringFinalizeIsIgnored() async {
+        var requestCallCount = 0
+        var resumeClear: CheckedContinuation<Void, Never>?
+        let coordinator = makeCoordinator(
+            requestDeletion: { _ in
+                requestCallCount += 1
+                return .verificationCodeSent(requestID: "req-1")
+            },
+            clearCredentials: {
+                await withCheckedContinuation { resumeClear = $0 }
+            }
+        )
+
+        await coordinator.start()
+        await coordinator.submitCode("123456")
+
+        let finalize = Task { await coordinator.finalizeDeletion() }
+        await waitUntil { resumeClear != nil }
+
+        await coordinator.start()
+        XCTAssertEqual(requestCallCount, 1)
+
+        resumeClear?.resume()
+        await finalize.value
     }
 
     // MARK: - Idempotency key default

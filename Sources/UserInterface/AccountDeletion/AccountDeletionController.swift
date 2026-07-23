@@ -102,6 +102,13 @@ final class AccountDeletionController {
                     Task {
                         await coordinator.start()
                     }
+                },
+                finalize: { [coordinator] in
+                    // Clears the local data and then the credential layer,
+                    // then force-quits; the coordinator guards re-entry.
+                    Task {
+                        await coordinator.finalizeDeletion()
+                    }
                 }
             )
         })

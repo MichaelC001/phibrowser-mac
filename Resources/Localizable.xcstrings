@@ -289,8 +289,8 @@
     "4 hours" : {
       "comment" : "Bitwarden session timeout - 4 hours"
     },
-    "A deletion request for this account is already being processed." : {
-      "comment" : "Account deletion - Text shown when a previous deletion request is already running server-side"
+    "A deletion request for this account is already being processed. You will receive an email receipt once the deletion is complete.\n\nPhi will now sign you out, remove its data from this Mac, and quit." : {
+      "comment" : "Account deletion - Text shown when a previous deletion request is already running server-side; the finalize confirmation comes next, as after a submission"
     },
     "A new version of Phi is available" : {
       "comment" : "Sparkle update window - Title"
@@ -2062,11 +2062,17 @@
     "Sign in again to continue" : {
       "comment" : "Auth reauthentication - Alert title when the access token can no longer be renewed"
     },
+    "Sign Out and Quit" : {
+      "comment" : "Account deletion - Button confirming the finalize: Phi clears its local data, signs out and quits"
+    },
     "Signed in" : {
       "comment" : "Phi & AI settings - Bitwarden ready status"
     },
     "Signed in as %@" : {
       "comment" : "Phi & AI settings - Bitwarden ready status with account"
+    },
+    "Signing you out and removing Phi's data from this Mac…" : {
+      "comment" : "Account deletion - Progress text while the finalize clears local data, right before the app quits"
     },
     "Site Settings" : {
       "comment" : "Address bar menu - Settings menu item\nAddress bar menu - Settings submenu title"
@@ -2438,8 +2444,8 @@
     "Your Data and Settings" : {
       "comment" : "Profiles settings - data & settings section header"
     },
-    "Your deletion request has been submitted. You will receive an email receipt once the deletion is complete." : {
-      "comment" : "Account deletion - Text shown once the deletion request is queued server-side; the deletion itself has not finished yet"
+    "Your deletion request has been submitted. You will receive an email receipt once the deletion is complete.\n\nPhi will now sign you out, remove its data from this Mac, and quit." : {
+      "comment" : "Account deletion - Text shown once the deletion request is queued server-side; the deletion itself has not finished yet, and the finalize confirmation comes next"
     },
     "Your Phi session has expired. Please sign in again, then retry Phi Link." : {
       "comment" : "Phi Link - Message shown when phi-agent returns 401 unauthorized"

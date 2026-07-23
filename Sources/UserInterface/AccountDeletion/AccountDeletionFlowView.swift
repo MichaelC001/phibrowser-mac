@@ -144,6 +144,10 @@ struct AccountDeletionFlowView: View {
     /// cannot double-book) and mints a fresh one after definitive
     /// rejections.
     let retry: () -> Void
+    /// Confirms the finalize once the deletion is booked server-side —
+    /// submitted, or found already running: the coordinator clears the
+    /// local data and then the credential layer, then force-quits.
+    let finalize: () -> Void
 
     @State private var code = ""
 
@@ -220,6 +224,12 @@ struct AccountDeletionFlowView: View {
             }
         case .requestSubmitted:
             Text(Self.submittedText)
+        case .finalizing:
+            HStack(spacing: 8) {
+                ProgressView()
+                    .controlSize(.small)
+                Text(Self.finalizingText)
+            }
         case .deletionAlreadyRunning:
             Text(Self.alreadyRunningText)
         case .failed(let error):
@@ -288,8 +298,17 @@ struct AccountDeletionFlowView: View {
                 }
             )
         case .requestSubmitted, .deletionAlreadyRunning:
+            // The one explicit confirmation before the quit: no Close and
+            // no Escape — the deletion is underway server-side, whether
+            // just queued or found already running, so the only way
+            // forward is the finalize — and, like Verify, no Return
+            // shortcut: the click must be deliberate.
             PhiAlertActions {
-                closeButton
+                signOutAndQuitButton(disabled: false)
+            }
+        case .finalizing:
+            PhiAlertActions {
+                signOutAndQuitButton(disabled: true)
             }
         case .failed(let error):
             // Sign-in guidance leaves nothing to retry in place; every other
@@ -366,6 +385,22 @@ struct AccountDeletionFlowView: View {
         }
     }
 
+    /// The finalize confirmation, kept on screen (disabled) while the
+    /// clears run so the state switch does not reflow the dialog.
+    private func signOutAndQuitButton(disabled: Bool) -> some View {
+        PhiAlertButton(
+            NSLocalizedString(
+                "Sign Out and Quit",
+                comment: "Account deletion - Button confirming the finalize: Phi clears its local data, signs out and quits"
+            ),
+            role: .destructive
+        ) {
+            finalize()
+        }
+        .disabled(disabled)
+        .opacity(disabled ? 0.5 : 1)
+    }
+
     private func cancelButton(disabled: Bool) -> some View {
         PhiAlertButton(
             NSLocalizedString(
@@ -406,13 +441,18 @@ struct AccountDeletionFlowView: View {
     )
 
     private static let submittedText = NSLocalizedString(
-        "Your deletion request has been submitted. You will receive an email receipt once the deletion is complete.",
-        comment: "Account deletion - Text shown once the deletion request is queued server-side; the deletion itself has not finished yet"
+        "Your deletion request has been submitted. You will receive an email receipt once the deletion is complete.\n\nPhi will now sign you out, remove its data from this Mac, and quit.",
+        comment: "Account deletion - Text shown once the deletion request is queued server-side; the deletion itself has not finished yet, and the finalize confirmation comes next"
+    )
+
+    private static let finalizingText = NSLocalizedString(
+        "Signing you out and removing Phi's data from this Mac…",
+        comment: "Account deletion - Progress text while the finalize clears local data, right before the app quits"
     )
 
     private static let alreadyRunningText = NSLocalizedString(
-        "A deletion request for this account is already being processed.",
-        comment: "Account deletion - Text shown when a previous deletion request is already running server-side"
+        "A deletion request for this account is already being processed. You will receive an email receipt once the deletion is complete.\n\nPhi will now sign you out, remove its data from this Mac, and quit.",
+        comment: "Account deletion - Text shown when a previous deletion request is already running server-side; the finalize confirmation comes next, as after a submission"
     )
 }
 
