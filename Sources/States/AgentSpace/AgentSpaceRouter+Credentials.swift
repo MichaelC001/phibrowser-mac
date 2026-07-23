@@ -206,6 +206,16 @@ extension AgentSpaceRouter {
             return "{\"ok\":false,\"error\":\"provider_error\"}"
         }
 
+        // Fills serve logins only: the approval said "fill your login", and
+        // only a login has an origin to bind the fill to. A note/card/
+        // identity/SSH key resolved by an id or search query is refused, not
+        // silently poured into a form field.
+        if let type = item.type, type != "login" {
+            CredentialAuditLog.shared.record(.denied, agent: agent, scope: scope,
+                                             detail: "not_a_login (\(type))")
+            return credJSON(["ok": false, "error": "not_a_login", "type": type])
+        }
+
         // Origin enforcement against the item's own site (the load-bearing
         // check for id/search queries; defense in depth for domain queries).
         // An item that names no site at all can't be origin-bound — refuse it
@@ -534,22 +544,37 @@ extension AgentSpaceRouter {
         }
     }
 
-    /// Builds the reply, revealing only the requested fields (default:
-    /// username/password/uri/domain — notes require an explicit ask; the totp
-    /// seed is never released, TOTP support is out for now). A served
-    /// credential is always the query's unique match (`matches` stays for
-    /// wire compatibility and is 1); several matches come back as the
-    /// `ambiguous` error instead — see `ambiguousReply`.
+    /// Builds the reply, revealing only the requested fields. The default set
+    /// follows the item type: a login serves username/password/uri/domain
+    /// (its notes require an explicit ask), a secure note serves its notes —
+    /// they ARE the item — and a card / identity / SSH key serves its
+    /// type-specific fields. `type` and `name` always ride along (non-secret
+    /// identity, like `matches`); the totp seed is never released, TOTP
+    /// support is out for now. A served credential is always the query's
+    /// unique match (`matches` stays for wire compatibility and is 1);
+    /// several matches come back as the `ambiguous` error instead — see
+    /// `ambiguousReply`.
     private static func buildCredentialReply(_ item: CredentialItem, fields: Set<String>?,
                                              matches: Int) -> String {
-        let requested = fields ?? ["username", "password", "uri", "domain"]
+        let defaults: Set<String>
+        switch item.type {
+        case "note": defaults = ["notes"]
+        case "card", "identity", "sshKey": defaults = Set(item.typed.keys)
+        default: defaults = ["username", "password", "uri", "domain"]
+        }
+        let requested = fields ?? defaults
         var cred: [String: Any] = [:]
+        if let v = item.type { cred["type"] = v }
+        if let v = item.name { cred["name"] = v }
         if requested.contains("username"), let v = item.username { cred["username"] = v }
         if requested.contains("password"), let v = item.password { cred["password"] = v.reveal() }
         if requested.contains("uri"), let v = item.uri { cred["uri"] = v }
         if requested.contains("domain"), let v = item.domain { cred["domain"] = v }
         if requested.contains("notes"), let v = item.notes { cred["notes"] = v.reveal() }
         if requested.contains("credentialId"), let v = item.credentialId { cred["credentialId"] = v }
+        for (key, value) in item.typed where requested.contains(key) {
+            cred[key] = value.reveal()
+        }
         return credJSON(["ok": true, "credential": cred, "matches": matches])
     }
 
@@ -563,6 +588,8 @@ extension AgentSpaceRouter {
             "candidates": candidates.map { c -> [String: Any] in
                 var entry: [String: Any] = [:]
                 if let v = c.credentialId { entry["credentialId"] = v }
+                if let v = c.type { entry["type"] = v }
+                if let v = c.name { entry["name"] = v }
                 if let v = c.username { entry["username"] = v }
                 if let v = c.uri { entry["uri"] = v }
                 if let v = c.domain { entry["domain"] = v }

@@ -197,6 +197,8 @@ final class BitwardenService: ObservableObject, CredentialProvider {
             let candidates = (result["candidates"] as? [[String: Any]] ?? []).map {
                 CredentialLookupCandidate(
                     credentialId: $0["credentialId"] as? String,
+                    type: $0["type"] as? String,
+                    name: $0["name"] as? String,
                     username: $0["username"] as? String,
                     uri: $0["uri"] as? String,
                     domain: $0["domain"] as? String)
@@ -244,14 +246,26 @@ final class BitwardenService: ObservableObject, CredentialProvider {
             guard let s = dict[key] as? String, !s.isEmpty else { return nil }
             return RedactedSecret(s)
         }
+        // Fixed keys are parsed by name; every other string the helper sends
+        // is a type-specific field (card / identity / SSH key), carried
+        // wire-named and uniformly redacted.
+        let fixed: Set<String> = ["credentialId", "type", "name", "domain", "uri",
+                                  "username", "password", "totp", "notes"]
+        var typed: [String: RedactedSecret] = [:]
+        for (key, value) in dict where !fixed.contains(key) {
+            if let s = value as? String, !s.isEmpty { typed[key] = RedactedSecret(s) }
+        }
         return CredentialItem(
             credentialId: dict["credentialId"] as? String,
+            type: dict["type"] as? String,
+            name: dict["name"] as? String,
             domain: dict["domain"] as? String,
             uri: dict["uri"] as? String,
             username: dict["username"] as? String,
             password: secret("password"),
             totp: secret("totp"),
-            notes: secret("notes")
+            notes: secret("notes"),
+            typed: typed
         )
     }
 }

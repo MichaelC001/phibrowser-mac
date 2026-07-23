@@ -350,6 +350,20 @@ or `{domain|id|search}`; a domain query also takes a `username`
 (`{domain: 'github.com', username: 'work@co'}`) to pick one of several
 accounts on the same site.
 
+The vault serves every standard item type, not just logins: secure notes,
+cards, identities, and SSH keys. Domain queries reach logins only (they match
+through the login's site URIs); use `{search: 'item name'}` or `{id}` for the
+other types — `getCredential({search: 'wifi note'})` returns a secure note's
+body as `notes`. Every served item carries `type` (`'login'` / `'note'` /
+`'card'` / `'identity'` / `'sshKey'`) and `name`, and its default fields
+follow the type: a note serves `notes`, a card serves
+`cardholderName`/`brand`/`number`/`expMonth`/`expYear`/`code`, an identity its
+name/address/contact fields (including `ssn`/`passportNumber`/
+`licenseNumber`), an SSH key `privateKey`/`publicKey`/`fingerprint`. Only
+logins can be filled into pages — `fillCredential` on another type fails with
+`not_a_login`; other types reach a task through `getCredential` or
+`runWithCredential` (e.g. `{env: {SSH_KEY: 'privateKey'}}`).
+
 **Prefer the secret-free helpers — you never see the value.**
 
 - Web form → `fillCredential(target, domain, {field})`. Phi fills the field
@@ -374,7 +388,9 @@ accounts on the same site.
 - CLI / API → `runWithCredential(domain, command, {env})`. Runs `command` (an
   argv array, no shell) with credential fields injected as environment
   variables — `{env: {PGPASSWORD: 'password'}}` maps variables to fields
-  (username, password, uri, notes, domain, credentialId), or
+  (username, password, uri, notes, domain, credentialId, plus the
+  type-specific card/identity/SSH-key fields such as `number`, `ssn`,
+  `privateKey`), or
   `{envAll: true}` injects all present fields as `PHI_CRED_<FIELD>`. Returns `{code, stdout, stderr, timedOut}` with secret
   values scrubbed to `•••` from the captured output:
 
@@ -428,8 +444,9 @@ declining the ESCALATION, not the task. The prompt also shows a purpose line —
 `{purpose: '…'}` to `getCredential` so the user sees why you need the value. On denial the call throws `user_denied` — surface that and stop,
 don't retry. If status is `locked` or `logged_out`, tell the user to
 unlock/sign in from Settings ▸ General ▸ Bitwarden rather than looping. On
-`not_found`, confirm the domain with the user — the item may be stored under
-a different name.
+`not_found`, retry a non-login item as `{search: 'its name'}` (domain queries
+reach logins only), and confirm the name/domain with the user — the item may
+be stored under a different one.
 
 Secrets returned by `getCredential` enter your context (transcript, logs), so
 request only the fields you need (`{fields: ['username','password']}`) and

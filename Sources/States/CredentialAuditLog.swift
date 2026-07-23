@@ -48,13 +48,17 @@ final class CredentialAuditLog: @unchecked Sendable {
             "scope": scope,
         ]
         if let fields {
-            entry["fields"] = [
+            var released: [String: Any] = [
                 "username": fields.username,
                 "password": fields.password,
                 "totp": fields.totp,
                 "uri": fields.uri,
                 "notes": fields.notes,
             ]
+            // Type-specific fields (card / identity / SSH key): names only,
+            // same presence-not-value rule as the booleans above.
+            if !fields.typed.isEmpty { released["typed"] = fields.typed }
+            entry["fields"] = released
         }
         if let detail { entry["detail"] = detail }
 

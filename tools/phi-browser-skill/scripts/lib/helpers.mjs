@@ -4069,13 +4069,18 @@ export async function removeBookmark(guid) {
 
 // --- Credentials -------------------------------------------------------------
 //
-// Fetch logins from the user's password manager (Bitwarden). Every
-// secret-touching call pops an approve/deny prompt in Phi first; the user may
-// grant a 10-minute remember for the same site. Gated by Settings ▸ Developer ▸
-// Agent permissions. fillCredential is the fill-first path: Phi fills the page
-// field itself, so the secret never enters this process at all. Values returned
-// by getCredential DO enter the agent's context — prefer fillCredential /
-// runWithCredential, then field-limited requests, and never log the values.
+// Fetch items from the user's password manager (Bitwarden) — logins, secure
+// notes, cards, identities, and SSH keys. A served item carries `type`
+// ('login'|'note'|'card'|'identity'|'sshKey') and `name`; domain queries reach
+// logins only (they match through login URIs), while {search} and {id} reach
+// every type. Every secret-touching call pops an approve/deny prompt in Phi
+// first; the user may grant a 10-minute remember for the same site. Gated by
+// Settings ▸ Developer ▸ Agent permissions. fillCredential is the fill-first
+// path: Phi fills the page field itself, so the secret never enters this
+// process at all (logins only — other types have no origin to bind a fill
+// to). Values returned by getCredential DO enter the agent's context — prefer
+// fillCredential / runWithCredential, then field-limited requests, and never
+// log the values.
 // TOTP is deliberately not exposed (the app answers totp_not_supported):
 // releasing a live 2FA code to an agent collapses both factors behind one
 // approval prompt — 2FA steps stay with the user via handOff().
@@ -4123,34 +4128,45 @@ export async function credentialStatus() {
 }
 
 /** For an `ambiguous` credential error: a message naming the (non-secret)
- *  candidate accounts and how to narrow; null for any other error. Phi never
- *  picks among several matching vault items — the right account is the user's
+ *  candidate items and how to narrow; null for any other error. Phi never
+ *  picks among several matching vault items — the right item is the user's
  *  call, made by narrowing the query, not a default taken on their behalf. */
 function ambiguousCredentialMessage(label, err) {
   const reply = err?.reply
   if (!reply || reply.error !== 'ambiguous') return null
   const names = (reply.candidates || [])
-    .map((c) => c.username || (c.credentialId ? `id ${c.credentialId}` : null))
+    .map((c) => {
+      // Logins go by username; notes/cards/identities/keys by name + type.
+      const base = c.username || c.name ||
+        (c.credentialId ? `id ${c.credentialId}` : null)
+      if (!base) return null
+      return c.type && c.type !== 'login' ? `${base} (${c.type})` : base
+    })
     .filter(Boolean)
   return `${label}: ${reply.matches || 'several'} vault items match this query ` +
-    'and Phi will not pick one — narrow it to a single account with ' +
+    'and Phi will not pick one — narrow it to a single item with ' +
     '{domain, username} (or {id: credentialId})' +
     (names.length ? `. Candidates: ${names.join(', ')}` : '') +
     (Array.isArray(reply.candidates) && reply.matches > reply.candidates.length
       ? ` (first ${reply.candidates.length} of ${reply.matches})` : '')
 }
 
-/** Fetches a credential for a site after the user approves in Phi. `query` is
- *  a domain string or {domain|id|search}; a domain query also takes a
- *  `username` to pick one of several accounts on the same site. opts.fields
- *  limits returned fields (default username/password/uri/domain; notes
- *  require an explicit ask); opts.purpose is a short line shown in the
- *  approval prompt saying why the credential is needed. Returns the credential
- *  object; a served credential is always the query's UNIQUE match — when
- *  several vault items fit, Phi releases no secret and this throws
- *  'ambiguous' with the candidate usernames, so narrow with {domain,
- *  username} (or {id}) and call again. Throws 'user_denied' if the user
- *  declines. */
+/** Fetches a vault item after the user approves in Phi. `query` is a domain
+ *  string or {domain|id|search}; a domain query also takes a `username` to
+ *  pick one of several accounts on the same site. Domain queries serve
+ *  logins; {search: 'item name'} and {id} also reach secure notes, cards,
+ *  identities, and SSH keys. The reply always carries `type`
+ *  ('login'|'note'|'card'|'identity'|'sshKey') and `name`. opts.fields limits
+ *  returned fields; the default follows the type — login:
+ *  username/password/uri/domain (its notes require an explicit ask), note:
+ *  notes (the note body), card: cardholderName/brand/number/expMonth/expYear/
+ *  code, identity: its name/address/contact fields plus ssn etc., sshKey:
+ *  privateKey/publicKey/fingerprint. opts.purpose is a short line shown in
+ *  the approval prompt saying why the item is needed. Returns the credential
+ *  object; a served item is always the query's UNIQUE match — when several
+ *  vault items fit, Phi releases no secret and this throws 'ambiguous' with
+ *  the candidate identities, so narrow with {domain, username} (or {id}) and
+ *  call again. Throws 'user_denied' if the user declines. */
 export async function getCredential(query, { fields, purpose } = {}) {
   const payload = { query: normalizeCredentialQuery(query), mode: 'reveal' }
   if (Array.isArray(fields)) payload.fields = fields
@@ -4316,10 +4332,24 @@ async function removeAutofillMarker(token) {
   })(${JSON.stringify(token)})`)
 }
 
-const CRED_RUN_FIELDS =
-  ['username', 'password', 'uri', 'notes', 'domain', 'credentialId']
+// Every field an env mapping may name: the fixed item fields, then the
+// type-specific fields of cards, identities, and SSH keys (wire-named, as the
+// app serves them).
+const CRED_RUN_FIELDS = [
+  'username', 'password', 'uri', 'notes', 'domain', 'credentialId',
+  'type', 'name',
+  // card
+  'cardholderName', 'brand', 'number', 'expMonth', 'expYear', 'code',
+  // identity
+  'title', 'firstName', 'middleName', 'lastName', 'address1', 'address2',
+  'address3', 'city', 'state', 'postalCode', 'country', 'company', 'email',
+  'phone', 'ssn', 'passportNumber', 'licenseNumber',
+  // SSH key
+  'privateKey', 'publicKey', 'fingerprint',
+]
 // Values scrubbed from captured child output; the rest are not secret.
-const CRED_SECRET_FIELDS = ['password', 'notes']
+const CRED_SECRET_FIELDS = ['password', 'notes', 'number', 'code', 'ssn',
+                            'passportNumber', 'licenseNumber', 'privateKey']
 
 /** Replaces every occurrence of each secret in `text` with •••. */
 function scrubSecrets(text, secrets) {
@@ -4353,8 +4383,11 @@ export function __scrubSessionSecrets(text) {
  * the child's environment, never through the agent's context. `command` is
  * an argv array (no shell). `env` maps variable names to credential fields
  * (`{PGPASSWORD: 'password'}`); `{envAll: true}` injects every present
- * field as PHI_CRED_<FIELD>. Valid fields: username, password, uri, notes,
- * domain, credentialId.
+ * field as PHI_CRED_<FIELD>. Valid fields: the fixed ones (username,
+ * password, uri, notes, domain, credentialId, type, name) plus the
+ * type-specific fields of cards (cardholderName, brand, number, expMonth,
+ * expYear, code), identities (firstName … licenseNumber), and SSH keys
+ * (privateKey, publicKey, fingerprint) — see CRED_RUN_FIELDS.
  *
  * Returns {code, stdout, stderr, timedOut} with secret values scrubbed to
  * ••• in the captured output. That catches an accidental echo (a connection

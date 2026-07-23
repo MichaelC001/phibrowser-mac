@@ -94,9 +94,12 @@ enum CredentialLookupResult: Sendable {
 }
 
 /// The non-secret identity of one item in an ambiguous lookup — enough to
-/// narrow the query, structurally incapable of carrying a secret.
+/// narrow the query, structurally incapable of carrying a secret. `type` and
+/// `name` identify non-login items, which have no username to go by.
 struct CredentialLookupCandidate: Sendable {
     var credentialId: String?
+    var type: String?
+    var name: String?
     var username: String?
     var uri: String?
     var domain: String?
@@ -108,12 +111,21 @@ struct CredentialLookupCandidate: Sendable {
 /// redacted; `debugDescription` reveals only which fields are *present*.
 struct CredentialItem: Sendable {
     var credentialId: String?
+    /// Wire item type: `login` / `note` / `card` / `identity` / `sshKey`.
+    /// nil (an older helper) reads as login.
+    var type: String?
+    /// Vault item name — display identity, not a secret (like `username`).
+    var name: String?
     var domain: String?
     var uri: String?
     var username: String?
     var password: RedactedSecret?
     var totp: RedactedSecret?
     var notes: RedactedSecret?
+    /// Type-specific fields of cards, identities, and SSH keys, keyed by their
+    /// wire names (`number`, `ssn`, `privateKey`, …). Uniformly redacted —
+    /// several are secrets and none needs to be readable app-side.
+    var typed: [String: RedactedSecret] = [:]
 
     /// Presence-only projection for the audit log — records which fields were
     /// released without ever recording their values (mirrors `ap-client`'s
@@ -124,18 +136,21 @@ struct CredentialItem: Sendable {
             password: password?.isEmpty == false,
             totp: totp?.isEmpty == false,
             uri: uri?.isEmpty == false,
-            notes: notes?.isEmpty == false
+            notes: notes?.isEmpty == false,
+            typed: typed.keys.sorted()
         )
     }
 }
 
-/// Which fields a released credential carried — booleans only, never values.
+/// Which fields a released credential carried — names and booleans only,
+/// never values. `typed` lists the type-specific field names present.
 struct CredentialFieldSet: Equatable, Sendable {
     var username = false
     var password = false
     var totp = false
     var uri = false
     var notes = false
+    var typed: [String] = []
 }
 
 extension CredentialItem: CustomDebugStringConvertible {
@@ -147,8 +162,8 @@ extension CredentialItem: CustomDebugStringConvertible {
             f.totp ? "totp" : nil,
             f.uri ? "uri" : nil,
             f.notes ? "notes" : nil,
-        ].compactMap { $0 }.joined(separator: ",")
-        return "CredentialItem(fields: [\(present)])"
+        ].compactMap { $0 } + f.typed
+        return "CredentialItem(type: \(type ?? "login"), fields: [\(present.joined(separator: ","))])"
     }
 }
 

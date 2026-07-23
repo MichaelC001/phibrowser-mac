@@ -288,7 +288,7 @@ final class CredentialAccessCoordinator {
                 format: NSLocalizedString("“%@” wants your %@ credential", comment: "Credential approval - reveal title"),
                 agentName, scope)
             alert.informativeText = NSLocalizedString(
-                "Approving shares the username and password with the agent, which may record them in its context. Only approve for agents and sites you trust.",
+                "Approving shares the saved item — a password, note, card, identity, or key — with the agent, which may record it in its context. Only approve for agents and items you trust.",
                 comment: "Credential approval - reveal body")
         }
         if let purpose {

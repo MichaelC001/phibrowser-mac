@@ -156,7 +156,7 @@ taker and is dropped, with no effect on the shared connection.
 | `lock` | — | `{}` (→ `locked` state, account kept) |
 | `logout` | — | `{}` |
 | `setTimeout` | `{ timeout, action }` | `{}` (updates the session-timeout policy live) |
-| `lookup` | `{ query: { domain \| id \| search } }` | `{ found: bool, item?: { credentialId, username, password, totp, uri, notes, domain } }`; an ambiguous query answers `{ found: false, ambiguous: true, matches, candidates: [{ credentialId, username?, uri?, domain? }] }` — non-secret identities only, no item |
+| `lookup` | `{ query: { domain \| id \| search } }` | `{ found: bool, item?: { credentialId, type, name, username?, password?, uri?, notes?, domain?, … } }` — `type` is `login`/`note`/`card`/`identity`/`sshKey`, and a card/identity/SSH-key item adds its type-specific fields flat and wire-named (`number`, `ssn`, `privateKey`, …). A domain query serves logins only (it matches through login URIs); `id`/`search` reach every type. An ambiguous query answers `{ found: false, ambiguous: true, matches, candidates: [{ credentialId, type?, name?, username?, uri?, domain? }] }` — non-secret identities only, no item |
 | `getTotp` | `{ query }` | `{ totp: "…" }` |
 
 The Swift `BitwardenHelperClient` and the Rust `protocol.rs` each implement this
