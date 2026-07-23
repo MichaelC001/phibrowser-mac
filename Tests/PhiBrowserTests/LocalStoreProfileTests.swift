@@ -36,6 +36,8 @@ final class LocalStoreProfileTests: XCTestCase {
         let tabs: [TabDataModel] = try context.fetch(FetchDescriptor<TabDataModel>())
         XCTAssertEqual(tabs.count, 1)
         XCTAssertEqual(tabs.first?.profile?.profileId, "Default")
+        XCTAssertEqual(tabs.first?.pinLineageId, "legacy-guid")
+        XCTAssertEqual(store.pinnedTabScope(), .profile)
     }
 
     func testGetAllPinnedTabsFiltersByProfileId() throws {

@@ -15,13 +15,16 @@ import SnapKit
 class DeveloperSettingViewController: NSViewController, SettingsPane {
     var paneIdentifier: Settings.PaneIdentifier = .developer
     var paneTitle: String = NSLocalizedString("Developer", comment: "Settings - Tab title for developer tooling")
-    // The sibling tabs use 32×32 template PDF assets; a bare SF Symbol renders
-    // larger than them in the toolbar, so draw the hammer centered into the
+    // The sibling tabs use 32×32 template PDF assets whose drawn glyphs
+    // occupy only 14–18pt of that canvas. A symbol's pointSize is a FONT
+    // size, not a glyph size — the hammer's ink comes out ~25% larger than
+    // the pointSize — so 13pt is what actually lands in the siblings'
+    // 14–18pt ink range (measured: 16.5×15.5). Draw it centered into the
     // same 32×32 template canvas to match their size and tinting.
     var toolbarItemIcon: NSImage = {
         guard let symbol = NSImage(systemSymbolName: "hammer",
                                    accessibilityDescription: "developer")?
-            .withSymbolConfiguration(.init(pointSize: 20, weight: .regular)) else {
+            .withSymbolConfiguration(.init(pointSize: 13, weight: .regular)) else {
             return NSImage()
         }
         let canvas = NSImage(size: NSSize(width: 32, height: 32), flipped: false) { rect in

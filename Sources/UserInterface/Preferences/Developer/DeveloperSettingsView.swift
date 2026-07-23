@@ -7,20 +7,29 @@ import AppKit
 import SwiftUI
 
 /// Settings pane content for developer tooling, moved out of the General pane
-/// into its own tab: the remote-debugging (CDP) toggle and the phi-browser
-/// skill installer. Sections use the shared `SettingsDetailCard` chrome so the
-/// pane reads like General's cards. The localized strings keep their original
-/// keys from the General pane so existing translations carry over.
+/// into its own tab. The "Allow agents to control Phi (CDP)" switch is the
+/// pane's master gate: while it is off only that card shows; turning it on
+/// reveals the phi-browser skill installer and the allowed-agent list right
+/// under it, plus the agent permissions section. Sections use the shared
+/// `SettingsDetailCard` chrome so the pane reads like General's cards.
 struct DeveloperSettingsView: View {
+    // Master switch state lives here (not in the remote-debugging section) so
+    // the sibling sections can gate on it.
+    @State private var agentAccessEnabled: Bool =
+        PhiPreferences.AgentSpaces.cdpAgentAccessEnabled
+
     var body: some View {
         ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 24) {
-                RemoteDebuggingSectionView()
-                SkillInstallSectionView()
+                RemoteDebuggingSectionView(agentAccessEnabled: $agentAccessEnabled)
+                if agentAccessEnabled {
+                    AgentPermissionsSectionView()
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, 36)
             .padding(.horizontal, 36)
+            .animation(.easeInOut(duration: 0.2), value: agentAccessEnabled)
         }
         .themedBackground(PhiPreferences.fixedWindowBackground)
         .frame(width: 680, height: 561)
@@ -46,149 +55,336 @@ private struct DeveloperSectionView<Content: View>: View {
 // MARK: - Remote debugging (CDP)
 
 private struct RemoteDebuggingSectionView: View {
-    // Reflects whether the CDP endpoint pref is set. Written through the app's
-    // own UserDefaults so the value the launcher reads next start is the one we
-    // wrote here (a `defaults write` from another process can lag via cfprefsd).
-    @State private var remoteDebuggingEnabled: Bool =
-        PhiPreferences.AgentSpaces.remoteDebuggingPort != nil
+    // Live master switch for agent CDP access over the app-owned Unix socket.
+    // Flipping it starts/stops the listener immediately — no relaunch.
+    @Binding var agentAccessEnabled: Bool
+    // Agents currently allowed to connect (persisted "Always Allow" plus this
+    // session's "Allow Once"). Read live from the listener on appear.
+    @State private var allowedGrants: [AgentGrant] =
+        AgentCDPListener.shared.allowedGrants()
 
     var body: some View {
         DeveloperSectionView(title: NSLocalizedString("Remote debugging", comment: "Developer settings - Remote debugging section title")) {
-            SettingsDetailCard {
-                HStack(alignment: .top, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(NSLocalizedString("Enable remote debugging (CDP)", comment: "Developer settings - Toggle title for the Chrome DevTools Protocol endpoint"))
-                            .font(.system(size: 13))
-                            .themedForeground(.textPrimary)
-                        Text(NSLocalizedString("Lets local tools drive Phi over the DevTools Protocol on 127.0.0.1. Any local process can control the browser while this is on — leave it off when you’re not using it. Takes effect after a relaunch.", comment: "Developer settings - Security note for the remote debugging toggle"))
-                            .font(.system(size: 11))
-                            .themedForeground(.textTertiary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    Spacer(minLength: 12)
-                    Toggle("", isOn: Binding(
-                        get: { remoteDebuggingEnabled },
-                        set: { newValue in
-                            remoteDebuggingEnabled = newValue
-                            // 0 = ephemeral port written to DevToolsActivePort.
-                            PhiPreferences.AgentSpaces.remoteDebuggingPort = newValue ? 0 : nil
-                            // Flush now so the relaunched process reads the new
-                            // value (the whole point of an in-app toggle over a
-                            // cross-process `defaults write`).
-                            UserDefaults.standard.synchronize()
-                            promptRelaunch(enabling: newValue)
-                        }
-                    ))
-                    .labelsHidden()
-                    .toggleStyle(.switch)
-                    .controlSize(.mini)
-                    .themedTint(.themeColor)
+            VStack(alignment: .leading, spacing: 16) {
+                enableCard
+                if agentAccessEnabled {
+                    SkillInstallCardView()
+                    grantsCard
                 }
-                .padding(.vertical, 12)
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
+        }
+        .onAppear { allowedGrants = AgentCDPListener.shared.allowedGrants() }
+    }
+
+    private var enableCard: some View {
+        SettingsDetailCard {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(NSLocalizedString("Allow agents to control Phi (CDP)", comment: "Developer settings - Toggle title for the Chrome DevTools Protocol endpoint"))
+                        .font(.system(size: 13))
+                        .themedForeground(.textPrimary)
+                    Text(NSLocalizedString("Lets agent tools (Claude Code, Codex) drive Phi over the DevTools Protocol through a private socket only this Mac’s processes can reach. Each agent asks for your approval the first time it connects. Applies immediately.", comment: "Developer settings - Security note for the agent CDP toggle"))
+                        .font(.system(size: 11))
+                        .themedForeground(.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 12)
+                Toggle("", isOn: Binding(
+                    get: { agentAccessEnabled },
+                    set: { newValue in
+                        agentAccessEnabled = newValue
+                        AgentCDPListener.shared.setEnabled(newValue)
+                        // Turning off clears the session grants; reflect it.
+                        allowedGrants = AgentCDPListener.shared.allowedGrants()
+                    }
+                ))
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+                .themedTint(.themeColor)
+            }
+            .padding(.vertical, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
-    private func promptRelaunch(enabling: Bool) {
-        let alert = NSAlert()
-        alert.messageText = NSLocalizedString("Relaunch to apply?", comment: "Developer settings - Relaunch prompt title after toggling remote debugging")
-        alert.informativeText = enabling
-            ? NSLocalizedString("Remote debugging starts after Phi Browser restarts.", comment: "Developer settings - Relaunch prompt body when enabling remote debugging")
-            : NSLocalizedString("Remote debugging stops after Phi Browser restarts.", comment: "Developer settings - Relaunch prompt body when disabling remote debugging")
-        alert.addButton(withTitle: NSLocalizedString("Relaunch Now", comment: "Developer settings - Relaunch prompt confirm button"))
-        alert.addButton(withTitle: NSLocalizedString("Later", comment: "Developer settings - Relaunch prompt dismiss button"))
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
+    private var grantsCard: some View {
+        SettingsDetailCard {
+            VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(NSLocalizedString("Allowed agents", comment: "Developer settings - Title for the allowed CDP agent list"))
+                        .font(.system(size: 13))
+                        .themedForeground(.textPrimary)
+                    Text(NSLocalizedString("Processes you’ve approved to control Phi. Removing one makes it ask again next time it connects.", comment: "Developer settings - Explanation for the allowed CDP agent list"))
+                        .font(.system(size: 11))
+                        .themedForeground(.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if allowedGrants.isEmpty {
+                    Text(NSLocalizedString("No agents approved yet. The first time one connects, Phi asks for your approval.", comment: "Developer settings - Empty state for the allowed CDP agent list"))
+                        .font(.system(size: 11))
+                        .themedForeground(.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    ForEach(allowedGrants) { grant in
+                        HStack(spacing: 12) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(grant.displayName)
+                                    .font(.system(size: 13))
+                                    .themedForeground(.textPrimary)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                Text(Self.subtitle(for: grant))
+                                    .font(.system(size: 11))
+                                    .themedForeground(.textTertiary)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                            }
+                            Spacer(minLength: 12)
+                            Button(NSLocalizedString("Remove", comment: "Developer settings - Revoke an allowed CDP agent")) {
+                                AgentCDPListener.shared.forgetGrant(key: grant.key)
+                                allowedGrants = AgentCDPListener.shared.allowedGrants()
+                            }
+                            .controlSize(.small)
+                        }
+                    }
+                }
+            }
+            .padding(.vertical, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
 
-        let quoted = "'" + Bundle.main.bundleURL.path.replacingOccurrences(of: "'", with: "'\\''") + "'"
-        let relaunch = Process()
-        relaunch.executableURL = URL(fileURLWithPath: "/bin/sh")
-        relaunch.arguments = ["-c", "( sleep 0.5; /usr/bin/open -n \(quoted) ) &"]
-        try? relaunch.run()
-        DispatchQueue.main.async { NSApp.terminate(nil) }
+    /// Second line: how the grant was given, and its team when known.
+    private static func subtitle(for grant: AgentGrant) -> String {
+        let scope = grant.remembered
+            ? NSLocalizedString("Always allowed", comment: "Developer settings - persisted CDP grant")
+            : NSLocalizedString("Allowed this session", comment: "Developer settings - session-only CDP grant")
+        if let teamId = grant.teamId, !teamId.isEmpty {
+            return String(format: NSLocalizedString("%@ · Team %@", comment: "Developer settings - CDP grant scope and team"), scope, teamId)
+        }
+        return scope
+    }
+}
+
+// MARK: - Agent permissions
+
+private struct AgentPermissionsSectionView: View {
+    @State private var userSpaceOperationsEnabled: Bool =
+        PhiPreferences.AgentSpaces.userSpaceOperationsEnabled
+    @ObservedObject private var profileManager = ProfileManager.shared
+    // Profiles the agent may NOT create Spaces in (blocklist mirror; empty =
+    // all allowed). Kept in @State for toggle reactivity, written through to
+    // the pref on each change.
+    @State private var disallowedProfileIds: Set<String> =
+        PhiPreferences.AgentSpaces.disallowedAgentProfileIds
+
+    var body: some View {
+        DeveloperSectionView(title: NSLocalizedString("Agent permissions", comment: "Developer settings - Agent permissions section title")) {
+            VStack(alignment: .leading, spacing: 16) {
+                operateSpacesCard
+                agentProfilesCard
+            }
+        }
+        .onAppear { profileManager.refresh() }
+    }
+
+    private var operateSpacesCard: some View {
+        SettingsDetailCard {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(NSLocalizedString("Allow agents to operate your Spaces", comment: "Developer settings - Toggle title for agent user-space operations"))
+                        .font(.system(size: 13))
+                        .themedForeground(.textPrimary)
+                    Text(NSLocalizedString("Lets agent tooling manage your own browsing data — Spaces, profiles, URL rules, pinned tabs, bookmarks, and the tab layout of your windows. When off, agents can only work inside their own agent Spaces. Applies immediately.", comment: "Developer settings - Explanation for the agent user-space operations toggle"))
+                        .font(.system(size: 11))
+                        .themedForeground(.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 12)
+                Toggle("", isOn: Binding(
+                    get: { userSpaceOperationsEnabled },
+                    set: { newValue in
+                        userSpaceOperationsEnabled = newValue
+                        PhiPreferences.AgentSpaces.userSpaceOperationsEnabled = newValue
+                    }
+                ))
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+                .themedTint(.themeColor)
+            }
+            .padding(.vertical, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var agentProfilesCard: some View {
+        SettingsDetailCard {
+            VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(NSLocalizedString("Profiles agents can use", comment: "Developer settings - Title for the per-profile agent-Space allowlist"))
+                        .font(.system(size: 13))
+                        .themedForeground(.textPrimary)
+                    Text(NSLocalizedString("Choose which profiles agents may create their own Spaces in. Turning a profile off stops agents from opening any new Space bound to it; existing Spaces are unaffected.", comment: "Developer settings - Explanation for the per-profile agent-Space allowlist"))
+                        .font(.system(size: 11))
+                        .themedForeground(.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if profileManager.userAssignableProfiles.isEmpty {
+                    Text(NSLocalizedString("No profiles found.", comment: "Developer settings - Empty state when no browser profiles exist"))
+                        .font(.system(size: 11))
+                        .themedForeground(.textTertiary)
+                } else {
+                    ForEach(profileManager.userAssignableProfiles) { profile in
+                        HStack(spacing: 12) {
+                            Text(profile.displayName)
+                                .font(.system(size: 13))
+                                .themedForeground(.textPrimary)
+                            Spacer(minLength: 12)
+                            Toggle("", isOn: Binding(
+                                get: { !disallowedProfileIds.contains(profile.profileId) },
+                                set: { allowed in
+                                    if allowed {
+                                        disallowedProfileIds.remove(profile.profileId)
+                                    } else {
+                                        disallowedProfileIds.insert(profile.profileId)
+                                    }
+                                    PhiPreferences.AgentSpaces.disallowedAgentProfileIds =
+                                        disallowedProfileIds
+                                }
+                            ))
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                            .controlSize(.mini)
+                            .themedTint(.themeColor)
+                        }
+                    }
+                }
+            }
+            .padding(.vertical, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 }
 
 // MARK: - phi-browser skill installer
 
-private struct SkillInstallSectionView: View {
-    // A Claude-Code-style coding agent that loads skills from a folder.
+private struct SkillInstallCardView: View {
+    // A coding agent that loads skills from a folder.
     // "Install" links this app's bundled phi-browser skill into
     // <skillsDirectory>/phi-browser so the agent can drive Phi over CDP.
     private struct SkillTarget: Identifiable {
         let id: String
         let name: String
+        /// Bundled brand icon (imageset under Assets ▸ agents). Rendering
+        /// follows the asset's own intent: the monochrome brand glyphs are
+        /// template, Hermes's favicon artwork renders in original color.
+        let iconAsset: String
         let skillsDirectory: URL
+        /// Pi alone exposes a supported in-process message API. Its companion
+        /// extension wakes idle sessions when Agent Transcript receives input.
+        let companionExtensionDirectory: URL?
+
+        init(id: String, name: String, iconAsset: String, skillsDirectory: URL,
+             companionExtensionDirectory: URL? = nil) {
+            self.id = id
+            self.name = name
+            self.iconAsset = iconAsset
+            self.skillsDirectory = skillsDirectory
+            self.companionExtensionDirectory = companionExtensionDirectory
+        }
 
         var linkURL: URL {
             skillsDirectory.appendingPathComponent("phi-browser", isDirectory: true)
+        }
+
+        var companionExtensionLinkURL: URL? {
+            companionExtensionDirectory?
+                .appendingPathComponent("phi-browser", isDirectory: true)
         }
     }
 
     private static let skillTargets: [SkillTarget] = {
         let home = FileManager.default.homeDirectoryForCurrentUser
         return [
-            SkillTarget(id: "claude", name: "Claude Code",
+            SkillTarget(id: "claude", name: "Claude Code", iconAsset: "agent-claude",
                         skillsDirectory: home.appendingPathComponent(".claude/skills", isDirectory: true)),
-            SkillTarget(id: "codex", name: "Codex",
+            SkillTarget(id: "codex", name: "Codex", iconAsset: "agent-openai",
                         skillsDirectory: home.appendingPathComponent(".codex/skills", isDirectory: true)),
-            SkillTarget(id: "openclaw", name: "OpenClaw",
+            SkillTarget(id: "cursor", name: "Cursor", iconAsset: "agent-cursor",
+                        skillsDirectory: home.appendingPathComponent(".cursor/skills", isDirectory: true)),
+            SkillTarget(id: "hermes", name: "Hermes", iconAsset: "agent-hermes",
+                        skillsDirectory: home.appendingPathComponent(".hermes/skills", isDirectory: true)),
+            SkillTarget(id: "openclaw", name: "OpenClaw", iconAsset: "agent-openclaw",
                         skillsDirectory: home.appendingPathComponent(".openclaw/skills", isDirectory: true)),
+            SkillTarget(
+                id: "pi", name: "Pi", iconAsset: "agent-pi",
+                skillsDirectory: home.appendingPathComponent(".pi/agent/skills", isDirectory: true),
+                companionExtensionDirectory: home.appendingPathComponent(
+                    ".pi/agent/extensions", isDirectory: true)),
         ]
     }()
 
-    // The skill tree is bundled at Contents/Resources/claude-skill/phi-browser.
+    // The skill tree is bundled at Contents/Resources/phi-browser-skill.
     private static var bundledSkillURL: URL? {
         Bundle.main.resourceURL?
-            .appendingPathComponent("claude-skill/phi-browser", isDirectory: true)
+            .appendingPathComponent("phi-browser-skill", isDirectory: true)
+    }
+
+    private static var bundledPiExtensionURL: URL? {
+        bundledSkillURL?
+            .appendingPathComponent("extensions/pi", isDirectory: true)
     }
 
     // IDs of agents whose skills folder already links to *this* app's bundle.
-    @State private var installedTargets: Set<String> = SkillInstallSectionView.installedTargetIDs()
+    @State private var installedTargets: Set<String> = SkillInstallCardView.installedTargetIDs()
 
     var body: some View {
-        DeveloperSectionView(title: NSLocalizedString("Agent skill", comment: "Developer settings - phi-browser skill section title")) {
-            SettingsDetailCard {
-                HStack(alignment: .top, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(NSLocalizedString("Install the phi-browser skill", comment: "Developer settings - Title for installing the phi-browser agent skill"))
-                            .font(.system(size: 13))
-                            .themedForeground(.textPrimary)
-                        Text(NSLocalizedString("Links the skill bundled in this app into an AI coding agent’s skills folder so it can drive Phi over the DevTools Protocol. Requires Node 22+; enable remote debugging above so it can connect.", comment: "Developer settings - Explanation for the phi-browser skill installer"))
-                            .font(.system(size: 11))
-                            .themedForeground(.textTertiary)
-                            .fixedSize(horizontal: false, vertical: true)
+        SettingsDetailCard {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(NSLocalizedString("Install the phi-browser skill", comment: "Developer settings - Title for installing the phi-browser agent skill"))
+                        .font(.system(size: 13))
+                        .themedForeground(.textPrimary)
+                    Text(NSLocalizedString("Links the skill bundled in this app into an AI coding agent’s skills folder so it can drive Phi over the DevTools Protocol. Pi also gets a companion extension that wakes idle sessions from Agent Transcript commands. Requires Node 22+.", comment: "Developer settings - Explanation for the phi-browser skill installer"))
+                        .font(.system(size: 11))
+                        .themedForeground(.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 12)
+                Menu {
+                    Button(NSLocalizedString("All agents", comment: "Developer settings - Menu item installing the skill for every agent")) {
+                        installAll()
                     }
-                    Spacer(minLength: 12)
-                    Menu {
-                        Button(NSLocalizedString("All agents", comment: "Developer settings - Menu item installing the skill for every agent")) {
-                            installAll()
-                        }
-                        Divider()
-                        ForEach(Self.skillTargets) { target in
-                            Button {
-                                installSkill(for: target)
-                            } label: {
-                                // The checkmark marks agents whose skills folder
-                                // already links to THIS app's bundle; picking one
-                                // again reinstalls (refreshes the link).
-                                if installedTargets.contains(target.id) {
-                                    Label("\(target.name)  \(Self.displayPath(target.skillsDirectory))",
-                                          systemImage: "checkmark")
-                                } else {
-                                    Text("\(target.name)  \(Self.displayPath(target.skillsDirectory))")
-                                }
+                    Divider()
+                    ForEach(Self.skillTargets) { target in
+                        Button {
+                            installSkill(for: target)
+                        } label: {
+                            // The agent's brand icon leads each row; a
+                            // trailing ✓ marks agents whose skills folder
+                            // already links to THIS app's bundle (picking
+                            // one again reinstalls / refreshes the link).
+                            Label {
+                                Text("\(target.name)  \(Self.displayPath(target.skillsDirectory))"
+                                     + (installedTargets.contains(target.id) ? "  ✓" : ""))
+                            } icon: {
+                                Image(target.iconAsset)
+                                    .resizable()
+                                    .scaledToFit()
+                                    .frame(width: 15, height: 15)
                             }
                         }
-                    } label: {
-                        Text(NSLocalizedString("Add skill to…", comment: "Developer settings - Dropdown button installing the phi-browser skill for an agent"))
                     }
-                    .controlSize(.small)
-                    .fixedSize()
+                } label: {
+                    Text(NSLocalizedString("Add skill to…", comment: "Developer settings - Dropdown button installing the phi-browser skill for an agent"))
                 }
-                .padding(.vertical, 12)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .controlSize(.small)
+                .fixedSize()
             }
+            .padding(.vertical, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -209,7 +405,7 @@ private struct SkillInstallSectionView: View {
             presentSkillAlert(
                 title: NSLocalizedString("Skill installed", comment: "Developer settings - Skill install success title"),
                 body: String(
-                    format: NSLocalizedString("%@ can now use the phi-browser skill. If it isn’t already on, enable remote debugging above and relaunch so the skill can connect.", comment: "Developer settings - Skill install success body; %@ is the agent name"),
+                    format: NSLocalizedString("%@ can now use the phi-browser skill. Restart newly configured agents; in Pi, /reload is enough.", comment: "Developer settings - Skill install success body; %@ is the agent name"),
                     succeeded.joined(separator: ", ")),
                 style: .informational)
         } else {
@@ -229,7 +425,12 @@ private struct SkillInstallSectionView: View {
 
     static func installedTargetIDs() -> Set<String> {
         guard let bundled = bundledSkillURL else { return [] }
-        return Set(skillTargets.filter { isLinked($0.linkURL, to: bundled) }.map(\.id))
+        return Set(skillTargets.filter { target in
+            guard isLinked(target.linkURL, to: bundled) else { return false }
+            guard let companionLink = target.companionExtensionLinkURL else { return true }
+            guard let companion = bundledPiExtensionURL else { return false }
+            return isLinked(companionLink, to: companion)
+        }.map(\.id))
     }
 
     // True only when linkURL is a symlink resolving to *this* app's bundled
@@ -262,20 +463,40 @@ private struct SkillInstallSectionView: View {
             return .failure(NSLocalizedString("This build doesn’t include the phi-browser skill resources. Rebuild Phi Browser and try again.", comment: "Developer settings - Skill install failure body when the resource is missing"))
         }
 
-        let link = target.linkURL
-        do {
-            try fm.createDirectory(at: target.skillsDirectory, withIntermediateDirectories: true)
+        var installs: [(link: URL, source: URL)] = [(target.linkURL, bundled)]
+        if let companionLink = target.companionExtensionLinkURL {
+            guard let companion = Self.bundledPiExtensionURL,
+                  fm.fileExists(atPath: companion.path) else {
+                return .failure(NSLocalizedString(
+                    "This build doesn’t include the Pi companion extension. Rebuild Phi Browser and try again.",
+                    comment: "Developer settings - Pi companion extension missing"))
+            }
+            installs.append((companionLink, companion))
+        }
 
-            if (try? fm.destinationOfSymbolicLink(atPath: link.path)) != nil {
-                // An existing symlink (ours, another build's, or broken) — replace it.
-                try fm.removeItem(at: link)
-            } else if fm.fileExists(atPath: link.path) {
-                // A real file/directory the user placed — don't clobber without asking.
-                guard confirmSkillOverwrite(at: link.path) else { return .cancelled }
-                try fm.removeItem(at: link)
+        do {
+            // Ask about every real destination before changing any of them, so
+            // declining the Pi extension replacement cannot leave a partial install.
+            for install in installs {
+                try fm.createDirectory(
+                    at: install.link.deletingLastPathComponent(),
+                    withIntermediateDirectories: true)
+                let isSymlink = (try? fm.destinationOfSymbolicLink(
+                    atPath: install.link.path)) != nil
+                if !isSymlink, fm.fileExists(atPath: install.link.path),
+                   !confirmSkillOverwrite(at: install.link.path) {
+                    return .cancelled
+                }
             }
 
-            try fm.createSymbolicLink(at: link, withDestinationURL: bundled)
+            for install in installs {
+                if (try? fm.destinationOfSymbolicLink(atPath: install.link.path)) != nil
+                    || fm.fileExists(atPath: install.link.path) {
+                    try fm.removeItem(at: install.link)
+                }
+                try fm.createSymbolicLink(
+                    at: install.link, withDestinationURL: install.source)
+            }
             installedTargets.insert(target.id)
             return .success
         } catch {
@@ -289,7 +510,7 @@ private struct SkillInstallSectionView: View {
             presentSkillAlert(
                 title: NSLocalizedString("Skill installed", comment: "Developer settings - Skill install success title"),
                 body: String(
-                    format: NSLocalizedString("%@ can now use the phi-browser skill. If it isn’t already on, enable remote debugging above and relaunch so the skill can connect.", comment: "Developer settings - Skill install success body; %@ is the agent name"),
+                    format: NSLocalizedString("%@ can now use the phi-browser skill. Restart newly configured agents; in Pi, /reload is enough.", comment: "Developer settings - Skill install success body; %@ is the agent name"),
                     target.name),
                 style: .informational)
         case .cancelled:

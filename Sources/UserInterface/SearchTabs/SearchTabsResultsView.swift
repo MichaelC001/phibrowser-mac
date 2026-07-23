@@ -16,10 +16,11 @@ protocol SearchTabsResultsViewDelegate: AnyObject {
 final class SearchTabsResultsView: NSView {
     static let topPadding: CGFloat = 6
     static let bottomPadding: CGFloat = 8
-    static let rowHeight: CGFloat = 50
+    static let cellHeight: CGFloat = 40
     static let headerHeight: CGFloat = 28
-    private static let horizontalInset: CGFloat = 18
+    private static let horizontalInset: CGFloat = 14
     private static let rowVerticalInset: CGFloat = 1
+    static let rowHeight: CGFloat = cellHeight + rowVerticalInset * 2
 
     weak var delegate: SearchTabsResultsViewDelegate?
 

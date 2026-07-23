@@ -97,6 +97,30 @@ final class AccountUserDefaults {
             AppLogError("Failed to encode value for key \(key): \(error.localizedDescription)")
         }
     }
+
+    /// Atomically writes an encoded value only when the stored data has not
+    /// changed since the caller captured `expectedData`.
+    @discardableResult
+    func set<T: Encodable>(
+        _ value: T,
+        forCodableKey key: String,
+        ifCurrentDataEquals expectedData: Data?
+    ) -> Bool {
+        let data: Data
+        do {
+            data = try JSONEncoder().encode(value)
+        } catch {
+            AppLogError("Failed to encode value for key \(key): \(error.localizedDescription)")
+            return false
+        }
+
+        return queue.sync {
+            guard (storage[key] as? Data) == expectedData else { return false }
+            storage[key] = data
+            persistLocked()
+            return true
+        }
+    }
     
     func codableValue<T: Decodable>(forKey key: String) -> T? {
         guard let data = data(forKey: key) else { return nil }
@@ -156,6 +180,12 @@ extension AccountUserDefaults {
         /// global selection. Stored here rather than on `SpaceModel` to
         /// avoid a schema migration for what is purely a UI preference.
         case spaceThemeIds
+        /// Per-Space window-overlay opacity map
+        /// (`[spaceId: [appearanceKey: alpha]]`, appearanceKey "light"/"dark").
+        /// A missing entry means "use the pinned theme's own overlay alpha".
+        /// Lives beside `spaceThemeIds` for the same no-schema-migration
+        /// reason.
+        case spaceOverlayOpacities
         /// Snapshot of the slot/window/Space layout written on every
         /// `SpaceWindowSlot.registerWindow`. Read on the next launch by
         /// `SpaceManager` so Chromium-restored windows reattach to the
@@ -214,6 +244,18 @@ extension AccountUserDefaults {
     /// mutate a snapshot from `spaceThemeIds()` and pass the new map here.
     func setSpaceThemeIds(_ map: [String: String]) {
         set(map, forKey: DefaultsKey.spaceThemeIds.rawValue)
+    }
+
+    /// Snapshot of the per-Space overlay-opacity map. Returns an empty
+    /// dictionary when no Space has a custom opacity yet.
+    func spaceOverlayOpacities() -> [String: [String: Double]] {
+        (object(forKey: DefaultsKey.spaceOverlayOpacities.rawValue) as? [String: [String: Double]]) ?? [:]
+    }
+
+    /// Persists the per-Space overlay-opacity map verbatim. Callers should
+    /// mutate a snapshot from `spaceOverlayOpacities()` and pass it back.
+    func setSpaceOverlayOpacities(_ map: [String: [String: Double]]) {
+        set(map, forKey: DefaultsKey.spaceOverlayOpacities.rawValue)
     }
 }
 

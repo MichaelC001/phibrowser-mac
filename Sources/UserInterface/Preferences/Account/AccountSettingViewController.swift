@@ -215,10 +215,29 @@ class AccountSettingViewController: NSViewController, SettingsPane {
         avatarWindowController?.close()
 
         var avatarWasSaved = false
+        // Pin the account that opened the editor: the editor window is
+        // non-modal and survives logout, so a save arriving after an
+        // account switch must not be stored for the new account
+        // (storeAvatarImage rejects a no-longer-current instance).
+        let editingAccount = AccountController.shared.account
         let windowController = AccountWebWindowController(url: avatarEditURL)
         avatarWindowController = windowController
         windowController.onAvatarSaved = { [weak self] image in
             self?.accountView.setAvatarImage(image)
+            // The avatar URL is stable while its content changes, and
+            // Kingfisher attaches same-URL retrieves to an in-flight
+            // download — cancel any pre-save download so the post-save
+            // refresh starts a fresh request instead of receiving the
+            // old bytes from a task that began before this save.
+            if let urlString = self?.accountViewModel.avatarURL,
+               let url = URL(string: urlString) {
+                KingfisherManager.shared.downloader.cancel(url: url)
+            }
+            // The editor's payload is the freshest copy; hand it to the
+            // Chromium settings bridge without waiting for the URL refetch.
+            if let editingAccount {
+                AccountController.shared.storeAvatarImage(image, for: editingAccount)
+            }
             avatarWasSaved = true
             Task {
                 await self?.accountViewModel.loadUserInfo(showLoading: false)
@@ -405,6 +424,12 @@ class AccountViewModel: ObservableObject {
                 // Refresh the cached copy with the latest network response.
                 cacheProfile(profile)
                 AppLogInfo("📦 [AccountSettings] Cached profile from network: \(profile.name)")
+                // Keep the Chromium settings bridge's avatar copy in step
+                // with this refresh.
+                if let account = AccountController.shared.account,
+                   profile.auth0_id == account.userID {
+                    AccountController.shared.refreshAvatar(for: account, pictureURLString: profile.picture)
+                }
                 
                 return await MainActor.run {
                     userName = profile.name

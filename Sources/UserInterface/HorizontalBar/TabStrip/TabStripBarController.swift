@@ -8,18 +8,40 @@ import Combine
 import SnapKit
 import SwiftUI
 
-/// Right-clicks open the strip context menu; scroll gestures feed the
+/// Contextual clicks open the strip context menu; scroll gestures feed the
 /// swipe-to-switch-Space handler (`TabStripBarView.scrollWheel`) and play
 /// no part in window drag/zoom, so claiming them from titlebar space costs
 /// nothing. Everything else falls through to the system titlebar.
 private func shouldConsumeTitlebarEvent(_ event: NSEvent?) -> Bool {
-    event?.type == .rightMouseDown || event?.type == .scrollWheel
+    ContextMenuEvent.isMouseDown(event) || event?.type == .scrollWheel
+}
+
+private func popUpControlClickMenu(for event: NSEvent, in view: NSView) -> Bool {
+    guard ContextMenuEvent.isControlClick(event),
+          let menu = view.menu(for: event) else {
+        return false
+    }
+    NSMenu.popUpContextMenu(menu, with: event, for: view)
+    return true
 }
 
 /// NSHostingView variant that ignores safe area insets.
 private final class SafeAreaIgnoringHostingView<Content: View>: NSHostingView<Content>, TitlebarAwareHitTestable {
     override var safeAreaInsets: NSEdgeInsets {
         return NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let hit = super.hitTest(point)
+        if ContextMenuEvent.isControlClick(NSApp.currentEvent), hit != nil {
+            return self
+        }
+        return hit
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard !popUpControlClickMenu(for: event, in: self) else { return }
+        super.mouseDown(with: event)
     }
 
     func shouldConsumeHitTest(at point: NSPoint) -> Bool {
@@ -61,6 +83,14 @@ private final class SafeAreaIgnoringThemedHostingView: ThemedHostingView, Titleb
         return NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
     }
 
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let hit = super.hitTest(point)
+        if ContextMenuEvent.isControlClick(NSApp.currentEvent), hit != nil {
+            return self
+        }
+        return hit
+    }
+
     func shouldConsumeHitTest(at point: NSPoint) -> Bool {
         // This view hosts the active-Space chip, so a left-click must reach it
         // to drop the Space-switcher menu (see `mouseDown`). Unlike the empty
@@ -73,6 +103,9 @@ private final class SafeAreaIgnoringThemedHostingView: ThemedHostingView, Titleb
     /// Left-clicking the chip drops the Space switcher. The chip's SwiftUI
     /// content has no click gesture, so this `mouseDown` is reached for the click.
     override func mouseDown(with event: NSEvent) {
+        if popUpControlClickMenu(for: event, in: self) {
+            return
+        }
         if primaryMenu != nil {
             onPrimaryMenuWillOpen?()
             dropPrimaryMenu()
@@ -112,6 +145,11 @@ final class TabStripBarView: NSView, TitlebarAwareHitTestable {
     /// see `TabStrip.scrollWheel`).
     private let spaceSwipe = SpaceSwipeTracker()
     var onSpaceSwipe: ((Int) -> Void)?
+
+    override func mouseDown(with event: NSEvent) {
+        guard !popUpControlClickMenu(for: event, in: self) else { return }
+        super.mouseDown(with: event)
+    }
 
     override func scrollWheel(with event: NSEvent) {
         switch spaceSwipe.handle(event) {

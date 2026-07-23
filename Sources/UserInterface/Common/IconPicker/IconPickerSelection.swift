@@ -9,7 +9,7 @@ enum IconPickerSelection: Hashable, Identifiable {
     case phiIcon(id: String)
     case emoji(id: String, text: String)
 
-    static let defaultPhiIconId = "phi-icon-1"
+    static let defaultPhiIconId = "phi-icon-rss"
     static let defaultSelection = IconPickerSelection.phiIcon(id: defaultPhiIconId)
 
     private static let phiIconPrefix = "phi:"
@@ -36,9 +36,9 @@ enum IconPickerSelection: Hashable, Identifiable {
     static func fromStorageValue(_ value: String,
                                  emojiCatalog: EmojiCatalog? = nil) -> IconPickerSelection? {
         if value.hasPrefix(Self.phiIconPrefix) {
-            let id = String(value.dropFirst(Self.phiIconPrefix.count))
-            guard PhiIconCatalog.allIds.contains(id) else { return nil }
-            return .phiIcon(id: id)
+            let storedId = String(value.dropFirst(Self.phiIconPrefix.count))
+            guard let canonicalId = PhiIconCatalog.canonicalId(for: storedId) else { return nil }
+            return .phiIcon(id: canonicalId)
         }
 
         if value.hasPrefix(Self.emojiPrefix) {

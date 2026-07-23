@@ -246,6 +246,298 @@ private final class DiffableOutlineAnimationFixture: NSObject, NSOutlineViewData
     }
 }
 
+private final class OutlineLayoutRepairItem: NSObject {
+    let height: CGFloat
+
+    init(height: CGFloat) {
+        self.height = height
+        super.init()
+    }
+}
+
+private final class RecordingSideBarOutlineView: SideBarOutlineView {
+    struct ItemReload {
+        let itemID: ObjectIdentifier
+        let reloadChildren: Bool
+    }
+
+    private(set) var itemReloads: [ItemReload] = []
+    private(set) var reloadDataCallCount = 0
+
+    override func reloadData() {
+        reloadDataCallCount += 1
+        super.reloadData()
+    }
+
+    override func reloadItem(_ item: Any?, reloadChildren: Bool) {
+        if let item {
+            itemReloads.append(ItemReload(
+                itemID: ObjectIdentifier(item as AnyObject),
+                reloadChildren: reloadChildren
+            ))
+        }
+        super.reloadItem(item, reloadChildren: reloadChildren)
+    }
+
+    func clearRecordedReloads() {
+        itemReloads.removeAll()
+        reloadDataCallCount = 0
+    }
+}
+
+private struct OutlineLayoutRepairResult {
+    let realizedSuffixRows: [Int]
+    let maximumOriginDeltaBeforeRepair: CGFloat
+    let repairedRow: Int?
+    let repairedOriginDelta: CGFloat?
+    let maximumOriginDeltaAfterRepair: CGFloat
+    let maximumOriginDeltaAfterHeightReconciliation: CGFloat
+    let selectedRowsBeforeRepair: IndexSet
+    let selectedRowsAfterRepair: IndexSet
+    let clipOriginBeforeRepair: NSPoint
+    let clipOriginAfterRepair: NSPoint
+    let secondRepairWasNeeded: Bool
+    let repairWasNeededAfterHeightReconciliation: Bool
+    let reloadItemCallCount: Int
+    let insertedItemReloadCount: Int
+    let reloadChildrenValues: [Bool]
+    let reloadDataCallCount: Int
+}
+
+private final class SideBarOutlineLayoutRepairFixture: NSObject,
+    NSOutlineViewDataSource,
+    NSOutlineViewDelegate
+{
+    private enum Identifier {
+        static let column = NSUserInterfaceItemIdentifier("sidebar-layout-repair-column")
+        static let cell = NSUserInterfaceItemIdentifier("sidebar-layout-repair-cell")
+    }
+
+    let outlineView = RecordingSideBarOutlineView()
+
+    private let scrollView: NSScrollView
+    private let window: NSWindow
+    private var items: [OutlineLayoutRepairItem]
+
+    override init() {
+        let viewport = NSRect(x: 0, y: 0, width: 193, height: 640)
+        scrollView = NSScrollView(frame: viewport)
+        window = NSWindow(
+            contentRect: viewport,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        items = [
+            36, 36, 36, 36, 36, 36, 16, 36,
+            260, 36, 260, 36, 36, 36, 36, 36, 36, 36,
+        ].map { OutlineLayoutRepairItem(height: $0) }
+
+        super.init()
+
+        let column = NSTableColumn(identifier: Identifier.column)
+        column.width = viewport.width
+
+        outlineView.frame = NSRect(x: 0, y: 0, width: viewport.width, height: 1_076)
+        outlineView.style = .fullWidth
+        outlineView.rowSizeStyle = .default
+        outlineView.intercellSpacing = .zero
+        outlineView.headerView = nil
+        outlineView.addTableColumn(column)
+        outlineView.outlineTableColumn = column
+        outlineView.dataSource = self
+        outlineView.delegate = self
+
+        scrollView.hasVerticalScroller = false
+        scrollView.documentView = outlineView
+        window.contentView = scrollView
+        outlineView.bottomPadding = 130
+        window.orderFrontRegardless()
+
+        outlineView.reloadData()
+        layout()
+
+        let clipView = scrollView.contentView
+        clipView.scroll(to: NSPoint(x: 0, y: 566))
+        scrollView.reflectScrolledClipView(clipView)
+        drainMainQueue()
+        layout()
+
+        _ = outlineView.view(atColumn: 0, row: 10, makeIfNecessary: true)
+        _ = outlineView.view(atColumn: 0, row: 11, makeIfNecessary: true)
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0
+            context.allowsImplicitAnimation = false
+            for _ in 0..<14 {
+                outlineView.noteHeightOfRows(
+                    withIndexesChanged: IndexSet([8, 10])
+                )
+            }
+        }
+    }
+
+    deinit {
+        outlineView.dataSource = nil
+        outlineView.delegate = nil
+        window.close()
+    }
+
+    func insertAndRepair() -> OutlineLayoutRepairResult {
+        let insertedItem = OutlineLayoutRepairItem(height: 36)
+        items.insert(insertedItem, at: 8)
+
+        outlineView.beginUpdates()
+        outlineView.insertItems(
+            at: IndexSet(integer: 8),
+            inParent: nil,
+            withAnimation: []
+        )
+        outlineView.endUpdates()
+
+        drainMainQueue()
+        let rects = (0..<outlineView.numberOfRows).map {
+            outlineView.rect(ofRow: $0)
+        }
+        outlineView.selectRowIndexes(IndexSet(integer: 8), byExtendingSelection: false)
+
+        let realizedSuffixRows = (9..<outlineView.numberOfRows).filter { row in
+            outlineView.rowView(atRow: row, makeIfNecessary: false) != nil
+        }
+        let maximumOriginDeltaBeforeRepair = maximumOriginDelta(
+            rows: realizedSuffixRows,
+            rects: rects
+        )
+        let selectedRowsBeforeRepair = outlineView.selectedRowIndexes
+        let clipOriginBeforeRepair = scrollView.contentView.bounds.origin
+
+        outlineView.clearRecordedReloads()
+        let repair = outlineView.repairRealizedRowLayoutIfNeeded(
+            afterInserting: insertedItem
+        )
+
+        let rectsAfterRepair = (0..<outlineView.numberOfRows).map {
+            outlineView.rect(ofRow: $0)
+        }
+        let realizedRowsAfterRepair = (9..<outlineView.numberOfRows).filter { row in
+            outlineView.rowView(atRow: row, makeIfNecessary: false) != nil
+        }
+        let maximumOriginDeltaAfterRepair = maximumOriginDelta(
+            rows: realizedRowsAfterRepair,
+            rects: rectsAfterRepair
+        )
+        let selectedRowsAfterRepair = outlineView.selectedRowIndexes
+        let clipOriginAfterRepair = scrollView.contentView.bounds.origin
+        let secondRepairWasNeeded = outlineView.repairRealizedRowLayoutIfNeeded(
+            afterInserting: insertedItem
+        ) != nil
+
+        DispatchQueue.main.async { [outlineView] in
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0
+                context.allowsImplicitAnimation = false
+                outlineView.noteHeightOfRows(
+                    withIndexesChanged: IndexSet([9, 11])
+                )
+            }
+        }
+        drainMainQueue()
+        layout()
+
+        let finalRects = (0..<outlineView.numberOfRows).map {
+            outlineView.rect(ofRow: $0)
+        }
+        let finalRealizedSuffixRows = (9..<outlineView.numberOfRows).filter { row in
+            outlineView.rowView(atRow: row, makeIfNecessary: false) != nil
+        }
+        let maximumOriginDeltaAfterHeightReconciliation = maximumOriginDelta(
+            rows: finalRealizedSuffixRows,
+            rects: finalRects
+        )
+        let repairWasNeededAfterHeightReconciliation =
+            outlineView.repairRealizedRowLayoutIfNeeded(
+                afterInserting: insertedItem
+            ) != nil
+        let insertedItemID = ObjectIdentifier(insertedItem)
+        let insertedItemReloads = outlineView.itemReloads.filter {
+            $0.itemID == insertedItemID
+        }
+
+        return OutlineLayoutRepairResult(
+            realizedSuffixRows: realizedSuffixRows,
+            maximumOriginDeltaBeforeRepair: maximumOriginDeltaBeforeRepair,
+            repairedRow: repair?.row,
+            repairedOriginDelta: repair?.originDelta,
+            maximumOriginDeltaAfterRepair: maximumOriginDeltaAfterRepair,
+            maximumOriginDeltaAfterHeightReconciliation:
+                maximumOriginDeltaAfterHeightReconciliation,
+            selectedRowsBeforeRepair: selectedRowsBeforeRepair,
+            selectedRowsAfterRepair: selectedRowsAfterRepair,
+            clipOriginBeforeRepair: clipOriginBeforeRepair,
+            clipOriginAfterRepair: clipOriginAfterRepair,
+            secondRepairWasNeeded: secondRepairWasNeeded,
+            repairWasNeededAfterHeightReconciliation:
+                repairWasNeededAfterHeightReconciliation,
+            reloadItemCallCount: outlineView.itemReloads.count,
+            insertedItemReloadCount: insertedItemReloads.count,
+            reloadChildrenValues: insertedItemReloads.map(\.reloadChildren),
+            reloadDataCallCount: outlineView.reloadDataCallCount
+        )
+    }
+
+    func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
+        item == nil ? items.count : 0
+    }
+
+    func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
+        items[index]
+    }
+
+    func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
+        false
+    }
+
+    func outlineView(_ outlineView: NSOutlineView, heightOfRowByItem item: Any) -> CGFloat {
+        (item as? OutlineLayoutRepairItem)?.height ?? 36
+    }
+
+    func outlineView(
+        _ outlineView: NSOutlineView,
+        viewFor tableColumn: NSTableColumn?,
+        item: Any
+    ) -> NSView? {
+        let cell = outlineView.makeView(withIdentifier: Identifier.cell, owner: self)
+            as? NSTableCellView ?? NSTableCellView()
+        cell.identifier = Identifier.cell
+        return cell
+    }
+
+    private func maximumOriginDelta(rows: [Int], rects: [NSRect]) -> CGFloat {
+        rows.reduce(0) { maximum, row in
+            guard let rowView = outlineView.rowView(
+                atRow: row,
+                makeIfNecessary: false
+            ) else { return maximum }
+            return max(maximum, abs(rowView.frame.minY - rects[row].minY))
+        }
+    }
+
+    private func layout() {
+        window.contentView?.layoutSubtreeIfNeeded()
+        outlineView.layoutSubtreeIfNeeded()
+    }
+
+    private func drainMainQueue() {
+        var didAdvance = false
+        DispatchQueue.main.async {
+            didAdvance = true
+        }
+        let deadline = Date().addingTimeInterval(0.5)
+        while !didAdvance, Date() < deadline {
+            RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.01))
+        }
+    }
+}
+
 final class DiffableOutlineViewAnimationTests: XCTestCase {
     func testAppliesCRUDSnapshotsWithRealOutlineViewAnimations() {
         runOnMain {
@@ -314,6 +606,41 @@ final class DiffableOutlineViewAnimationTests: XCTestCase {
                 fixture.outlineView.mutations,
                 [.remove(parentID: "folder", indexes: [2], animated: true)]
             )
+        }
+    }
+
+    func testRepairsStaleRealizedRowsAfterInsertionInVariableHeightOutline() {
+        runOnMain {
+            let fixture = SideBarOutlineLayoutRepairFixture()
+            let result = fixture.insertAndRepair()
+
+            XCTAssertFalse(result.realizedSuffixRows.isEmpty)
+            XCTAssertGreaterThan(result.maximumOriginDeltaBeforeRepair, 0.5)
+            XCTAssertNotNil(result.repairedRow)
+            XCTAssertGreaterThan(abs(result.repairedOriginDelta ?? 0), 0.5)
+            XCTAssertEqual(result.reloadItemCallCount, 1)
+            XCTAssertEqual(result.insertedItemReloadCount, 1)
+            XCTAssertEqual(result.reloadChildrenValues, [false])
+            XCTAssertEqual(result.reloadDataCallCount, 0)
+            XCTAssertLessThanOrEqual(result.maximumOriginDeltaAfterRepair, 0.5)
+            XCTAssertLessThanOrEqual(
+                result.maximumOriginDeltaAfterHeightReconciliation,
+                0.5
+            )
+            XCTAssertEqual(result.selectedRowsBeforeRepair, IndexSet(integer: 8))
+            XCTAssertEqual(result.selectedRowsAfterRepair, result.selectedRowsBeforeRepair)
+            XCTAssertEqual(
+                result.clipOriginAfterRepair.x,
+                result.clipOriginBeforeRepair.x,
+                accuracy: 0.5
+            )
+            XCTAssertEqual(
+                result.clipOriginAfterRepair.y,
+                result.clipOriginBeforeRepair.y,
+                accuracy: 0.5
+            )
+            XCTAssertFalse(result.secondRepairWasNeeded)
+            XCTAssertFalse(result.repairWasNeededAfterHeightReconciliation)
         }
     }
 

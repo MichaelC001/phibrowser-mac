@@ -243,6 +243,10 @@ class SideBarOutlineView: DiffableOutlineView {
 
     var dragAutoscrollTopObstructionHeight: CGFloat = 0
 
+    /// Keeps contextual clicks on the outline view so AppKit asks this view for
+    /// its menu before any row-level click or drag handling begins.
+    var capturesContextMenuClicks = false
+
     private(set) var rightClickedRow: Int?
     /// Click location in outline-view coordinates, set together with
     /// `rightClickedRow` when the context menu is requested.
@@ -264,6 +268,30 @@ class SideBarOutlineView: DiffableOutlineView {
     private var tabDragThresholdPassed = false
     private var tabDragBelowThresholdLogged = false
     private var dragAutoscrollCueViews: [SidebarDragAutoscrollCueView.Edge: SidebarDragAutoscrollCueView] = [:]
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let defaultHitTarget = super.hitTest(point)
+        guard capturesContextMenuClicks,
+              ContextMenuEvent.isMouseDown(NSApp.currentEvent),
+              !isHidden,
+              alphaValue > 0,
+              let defaultHitTarget else {
+            return defaultHitTarget
+        }
+        return contextMenuHitTarget(from: defaultHitTarget)
+    }
+
+    func contextMenuHitTarget(from defaultHitTarget: NSView) -> NSView {
+        var candidate: NSView? = defaultHitTarget
+        while let current = candidate, current !== self {
+            if current is NSTextView
+                || (current as? NSTextField)?.isEditable == true {
+                return defaultHitTarget
+            }
+            candidate = current.superview
+        }
+        return self
+    }
 
     override func setFrameSize(_ newSize: NSSize) {
         var adjusted = newSize
@@ -293,6 +321,48 @@ class SideBarOutlineView: DiffableOutlineView {
     override func noteNumberOfRowsChanged() {
         super.noteNumberOfRowsChanged()
         updateDocumentHeightIfNeeded()
+    }
+
+    /// AppKit can position realized suffix rows using an estimated height for a
+    /// newly inserted row in a variable-height outline, then leave those row
+    /// views at the estimated origins after `rect(ofRow:)` resolves the final
+    /// height. Reload only the inserted item when that exact frame mismatch is
+    /// present; this makes NSOutlineView retile the affected suffix without
+    /// rebuilding the list.
+    @discardableResult
+    func repairRealizedRowLayoutIfNeeded(
+        afterInserting insertedItem: AnyObject
+    ) -> (row: Int, originDelta: CGFloat)? {
+        let insertedRow = row(forItem: insertedItem)
+        guard insertedRow >= 0, insertedRow < numberOfRows else { return nil }
+
+        // Resolving the inserted row itself is what replaces AppKit's temporary
+        // estimated height with the delegate-provided final height.
+        _ = rect(ofRow: insertedRow)
+
+        var mismatch: (row: Int, originDelta: CGFloat)?
+        for row in (insertedRow + 1)..<numberOfRows {
+            guard let rowView = rowView(atRow: row, makeIfNecessary: false) else {
+                continue
+            }
+            let expectedFrame = rect(ofRow: row)
+            let originDelta = rowView.frame.minY - expectedFrame.minY
+            guard abs(originDelta) > 0.5 else { continue }
+            mismatch = (row, originDelta)
+            break
+        }
+
+        guard let mismatch,
+              let currentInsertedItem = item(atRow: insertedRow),
+              currentInsertedItem as AnyObject === insertedItem
+        else { return nil }
+
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0
+            context.allowsImplicitAnimation = false
+            reloadItem(currentInsertedItem, reloadChildren: false)
+        }
+        return mismatch
     }
     
     override func menu(for event: NSEvent) -> NSMenu? {
@@ -354,11 +424,20 @@ class SideBarOutlineView: DiffableOutlineView {
                 "[SIDEBAR_TAB_DRAG_THRESHOLD] super mouseDown returned row=\(index)"
             )
         } else if let window {
+            let mouseDownLocation = window.convertPoint(toScreen: event.locationInWindow)
             AppLogDebug("[SIDEBAR_TAB_DRAG_THRESHOLD] dragging window from empty area")
             window.performDrag(with: event)
+            if Self.isBlankAreaClick(from: mouseDownLocation, to: NSEvent.mouseLocation) {
+                phiOutlineDelegate?.outlineView(self, didClickRow: -1, modifierFlags: [])
+            }
         } else {
             super.mouseDown(with: event)
         }
+    }
+
+    static func isBlankAreaClick(from mouseDownLocation: NSPoint, to mouseUpLocation: NSPoint) -> Bool {
+        abs(mouseUpLocation.x - mouseDownLocation.x) <= dragThreshold
+            && abs(mouseUpLocation.y - mouseDownLocation.y) <= dragThreshold
     }
 
     override func mouseDragged(with event: NSEvent) {

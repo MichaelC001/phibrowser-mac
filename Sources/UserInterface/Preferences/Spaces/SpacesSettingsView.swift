@@ -18,11 +18,16 @@ struct SpacesSettingsView: View {
     @ObservedObject private var profileManager = ProfileManager.shared
 
     @State private var selectedSpaceId: String?
-    /// Pinned theme id for the selected Space (nil = Follow Global), loaded on
-    /// selection and updated optimistically (setTheme writes to a separate store
-    /// that doesn't republish `spaces`, so unlike icon/profile this needs local
-    /// state).
-    @State private var spacePinnedThemeId: String?
+    @State private var pinnedTabScope: PinnedTabScope = .profile
+    @State private var isChangingPinnedTabScope = false
+    /// Resolved theme id and opacity slider position for the selected Space,
+    /// loaded on selection and updated optimistically (setTheme /
+    /// setOverlayOpacity write to stores that don't republish `spaces`, so
+    /// unlike icon/profile these need local state).
+    @State private var spaceThemeId: String = Theme.default.id
+    @State private var spaceOpacitySliderValue: Double = 0
+
+    @Environment(\.phiAppearance) private var appearance
 
     /// Drag-reorder state, mirroring SpacesStripView's picker: `orderedIds` is
     /// the live snapshot rearranged as a drag hovers across rows; the persisted
@@ -31,16 +36,32 @@ struct SpacesSettingsView: View {
     @State private var orderedIds: [String] = []
 
     var body: some View {
-        HStack(alignment: .top, spacing: 16) {
-            spaceListPanel
-                .frame(width: 300, alignment: .top)
-                .frame(maxHeight: .infinity)
-            detailPanel
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        ScrollView(.vertical) {
+            VStack(spacing: 16) {
+                HStack(alignment: .top, spacing: 16) {
+                    spaceListPanel
+                        .frame(maxHeight: .infinity)
+                    detailPanel
+                        .frame(maxHeight: .infinity, alignment: .top)
+                }
+                .frame(height: 431)
+                SettingsDetailCard {
+                    pinnedTabScopeRow
+                }
+                // The URL Rules editor lists every Space's rules, so it sits below
+                // the master-detail split as a pane-wide jump-off rather than a
+                // per-Space control.
+                SettingsDetailCard {
+                    urlRulesRow
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .top)
+            .padding(.vertical, 36)
+            .padding(.horizontal, 36)
         }
-        .padding(20)
         .onAppear {
             profileManager.refresh()
+            pinnedTabScope = AccountController.shared.account?.localStorage.pinnedTabScope() ?? .profile
             orderedIds = listedSpaces.map(\.spaceId)
             if selectedSpaceId == nil { selectInitialSpace() }
         }
@@ -50,6 +71,19 @@ struct SpacesSettingsView: View {
             if draggingSpaceId == nil { orderedIds = ids }
             if let sel = selectedSpaceId, ids.contains(sel) { return }
             selectInitialSpace()
+        }
+        // Resync theme controls when the selected Space is edited from
+        // another surface (General pane, sidebar picker, Spaces menu), the
+        // global theme registry changes, or the appearance flips (the
+        // opacity slider edits the current appearance's value).
+        .onReceive(NotificationCenter.default.publisher(for: .spaceThemeDidChange)) { _ in
+            syncThemeControls()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .themeDidChange)) { _ in
+            syncThemeControls()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .appearanceDidChange)) { _ in
+            syncThemeControls()
         }
     }
 
@@ -141,18 +175,19 @@ struct SpacesSettingsView: View {
         return HStack(spacing: 8) {
             Image(systemName: "line.3.horizontal")
                 .font(.system(size: 12, weight: .medium))
-                .themedForeground(.textSecondary)
+                .themedForeground(isSelected ? ThemedColor(.white) : .textSecondary)
             Button {
                 select(space.spaceId)
             } label: {
                 HStack(spacing: 8) {
-                    spaceSwatch(space, size: 20)
+                    spaceSwatch(space, size: 20, isSelected: isSelected)
                     Text(space.name)
                         .font(.system(size: 13))
-                        .themedForeground(.textPrimary)
+                        .themedForeground(isSelected ? ThemedColor(.white) : .textPrimary)
                         .lineLimit(1)
+                        .customTooltip(space.name)
                     if isDefault {
-                        SettingsDefaultBadge()
+                        SettingsDefaultBadge(onAccent: isSelected)
                     }
                     Spacer(minLength: 4)
                 }
@@ -160,19 +195,24 @@ struct SpacesSettingsView: View {
             }
             .buttonStyle(.plain)
             Picker("", selection: profileBinding(space.spaceId)) {
-                ForEach(profileManager.profiles, id: \.profileId) { profile in
+                ForEach(profileManager.userAssignableProfiles, id: \.profileId) { profile in
                     Text(profile.displayName).tag(profile.profileId)
                 }
             }
             .labelsHidden()
             .pickerStyle(.menu)
-            .fixedSize()
+            // Keep long profile names from expanding the surrounding list layout.
+            .lineLimit(1)
+            .frame(maxWidth: 100, alignment: .trailing)
+            .fixedSize(horizontal: false, vertical: true)
             .disabled(isDefault)
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
         .frame(maxWidth: .infinity)
-        .background(isSelected ? Color.accentColor.opacity(0.15) : Color.clear)
+        // Solid system accent for the focused Space, matching the sidebar
+        // Space switcher's active row (SpacePickerRow).
+        .background(isSelected ? Color.accentColor : Color.clear)
         .clipShape(RoundedRectangle(cornerRadius: 6))
         .contentShape(Rectangle())
         // Use an explicit drag preview (not the implicit view snapshot): the
@@ -202,21 +242,12 @@ struct SpacesSettingsView: View {
         ))
     }
 
-    /// Gray, small-caps-style section label sitting above a settings card, as in
-    /// the Spaces settings layout (Icon / Theme sections).
-    private func sectionHeader(_ title: String) -> some View {
-        Text(title)
-            .font(.system(size: 12, weight: .regular))
-            .themedForeground(.textSecondary)
-            .padding(.leading, 2)
-    }
-
-    private func spaceSwatch(_ space: SpaceModel, size: CGFloat) -> some View {
+    private func spaceSwatch(_ space: SpaceModel, size: CGFloat, isSelected: Bool = false) -> some View {
         SpaceIconView(
             storedValue: space.iconName,
             size: size * 0.8,
             symbolWeight: .semibold,
-            tint: Color.primary
+            tint: isSelected ? Color.white : Color.primary
         )
         .frame(width: size, height: size)
     }
@@ -233,14 +264,14 @@ struct SpacesSettingsView: View {
         return HStack(spacing: 8) {
             Image(systemName: "line.3.horizontal")
                 .font(.system(size: 12, weight: .medium))
-                .themedForeground(.textSecondary)
-            spaceSwatch(space, size: 20)
+                .foregroundStyle(Color.white.opacity(0.85))
+            spaceSwatch(space, size: 20, isSelected: true)
             Text(space.name)
                 .font(.system(size: 13))
-                .themedForeground(.textPrimary)
+                .foregroundStyle(Color.white)
                 .lineLimit(1)
             if isDefault {
-                SettingsDefaultBadge()
+                SettingsDefaultBadge(onAccent: true)
             }
             Spacer(minLength: 4)
             // Static stand-in for the row's profile picker (a drag image is
@@ -248,23 +279,21 @@ struct SpacesSettingsView: View {
             HStack(spacing: 4) {
                 Text(profileName)
                     .font(.system(size: 13))
-                    .themedForeground(.textPrimary)
+                    .foregroundStyle(Color.white)
                     .lineLimit(1)
                 Image(systemName: "chevron.up.chevron.down")
                     .font(.system(size: 9, weight: .medium))
-                    .themedForeground(.textSecondary)
+                    .foregroundStyle(Color.white.opacity(0.85))
             }
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
-        // The list panel is 300 wide and the row stack is inset by 6 on each
-        // side, so the row — and therefore this preview — is 288 wide.
-        .frame(width: 288, alignment: .leading)
+        // The list panel is 280 wide and the row stack is inset by 6 on each
+        // side, so the row — and therefore this preview — is 268 wide.
+        .frame(width: 268, alignment: .leading)
         // The lifted Space is selected the moment it's grabbed, so the preview
-        // carries the same accent highlight a selected row shows, layered over
-        // an opaque base so the floating drag image still reads as a card.
-        .background(Color.accentColor.opacity(0.15))
-        .themedBackground(.settingItemBackground)
+        // carries the same solid accent highlight a selected row shows.
+        .background(Color.accentColor)
         .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 
@@ -295,61 +324,45 @@ struct SpacesSettingsView: View {
     @ViewBuilder
     private var detailPanel: some View {
         if let space = selectedSpace {
-            let isDefault = space.spaceId == LocalStore.defaultSpaceId
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    HStack(spacing: 10) {
-                        spaceSwatch(space, size: 30)
-                        Text(space.name)
-                            .font(.system(size: 15, weight: .semibold))
-                            .themedForeground(.textPrimary)
-                            .lineLimit(1)
-                        Spacer()
-                    }
-                    .padding(.leading, 2)
-
-                    VStack(alignment: .leading, spacing: 8) {
-                        sectionHeader(NSLocalizedString("Icon", comment: "Spaces settings - icon section header"))
-                        SettingsDetailCard {
-                            IconPicker(
-                                selected: IconPickerSelection.fromStorageValue(space.iconName),
-                                showsGroups: true,
-                                onSelect: { selection in
-                                    spaceManager.changeIcon(spaceId: space.spaceId, iconName: selection.storageValue)
-                                }
-                            )
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 8)
-                        }
-                    }
-
-                    VStack(alignment: .leading, spacing: 8) {
-                        sectionHeader(NSLocalizedString("Theme", comment: "Spaces settings - theme section header"))
-                        SettingsDetailCard {
-                            SettingsDetailRow(NSLocalizedString("Color", comment: "Spaces settings - theme color row label")) {
-                                themeControl(space.spaceId)
+            // No outer ScrollView: the Icon card absorbs all spare height (the
+            // grid scrolls internally), so the Opacity card's bottom edge lines
+            // up with the Space list's bottom edge.
+            VStack(alignment: .leading, spacing: 16) {
+                SettingsDetailCard {
+                    // Report the card's real content width so the picker
+                    // reflows its grid edge-to-edge (the width-less path
+                    // renders a fixed 262pt column centered in the card,
+                    // leaving blank margins on both sides).
+                    GeometryReader { geo in
+                        IconPicker(
+                            selected: IconPickerSelection.fromStorageValue(space.iconName),
+                            showsGroups: true,
+                            width: geo.size.width,
+                            fillsAvailableHeight: true,
+                            onSelect: { selection in
+                                spaceManager.changeIcon(spaceId: space.spaceId, iconName: selection.storageValue)
                             }
-                        }
+                        )
                     }
-
-                    VStack(alignment: .leading, spacing: 8) {
-                        sectionHeader(NSLocalizedString("Routing", comment: "Spaces settings - routing section header"))
-                        SettingsDetailCard {
-                            urlRulesRow
-                        }
-                    }
-
-                    if isDefault {
-                        Text(NSLocalizedString("The default Space can't be moved to another profile or deleted.",
-                                               comment: "Spaces settings - default Space limits note"))
-                            .font(.system(size: 11))
-                            .themedForeground(.textSecondary)
-                            .padding(.leading, 2)
-                    }
-
+                    .padding(.vertical, 8)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(maxHeight: .infinity)
+
+                SettingsDetailCard {
+                    colorRow(space.spaceId)
+                    SettingsRowDivider()
+                    SettingsDetailRow(NSLocalizedString("Opacity", comment: "Spaces settings - theme opacity row label for the per-Space window overlay transparency")) {
+                        ThemeOpacitySliderView(
+                            value: opacityBinding(space.spaceId),
+                            trackColor: opacitySliderTrackColor(space.spaceId),
+                            borderColor: ThemedColor.border.resolve(theme: displayedTheme, appearance: appearance),
+                            width: Self.opacitySliderWidth
+                        )
+                        .frame(width: Self.opacitySliderWidth, height: 20)
+                    }
+                }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         } else {
             Text(NSLocalizedString("Select a Space to view its settings.",
                                    comment: "Spaces settings - empty detail placeholder"))
@@ -372,7 +385,7 @@ struct SpacesSettingsView: View {
                     .font(.system(size: 13))
                     .themedForeground(.textPrimary)
                 Spacer(minLength: 8)
-                Image(systemName: "arrow.up.forward")
+                Image(systemName: "chevron.right")
                     .font(.system(size: 11, weight: .semibold))
                     .themedForeground(.textSecondary)
             }
@@ -383,6 +396,138 @@ struct SpacesSettingsView: View {
         .buttonStyle(.plain)
         .help(NSLocalizedString("Open the URL rules editor",
                                 comment: "Spaces settings - tooltip for the URL rules button"))
+    }
+
+    private var pinnedTabScopeRow: some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(NSLocalizedString(
+                    "Pinned tab scope",
+                    comment: "Spaces settings - pinned-tab scope row label"
+                ))
+                .font(.system(size: 13))
+                .themedForeground(.textPrimary)
+
+                Text(pinnedTabScopeDescription)
+                    .font(.system(size: 11))
+                    .themedForeground(.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 12)
+
+            Picker(
+                "",
+                selection: Binding(
+                    get: { pinnedTabScope },
+                    set: { requestPinnedTabScopeChange(to: $0) }
+                )
+            ) {
+                ForEach(PinnedTabScope.allCases) { scope in
+                    Text(pinnedTabScopeName(scope)).tag(scope)
+                }
+            }
+            .labelsHidden()
+            .frame(width: 120)
+            .disabled(isChangingPinnedTabScope)
+        }
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var pinnedTabScopeDescription: String {
+        switch pinnedTabScope {
+        case .space:
+            return NSLocalizedString(
+                "Each Space has its own pinned tabs.",
+                comment: "Spaces settings - description of Space pinned-tab scope"
+            )
+        case .profile:
+            return NSLocalizedString(
+                "Spaces using the same profile share pinned tabs.",
+                comment: "Spaces settings - description of Profile pinned-tab scope"
+            )
+        case .app:
+            return NSLocalizedString(
+                "Pinned tabs are shared across all profiles and Spaces.",
+                comment: "Spaces settings - description of App pinned-tab scope"
+            )
+        }
+    }
+
+    private func pinnedTabScopeName(_ scope: PinnedTabScope) -> String {
+        switch scope {
+        case .space:
+            return NSLocalizedString("Space", comment: "Spaces settings - Space pinned-tab scope option")
+        case .profile:
+            return NSLocalizedString("Profile", comment: "Spaces settings - Profile pinned-tab scope option")
+        case .app:
+            return NSLocalizedString("App", comment: "Spaces settings - App pinned-tab scope option")
+        }
+    }
+
+    private func requestPinnedTabScopeChange(to newScope: PinnedTabScope) {
+        guard newScope != pinnedTabScope,
+              !isChangingPinnedTabScope else { return }
+
+        let previousScope = pinnedTabScope
+        let isCopy = newScope.hierarchyLevel < previousScope.hierarchyLevel
+        pinnedTabScope = newScope
+
+        guard let store = AccountController.shared.account?.localStorage else {
+            pinnedTabScope = previousScope
+            return
+        }
+
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = NSLocalizedString(
+            "Change Pinned Tab Scope?",
+            comment: "Spaces settings - title of pinned-tab scope migration confirmation"
+        )
+        alert.informativeText = isCopy
+            ? NSLocalizedString(
+                "Your current pinned tabs will be copied into each existing destination. The copies can then be changed independently.",
+                comment: "Spaces settings - confirmation body for narrowing pinned-tab scope"
+            )
+            : NSLocalizedString(
+                "Pinned tabs from the existing destinations will be merged. Unchanged copies will be combined, while different versions will be kept.",
+                comment: "Spaces settings - confirmation body for broadening pinned-tab scope"
+            )
+        alert.addButton(withTitle: NSLocalizedString("Change Scope", comment: "Spaces settings - confirm pinned-tab scope change"))
+        alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Cancel button"))
+        guard alert.runModal() == .alertFirstButtonReturn else {
+            pinnedTabScope = previousScope
+            return
+        }
+
+        let preferredSpaceId = spaceManager.activeSpaceId ?? selectedSpaceId
+        let preferredProfileId = preferredSpaceId.flatMap { spaceId in
+            spaceManager.spaces.first(where: { $0.spaceId == spaceId })?.profileId
+        }
+        isChangingPinnedTabScope = true
+        Task { @MainActor in
+            do {
+                try await store.changePinnedTabScope(
+                    to: newScope,
+                    preferredProfileId: preferredProfileId,
+                    preferredSpaceId: preferredSpaceId
+                )
+                pinnedTabScope = newScope
+            } catch {
+                pinnedTabScope = previousScope
+                let errorAlert = NSAlert()
+                errorAlert.alertStyle = .critical
+                errorAlert.messageText = NSLocalizedString(
+                    "Pinned Tab Scope Wasn’t Changed",
+                    comment: "Spaces settings - pinned-tab scope migration error title"
+                )
+                errorAlert.informativeText = error.localizedDescription
+                errorAlert.addButton(withTitle: NSLocalizedString("OK", comment: "Dismiss button"))
+                errorAlert.runModal()
+            }
+            isChangingPinnedTabScope = false
+        }
     }
 
     // MARK: - Selection
@@ -413,87 +558,100 @@ struct SpacesSettingsView: View {
 
     private func select(_ spaceId: String) {
         selectedSpaceId = spaceId
-        spacePinnedThemeId = spaceManager.themeId(forSpaceId: spaceId)
+        syncThemeControls()
+    }
+
+    /// Loads the selected Space's resolved theme id and effective overlay
+    /// opacity (for the current appearance) into the local control state.
+    private func syncThemeControls() {
+        guard let spaceId = selectedSpaceId else { return }
+        spaceThemeId = spaceManager.resolvedThemeId(forSpaceId: spaceId)
+        let alpha = spaceManager.effectiveOverlayOpacity(
+            forSpaceId: spaceId,
+            appearance: ThemeManager.shared.currentAppearance
+        )
+        spaceOpacitySliderValue = OverlayOpacityScale.sliderValue(forOpacityPercent: alpha * 100)
     }
 
     // MARK: - Detail bindings
 
+    private static let opacitySliderWidth: CGFloat = 220
 
-    /// Theme dropdown matching the sidebar's right-click "Edit Theme" submenu:
-    /// a "Follow Global" entry, a divider, then every theme with its color
-    /// swatch; the current one is checkmarked. A `nil` selection = Follow Global.
-    private func themeControl(_ spaceId: String) -> some View {
-        Menu {
-            Picker("", selection: themeBinding(spaceId)) {
-                Label {
-                    Text(NSLocalizedString("Follow Global", comment: "Spaces settings - theme entry that clears the per-Space override"))
-                } icon: {
-                    Image(nsImage: .themeColorSwatch(for: ThemeManager.shared.currentTheme))
-                        .renderingMode(.original)
-                }
-                .tag(String?.none)
+    /// Inline theme swatch row mirroring the General pane's Color row: one
+    /// dot per built-in theme, the Space's resolved theme ringed with its
+    /// name captioned underneath. Compact sizing so all eight dots fit the
+    /// narrower detail card.
+    private func colorRow(_ spaceId: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Text(NSLocalizedString("Color", comment: "Spaces settings - theme color row label"))
+                .font(.system(size: 13))
+                .themedForeground(.textPrimary)
+                // The swatch row eats most of the card width; never let the
+                // label wrap into a vertical letter stack.
+                .lineLimit(1)
+                .fixedSize()
 
-                Divider()
+            Spacer(minLength: 8)
 
+            HStack(alignment: .top, spacing: 3) {
                 ForEach(ThemeManager.shared.orderedThemes, id: \.id) { theme in
-                    Label {
-                        Text(theme.name)
-                    } icon: {
-                        Image(nsImage: .themeColorSwatch(for: theme))
-                            .renderingMode(.original)
-                    }
-                    .tag(String?(theme.id))
+                    ThemeSwatchView(
+                        fillColor: theme == .pure
+                            ? .white
+                            : Color(theme.color(for: .themeColor, appearance: appearance)),
+                        ringColor: Color(theme.color(for: .themeColor, appearance: appearance)),
+                        selected: spaceThemeId == theme.id,
+                        title: theme.name,
+                        showsContrastBorder: theme == .pure,
+                        action: { selectTheme(theme.id, for: spaceId) }
+                    )
+                    .frame(width: 26)
                 }
             }
-            .pickerStyle(.inline)
-            .labelsHidden()
-        } label: {
-            HStack(spacing: 6) {
-                Image(nsImage: .themeColorSwatch(for: displayedTheme))
-                    .renderingMode(.original)
-                Text(displayedThemeName)
-                    .font(.system(size: 13))
-                    .themedForeground(.textPrimary)
-                    .lineLimit(1)
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 9, weight: .medium))
-                    .themedForeground(.textSecondary)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(Color.primary.opacity(0.06))
-            .clipShape(RoundedRectangle(cornerRadius: 6))
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func themeBinding(_ spaceId: String) -> Binding<String?> {
+    private func selectTheme(_ themeId: String, for spaceId: String) {
+        guard spaceThemeId != themeId else { return }
+        spaceThemeId = themeId
+        // For the default Space this also switches the global theme
+        // (SpaceManager keeps that invariant).
+        spaceManager.setTheme(forSpaceId: spaceId, themeId: themeId)
+        // The new theme's own alpha may differ; re-derive the slider (a
+        // custom per-Space opacity survives the switch).
+        syncThemeControls()
+    }
+
+    private func opacityBinding(_ spaceId: String) -> Binding<Double> {
         Binding(
-            get: { spacePinnedThemeId },
-            set: { newThemeId in
-                spacePinnedThemeId = newThemeId
-                spaceManager.setTheme(forSpaceId: spaceId, themeId: newThemeId)
+            get: { spaceOpacitySliderValue },
+            set: { newValue in
+                spaceOpacitySliderValue = newValue
+                let percent = OverlayOpacityScale.opacityPercent(forSlider: newValue)
+                spaceManager.setOverlayOpacity(
+                    CGFloat(percent / 100),
+                    forSpaceId: spaceId,
+                    appearance: ThemeManager.shared.currentAppearance
+                )
             }
         )
     }
 
-    /// The theme whose swatch/name the closed dropdown shows: the pinned theme,
-    /// or the current global theme when following global.
-    private var displayedTheme: Theme {
-        if let id = spacePinnedThemeId {
-            return ThemeManager.shared.registeredThemes[id]
-                ?? Theme.builtInThemes.first(where: { $0.id == id })
-                ?? ThemeManager.shared.currentTheme
-        }
-        return ThemeManager.shared.currentTheme
+    /// The gradient hue behind the opacity slider: the Space's resolved
+    /// overlay color (alpha is stripped by the track renderer).
+    private func opacitySliderTrackColor(_ spaceId: String) -> NSColor {
+        spaceManager.resolvedTheme(forSpaceId: spaceId)
+            .color(for: .windowOverlayBackground, appearance: appearance)
     }
 
-    private var displayedThemeName: String {
-        spacePinnedThemeId == nil
-            ? NSLocalizedString("Follow Global", comment: "Spaces settings - theme follows global label")
-            : displayedTheme.name
+    /// The selected Space's theme instance, for chrome derived from it
+    /// (the opacity slider's border color).
+    private var displayedTheme: Theme {
+        ThemeManager.shared.registeredThemes[spaceThemeId]
+            ?? Theme.builtInThemes.first(where: { $0.id == spaceThemeId })
+            ?? ThemeManager.shared.currentTheme
     }
 
     private func profileBinding(_ spaceId: String) -> Binding<String> {
@@ -562,10 +720,7 @@ struct SpacesSettingsView: View {
             format: NSLocalizedString("Change Profile to \u{201C}%@\u{201D}?", comment: "Title of the change-Space-profile confirmation"),
             profile.displayName
         )
-        alert.informativeText = NSLocalizedString(
-            "This Space's window will be reopened with the new profile and its open tabs will be reloaded there. Site logins won't carry over. Bookmarks stay with the Space; pinned tabs will be the new profile's.",
-            comment: "Body of the change-Space-profile confirmation"
-        )
+        alert.informativeText = changeProfileConfirmationBody
         alert.addButton(withTitle: NSLocalizedString("Change Profile", comment: "Confirm button of the change-Space-profile confirmation"))
         alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Cancel button"))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
@@ -579,15 +734,45 @@ struct SpacesSettingsView: View {
             format: NSLocalizedString("Delete \u{201C}%@\u{201D}?", comment: "Title of the delete-Space confirmation"),
             space.name
         )
-        alert.informativeText = NSLocalizedString(
-            "Bookmarks belonging to this Space will also be removed. This action cannot be undone.",
-            comment: "Body of the delete-Space confirmation"
-        )
+        alert.informativeText = deleteSpaceConfirmationBody
         alert.alertStyle = .warning
         alert.addButton(withTitle: NSLocalizedString("Delete", comment: "Destructive button"))
         alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Cancel button"))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         spaceManager.deleteSpace(spaceId: space.spaceId)
+    }
+
+    private var changeProfileConfirmationBody: String {
+        switch pinnedTabScope {
+        case .space:
+            return NSLocalizedString(
+                "This Space's window will be reopened with the new profile and its open tabs will be reloaded there. Site logins won't carry over. Bookmarks and pinned tabs stay with the Space.",
+                comment: "Body of the change-Space-profile confirmation with Space-scoped pinned tabs"
+            )
+        case .profile:
+            return NSLocalizedString(
+                "This Space's window will be reopened with the new profile and its open tabs will be reloaded there. Site logins won't carry over. Bookmarks stay with the Space; pinned tabs will be the new profile's.",
+                comment: "Body of the change-Space-profile confirmation with Profile-scoped pinned tabs"
+            )
+        case .app:
+            return NSLocalizedString(
+                "This Space's window will be reopened with the new profile and its open tabs will be reloaded there. Site logins won't carry over. Bookmarks stay with the Space; pinned tabs remain shared across the app.",
+                comment: "Body of the change-Space-profile confirmation with App-scoped pinned tabs"
+            )
+        }
+    }
+
+    private var deleteSpaceConfirmationBody: String {
+        if pinnedTabScope == .space {
+            return NSLocalizedString(
+                "Bookmarks and pinned tabs belonging to this Space will also be removed. This action cannot be undone.",
+                comment: "Body of the delete-Space confirmation with Space-scoped pinned tabs"
+            )
+        }
+        return NSLocalizedString(
+            "Bookmarks belonging to this Space will also be removed. This action cannot be undone.",
+            comment: "Body of the delete-Space confirmation"
+        )
     }
 }
 

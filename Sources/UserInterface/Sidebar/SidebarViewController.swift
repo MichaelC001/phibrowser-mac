@@ -9,6 +9,19 @@ import SwiftUI
 import Combine
 
 final class SpacesStripHostingView: ThemedHostingView {
+    /// Converts wheel scrolling over the strip row into pip viewport steps for
+    /// the hosted SpacesStripView (see SpacesStripWheelTracker), assigned by
+    /// the controller that builds the strip. Vertical scrolling is consumed
+    /// here so an overflowing row can be scrolled in place; horizontal
+    /// trackpad gestures fall through to the sidebar controller's
+    /// swipe-to-switch-Space handler up the responder chain.
+    var wheelTracker: SpacesStripWheelTracker?
+
+    override func scrollWheel(with event: NSEvent) {
+        if wheelTracker?.handle(event) == true { return }
+        super.scrollWheel(with: event)
+    }
+
     // Native AppKit tab groups can temporarily adjust titlebar/safe-area metrics
     // while their NSTabView/NSTabBar accessory is created or hidden. The Space
     // row is already positioned by SidebarHeaderView's fixed constraints, so its
@@ -141,15 +154,18 @@ class SidebarViewController: NSViewController {
         ?? SpaceManager.shared.createSlot(initialSpaceId: nil)
 
     private lazy var spacesStripHostingView: SpacesStripHostingView = {
+        let wheelTracker = SpacesStripWheelTracker()
         let hostingView = SpacesStripHostingView(
             rootView: SpacesStripView(
                 manager: SpaceManager.shared,
                 slot: spacesStripSlot,
                 rowHeight: SpacesStripView.sidebarHeight,
-                resolveOwnerController: { [weak state] in state?.windowController }
+                resolveOwnerController: { [weak state] in state?.windowController },
+                wheelTracker: wheelTracker
             ),
             themeSource: state.themeContext
         )
+        hostingView.wheelTracker = wheelTracker
         if #available(macOS 13.0, *) {
             hostingView.sizingOptions = []
         }
@@ -437,6 +453,7 @@ class SidebarViewController: NSViewController {
             spacesStripRowView = spacesStripHostingView
         }
 
+        tabList.enableContextMenuClickRouting()
         mainStackView.addArrangedSubview(tabList.view)
         tabList.view.snp.makeConstraints { make in
             make.leading.trailing.equalToSuperview()
@@ -478,6 +495,7 @@ class SidebarViewController: NSViewController {
     }
     
     private func setupFavoriteContainer() {
+        pinnedTabViewController.enableContextMenuClickRouting()
         pinnedTabContainerView.addSubview(pinnedTabViewController.view)
         pinnedTabViewController.view.snp.makeConstraints { make in
             make.edges.equalToSuperview()
@@ -947,6 +965,8 @@ class SidebarViewController: NSViewController {
             initialProfileId: initialProfileId
         ) { [weak self] in
             self?.dismissCreateSpaceOverlay()
+        } onThemeSelectionChange: { [weak self] theme in
+            self?.previewCreateSpaceOverlayTheme(theme)
         }
         // Keep the Spaces icon row visible above the form while creating. Force
         // it on so it shows even with a single Space (normally hidden — nothing
@@ -1001,6 +1021,7 @@ class SidebarViewController: NSViewController {
         host.view.alphaValue = 0
         createSpaceOverlay = host
         createSpaceOverlayBackdrop = backdrop
+        themeBeforeCreateSpacePreview = state.themeContext.currentTheme
         // Mark the create flow active: the strip stays visible above the form
         // for reference, so its pip clicks are disabled (a switch would swap the
         // form's window away) while hover info keeps working — see
@@ -1014,11 +1035,33 @@ class SidebarViewController: NSViewController {
         }
     }
 
+    /// The window theme in effect when the create-Space form opened, restored
+    /// on dismiss so cancelling drops the preview. Creating restores it too,
+    /// then immediately activates the new Space, which re-applies its real
+    /// theme in the same runloop turn — no visible flash of the old theme.
+    private var themeBeforeCreateSpacePreview: Theme?
+
+    /// Previews the theme picked in the create-Space form across the whole
+    /// window — applied to the same window-scoped context a Space switch
+    /// re-themes, so the titlebar, strip, and overlay backdrop all show
+    /// exactly what the new Space will look like.
+    private func previewCreateSpaceOverlayTheme(_ theme: Theme) {
+        guard createSpaceOverlay != nil else { return }
+        state.themeContext.setTheme(theme)
+    }
+
     func dismissCreateSpaceOverlay() {
         guard let host = createSpaceOverlay else { return }
         let backdrop = createSpaceOverlayBackdrop
         createSpaceOverlay = nil
         createSpaceOverlayBackdrop = nil
+        // Drop the theme preview. On create, `CreateSpacePanel.create` activates
+        // the new Space right after this call, re-theming the window to the
+        // Space's real theme within the same runloop turn.
+        if let saved = themeBeforeCreateSpacePreview {
+            themeBeforeCreateSpacePreview = nil
+            state.themeContext.setTheme(saved)
+        }
         spacesStripSlot.isCreatingSpace = false
         // Release the forced strip visibility. A Space just created leaves the
         // count > 1, so the row stays; a cancel from a single Space re-hides it.

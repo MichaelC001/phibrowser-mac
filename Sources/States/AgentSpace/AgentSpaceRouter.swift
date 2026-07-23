@@ -12,14 +12,17 @@ import Foundation
 /// Kensington extension and — with senderId "cdp" — from remote-debugging
 /// clients through the PhiAgentSpace CDP domain.
 enum AgentSpaceRouter {
-    private static func json(_ payload: String) -> [String: Any]? {
+    // These helpers are shared with the management handlers in
+    // AgentSpaceRouter+Management.swift (internal, not private, for that
+    // reason only — they are not meant as general-purpose API).
+    static func json(_ payload: String) -> [String: Any]? {
         guard let data = payload.data(using: .utf8),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return nil }
         return obj
     }
 
-    private static func origin(for context: ExtensionMessageContext) -> AgentTaskOrigin {
+    static func origin(for context: ExtensionMessageContext) -> AgentTaskOrigin {
         context.senderId == "cdp" ? .cdp : .phiAgent
     }
 
@@ -32,15 +35,21 @@ enum AgentSpaceRouter {
     /// Doubles as the keep-alive heartbeat: every task-scoped message from the
     /// owning driver passes through here, so an authorized caller refreshes the
     /// task's expiry as a side effect — the driver is evidently alive. Explicit
-    /// TTL control stays with `agentSpace.ping`.
-    private static func callerMayControl(
-        taskId: String, context: ExtensionMessageContext
+    /// TTL control stays with `agentSpace.ping`. `touchKeepAlive: false` keeps
+    /// the origin gate but skips the refresh, for traffic that proves the
+    /// SESSION is alive without proving anyone is still driving (the session
+    /// mirror's prose) — such traffic must not extend an idle Space's life.
+    static func callerMayControl(
+        taskId: String, context: ExtensionMessageContext,
+        touchKeepAlive: Bool = true
     ) -> Bool {
         MainActor.assumeIsolated {
             guard AgentSpaceManager.shared.origin(forTaskId: taskId) == origin(for: context) else {
                 return false
             }
-            AgentSpaceManager.shared.touchKeepAlive(taskId: taskId)
+            if touchKeepAlive {
+                AgentSpaceManager.shared.touchKeepAlive(taskId: taskId)
+            }
             return true
         }
     }
@@ -79,24 +88,61 @@ enum AgentSpaceRouter {
                 ?? (obj["profileName"] as? String)
                 ?? ""
             let persistent = obj["persistent"] as? Bool ?? false
-            AgentSpaceManager.shared.createAgentSpace(
-                taskId: taskId,
-                profileName: profileName,
-                origin: taskOrigin,
-                persistent: persistent
-            ) { spaceId, windowId in
-                var replyObject: [String: Any]?
-                if let spaceId, let windowId {
-                    replyObject = ["ok": true, "spaceId": spaceId, "windowId": windowId]
+            // Per-profile agent-Space permission (Settings ▸ Developer ▸ Agent
+            // permissions): refuse creation in a profile the user disallows.
+            // An empty request resolves to the first allowed profile, so the
+            // agent's default never lands on a blocked one; an explicit request
+            // for a blocked profile is refused. The resolved profileId is
+            // passed on so create binds exactly what the permission approved.
+            let agentName = context.agentName
+            let proceedCreate: @MainActor (String) -> Void = { resolvedProfileName in
+                AgentSpaceManager.shared.createAgentSpace(
+                    taskId: taskId,
+                    profileName: resolvedProfileName,
+                    origin: taskOrigin,
+                    persistent: persistent,
+                    agentName: agentName
+                ) { spaceId, windowId in
+                    var replyObject: [String: Any]?
+                    if let spaceId, let windowId {
+                        replyObject = ["ok": true, "spaceId": spaceId, "windowId": windowId]
+                    }
+                    if let replyObject,
+                       let data = try? JSONSerialization.data(withJSONObject: replyObject),
+                       let reply = String(data: data, encoding: .utf8) {
+                        ExtensionMessaging.shared.sendResponse(reply, requestId: requestId)
+                    } else {
+                        ExtensionMessaging.shared.sendResponse(
+                            "{\"ok\":false,\"error\":\"create_failed\"}",
+                            requestId: requestId)
+                    }
                 }
-                if let replyObject,
-                   let data = try? JSONSerialization.data(withJSONObject: replyObject),
-                   let reply = String(data: data, encoding: .utf8) {
-                    ExtensionMessaging.shared.sendResponse(reply, requestId: requestId)
-                } else {
-                    ExtensionMessaging.shared.sendResponse(
-                        "{\"ok\":false,\"error\":\"create_failed\"}",
-                        requestId: requestId)
+            }
+
+            switch AgentSpaceManager.shared.resolveAgentCreateProfile(profileName: profileName) {
+            case .allowed(let profile):
+                proceedCreate(profile.profileId)
+            case .blocked:
+                ExtensionMessaging.shared.sendResponse(
+                    "{\"ok\":false,\"error\":\"profile_not_agent_allowed\"}",
+                    requestId: requestId)
+            case .noMatch:
+                // Unknown profile — let createAgentSpace surface its own failure
+                // (persistent re-bind may still match by taskId).
+                proceedCreate(profileName)
+            case .needsTemporary:
+                // The user left the agent no usable profile — create/reuse a
+                // dedicated one and bind the Space to it.
+                AgentSpaceManager.shared.ensureAgentFallbackProfile { profileId in
+                    MainActor.assumeIsolated {
+                        guard let profileId else {
+                            ExtensionMessaging.shared.sendResponse(
+                                "{\"ok\":false,\"error\":\"create_failed\"}",
+                                requestId: requestId)
+                            return
+                        }
+                        proceedCreate(profileId)
+                    }
                 }
             }
         }
@@ -111,7 +157,15 @@ enum AgentSpaceRouter {
             // call can't rely on profile UI having populated the cache.
             ProfileManager.shared.refresh()
             return ProfileManager.shared.profiles.map {
-                ["profileId": $0.profileId, "displayName": $0.displayName]
+                [
+                    "profileId": $0.profileId,
+                    "displayName": $0.displayName,
+                    // Whether the agent may create a Space in this profile
+                    // (Settings ▸ Developer ▸ Agent permissions). A create
+                    // targeting a profile with false is refused.
+                    "agentSpacesAllowed":
+                        PhiPreferences.AgentSpaces.isProfileAgentSpaceAllowed($0.profileId),
+                ]
             }
         }
         guard let data = try? JSONSerialization.data(withJSONObject: ["profiles": profiles]),
@@ -158,6 +212,12 @@ enum AgentSpaceRouter {
                     "caption": task.statusCaption,
                     "keepAliveRemainingSeconds": keepAliveRemaining,
                     "persistent": task.persistent,
+                    // Undrained console commands (see `agentSpace.readUserMessages`)
+                    // so passive status reads surface pending user input for free.
+                    "pendingUserMessages":
+                        AgentSpaceManager.shared.pendingUserMessageCount(taskId: task.taskId),
+                    // The resolved driving-agent identity that badges the Space.
+                    "agentName": task.agentName,
                 ]
             }
         }
@@ -229,6 +289,117 @@ enum AgentSpaceRouter {
                 taskId: taskId, kind: kind, point: point, size: size, dy: dy)
         }
         return ok()
+    }
+
+    /// `agentSpace.log` — lines for the task's live transcript console, one
+    /// at top level (`text`) or batched (`entries`, oldest first — the session
+    /// forwarder flushes each batch as ONE call so delivery is all-or-nothing
+    /// and a mid-batch failure can't duplicate an already-delivered prefix).
+    /// Fire-and-forget from the driver, like `agentSpace.effect`: cosmetic,
+    /// never load-bearing for the primitive that emitted it. The origin gate
+    /// also means one driver cannot spoof lines into another's console.
+    /// `touch: false` marks mirror traffic that must not refresh keep-alive
+    /// (see `callerMayControl`).
+    static func handleLog(context: ExtensionMessageContext) -> String? {
+        guard let obj = json(context.payload),
+              let taskId = obj["taskId"] as? String else { return invalid() }
+        let items: [[String: Any]]
+        if let batch = obj["entries"] as? [[String: Any]] {
+            items = Array(batch.prefix(Self.maxLogBatchEntries))
+        } else if obj["text"] is String {
+            items = [obj]
+        } else {
+            return invalid()
+        }
+        let touch = obj["touch"] as? Bool ?? true
+        guard callerMayControl(taskId: taskId, context: context,
+                               touchKeepAlive: touch) else { return unknownTask() }
+        MainActor.assumeIsolated {
+            for item in items {
+                guard let text = item["text"] as? String else { continue }
+                // Mirror turn edges drive a live tail row; they replace one
+                // another and deliberately never enter transcript history.
+                if item["kind"] as? String == "activity" {
+                    if item["agent"] as? String == "codex",
+                       let activity = CodexTranscriptActivity(rawValue: text) {
+                        AgentTranscriptStore.shared.setCodexActivity(
+                            taskId: taskId, activity: activity)
+                    }
+                    if item["agent"] as? String == "claude",
+                       let activity = ClaudeTranscriptActivity(payloadText: text) {
+                        AgentTranscriptStore.shared.setClaudeActivity(
+                            taskId: taskId, activity: activity)
+                    }
+                    // Activity is a control record reserved for the mirrored
+                    // CLIs' transient tail rows. Drop the kind for every
+                    // other origin instead of degrading it into a visible
+                    // action line.
+                    continue
+                }
+                var kind = AgentTranscriptEntry.Kind(rawValue: item["kind"] as? String ?? "")
+                    ?? .action
+                // `status` and `round` are app lifecycle lines (ownership
+                // flips, round edges) — reserved so a driver cannot forge
+                // "You took control"-style entries in its console.
+                if kind == .status || kind == .round { kind = .action }
+                let agent = item["agent"] as? String
+                // Pairing metadata is reserved for Pi tool cards. Other
+                // agents retain append-only transcript semantics even if a
+                // caller sends similarly named fields.
+                let isPiTool = agent == "pi" && kind == .tool
+                AgentSpaceManager.shared.appendTranscript(
+                    taskId: taskId, kind: kind, text: text,
+                    detail: item["detail"] as? String,
+                    agent: agent,
+                    piToolCallId: isPiTool ? item["sourceId"] as? String : nil,
+                    piToolState: isPiTool
+                        ? (item["toolState"] as? String).flatMap(
+                            PiTranscriptToolState.init(rawValue:))
+                        : nil,
+                    timestamp: Self.clampedLogTimestamp(item["ts"] as? Double))
+            }
+        }
+        return ok()
+    }
+
+    /// Ceiling well above the forwarder's per-run cap; a runaway batch is
+    /// truncated, not rejected (the console is cosmetic).
+    private static let maxLogBatchEntries = 200
+
+    /// Optional source timestamp (epoch ms), so a mirrored session line
+    /// forwarded after the fact sorts by when it was really authored. Trusted
+    /// for ORDER, not range: an absurd epoch would pin the line to the top or
+    /// bottom of the time-sorted feed forever, so clamp to a sane window
+    /// (a day of backfill behind, a couple of minutes of clock skew ahead).
+    private static func clampedLogTimestamp(_ epochMs: Double?) -> Date {
+        guard let epochMs else { return Date() }
+        let now = Date()
+        let ts = Date(timeIntervalSince1970: epochMs / 1000)
+        return min(max(ts, now.addingTimeInterval(-86400)), now.addingTimeInterval(120))
+    }
+
+    /// `agentSpace.readUserMessages` — hand the driver the commands the user
+    /// typed into the console since the last drain, emptying the queue. The
+    /// skill drains at round boundaries; `agentSpace.userMessage` broadcasts
+    /// wake a live round, but this queue is what guarantees delivery.
+    static func handleReadUserMessages(context: ExtensionMessageContext) -> String? {
+        guard let obj = json(context.payload),
+              let taskId = obj["taskId"] as? String else { return invalid() }
+        guard callerMayControl(taskId: taskId, context: context) else { return unknownTask() }
+        let messages = MainActor.assumeIsolated {
+            AgentSpaceManager.shared.drainUserMessages(taskId: taskId).map {
+                [
+                    "id": $0.id.uuidString,
+                    "text": $0.text,
+                    "ts": Int($0.ts.timeIntervalSince1970 * 1000),
+                ] as [String: Any]
+            }
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: ["messages": messages]),
+              let reply = String(data: data, encoding: .utf8) else {
+            return "{\"messages\":[]}"
+        }
+        return reply
     }
 
     static func handleMarkError(context: ExtensionMessageContext) -> String? {
@@ -346,7 +517,7 @@ enum AgentSpaceRouter {
         return ok()
     }
 
-    private static func ok() -> String { "{\"ok\":true}" }
-    private static func invalid() -> String { "{\"ok\":false,\"error\":\"invalid_payload\"}" }
-    private static func unknownTask() -> String { "{\"ok\":false,\"error\":\"unknown_task\"}" }
+    static func ok() -> String { "{\"ok\":true}" }
+    static func invalid() -> String { "{\"ok\":false,\"error\":\"invalid_payload\"}" }
+    static func unknownTask() -> String { "{\"ok\":false,\"error\":\"unknown_task\"}" }
 }

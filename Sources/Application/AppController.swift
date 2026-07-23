@@ -40,7 +40,12 @@ import PostHog
     /// Defer forwarding cold-launch URLs until Chromium session restore registers
     /// the first tabbed `Browser` (see `OpenUrlsInBrowserWithProfile`).
     private static let coldOpenURLForwardDelay: TimeInterval = 0.5
+    /// Upper bound on cold-open forward deferrals (attempts × delay ≈ 4s).
+    /// After that the URLs are forwarded regardless of readiness — a late,
+    /// possibly unrouted open beats silently dropping the user's link.
+    private static let coldOpenURLForwardMaxAttempts = 8
     private var coldOpenURLForwardWorkItem: DispatchWorkItem?
+    private var coldOpenURLForwardAttempts = 0
     private var pendingColdOpenForwardURLs: [URL] = []
     private var pendingOpenURLsAwaitingLoginStatus: [URL] = []
     /// Cached in `applicationWillFinishLaunching`; weak — owned by `ChromiumLauncher`, not AppController.
@@ -78,9 +83,13 @@ import PostHog
         SentryService.setup()
         
         MemoryUsageMonitor.shared.start()
-        
+
         DefaultExtensionManifestWriter.start()
         FeedbackOutboxUploader.shared.start()
+
+        // Start the agent CDP socket listener when the user has enabled agent
+        // browser control (Settings ▸ Developer ▸ Remote debugging).
+        AgentCDPListener.shared.startIfEnabled()
         
         NotificationCenter.default.addObserver(self,
                                                selector: #selector(phiWillTryToTerminateApplicationNotification(_:)),
@@ -159,6 +168,7 @@ import PostHog
         coldOpenURLForwardWorkItem = nil
         AppLogInfo("-------applicationWillTerminate----")
         MemoryUsageMonitor.shared.stop()
+        AgentCDPListener.shared.stop()
         if let chromiumBridge {
             chromiumBridge.applicationWillTerminate(notification)
         } else {
@@ -257,21 +267,35 @@ import PostHog
         }
     }
 
-    /// Forwards `application(_:open:)` URLs to Chromium. Cold launch defers ~600ms so
-    /// `StartupBrowserCreator` / session restore can register a browser before
-    /// `PhiOpenUrlsInBrowser` would otherwise call `Browser::Create` again.
+    /// Forwards `application(_:open:)` URLs to Chromium once the app can
+    /// honor Space URL rules for them: a browser window is registered (so
+    /// `PhiOpenUrlsInBrowser` doesn't call `Browser::Create` against a
+    /// mid-restore session) AND the initial rule snapshot has been pushed to
+    /// Chromium's routing table (forwarding earlier would resolve the URL
+    /// against an empty table and open it unrouted in the last-active
+    /// window). Cold launch retries in `coldOpenURLForwardDelay` steps up to
+    /// `coldOpenURLForwardMaxAttempts`, then forwards anyway.
     private func scheduleForwardOpenURLsToChromium(application: NSApplication, urls: [URL]) {
-        let manager = MainBrowserWindowControllersManager.shared
-        if manager.getFirstAvailableWindowId() != nil {
+        if isReadyToForwardOpenURLs {
             let urlsToForward = pendingColdOpenForwardURLs + urls
             pendingColdOpenForwardURLs.removeAll()
             coldOpenURLForwardWorkItem?.cancel()
             coldOpenURLForwardWorkItem = nil
+            coldOpenURLForwardAttempts = 0
             forwardOpenURLsToChromium(application: application, urls: urlsToForward, label: "immediate")
             return
         }
 
         pendingColdOpenForwardURLs.append(contentsOf: urls)
+        scheduleColdOpenForwardRetry(application: application)
+    }
+
+    private var isReadyToForwardOpenURLs: Bool {
+        MainBrowserWindowControllersManager.shared.getFirstAvailableWindowId() != nil
+            && SpaceManager.shared.hasLoadedURLRules
+    }
+
+    private func scheduleColdOpenForwardRetry(application: NSApplication) {
         guard coldOpenURLForwardWorkItem == nil else {
             AppLogDebug("[coldopen] urls appended to pending bridge forward queue")
             return
@@ -280,13 +304,21 @@ import PostHog
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
             self.coldOpenURLForwardWorkItem = nil
+            self.coldOpenURLForwardAttempts += 1
+            if !self.isReadyToForwardOpenURLs,
+               self.coldOpenURLForwardAttempts < Self.coldOpenURLForwardMaxAttempts {
+                self.scheduleColdOpenForwardRetry(application: application)
+                return
+            }
+            let label = self.isReadyToForwardOpenURLs ? "deferred" : "deferred-timeout"
             let urlsToForward = self.pendingColdOpenForwardURLs
             self.pendingColdOpenForwardURLs.removeAll()
-            self.forwardOpenURLsToChromium(application: application, urls: urlsToForward, label: "deferred-600ms")
+            self.coldOpenURLForwardAttempts = 0
+            self.forwardOpenURLsToChromium(application: application, urls: urlsToForward, label: label)
         }
         coldOpenURLForwardWorkItem = work
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.coldOpenURLForwardDelay, execute: work)
-        AppLogDebug("[coldopen] urls call bridge scheduled in \(Self.coldOpenURLForwardDelay)s")
+        AppLogDebug("[coldopen] urls call bridge scheduled in \(Self.coldOpenURLForwardDelay)s (attempt \(coldOpenURLForwardAttempts + 1)/\(Self.coldOpenURLForwardMaxAttempts))")
     }
 
     private func forwardOpenURLsToChromium(application: NSApplication, urls: [URL], label: String) {

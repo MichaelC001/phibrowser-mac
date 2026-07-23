@@ -466,6 +466,9 @@ class BrowserState {
     
     private func makePinnedTab(from model: TabDataModel) -> Tab {
         let tab = Tab(with: model)
+        // App-scoped rows intentionally have no persisted profile owner, but
+        // a runtime tab still opens inside this window's Chromium profile.
+        tab.profileId = profileId
         if let guid = tab.guidInLocalDB {
             tab.setFaviconSnapshotUpdater { [weak self] data in
                 self?.localStore.updateTabFavicon(guid, favicon: data)
@@ -475,6 +478,8 @@ class BrowserState {
     }
     
     private func syncPinnedTabMetadata(_ existing: Tab, from localTab: Tab) {
+        existing.pinnedLineageId = localTab.pinnedLineageId
+        existing.pinnedCreatedDate = localTab.pinnedCreatedDate
         let persistedURL = localTab.pinnedUrl ?? localTab.url
         if existing.pinnedUrl != persistedURL {
             existing.pinnedUrl = persistedURL
@@ -497,7 +502,7 @@ class BrowserState {
         if existing.index != localTab.index {
             existing.setIndex(localTab.index)
         }
-        existing.profileId = localTab.profileId
+        existing.profileId = profileId
 
         if existing.splitPartnerGuid != localTab.splitPartnerGuid {
             existing.splitPartnerGuid = localTab.splitPartnerGuid
@@ -505,6 +510,12 @@ class BrowserState {
 
         if existing.lastSeen != localTab.lastSeen {
             existing.lastSeen = localTab.lastSeen
+        }
+
+        existing.allowsProfileScopedFaviconPersistence = localTab.allowsProfileScopedFaviconPersistence
+
+        if existing.cachedFaviconData != localTab.cachedFaviconData {
+            existing.hydrateCachedFaviconData(localTab.cachedFaviconData)
         }
 
         if !existing.isOpenned {
@@ -552,7 +563,7 @@ class BrowserState {
             }
             .store(in: &cancellables)
 
-        localStore.pinnedTabsPublisher(for: profileId)
+        localStore.pinnedTabsPublisher(for: profileId, spaceId: spaceId)
             .sink { [weak self] (localTabs: [TabDataModel]) in
                 guard let self else { return }
                 self.handlePinnedTabsChanged(localTabs.map { self.makePinnedTab(from: $0) })
@@ -565,7 +576,7 @@ class BrowserState {
             pinnedTabs = []
             return
         }
-        let localTabs: [TabDataModel] = localStore.getAllPinnedTabs(for: profileId)
+        let localTabs: [TabDataModel] = localStore.getAllPinnedTabs(for: profileId, spaceId: spaceId)
         pinnedTabs = localTabs.map { makePinnedTab(from: $0) }
 
         for pinnedTab in pinnedTabs {
@@ -584,8 +595,14 @@ class BrowserState {
             pinnedTabs = []
             return
         }
-        pinnedTabs = localTabs.map { localTab in
-            if let existing = pinnedTabs.first(where: { $0.guidInLocalDB == localTab.guidInLocalDB }) {
+        let existingTabs = pinnedTabs
+        let scopeSyncMatches = pinnedTabScopeSyncMatches(
+            localTabs: localTabs,
+            existingTabs: existingTabs
+        )
+        pinnedTabs = localTabs.enumerated().map { index, localTab in
+            if let existing = scopeSyncMatches[index] {
+                rebindPinnedTabAfterScopeMigrationIfNeeded(existing, to: localTab)
                 syncPinnedTabMetadata(existing, from: localTab)
                 return existing
             }
@@ -3148,7 +3165,7 @@ class BrowserState {
                 migrateAIChatTab(for: opennedTab, toNewIdentifier: nil)
 
                 clearPinnedSplitPartnerReference(forPinnedGuid: opennedTab.guidInLocalDB)
-                localStore.removePinnedTab(opennedTab)
+                localStore.removePinnedTab(opennedTab, profileId: profileId, spaceId: spaceId)
                 opennedTab.guidInLocalDB = nil
                 if let wrapper = opennedTab.webContentWrapper {
                     wrapper.updateTabCustomValue("")
@@ -3179,7 +3196,7 @@ class BrowserState {
                 return
             }
             clearPinnedSplitPartnerReference(forPinnedGuid: pinnedTab.guidInLocalDB)
-            localStore.removePinnedTab(pinnedTab)
+            localStore.removePinnedTab(pinnedTab, profileId: profileId, spaceId: spaceId)
             createTab(pinnedTab.url ?? "", customGuid: nil, focusAfterCreate: false)
         }
     }
@@ -4786,7 +4803,7 @@ class BrowserState {
             after = tab.guidInLocalDB
         }
 
-        localStore.moveOrCreatePinnedTab(tab, after: after, profileId: profileId)
+        localStore.moveOrCreatePinnedTab(tab, after: after, profileId: profileId, spaceId: spaceId)
 //        if !tab.isOpenned {
 //            openOrFocusPinnedTab(tab)
 //        }
@@ -4831,8 +4848,8 @@ class BrowserState {
             ? rest[restIndex - 1].guidInLocalDB
             : nil
 
-        localStore.moveOrCreatePinnedTab(firstPane, after: afterFirstPane, profileId: profileId)
-        localStore.moveOrCreatePinnedTab(secondPane, after: firstPane.guidInLocalDB, profileId: profileId)
+        localStore.moveOrCreatePinnedTab(firstPane, after: afterFirstPane, profileId: profileId, spaceId: spaceId)
+        localStore.moveOrCreatePinnedTab(secondPane, after: firstPane.guidInLocalDB, profileId: profileId, spaceId: spaceId)
     }
     
     private func normalTabTransferUnits(tabIds: [Int]) -> [Tab] {
@@ -5001,12 +5018,44 @@ class BrowserState {
         let newGuid = UUID().uuidString
         migrateAIChatTab(for: tab, toNewIdentifier: newGuid)
 
-        localStore.moveOrCreatePinnedTab(tab, after: afterGuid, profileId: profileId, newGuid: newGuid)
+        localStore.moveOrCreatePinnedTab(tab, after: afterGuid, profileId: profileId, spaceId: spaceId, newGuid: newGuid)
         tab.guidInLocalDB = newGuid
         if let wrapper = tab.webContentWrapper {
             wrapper.updateTabCustomValue(newGuid)
         }
         return newGuid
+    }
+
+    /// Applies identifiers that were already committed by the target owner's
+    /// atomic cross-window pin transaction. Keeping this preparation beside the
+    /// ordinary pin path preserves opener repair, tab-group detachment, and the
+    /// existing AI-chat identifier migration without publishing a guid that
+    /// does not exist in storage yet.
+    @MainActor
+    func applyCrossWindowPinnedIdentifiers(
+        _ guidByTabId: [Int: String],
+        splitId: String?
+    ) {
+        for tab in tabs where guidByTabId[tab.guid] != nil {
+            guard let newGuid = guidByTabId[tab.guid] else { continue }
+            detachNormalTabFromGroupForPinning(tab)
+            let affectedChildren = nativeRelationGraph.directChildren(of: tab.guid)
+            nativeRelationGraph.fixOpenersAfterMovingTab(tab.guid)
+            for childId in affectedChildren {
+                nativeRelationGraph.locallyFixedOpenerTabIds.insert(childId)
+            }
+            migrateAIChatTab(for: tab, toNewIdentifier: newGuid)
+            tab.guidInLocalDB = newGuid
+            if splitId != nil {
+                tab.isPinned = true
+            }
+            tab.webContentWrapper?.updateTabCustomValue(newGuid)
+        }
+        if let splitId,
+           let splitIndex = splits.firstIndex(where: { $0.id == splitId }) {
+            splits[splitIndex].isPinned = true
+            updateNormalTabs()
+        }
     }
     
     func movePinnedTabOut(pinnedGuid: String, to normalIndex: Int, selectAfterMove: Bool = false) {
@@ -5073,7 +5122,7 @@ class BrowserState {
             ChromiumLauncher.sharedInstance().bridge?.createNewTab(withUrl: pinnedTab.url ?? "", at: -1, windowId: windowId, customGuid: nil)
         }
 
-        localStore.removePinnedTab(pinnedTab)
+        localStore.removePinnedTab(pinnedTab, profileId: profileId, spaceId: spaceId)
     }
 
     /// Unpins both panes of a live pinned split into the normal tab list,
@@ -5147,8 +5196,8 @@ class BrowserState {
         handlePinned.splitPartnerGuid = nil
         partnerPinned.splitPartnerGuid = nil
 
-        localStore.removePinnedTab(handlePinned)
-        localStore.removePinnedTab(partnerPinned)
+        localStore.removePinnedTab(handlePinned, profileId: profileId, spaceId: spaceId)
+        localStore.removePinnedTab(partnerPinned, profileId: profileId, spaceId: spaceId)
 
         if let group = existingGroup {
             moveSplit(group.id, toIndex: insertIndex)
@@ -5405,7 +5454,7 @@ class BrowserState {
         }
 
         // Remove the persisted pinned entry after the Chromium tab is converted back.
-        localStore.removePinnedTab(pinnedTab)
+        localStore.removePinnedTab(pinnedTab, profileId: profileId, spaceId: spaceId)
 
         // Rebuild normal tabs after the move completes.
         updateNormalTabs()
@@ -5514,8 +5563,8 @@ class BrowserState {
             }
         }
 
-        localStore.removePinnedTab(handlePinned)
-        localStore.removePinnedTab(partnerPinned)
+        localStore.removePinnedTab(handlePinned, profileId: profileId, spaceId: spaceId)
+        localStore.removePinnedTab(partnerPinned, profileId: profileId, spaceId: spaceId)
 
         updateNormalTabs()
     }
@@ -5564,7 +5613,7 @@ class BrowserState {
         let tempTab = Tab(guid: -1, url: url, isActive: false, index: 0, title: bookmark.title, customGuid: nil)
         
         // Create the new pinned-tab entry in local storage.
-        localStore.moveOrCreatePinnedTab(tempTab, after: afterGuid, profileId: profileId, newGuid: newPinnedGuid)
+        localStore.moveOrCreatePinnedTab(tempTab, after: afterGuid, profileId: profileId, spaceId: spaceId, newGuid: newPinnedGuid)
         
         // If the bookmark is already open, retarget the live Chromium tab as well.
         if realBookmark.isOpened, let chromiumTab = tabs.first(where: { $0.guidInLocalDB == bookmark.guid }) {
@@ -5858,8 +5907,8 @@ class BrowserState {
             partnerPinned.splitPartnerGuid = nil
             localStore.updateTabSplitPartner(pinnedGuid, partnerGuid: nil)
             localStore.updateTabSplitPartner(partnerGuid, partnerGuid: nil)
-            localStore.removePinnedTab(pinnedTab)
-            localStore.removePinnedTab(partnerPinned)
+            localStore.removePinnedTab(pinnedTab, profileId: profileId, spaceId: spaceId)
+            localStore.removePinnedTab(partnerPinned, profileId: profileId, spaceId: spaceId)
             openTwoURLsAsSplit(primaryURL: url,
                                secondaryURL: partnerURL,
                                groupToken: tokenHex,
@@ -5879,7 +5928,7 @@ class BrowserState {
             insertIntoNormalTabOrder(tabGuid: normalTab.guid,
                                      at: normalTabsIndex,
                                      syncChromiumOrder: true)
-            localStore.removePinnedTab(pinnedTab)
+            localStore.removePinnedTab(pinnedTab, profileId: profileId, spaceId: spaceId)
 
             let tabIds = [NSNumber(value: Int64(normalTab.guid))]
             bridge.addTabsToGroup(withWindowId: windowId.int64Value,
@@ -5894,7 +5943,7 @@ class BrowserState {
                                     url: url,
                                     groupIndex: groupIndex,
                                     focusAfterCreate: focusAfterCreate)
-            localStore.removePinnedTab(pinnedTab)
+            localStore.removePinnedTab(pinnedTab, profileId: profileId, spaceId: spaceId)
         }
 
         return true
@@ -5981,8 +6030,8 @@ class BrowserState {
         let primaryTempTab = Tab(guid: -1, url: primaryURL, isActive: false, index: 0, title: primaryTitle, customGuid: nil)
         let secondaryTempTab = Tab(guid: -1, url: secondaryURL, isActive: false, index: 0, title: secondaryTitle, customGuid: nil)
 
-        localStore.moveOrCreatePinnedTab(primaryTempTab, after: afterGuid, profileId: profileId, newGuid: primaryPinnedGuid)
-        localStore.moveOrCreatePinnedTab(secondaryTempTab, after: primaryPinnedGuid, profileId: profileId, newGuid: secondaryPinnedGuid)
+        localStore.moveOrCreatePinnedTab(primaryTempTab, after: afterGuid, profileId: profileId, spaceId: spaceId, newGuid: primaryPinnedGuid)
+        localStore.moveOrCreatePinnedTab(secondaryTempTab, after: primaryPinnedGuid, profileId: profileId, spaceId: spaceId, newGuid: secondaryPinnedGuid)
 
         persistPinnedSplitPair(primaryDB: primaryPinnedGuid, secondaryDB: secondaryPinnedGuid)
 

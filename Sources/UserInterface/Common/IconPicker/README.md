@@ -8,6 +8,23 @@
 The picker does not parse Unicode metadata at runtime. Runtime code only decodes
 the bundled JSON catalog through `EmojiCatalog`.
 
+## Phi Icon Identity
+
+Phi icon assets use semantic image-set names such as `phi-icon-mail` and
+`phi-icon-view-grid-add`. `PhiIconCatalog` is the single mapping between the
+trailing Figma component name, the asset name, and the numbered asset name used
+by older releases.
+
+The numbered compatibility mapping is based on matching the artwork, not the
+current Figma order. `IconPickerSelection.fromStorageValue` converts stored
+values such as `phi:phi-icon-1` into the current semantic ID before rendering,
+so existing Space records keep the same visible icon.
+
+Character component names use file-safe asset slugs to avoid colliding with
+legacy numbered IDs. For example, Figma names `1`, `A`, and `?` map to
+`phi-icon-number-1`, `phi-icon-letter-a`, and
+`phi-icon-question-mark`.
+
 ## Emoji Metadata Source
 
 Emoji metadata is generated from Unicode's official `emoji-test.txt` file:

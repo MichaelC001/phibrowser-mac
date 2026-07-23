@@ -11,6 +11,12 @@ import SwiftUI
 /// Container for managing multiple WebContentViewController instances (one per tab)
 /// Also manages the global topBarView (TabStrip) for traditional layout mode
 class WebContentContainerViewController: NSViewController {
+    private final class TitlebarAwareView: NSView, TitlebarAwareHitTestable {
+        func shouldConsumeHitTest(at point: NSPoint) -> Bool {
+            false
+        }
+    }
+
     weak var browserState: BrowserState?
     private var cancellables = Set<AnyCancellable>()
     private var isSubscriptionsSetup = false
@@ -213,8 +219,11 @@ class WebContentContainerViewController: NSViewController {
         static let floatingSidebar: CGFloat = 1100
     }
     
-    /// Titlebar aware area for handling double-click on titlebar
+    /// Single window-level region for titlebar drag and double-click handling.
+    /// Child tab and placeholder controllers must not add their own copies:
+    /// those overlays stack above the page when performance mode hides its header.
     private var titleAwareArea = TitlebarAwareView()
+    private var titleAwareAreaHeightConstraint: Constraint?
     
     /// Left-edge hover trigger for showing floating sidebar when main sidebar is collapsed.
     lazy var floatingSidebarTriggerView = MouseTrackingAreaView()
@@ -236,6 +245,11 @@ class WebContentContainerViewController: NSViewController {
     var isPointerInsideFloatingSidebarTrigger = false
     /// Tracks the last non-zero sidebar width so the floating panel can match it after collapse.
     var lastKnownSidebarWidth: CGFloat = 0
+
+    /// The docked agent console currently hosted by this window, if any.
+    /// Owned by `AgentTranscriptPanelController`; see `attachTranscriptDock`.
+    private(set) var transcriptDockView: AgentTranscriptDockView?
+    private var transcriptDockEdge: AgentTranscriptDockEdge?
     
     // MARK: - Initialization
     
@@ -344,7 +358,11 @@ class WebContentContainerViewController: NSViewController {
         view.addSubview(titleAwareArea)
         titleAwareArea.snp.makeConstraints { make in
             make.leading.trailing.top.equalToSuperview()
-            make.height.equalTo(12)
+            titleAwareAreaHeightConstraint = make.height.equalTo(
+                WebContentConstant.titleAwareAreaHeight(
+                    for: PhiPreferences.GeneralSettings.loadLayoutMode()
+                )
+            ).constraint
         }
         
         // Observe configuration changes
@@ -394,10 +412,73 @@ class WebContentContainerViewController: NSViewController {
         }
         
         // Update content container constraints to be below topBar
+        remakeContentLayout()
+    }
+
+    // MARK: - Agent transcript dock
+
+    /// Installs the docked agent console (see `AgentTranscriptPanelController`)
+    /// along the given edge, shrinking the content area to make room. One
+    /// dock view exists app-wide; the controller moves it between windows as
+    /// the frontmost browser window changes.
+    func attachTranscriptDock(_ dock: AgentTranscriptDockView, edge: AgentTranscriptDockEdge) {
+        guard transcriptDockView !== dock || transcriptDockEdge != edge else { return }
+        transcriptDockView?.removeFromSuperview()
+        transcriptDockView = dock
+        transcriptDockEdge = edge
+        view.addSubview(dock)
+        dock.updateLeadingInset(pageAreaLeadingInset)
+        remakeContentLayout()
+    }
+
+    func detachTranscriptDock() {
+        guard let dock = transcriptDockView else { return }
+        dock.removeFromSuperview()
+        transcriptDockView = nil
+        transcriptDockEdge = nil
+        remakeContentLayout()
+    }
+
+    /// Single owner of `contentContainer`'s outer constraints: below the tab
+    /// strip (once created) and beside/above the transcript dock (when
+    /// attached). Every path that changes either edge funnels here so no
+    /// remake can drop the other's constraint.
+    private func remakeContentLayout() {
         contentContainer.snp.remakeConstraints { make in
-            make.leading.trailing.bottom.equalToSuperview()
-            make.top.equalTo(barController.view.snp.bottom)
+            if let bar = tabStripBarController?.view, bar.superview === view {
+                make.top.equalTo(bar.snp.bottom)
+            } else {
+                make.top.equalToSuperview()
+            }
+            make.leading.equalToSuperview()
+            if let dock = transcriptDockView, let edge = transcriptDockEdge {
+                switch edge {
+                case .right:
+                    make.trailing.equalTo(dock.snp.leading)
+                    make.bottom.equalToSuperview()
+                case .bottom:
+                    make.trailing.equalToSuperview()
+                    make.bottom.equalTo(dock.snp.top)
+                }
+            } else {
+                make.trailing.bottom.equalToSuperview()
+            }
         }
+        if let dock = transcriptDockView, let edge = transcriptDockEdge {
+            // The dock's own thickness constraint lives on the dock view
+            // (plain NSLayoutConstraint, untouched by this snp remake).
+            dock.snp.remakeConstraints { make in
+                switch edge {
+                case .right:
+                    make.trailing.equalToSuperview()
+                    make.top.equalTo(contentContainer.snp.top)
+                    make.bottom.equalToSuperview()
+                case .bottom:
+                    make.leading.trailing.bottom.equalToSuperview()
+                }
+            }
+        }
+        view.needsLayout = true
     }
     
     // MARK: - Subscriptions Setup
@@ -1343,7 +1424,12 @@ class WebContentContainerViewController: NSViewController {
     // MARK: - Layout Mode
     
     private func updateLayoutForMode() {
-        let traditionalLayout = PhiPreferences.GeneralSettings.loadLayoutMode().isTraditional
+        let layoutMode = PhiPreferences.GeneralSettings.loadLayoutMode()
+        let traditionalLayout = layoutMode.isTraditional
+
+        titleAwareAreaHeightConstraint?.update(
+            offset: WebContentConstant.titleAwareAreaHeight(for: layoutMode)
+        )
         
         if traditionalLayout {
             // Traditional layout (horizontal tabs): show topBar
@@ -1367,15 +1453,21 @@ class WebContentContainerViewController: NSViewController {
 
     /// Mirror of `WebContentViewController.updateSplitViewLeadingInset`, so
     /// the backdrop hugs the same leading edge the mounted panel uses.
-    /// Called from `updateLayoutForMode`, which already re-runs on layout-mode
-    /// and sidebar-collapse changes.
-    private func updatePageAreaBackdropLeadingInset() {
+    private var pageAreaLeadingInset: CGFloat {
         let traditionalLayout = PhiPreferences.GeneralSettings.loadLayoutMode().isTraditional
         let sidebarCollapsed = browserState?.sidebarCollapsed ?? true
-        let inset: CGFloat = (traditionalLayout || sidebarCollapsed)
+        return (traditionalLayout || sidebarCollapsed)
             ? WebContentConstant.edgesSpacing
             : 0
+    }
+
+    /// Called from `updateLayoutForMode`, which already re-runs on layout-mode
+    /// and sidebar-collapse changes. A bottom transcript dock shares the page
+    /// panel's left edge, so it follows the same inset.
+    private func updatePageAreaBackdropLeadingInset() {
+        let inset = pageAreaLeadingInset
         pageAreaBackdropLeadingConstraint?.update(inset: inset)
+        transcriptDockView?.updateLeadingInset(inset)
     }
 
     // MARK: - AI Chat Toggle

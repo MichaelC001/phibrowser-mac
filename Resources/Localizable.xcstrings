@@ -4,6 +4,9 @@
     "" : {
 
     },
+    " · ended" : {
+      "comment" : "Agent console - filter label suffix for a finished task"
+    },
     " Telegram bot creation and customization process, follow the on-screen instructions and paste the Bot Token below" : {
       "comment" : "Phi Link - Custom bot guide suffix"
     },
@@ -21,6 +24,12 @@
     },
     "“%@” already exists and isn’t a link created by Phi Browser. Replace it with a link to this app’s bundled skill?" : {
       "comment" : "Developer settings - Skill overwrite prompt body"
+    },
+    "“%@” wants to control Phi Browser" : {
+      "comment" : "CDP consent - title"
+    },
+    "❯" : {
+
     },
     "@%@" : {
 
@@ -109,16 +118,6 @@
     "/**/Window Background" : {
       "comment" : "[EXAMPLE] Theme example: window background label"
     },
-    "%@  %@" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "%1$@  %2$@"
-          }
-        }
-      }
-    },
     "%@ — in use by a Space" : {
       "comment" : "Spaces menu - Delete Profile row label for a profile bound to a Space"
     },
@@ -129,6 +128,17 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "%1$@ · %2$d tabs"
+          }
+        }
+      }
+    },
+    "%@ · Team %@" : {
+      "comment" : "Developer settings - CDP grant scope and team",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ · Team %2$@"
           }
         }
       }
@@ -144,7 +154,7 @@
         }
       }
     },
-    "%@ can now use the phi-browser skill. If it isn’t already on, enable remote debugging above and relaunch so the skill can connect." : {
+    "%@ can now use the phi-browser skill. Restart newly configured agents; in Pi, /reload is enough." : {
       "comment" : "Developer settings - Skill install success body; %@ is the agent name"
     },
     "%@ tab group, %d tabs, collapsed" : {
@@ -190,8 +200,22 @@
     "%d hour ago" : {
       "comment" : "Download item row - Relative time showing hours since download completed"
     },
+    "%d live · %d running" : {
+      "comment" : "Agent console - live vs actively running agent task counts",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$d live · %2$d running"
+          }
+        }
+      }
+    },
     "%d min ago" : {
       "comment" : "Download item row - Relative time showing minutes since download completed"
+    },
+    "%d running" : {
+      "comment" : "Agent console - status pill with the actively running task count"
     },
     "%d Spaces" : {
       "comment" : "Profiles settings - Count of Spaces bound to a profile"
@@ -269,8 +293,14 @@
     "Agent Autoview" : {
       "comment" : "View menu - Toggle that automatically switches to the Space of an operating agent"
     },
-    "Agent skill" : {
-      "comment" : "Developer settings - phi-browser skill section title"
+    "agent idle — command starts or queues its next round" : {
+      "comment" : "Agent console - hint for sending a command to an idle agent"
+    },
+    "Agent permissions" : {
+      "comment" : "Developer settings - Agent permissions section title"
+    },
+    "Agent Transcript" : {
+      "comment" : "Agent console panel - window title\nView menu - Toggle for the console mirroring the driving agent's session"
     },
     "AI conversations will be closed and all connected Connectors will be disconnected." : {
       "comment" : "AI settings - Alert message explaining consequences of disabling AI features"
@@ -290,6 +320,30 @@
     "All Downloads" : {
       "comment" : "Downloads list - Button to open full downloads page"
     },
+    "All tasks" : {
+      "comment" : "Agent console - feed filter: every task"
+    },
+    "Allow agents to control Phi (CDP)" : {
+      "comment" : "Developer settings - Toggle title for the Chrome DevTools Protocol endpoint"
+    },
+    "Allow agents to operate your Spaces" : {
+      "comment" : "Developer settings - Toggle title for agent user-space operations"
+    },
+    "Allow Once" : {
+      "comment" : "CDP consent - allow for this session"
+    },
+    "Allowed agents" : {
+      "comment" : "Developer settings - Title for the allowed CDP agent list"
+    },
+    "Allowed this session" : {
+      "comment" : "Developer settings - session-only CDP grant"
+    },
+    "Always Allow" : {
+      "comment" : "CDP consent - allow and remember"
+    },
+    "Always allowed" : {
+      "comment" : "Developer settings - persisted CDP grant"
+    },
     "Always Show Bookmark Bar" : {
       "comment" : "View menu - Menu item to always show the bookmark bar"
     },
@@ -302,11 +356,17 @@
     "Amber" : {
       "comment" : "Amber theme color name"
     },
+    "An agent is asking to drive Phi Browser over the DevTools Protocol — opening pages, reading content, and acting on your behalf. Only allow agents you trust." : {
+      "comment" : "CDP consent - body"
+    },
     "An import is still adding bookmarks to this Space. Wait for it to finish, then try again." : {
       "comment" : "Body shown when a Space action is blocked by an in-progress import\nBody shown when deleting a Space is blocked by an in-progress import"
     },
     "Any unsaved changes may be lost." : {
       "comment" : "Quit confirmation message"
+    },
+    "App" : {
+      "comment" : "Spaces settings - App pinned-tab scope option"
     },
     "Appearance" : {
       "comment" : "General settings - Appearance section title"
@@ -328,6 +388,9 @@
     },
     "Attach files" : {
       "comment" : "Feedback form - Label for file attachment section"
+    },
+    "Auto picture-in-picture" : {
+      "comment" : "General settings - Row title for the three-state auto picture-in-picture mode"
     },
     "Automatically add current tab as context to new conversation" : {
       "comment" : "AI settings - Toggle to auto-add current tab as context when starting new AI conversation"
@@ -379,6 +442,9 @@
     },
     "Bookmarks" : {
       "comment" : "Default root bookmarks folder title\nImport data type - Bookmarks toggle label\nMain menu - Top-level Bookmarks menu title in the application menu bar\nSearch Tabs - Bookmark root menu title\nSearch Tabs - Bookmarks section title"
+    },
+    "Bookmarks and pinned tabs belonging to this Space will also be removed. This action cannot be undone." : {
+      "comment" : "Body of the delete-Space confirmation with Space-scoped pinned tabs"
     },
     "Bookmarks Bar" : {
       "comment" : "Bookmark editor - Root bookmark folder display name in folder picker"
@@ -440,11 +506,17 @@
     "Change Name" : {
       "comment" : "Account settings - Dialog title for changing user name"
     },
+    "Change Pinned Tab Scope?" : {
+      "comment" : "Spaces settings - title of pinned-tab scope migration confirmation"
+    },
     "Change Profile" : {
       "comment" : "Confirm button of the change-Space-profile confirmation\nSpaces menu - Submenu to re-bind the active Space to another profile"
     },
     "Change Profile to “%@”?" : {
       "comment" : "Title of the change-Space-profile confirmation"
+    },
+    "Change Scope" : {
+      "comment" : "Spaces settings - confirm pinned-tab scope change"
     },
     "Change Theme" : {
       "comment" : "Active-Space menu: change current Space theme"
@@ -470,11 +542,17 @@
     "Choose Files" : {
       "comment" : "Feedback form - Button to open file picker for attachments"
     },
+    "Choose which profiles agents may create their own Spaces in. Turning a profile off stops agents from opening any new Space bound to it; existing Spaces are unaffected." : {
+      "comment" : "Developer settings - Explanation for the per-profile agent-Space allowlist"
+    },
     "Choose…" : {
       "comment" : "Profiles settings - download location not set"
     },
     "Chromium Engine Version %@" : {
       "comment" : "About window - Chromium engine version label"
+    },
+    "Clear" : {
+      "comment" : "Agent console - clear the feed"
     },
     "Clear Browsing Data" : {
       "comment" : "Profiles settings - data link to clear browsing data"
@@ -484,6 +562,9 @@
     },
     "Clear Cookie" : {
       "comment" : "Address bar menu - Settings submenu item to clear cookie\nExtension list - Website settings item to clear cookies"
+    },
+    "Clear search" : {
+      "comment" : "Icon picker - Accessibility label for clearing search"
     },
     "Click " : {
       "comment" : "Phi Link - Custom bot guide prefix"
@@ -583,6 +664,9 @@
     },
     "Copy Right URL" : {
       "comment" : "Bookmark context menu - Copy the right (secondary) URL of a split-view bookmark\nTab context menu - Copy the right pane's URL for a split"
+    },
+    "Copy transcript" : {
+      "comment" : "Agent console - copy the visible feed as text"
     },
     "Copy URL" : {
       "comment" : "Copy URL shortcut tooltip title\nEdit menu - Copy the selected tab URL to the clipboard"
@@ -704,6 +788,9 @@
     "Deleted" : {
       "comment" : "Download item row - Status label when downloaded file was deleted"
     },
+    "Deny" : {
+      "comment" : "CDP consent - deny"
+    },
     "Describe the issue in detail" : {
       "comment" : "Feedback form - Section header prompting user to describe the issue"
     },
@@ -721,6 +808,12 @@
     },
     "Do not ask again" : {
       "comment" : "Suppression checkbox of the close-Incognito-Space confirmation"
+    },
+    "Dock to Bottom" : {
+      "comment" : "Agent console placement - bottom dock"
+    },
+    "Dock to Right" : {
+      "comment" : "Agent console placement - right sidebar"
     },
     "Domain" : {
       "comment" : "URL rule match type: exact host only"
@@ -770,11 +863,17 @@
     "Each space has its own independent bookmarks" : {
       "comment" : "Subtitle of the create-Space panel"
     },
+    "Each Space has its own pinned tabs." : {
+      "comment" : "Spaces settings - description of Space pinned-tab scope"
+    },
     "Edit Bookmark" : {
       "comment" : "Bookmark editor - Title of the sheet to edit a bookmark"
     },
     "Edit Folder" : {
       "comment" : "Folder editor - Title of the sheet to edit a folder"
+    },
+    "Edit in Spaces settings…" : {
+      "comment" : "General settings - Link that jumps to the Spaces settings pane"
     },
     "Edit Pinned Split" : {
       "comment" : "Favorite editor - Title of the sheet to edit a pinned split-view tab"
@@ -814,9 +913,6 @@
     },
     "Enable External Data Connectors" : {
       "comment" : "AI settings - Toggle to enable external data connectors"
-    },
-    "Enable remote debugging (CDP)" : {
-      "comment" : "Developer settings - Toggle title for the Chrome DevTools Protocol endpoint"
     },
     "Enter a name for the new folder." : {
       "comment" : "Bookmark editor - Inline new folder creation subtitle"
@@ -884,6 +980,9 @@
     "Failed to load remote image" : {
       "comment" : "Image preview error"
     },
+    "Favorites" : {
+      "comment" : "Bookmark export - name of the exported folder carrying the window's pinned tabs"
+    },
     "Feedback" : {
       "comment" : "Feedback - Sidebar feedback button title\nFeedback - Tooltip text for icon-only feedback button\nHeader more menu - Feedback action"
     },
@@ -898,9 +997,6 @@
     },
     "Folder Name" : {
       "comment" : "Folder editor - Placeholder for folder name input\nNew folder dialog input placeholder"
-    },
-    "Follow Global" : {
-      "comment" : "Create-Space panel — toggle so the new Space follows the global theme\nSpaces menu - Theme submenu entry that clears the per-Space override\nSpaces settings - theme entry that clears the per-Space override\nSpaces settings - theme follows global label\nTheme menu: clear per-Space override"
     },
     "Forward" : {
       "comment" : "Web content header - Accessibility description for forward navigation button"
@@ -964,6 +1060,9 @@
     },
     "Icon" : {
       "comment" : "Spaces settings - icon section header"
+    },
+    "idle" : {
+      "comment" : "Agent console - status pill when no task is actively running"
     },
     "Image file not found" : {
       "comment" : "Image preview error"
@@ -1047,7 +1146,7 @@
       "comment" : "Download item row - Tooltip for keep button on safety warning\nTooltip for keep button on safety warning in living downloads toast"
     },
     "Later" : {
-      "comment" : "Agent handoff prompt - dismiss\nDeveloper settings - Relaunch prompt dismiss button"
+      "comment" : "Agent handoff prompt - dismiss"
     },
     "Launch Phi Sentinel automatically at login" : {
       "comment" : "AI settings - Toggle to auto-launch Phi Sentinel at system login"
@@ -1070,8 +1169,11 @@
     "Left URL" : {
       "comment" : "Bookmark editor - Label for the left (primary) URL input field on a split-view bookmark"
     },
-    "Lets local tools drive Phi over the DevTools Protocol on 127.0.0.1. Any local process can control the browser while this is on — leave it off when you’re not using it. Takes effect after a relaunch." : {
-      "comment" : "Developer settings - Security note for the remote debugging toggle"
+    "Lets agent tooling manage your own browsing data — Spaces, profiles, URL rules, pinned tabs, bookmarks, and the tab layout of your windows. When off, agents can only work inside their own agent Spaces. Applies immediately." : {
+      "comment" : "Developer settings - Explanation for the agent user-space operations toggle"
+    },
+    "Lets agent tools (Claude Code, Codex) drive Phi over the DevTools Protocol through a private socket only this Mac’s processes can reach. Each agent asks for your approval the first time it connects. Applies immediately." : {
+      "comment" : "Developer settings - Security note for the agent CDP toggle"
     },
     "Light" : {
       "comment" : "Appearance choice: always light mode"
@@ -1088,7 +1190,7 @@
     "Linking..." : {
       "comment" : "Phi Link - Custom bot linking text"
     },
-    "Links the skill bundled in this app into an AI coding agent’s skills folder so it can drive Phi over the DevTools Protocol. Requires Node 22+; enable remote debugging above so it can connect." : {
+    "Links the skill bundled in this app into an AI coding agent’s skills folder so it can drive Phi over the DevTools Protocol. Pi also gets a companion extension that wakes idle sessions from Agent Transcript commands. Requires Node 22+." : {
       "comment" : "Developer settings - Explanation for the phi-browser skill installer"
     },
     "Loading image…" : {
@@ -1096,6 +1198,9 @@
     },
     "Loading release notes..." : {
       "comment" : "Sparkle update window - Release notes loading placeholder"
+    },
+    "Local browser data is unavailable." : {
+      "comment" : "Pinned-tab scope migration error when the local store cannot be opened"
     },
     "Log in" : {
       "comment" : "Onboarding Login button title"
@@ -1111,6 +1216,9 @@
     },
     "Manage User Data" : {
       "comment" : "Help menu - Parent menu item for exporting and importing Phi user data backup"
+    },
+    "Message the agent (→ %@)" : {
+      "comment" : "Agent console - prompt placeholder naming the target task's Space"
     },
     "Mint" : {
       "comment" : "Mint theme color name"
@@ -1153,6 +1261,9 @@
     },
     "Name is too long (maximum 100 characters)" : {
       "comment" : "Set name page - Error message when user name exceeds 100 characters"
+    },
+    "Never pop out automatically; manual picture-in-picture still works" : {
+      "comment" : "General settings - Hint for the Off auto picture-in-picture mode"
     },
     "New Conversation" : {
       "comment" : "View menu - Menu item to start a new AI conversation in the sidebar"
@@ -1220,6 +1331,15 @@
     "Next Space" : {
       "comment" : "Spaces menu - Activate the next Space in the strip"
     },
+    "No active agent task" : {
+      "comment" : "Agent console - prompt disabled placeholder"
+    },
+    "no active tasks" : {
+      "comment" : "Agent console - footer with no live agent task"
+    },
+    "No agents approved yet. The first time one connects, Phi asks for your approval." : {
+      "comment" : "Developer settings - Empty state for the allowed CDP agent list"
+    },
     "No Backups Available" : {
       "comment" : "Help menu - Time Machine submenu placeholder when no completed backups exist"
     },
@@ -1244,11 +1364,17 @@
     "No Phi User Data to Back Up" : {
       "comment" : "Debug clear data - Alert title when the Phi data folder is missing before backup"
     },
+    "No profiles found." : {
+      "comment" : "Developer settings - Empty state when no browser profiles exist"
+    },
     "No Profiles to Delete" : {
       "comment" : "Spaces menu - Delete Profile submenu empty state"
     },
     "No release notes available." : {
       "comment" : "Sparkle update window - Missing release notes placeholder"
+    },
+    "No results" : {
+      "comment" : "Icon picker - Empty state when search has no matching icons"
     },
     "No Results" : {
       "comment" : "Shortcuts settings - Empty state text when no shortcuts match search"
@@ -1258,6 +1384,9 @@
     },
     "No share actions available" : {
       "comment" : "Address bar menu - Empty share submenu item"
+    },
+    "Normal" : {
+      "comment" : "Auto picture-in-picture option - pop out and stay in place"
     },
     "Not configured" : {
       "comment" : "Phi Link - Custom bot not configured status"
@@ -1271,8 +1400,14 @@
     "Not used" : {
       "comment" : "Profiles settings - tag for a profile with no Spaces"
     },
+    "Nothing yet — agent activity appears here live." : {
+      "comment" : "Agent console - empty feed placeholder"
+    },
     "Notifications" : {
       "comment" : "Profiles settings - data link to notification settings"
+    },
+    "Off" : {
+      "comment" : "Auto picture-in-picture option - never pop out automatically; manual picture-in-picture is unaffected"
     },
     "Official Phi Link Telegram bot" : {
       "comment" : "Phi Link - Official Bot title"
@@ -1284,7 +1419,7 @@
       "comment" : "General settings - Option to open Omnibox search when pressing ⌘+T"
     },
     "Opacity" : {
-      "comment" : "General settings - Theme opacity row title for adjusting the selected theme overlay transparency"
+      "comment" : "General settings - Theme opacity row title for adjusting the selected theme overlay transparency\nSpaces settings - theme opacity row label for the per-Space window overlay transparency"
     },
     "Open as Split" : {
       "comment" : "Bookmark context menu - Open this bookmark as a new tab paired with the current tab in a split\nTab context menu - Open a new tab as the second pane in a split with this tab\nTab multi-selection context menu - split exactly two selected tabs into paired panes"
@@ -1318,6 +1453,9 @@
     },
     "Organize tabs with AI" : {
       "comment" : "Organize Tabs - Button tooltip and accessibility label\nside bar new tab row - organize tabs button tooltip"
+    },
+    "Park at edge" : {
+      "comment" : "Auto picture-in-picture option - pop out, then park at the screen edge until clicked"
     },
     "Passwords Manager" : {
       "comment" : "Onboarding password manager - Page title"
@@ -1382,17 +1520,32 @@
     "Pink" : {
       "comment" : "Tab Groups - color name shown in auto-named group title and color picker"
     },
+    "Pinned tab scope" : {
+      "comment" : "Spaces settings - pinned-tab scope row label"
+    },
+    "Pinned Tab Scope Wasn’t Changed" : {
+      "comment" : "Spaces settings - pinned-tab scope migration error title"
+    },
     "Pinned Tabs" : {
       "comment" : "Search Tabs - Pinned tabs section title"
     },
-    "Pinned tabs and bookmarks belonging to this Space will also be removed. This action cannot be undone." : {
-      "comment" : "Body of the delete-Space confirmation"
+    "Pinned tabs are shared across all profiles and Spaces." : {
+      "comment" : "Spaces settings - description of App pinned-tab scope"
+    },
+    "Pinned tabs from the existing destinations will be merged. Unchanged copies will be combined, while different versions will be kept." : {
+      "comment" : "Spaces settings - confirmation body for broadening pinned-tab scope"
     },
     "Please quit Safari before importing its data." : {
       "comment" : "Import browser data page - Reminder to quit Safari before importing so its data can be read"
     },
     "Please reauthenticate to restore account features." : {
       "comment" : "Account settings - Tooltip explaining why reauthentication is needed"
+    },
+    "Pop out playing video when you switch tabs or apps" : {
+      "comment" : "General settings - Hint for the Normal auto picture-in-picture mode"
+    },
+    "Pop out playing video, parked at the screen edge until you click it" : {
+      "comment" : "General settings - Hint for the Park at edge auto picture-in-picture mode"
     },
     "Pop up" : {
       "comment" : "Notification menu option - Enable auto popup for notification cards"
@@ -1424,14 +1577,20 @@
     "Private AI" : {
       "comment" : "AI settings - Row that opens Phi Sentinel's Private AI page"
     },
+    "Processes you’ve approved to control Phi. Removing one makes it ask again next time it connects." : {
+      "comment" : "Developer settings - Explanation for the allowed CDP agent list"
+    },
     "Profile" : {
-      "comment" : "Label for the profile picker in the create-Space panel"
+      "comment" : "Label for the profile picker in the create-Space panel\nSpaces settings - Profile pinned-tab scope option"
     },
     "Profile name" : {
       "comment" : "Placeholder for the profile-name field"
     },
     "Profiles" : {
       "comment" : "Settings - Tab title for profiles management"
+    },
+    "Profiles agents can use" : {
+      "comment" : "Developer settings - Title for the per-profile agent-Space allowlist"
     },
     "Pure" : {
       "comment" : "Pure theme name"
@@ -1466,12 +1625,6 @@
     "Refresh connector status" : {
       "comment" : "AI settings - Tooltip for refreshing connector status"
     },
-    "Relaunch Now" : {
-      "comment" : "Developer settings - Relaunch prompt confirm button"
-    },
-    "Relaunch to apply?" : {
-      "comment" : "Developer settings - Relaunch prompt title after toggling remote debugging"
-    },
     "Relink" : {
       "comment" : "Phi Link - Official bot relink action"
     },
@@ -1481,14 +1634,8 @@
     "Remote debugging" : {
       "comment" : "Developer settings - Remote debugging section title"
     },
-    "Remote debugging starts after Phi Browser restarts." : {
-      "comment" : "Developer settings - Relaunch prompt body when enabling remote debugging"
-    },
-    "Remote debugging stops after Phi Browser restarts." : {
-      "comment" : "Developer settings - Relaunch prompt body when disabling remote debugging"
-    },
     "Remove" : {
-      "comment" : "Bookmark editor - Remove bookmark button title (CMD+D toggle)\nDownload item row - Tooltip for remove download button\nIM Channels - Custom bot remove action"
+      "comment" : "Bookmark editor - Remove bookmark button title (CMD+D toggle)\nDeveloper settings - Revoke an allowed CDP agent\nDownload item row - Tooltip for remove download button\nIM Channels - Custom bot remove action"
     },
     "Remove attachment" : {
       "comment" : "Feedback form - Tooltip for removing an attachment"
@@ -1586,9 +1733,6 @@
     "Right URL" : {
       "comment" : "Bookmark editor - Label for the right (secondary) URL input field on a split-view bookmark"
     },
-    "Routing" : {
-      "comment" : "Spaces settings - routing section header"
-    },
     "Run" : {
       "comment" : "Notification card run button - Executes the suggested action"
     },
@@ -1601,8 +1745,14 @@
     "Search" : {
       "comment" : "Omnibox - Accessibility description for search icon"
     },
+    "Search emoji" : {
+      "comment" : "Icon picker - Search field placeholder for emoji"
+    },
     "Search engine" : {
       "comment" : "Profiles settings - search engine row label"
+    },
+    "Search icons" : {
+      "comment" : "Icon picker - Search field placeholder for Phi icons"
     },
     "Search or Enter URL" : {
       "comment" : "Omnibox - Placeholder text prompting user to search or enter URL\nOmnibox suggestion - Placeholder text for search or URL entry\nSidebar address bar - Placeholder text prompting user to enter URL or search query\nWeb content address bar - Placeholder text shown when window has no tab"
@@ -1627,6 +1777,9 @@
     },
     "Separate From Bookmark" : {
       "comment" : "Bookmark favicon command-hover hint - Preserve the current page as a normal tab and reset the bookmark"
+    },
+    "Separate Window" : {
+      "comment" : "Agent console placement - standalone window"
     },
     "Service issue" : {
       "comment" : "Phi Link - Custom bot service issue status\nPhi Link - Official bot service issue status"
@@ -1664,6 +1817,9 @@
     "Show proactive suggestions on the new tab page" : {
       "comment" : "AI settings - Toggle to show proactive suggestions on the new tab page"
     },
+    "Show Transcript" : {
+      "comment" : "Agent pip context menu - open the agent console for this task"
+    },
     "Sign in again to continue" : {
       "comment" : "Auth reauthentication - Alert title when the access token can no longer be renewed"
     },
@@ -1691,6 +1847,9 @@
     "Something went wrong? " : {
       "comment" : "Retry hint prefix text shown when login fails in onboarding"
     },
+    "Space" : {
+      "comment" : "Spaces settings - Space pinned-tab scope option"
+    },
     "Space %d" : {
       "comment" : "Default name for a newly created Space"
     },
@@ -1700,8 +1859,8 @@
     "Spaces" : {
       "comment" : "Accessibility label for the Spaces picker affordance\nMain menu - Top-level Spaces menu title in the application menu bar\nSettings - Tab title for profiles and spaces management"
     },
-    "Split with" : {
-      "comment" : "Search Tabs - Prefix for the split partner shown in a result row"
+    "Spaces using the same profile share pinned tabs." : {
+      "comment" : "Spaces settings - description of Profile pinned-tab scope"
     },
     "Split with Current" : {
       "comment" : "Tab context menu - Pair this tab with the currently focused tab in a split"
@@ -1730,6 +1889,17 @@
     "Target Space unavailable" : {
       "comment" : "URL rule target whose Space no longer exists"
     },
+    "Team %@ · %@" : {
+      "comment" : "CDP consent - team and trust",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Team %1$@ · %2$@"
+          }
+        }
+      }
+    },
     "Telegram" : {
       "comment" : "Phi Link - Section title"
     },
@@ -1748,9 +1918,6 @@
     "The connector authorization URL is invalid." : {
       "comment" : "AI settings - OAuth authorization URL error"
     },
-    "The default Space can't be moved to another profile or deleted." : {
-      "comment" : "Spaces settings - default Space limits note"
-    },
     "The local IM service is unavailable. Check whether Phi Sentinel started normally and the IM service is running." : {
       "comment" : "IM Channels - Message shown when im-server is not connected"
     },
@@ -1764,7 +1931,7 @@
       "comment" : "Help menu - Time Machine restore error when a selected backup disappears"
     },
     "Theme" : {
-      "comment" : "General settings - Theme section title\nSpaces settings - theme section header"
+      "comment" : "General settings - Theme section title"
     },
     "This action cannot be undone." : {
       "comment" : "Bookmark multi-selection delete confirmation irreversible warning"
@@ -1772,11 +1939,20 @@
     "This build doesn’t include the phi-browser skill resources. Rebuild Phi Browser and try again." : {
       "comment" : "Developer settings - Skill install failure body when the resource is missing"
     },
+    "This build doesn’t include the Pi companion extension. Rebuild Phi Browser and try again." : {
+      "comment" : "Developer settings - Pi companion extension missing"
+    },
     "This replaces the Phi user data folder with the archive and restarts Phi. Save your work first." : {
       "comment" : "Debug import user data - Confirmation alert body warning data replacement and relaunch"
     },
+    "This Space's window will be reopened with the new profile and its open tabs will be reloaded there. Site logins won't carry over. Bookmarks and pinned tabs stay with the Space." : {
+      "comment" : "Body of the change-Space-profile confirmation with Space-scoped pinned tabs"
+    },
+    "This Space's window will be reopened with the new profile and its open tabs will be reloaded there. Site logins won't carry over. Bookmarks stay with the Space; pinned tabs remain shared across the app." : {
+      "comment" : "Body of the change-Space-profile confirmation with App-scoped pinned tabs"
+    },
     "This Space's window will be reopened with the new profile and its open tabs will be reloaded there. Site logins won't carry over. Bookmarks stay with the Space; pinned tabs will be the new profile's." : {
-      "comment" : "Body of the change-Space-profile confirmation"
+      "comment" : "Body of the change-Space-profile confirmation with Profile-scoped pinned tabs"
     },
     "This version of Phi cannot open local browser data that was updated by a newer version. Install the latest Phi version and try again." : {
       "comment" : "Local store compatibility alert - body when a newer app is required to read local data"
@@ -1841,6 +2017,9 @@
     "Unpin Split" : {
       "comment" : "Tab context menu - Remove the pin from the split that contains this tab"
     },
+    "unsigned" : {
+      "comment" : "CDP consent - no valid signature"
+    },
     "Unsupported image format" : {
       "comment" : "Image preview error"
     },
@@ -1885,6 +2064,9 @@
     },
     "Verification failed. Please check the token and try again." : {
       "comment" : "IM Channels - Custom bot verify failure"
+    },
+    "verified" : {
+      "comment" : "CDP consent - signature verified"
     },
     "Verify" : {
       "comment" : "IM Channels - Custom bot verify action\nIM Channels - Custom bot verify button"
@@ -1942,8 +2124,14 @@
     "You can save a zip of your Phi user data folder before local files are removed and the app quits." : {
       "comment" : "Debug clear data - Alert body explaining optional zip backup before clearing user data"
     },
+    "You have more than one Space, so each Space sets its own color and opacity." : {
+      "comment" : "General settings - Hint shown when the theme color/opacity rows are locked because multiple Spaces exist"
+    },
     "You will be logged out and returned to the login screen. Are you sure?" : {
       "comment" : "Account settings - Logout confirmation dialog message"
+    },
+    "Your current pinned tabs will be copied into each existing destination. The copies can then be changed independently." : {
+      "comment" : "Spaces settings - confirmation body for narrowing pinned-tab scope"
     },
     "Your Data and Settings" : {
       "comment" : "Profiles settings - data & settings section header"

@@ -45,6 +45,17 @@ final class ProfileManager: ObservableObject {
 
     @Published private(set) var profiles: [PhiBrowserProfile] = []
 
+    /// Profiles a user picker should offer: every profile except the agent's
+    /// auto-created fallback, which belongs to the agent (see
+    /// `AgentSpaceManager.ensureAgentFallbackProfile`). The one list every
+    /// user-facing profile picker draws from.
+    var userAssignableProfiles: [PhiBrowserProfile] {
+        profiles.filter {
+            !PhiPreferences.AgentSpaces.isAgentFallbackProfile(
+                profileId: $0.profileId, displayName: $0.displayName)
+        }
+    }
+
     private init() {
         refresh()
     }

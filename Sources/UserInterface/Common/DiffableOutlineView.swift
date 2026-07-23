@@ -15,6 +15,10 @@ class DiffableOutlineView: NSOutlineView {
     }
 
     private var currentSnapshot: DiffableOutlineSnapshot<AnyHashable>?
+    /// True only when `currentSnapshot` came from a request validated by this
+    /// view. A snapshot injected through `resetDiffableSnapshot` deliberately
+    /// remains untrusted so the checked planner preserves its fallback path.
+    private var currentSnapshotIsValidated = false
     private var isApplyingSnapshot = false
     private var pendingReloadRequest: ReloadRequest?
 
@@ -61,7 +65,8 @@ class DiffableOutlineView: NSOutlineView {
     }
 
     private func apply(_ request: ReloadRequest) {
-        if let validationError = request.snapshot.validationError {
+        let validationError = request.snapshot.validationError
+        if let validationError {
             reportInvalidSnapshot(validationError)
             request.completion?()
             return
@@ -72,16 +77,29 @@ class DiffableOutlineView: NSOutlineView {
             request.prepareReloadData?()
             reloadData()
             currentSnapshot = request.snapshot
+            currentSnapshotIsValidated = true
             request.completion?()
             return
         }
 
-        let plan = DiffableOutlineDiffPlanner.plan(from: oldSnapshot, to: request.snapshot)
+        let plan: DiffableOutlinePlan<AnyHashable>
+        if currentSnapshotIsValidated {
+            plan = DiffableOutlineDiffPlanner.planValidated(
+                from: oldSnapshot,
+                to: request.snapshot
+            )
+        } else {
+            plan = DiffableOutlineDiffPlanner.plan(
+                from: oldSnapshot,
+                to: request.snapshot
+            )
+        }
         guard plan.isSafe else {
             request.updateDataSource()
             request.prepareReloadData?()
             reloadData()
             currentSnapshot = request.snapshot
+            currentSnapshotIsValidated = true
             request.completion?()
             return
         }
@@ -90,6 +108,7 @@ class DiffableOutlineView: NSOutlineView {
         request.updateDataSource()
         apply(plan.operations, oldSnapshot: oldSnapshot, newSnapshot: request.snapshot, animated: request.animated)
         currentSnapshot = request.snapshot
+        currentSnapshotIsValidated = true
         isApplyingSnapshot = false
 
         DispatchQueue.main.async {
@@ -99,6 +118,7 @@ class DiffableOutlineView: NSOutlineView {
 
     func resetDiffableSnapshot(_ snapshot: DiffableOutlineSnapshot<AnyHashable>? = nil) {
         currentSnapshot = snapshot
+        currentSnapshotIsValidated = false
     }
 
     func reportInvalidSnapshot(_ error: DiffableOutlineSnapshotValidationError<AnyHashable>) {

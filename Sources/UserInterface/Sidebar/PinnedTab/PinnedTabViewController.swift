@@ -51,6 +51,7 @@ class PinnedTabViewController: NSViewController {
                                      icon: manager?.iconImage(extensionId: model.id,
                                                               staticIcon: model.icon),
                                      manager: manager)
+                pinnedItem.setContextMenuClickRoutingEnabled(self.contextMenuClickRoutingEnabled)
                 pinnedItem.itemClicked = { [weak self] model, view in
                     self?.handleExtensionClicked(model, anchor: view)
                 }
@@ -59,7 +60,8 @@ class PinnedTabViewController: NSViewController {
                 }
                 return pinnedItem
 
-            case .tabItem(let tab):
+            case .tabItem(let snapshotItem):
+                let tab = snapshotItem.tab
                 guard let tabItem = collectionView.makeItem(withIdentifier: PinnedTabItem.reuseIdentifier, for: indexPath) as? PinnedTabItem else {
                     return NSCollectionViewItem()
                 }
@@ -151,29 +153,47 @@ class PinnedTabViewController: NSViewController {
         let rawPinnedIndices: [Int]
     }
 
+    /// Captures a tab's diffable identifier when the snapshot item is built.
+    /// Scope migration preserves the runtime `Tab` object while rebinding its
+    /// physical database GUID, so deriving Hashable identity from the live tab
+    /// would mutate identifiers that AppKit already holds in an old snapshot.
+    struct PinnedTabSnapshotItem: Hashable {
+        let identifier: String
+        let tab: Tab
+
+        init(tab: Tab) {
+            self.tab = tab
+            if let localGuid = tab.guidInLocalDB, localGuid.isEmpty == false {
+                identifier = localGuid
+            } else if tab.guid >= 0 {
+                identifier = "chromium:\(tab.guid)"
+            } else {
+                identifier = "object:\(ObjectIdentifier(tab).hashValue)"
+            }
+        }
+
+        func hash(into hasher: inout Hasher) {
+            hasher.combine(identifier)
+        }
+
+        static func == (lhs: PinnedTabSnapshotItem, rhs: PinnedTabSnapshotItem) -> Bool {
+            lhs.identifier == rhs.identifier
+        }
+    }
+
     private enum Item: Hashable {
         case extensionItem(PinnedTabItemModel)
-        case tabItem(Tab)
+        case tabItem(PinnedTabSnapshotItem)
         case splitItem(PinnedSplitGroupItem)
-
-        private static func stableTabIdentifier(for tab: Tab) -> String {
-            if let localGuid = tab.guidInLocalDB, localGuid.isEmpty == false {
-                return localGuid
-            }
-            if tab.guid >= 0 {
-                return "chromium:\(tab.guid)"
-            }
-            return "object:\(ObjectIdentifier(tab).hashValue)"
-        }
 
         func hash(into hasher: inout Hasher) {
             switch self {
             case .extensionItem(let model):
                 hasher.combine("extension")
                 hasher.combine(model)
-            case .tabItem(let tab):
+            case .tabItem(let snapshotItem):
                 hasher.combine("tab")
-                hasher.combine(Self.stableTabIdentifier(for: tab))
+                hasher.combine(snapshotItem)
             case .splitItem(let group):
                 hasher.combine("split")
                 hasher.combine(group.splitId)
@@ -185,7 +205,7 @@ class PinnedTabViewController: NSViewController {
             case (.extensionItem(let a), .extensionItem(let b)):
                 return a == b
             case (.tabItem(let a), .tabItem(let b)):
-                return stableTabIdentifier(for: a) == stableTabIdentifier(for: b)
+                return a == b
             case (.splitItem(let a), .splitItem(let b)):
                 return a == b
             default:
@@ -250,6 +270,7 @@ class PinnedTabViewController: NSViewController {
     private var isShowingMultiSelectionPlaceholderDragImage = false
     private var hasAppliedInitialContentSnapshot = false
     private var isActive = false
+    private var contextMenuClickRoutingEnabled = false
     /// Last applied left|right DB-guid pair per splitId. `PinnedSplitGroupItem`
     /// hashes on `splitId` alone (so a Tab-instance churn doesn't recycle the
     /// cell), which means `apply()` skips items whose pair flipped via
@@ -306,10 +327,20 @@ class PinnedTabViewController: NSViewController {
     }
 
     private func setupDragDestination() {
-        view.registerForDraggedTypes([.normalTab, .phiBookmark, .bookmarks])
+        view.registerForDraggedTypes([.pinnedTab, .normalTab, .phiBookmark, .bookmarks])
         view.wantsLayer = true
     }
 
+    /// Enables native right-click and Control-click equivalence for pinned
+    /// items in sidebar hosts.
+    func enableContextMenuClickRouting() {
+        _ = view
+        contextMenuClickRoutingEnabled = true
+        collectionView.capturesContextMenuClicks = true
+        for case let item as PinnedExtensionItem in collectionView.visibleItems() {
+            item.setContextMenuClickRoutingEnabled(true)
+        }
+    }
 
     func setActive(_ active: Bool) {
         if active {
@@ -578,7 +609,10 @@ class PinnedTabViewController: NSViewController {
     private func buildTabSectionEntries(from sourcePinnedTabs: [Tab]) -> [TabSectionEntry] {
         guard let state = browserState else {
             return sourcePinnedTabs.enumerated().map { index, tab in
-                TabSectionEntry(item: .tabItem(tab), rawPinnedIndices: [index])
+                TabSectionEntry(
+                    item: .tabItem(PinnedTabSnapshotItem(tab: tab)),
+                    rawPinnedIndices: [index]
+                )
             }
         }
         // Pre-compute lookup dictionaries so the per-tab loop runs O(1) per
@@ -670,7 +704,10 @@ class PinnedTabViewController: NSViewController {
                 }
                 entries.append(TabSectionEntry(item: .splitItem(combined), rawPinnedIndices: rawIndices))
             } else {
-                entries.append(TabSectionEntry(item: .tabItem(tab), rawPinnedIndices: [rawIndex]))
+                entries.append(TabSectionEntry(
+                    item: .tabItem(PinnedTabSnapshotItem(tab: tab)),
+                    rawPinnedIndices: [rawIndex]
+                ))
             }
             consumedDBGuids.insert(myDBGuid)
         }
@@ -766,8 +803,8 @@ class PinnedTabViewController: NSViewController {
         }
         let tabItems = dataSource.snapshot().itemIdentifiers(inSection: .tabs)
         guard let itemIndex = tabItems.firstIndex(where: { item in
-            if case .tabItem(let tab) = item {
-                return tab == placeholder
+            if case .tabItem(let snapshotItem) = item {
+                return snapshotItem.tab == placeholder
             }
             return false
         }) else {
@@ -834,9 +871,9 @@ class PinnedTabViewController: NSViewController {
         for (index, item) in tabItems.enumerated() {
             let indexPath = IndexPath(item: index, section: Section.tabs.rawValue)
             switch item {
-            case .tabItem(let tab):
+            case .tabItem(let snapshotItem):
                 if let cell = collectionView.item(at: indexPath) as? PinnedTabItem {
-                    cell.isSelected = tab.guidInLocalDB == focusingDBGuid
+                    cell.isSelected = snapshotItem.tab.guidInLocalDB == focusingDBGuid
                 }
             case .splitItem(let group):
                 if let cell = collectionView.item(at: indexPath) as? PinnedSplitItem {
@@ -895,12 +932,10 @@ class PinnedTabViewController: NSViewController {
             handleExtensionSecondaryClicked(item)
             return
         }
-        let point = ExtensionPopupAnchor.pointBelowView(view)
-            ?? ExtensionPopupAnchor.mouseFallback()
         let windowId = MainBrowserWindowControllersManager.shared.activeWindowController?.browserState.windowId
         ChromiumLauncher.sharedInstance().bridge?.triggerExtension(
             withId: item.id,
-            pointInScreen: point,
+            anchorRect: ExtensionPopupAnchor.rectOfView(view),
             windowId: windowId?.int64Value ?? 0
         )
     }
@@ -1076,8 +1111,8 @@ extension PinnedTabViewController {
         // the whole pair where appropriate.
         let tab: Tab
         switch item {
-        case .tabItem(let t):
-            tab = t
+        case .tabItem(let snapshotItem):
+            tab = snapshotItem.tab
         case .splitItem(let group):
             tab = group.leftTab
         case .extensionItem(let model):
@@ -1125,8 +1160,8 @@ extension PinnedTabViewController {
                 return (nil, nil)
             }
             switch item {
-            case .tabItem(let tab):
-                return (tab, tab.guidInLocalDB)
+            case .tabItem(let snapshotItem):
+                return (snapshotItem.tab, snapshotItem.tab.guidInLocalDB)
             case .splitItem(let group):
                 return (group.leftTab, group.leftTab.guidInLocalDB)
             case .extensionItem:
@@ -1448,24 +1483,37 @@ extension PinnedTabViewController {
     
     private func handleCrossWindowPinnedDrop(pinnedGuid: String, sourceState: BrowserState, destinationIndex: Int) -> Bool {
         guard let targetState = browserState else { return false }
-        if let targetPinned = targetState.pinnedTabs.first(where: { $0.guidInLocalDB == pinnedGuid }),
-           let sourceIndex = targetState.pinnedTabs.firstIndex(of: targetPinned) {
-            var adjustedDestinationIndex = destinationIndex
-            if sourceIndex < destinationIndex {
-                adjustedDestinationIndex += pinnedReorderStepSize(for: targetPinned, in: targetState)
+        Task { @MainActor in
+            do {
+                try await sourceState.commitCrossWindowPinnedDrop(
+                    pinnedGuid: pinnedGuid,
+                    to: targetState,
+                    destinationIndex: destinationIndex
+                )
+            } catch {
+                AppLogError("[PinnedTabDrag] Cross-window pinned transfer failed: \(error)")
             }
-            targetState.movePinnedTab(tab: targetPinned, to: adjustedDestinationIndex, selectAfterMove: targetPinned.isActive)
-        }
-        if let openTab = findOpenTab(in: sourceState, matchingLocalGuid: pinnedGuid) {
-            return moveTabToTargetWindow(openTab)
         }
         return true
     }
     
     private func handleCrossWindowNormalTabDropToFavorites(tabGuid: Int, sourceState: BrowserState, destinationIndex: Int) -> Bool {
-        guard let tab = sourceState.tabs.first(where: { $0.guid == tabGuid }) else { return false }
-        sourceState.moveNormalTab(tabId: tabGuid, toPinnd: destinationIndex)
-        return moveTabToTargetWindow(tab)
+        guard let targetState = browserState,
+              sourceState.tabs.contains(where: { $0.guid == tabGuid }) else {
+            return false
+        }
+        Task { @MainActor in
+            do {
+                try await sourceState.commitCrossWindowNormalTabDropToPinned(
+                    tabId: tabGuid,
+                    to: targetState,
+                    destinationIndex: destinationIndex
+                )
+            } catch {
+                AppLogError("[PinnedTabDrag] Cross-window normal-tab pin failed: \(error)")
+            }
+        }
+        return true
     }
     
     private func handleCrossWindowBookmarkDropToFavorites(bookmarkGuid: String, sourceState: BrowserState, destinationIndex: Int) -> Bool {
@@ -1638,8 +1686,11 @@ extension PinnedTabViewController: NSDraggingDestination {
             return .copy
         }
         
-        // Accept normal tabs.
-        if pasteboard.string(forType: .normalTab) != nil {
+        // Accept pinned and normal tabs. Pinned drags also publish a normal-tab
+        // id for legacy destinations, so the commit path must inspect pinned
+        // payloads first.
+        if pasteboard.string(forType: .pinnedTab) != nil ||
+            pasteboard.string(forType: .normalTab) != nil {
             // Add visual feedback for the empty drop target.
             emptyView.layer?.backgroundColor = NSColor.selectedControlColor.withAlphaComponent(0.4).cgColor
             return .copy
@@ -1706,6 +1757,16 @@ extension PinnedTabViewController: NSDraggingDestination {
         if batchTabIds.count > 1 {
             return browserState?.moveNormalTabs(tabIds: batchTabIds,
                                                 toPinnedTabs: 0) ?? false
+        }
+
+        if isCrossWindowDrag(pasteboard),
+           let pinnedGuid = pasteboard.string(forType: .pinnedTab),
+           let sourceState = sourceBrowserState(for: pasteboard) {
+            return handleCrossWindowPinnedDrop(
+                pinnedGuid: pinnedGuid,
+                sourceState: sourceState,
+                destinationIndex: 0
+            )
         }
 
         if let guidString = pasteboard.string(forType: .normalTab),

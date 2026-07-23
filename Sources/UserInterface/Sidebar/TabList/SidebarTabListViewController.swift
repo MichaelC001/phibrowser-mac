@@ -191,6 +191,9 @@ class SidebarTabListViewController: NSViewController {
     /// Snapshot committed by the latest accepted `reloadWith` request.
     /// Unlike `allItems`, its captured child IDs cannot be changed by model reuse.
     private var lastAcceptedOutlineSnapshot: DiffableOutlineSnapshot<AnyHashable>?
+    /// Advances only for accepted structural mutations. PHI-1099 repair
+    /// completions use it to avoid touching rows owned by a newer transaction.
+    private var outlineLayoutGeneration: UInt = 0
     private var multiSelectionRangeAnchor: SidebarMultiSelectionUnit?
     /// Diffable completion runs before AppKit necessarily finishes moving rows.
     /// Keep group-local animations off until the latest structural transition settles.
@@ -295,7 +298,6 @@ class SidebarTabListViewController: NSViewController {
         scrollView.hasHorizontalScroller = false
         scrollView.autohidesScrollers = true
         scrollView.drawsBackground = false
-        scrollView.menu = contextMenu
         scrollView.contentView.postsBoundsChangedNotifications = true
         scrollView.contentView.postsFrameChangedNotifications = true
 
@@ -317,6 +319,11 @@ class SidebarTabListViewController: NSViewController {
         outlineView.action = #selector(outlineViewClicked(_:))
         outlineView.doubleAction = #selector(outlineViewDoubleClicked(_:))
 //        outlineView.draggingDestinationFeedbackStyle = .gap
+
+        // Keep the physical right-click menu available for every host of this
+        // controller, including the floating sidebar. Control-click capture is
+        // enabled explicitly by each sidebar host below.
+        outlineView.menu = contextMenu
         
         outlineView.setDraggingSourceOperationMask([.move, .copy], forLocal: true)
         outlineView.setDraggingSourceOperationMask([.move, .copy], forLocal: false)
@@ -340,6 +347,13 @@ class SidebarTabListViewController: NSViewController {
             scrollView.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor)
         ])
+    }
+
+    /// Enables native right-click and Control-click equivalence for a sidebar
+    /// host without changing how the shared context menu is populated.
+    func enableContextMenuClickRouting() {
+        _ = view
+        outlineView.capturesContextMenuClicks = true
     }
     
     private func setupAppearance() {
@@ -492,6 +506,7 @@ class SidebarTabListViewController: NSViewController {
     private func refreshAllItems(
         presentationState: FloatingBookmarkPresentationState? = nil,
         animated: Bool = true,
+        allowsInsertedRootTabLayoutRepair: Bool = false,
         afterReload: ((_ outlineStructureChanged: Bool) -> Void)? = nil
     ) -> Bool {
         guard isActive else { return false }
@@ -516,15 +531,50 @@ class SidebarTabListViewController: NSViewController {
             from: previousSnapshot,
             to: snapshot
         )
+        let insertedRootTabForLayoutRepair: Tab? = {
+            guard allowsInsertedRootTabLayoutRepair else { return nil }
+            guard let insertionIndex = Self.singleRootInsertionIndex(
+                from: previousSnapshot.rootIDs,
+                to: snapshot.rootIDs
+            ) else { return nil }
+
+            let plan = DiffableOutlineDiffPlanner.plan(
+                from: previousSnapshot,
+                to: snapshot
+            )
+            guard
+                plan.isSafe,
+                plan.operations.count == 1,
+                case let .insert(insertedID, parentID, planIndex) = plan.operations[0],
+                insertedID == snapshot.rootIDs[insertionIndex],
+                parentID == nil,
+                planIndex == insertionIndex,
+                let tab = snapshot.item(for: snapshot.rootIDs[insertionIndex]) as? Tab,
+                tab.groupToken == nil,
+                snapshot.rootIDs.dropFirst(insertionIndex + 1).contains(where: {
+                    guard let groupItem = snapshot.item(for: $0) as? TabGroupSidebarItem else {
+                        return false
+                    }
+                    return !groupItem.group.isCollapsed
+                })
+            else { return nil }
+            return tab
+        }()
+        let shouldAnimateOutlineMutation = animated && insertedRootTabForLayoutRepair == nil
 
         var didUpdateDataSource = false
+        var acceptedOutlineLayoutGeneration: UInt?
         outlineView.reloadWith(
             snapshot,
-            animated: animated,
+            animated: shouldAnimateOutlineMutation,
             updateDataSource: { [weak self] in
                 guard let self else { return }
+                if outlineStructureChanged {
+                    self.outlineLayoutGeneration &+= 1
+                }
+                acceptedOutlineLayoutGeneration = self.outlineLayoutGeneration
                 self.lastAcceptedOutlineSnapshot = snapshot
-                if animated && outlineStructureChanged {
+                if shouldAnimateOutlineMutation && outlineStructureChanged {
                     self.suppressGroupAnimationsUntilOutlineSettles()
                 }
                 self.allItems = items
@@ -540,6 +590,19 @@ class SidebarTabListViewController: NSViewController {
             completion: { [weak self] in
                 guard let self else { return }
                 guard didUpdateDataSource else { return }
+                if let insertedRootTabForLayoutRepair,
+                   let acceptedOutlineLayoutGeneration,
+                   acceptedOutlineLayoutGeneration == self.outlineLayoutGeneration,
+                   self.lastAcceptedOutlineSnapshot?.rootIDs == snapshot.rootIDs,
+                   let repair = self.outlineView.repairRealizedRowLayoutIfNeeded(
+                       afterInserting: insertedRootTabForLayoutRepair
+                   ) {
+                    AppLogDebug(
+                        "[TAB_GROUP_GAP] repaired realized suffix rows " +
+                            "mismatchedRow=\(repair.row) " +
+                            "originDelta=\(String(format: "%.1f", repair.originDelta))"
+                    )
+                }
                 self.selectActiveTab()
                 self.applyFocusingSelection(for: self.browserState.focusingTab)
 
@@ -573,6 +636,29 @@ class SidebarTabListViewController: NSViewController {
             else { return true }
         }
         return false
+    }
+
+    static func singleRootInsertionIndex<ItemID: Equatable>(
+        from oldRootIDs: [ItemID],
+        to newRootIDs: [ItemID]
+    ) -> Int? {
+        guard newRootIDs.count == oldRootIDs.count + 1 else { return nil }
+
+        var oldIndex = 0
+        var insertionIndex: Int?
+        for newIndex in newRootIDs.indices {
+            if oldIndex < oldRootIDs.count,
+               newRootIDs[newIndex] == oldRootIDs[oldIndex] {
+                oldIndex += 1
+            } else if insertionIndex == nil {
+                insertionIndex = newIndex
+            } else {
+                return nil
+            }
+        }
+
+        guard oldIndex == oldRootIDs.count else { return nil }
+        return insertionIndex
     }
 
     private func suppressGroupAnimationsUntilOutlineSettles() {
@@ -689,8 +775,7 @@ class SidebarTabListViewController: NSViewController {
     @objc private func outlineViewClicked(_ sender: NSOutlineView) {
         let clickedRow = sender.clickedRow
         guard clickedRow != -1 else {
-            cancelPendingBookmarkRenameClick()
-            endBookmarkEditing(except: nil)
+            handleSidebarBlankAreaClick()
             return
         }
 
@@ -740,6 +825,13 @@ class SidebarTabListViewController: NSViewController {
             }
             itemClicked(item)
         }
+    }
+
+    private func handleSidebarBlankAreaClick() {
+        cancelPendingBookmarkRenameClick()
+        endBookmarkEditing(except: nil)
+        multiSelectionRangeAnchor = nil
+        browserState.clearMultiSelection()
     }
 
     private func handleModifiedMultiSelectionClick(
@@ -3696,7 +3788,9 @@ extension SidebarTabListViewController: SidebarTabListItemOwner {
                     floatingAnchorFolderGuid: folder.guid,
                     hiddenBookmarkGuid: focusingBookmark.guid
                 )
-                refreshAllItems(presentationState: presentationState) { [weak self] _ in
+                refreshAllItems(
+                    presentationState: presentationState
+                ) { [weak self] _ in
                     guard let self else { return }
                     self.outlineView.animator().collapseItem(item)
                     self.applyFocusingSelection(for: focusingTab)
@@ -3844,7 +3938,26 @@ extension SidebarTabListViewController: TabSectionDelegate {
     
     func tabSectionDidUpdate(with change: TabSectionChange) {
         guard isActive else { return }
-        refreshAllItems { [weak self] outlineStructureChanged in
+        guard change.rootItemsChanged else {
+            selectActiveTab()
+            applyFocusingSelection(for: browserState.focusingTab)
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.updateVisibleBookmarkTabs()
+                self.updateFloatingNewTabVisibility()
+                self.pushMemberUpdatesToGroupCells(
+                    change.affectedGroupTokens,
+                    animated: !self.suppressesGroupUpdateAnimations
+                )
+                self.pushPaneUpdatesToSplitPairCells(change.affectedSplitIds)
+                self.updateNewTabCleanupVisibility()
+                self.clearFloatingProxyIfTabClosed()
+            }
+            return
+        }
+        refreshAllItems(
+            allowsInsertedRootTabLayoutRepair: change.allowsInsertedRootTabLayoutRepair
+        ) { [weak self] outlineStructureChanged in
             guard let self else { return }
             self.pushMemberUpdatesToGroupCells(
                 change.affectedGroupTokens,
@@ -4975,8 +5088,11 @@ extension SidebarTabListViewController: SideBarOutlineViewDelegate {
     func outlineView(_ outlineView: SideBarOutlineView,
                      didClickRow row: Int,
                      modifierFlags: NSEvent.ModifierFlags) {
-        guard row >= 0,
-              let item = outlineView.item(atRow: row) as? SidebarItem else {
+        guard row >= 0 else {
+            handleSidebarBlankAreaClick()
+            return
+        }
+        guard let item = outlineView.item(atRow: row) as? SidebarItem else {
             return
         }
         if let tab = item as? Tab, modifierFlags.isPureOptionClick {

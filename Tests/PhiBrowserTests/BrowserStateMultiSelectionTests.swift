@@ -43,6 +43,25 @@ final class BrowserStateMultiSelectionTests: XCTestCase {
         state.updateNormalTabs()
     }
 
+    private func makeKeyDownEvent(
+        in window: NSWindow,
+        characters: String,
+        keyCode: UInt16
+    ) throws -> NSEvent {
+        try XCTUnwrap(NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: [],
+            timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: window.windowNumber,
+            context: nil,
+            characters: characters,
+            charactersIgnoringModifiers: characters,
+            isARepeat: false,
+            keyCode: keyCode
+        ))
+    }
+
     private func waitUntil(timeout: TimeInterval = 1,
                            condition: () -> Bool) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
@@ -204,6 +223,91 @@ final class BrowserStateMultiSelectionTests: XCTestCase {
 
         state.clearMultiSelection()
         XCTAssertFalse(state.multiSelection.isActive)
+    }
+
+    func testEscapeClearsMultiSelectionAndConsumesEventForMatchingWindow() throws {
+        let state = try makeState()
+        seed(state, guids: [1, 2])
+        state.focuseTab(state.tabs[0])
+        state.toggleMultiSelection(for: state.tabs[1])
+        let window = NSWindow(
+            contentRect: CGRect(x: 0, y: 0, width: 100, height: 100),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        let event = try makeKeyDownEvent(in: window, characters: "\u{1B}", keyCode: 53)
+
+        XCTAssertNil(MainBrowserWindowController.handleMultiSelectionEscape(
+            event,
+            in: window,
+            browserState: state
+        ))
+        XCTAssertFalse(state.multiSelection.isActive)
+        let unhandledEvent = MainBrowserWindowController.handleMultiSelectionEscape(
+            event,
+            in: window,
+            browserState: state
+        )
+        XCTAssertTrue(unhandledEvent === event)
+    }
+
+    func testMultiSelectionEscapeIgnoresOtherWindowsAndKeys() throws {
+        let state = try makeState()
+        seed(state, guids: [1, 2])
+        state.focuseTab(state.tabs[0])
+        state.toggleMultiSelection(for: state.tabs[1])
+        let eventWindow = NSWindow(
+            contentRect: CGRect(x: 0, y: 0, width: 100, height: 100),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        let otherWindow = NSWindow(
+            contentRect: CGRect(x: 0, y: 0, width: 100, height: 100),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        let escape = try makeKeyDownEvent(in: eventWindow, characters: "\u{1B}", keyCode: 53)
+        let regularKey = try makeKeyDownEvent(in: eventWindow, characters: "x", keyCode: 7)
+
+        let otherWindowEvent = MainBrowserWindowController.handleMultiSelectionEscape(
+            escape,
+            in: otherWindow,
+            browserState: state
+        )
+        let regularKeyEvent = MainBrowserWindowController.handleMultiSelectionEscape(
+            regularKey,
+            in: eventWindow,
+            browserState: state
+        )
+        XCTAssertTrue(otherWindowEvent === escape)
+        XCTAssertTrue(regularKeyEvent === regularKey)
+        XCTAssertTrue(state.multiSelection.isActive)
+    }
+
+    func testSidebarBlankAreaClickClearsMultiSelection() throws {
+        let state = try makeState()
+        seed(state, guids: [1, 2])
+        state.focuseTab(state.tabs[0])
+        state.toggleMultiSelection(for: state.tabs[1])
+        let controller = SidebarTabListViewController(state: state)
+
+        controller.outlineView(SideBarOutlineView(), didClickRow: -1)
+
+        XCTAssertFalse(state.multiSelection.isActive)
+    }
+
+    func testSidebarBlankAreaClickDistinguishesWindowDrag() {
+        XCTAssertTrue(SideBarOutlineView.isBlankAreaClick(
+            from: NSPoint(x: 10, y: 10),
+            to: NSPoint(x: 15, y: 15)
+        ))
+        XCTAssertFalse(SideBarOutlineView.isBlankAreaClick(
+            from: NSPoint(x: 10, y: 10),
+            to: NSPoint(x: 16, y: 10)
+        ))
     }
 
     func testOrderedSelectionFollowsTabOrderNotClickOrder() throws {

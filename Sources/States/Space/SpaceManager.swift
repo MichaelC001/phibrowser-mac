@@ -300,6 +300,43 @@ final class SpaceManager: ObservableObject {
 
     @Published private(set) var spaces: [SpaceModel] = []
 
+    /// Persisted user Spaces — the ones the Spaces settings pane manages.
+    /// Excludes runtime-only Incognito Spaces and ephemeral agent Spaces;
+    /// the General pane's Theme section locks when this holds more than
+    /// one Space.
+    var userSpaces: [SpaceModel] {
+        spaces.filter { !Self.isIncognitoSpaceId($0.spaceId) && !$0.isAgentSpace }
+    }
+
+    /// One-shot guard for `migrateLegacyFollowGlobalPinsIfNeeded`.
+    private var hasMigratedLegacyThemePins = false
+
+    /// Spaces created when "Follow Global" existed have no pinned theme.
+    /// Now that every Space owns its theme, pin those to the current
+    /// global theme (their exact rendered look) once per launch, so their
+    /// color no longer shifts when the default Space's theme changes.
+    /// Agent Spaces are skipped — ephemeral and orphan-swept at launch.
+    private func migrateLegacyFollowGlobalPinsIfNeeded(storeSpaces: [SpaceModel]) {
+        guard !hasMigratedLegacyThemePins, !storeSpaces.isEmpty,
+              let account = boundAccount else { return }
+        hasMigratedLegacyThemePins = true
+        var map = account.userDefaults.spaceThemeIds()
+        let globalThemeId = MainActor.assumeIsolated { ThemeManager.shared.currentTheme.id }
+        var migratedIds: [String] = []
+        for space in storeSpaces where !space.isAgentSpace && map[space.spaceId] == nil {
+            map[space.spaceId] = globalThemeId
+            migratedIds.append(space.spaceId)
+        }
+        guard !migratedIds.isEmpty else { return }
+        account.userDefaults.setSpaceThemeIds(map)
+        // Windows registered before this ran (the cold-launch race) were
+        // left mirroring the global theme; pin them to the pin just
+        // written so window and stored state can't drift apart later.
+        for spaceId in migratedIds {
+            reapplyResolvedTheme(forSpaceId: spaceId)
+        }
+    }
+
     /// Whether an AUTOMATIC switch (deletion retreat, slot reconciliation,
     /// new-slot seeding, tab-driven hand-off) may land on this Space. Agent
     /// Spaces are ephemeral task workspaces and an Incognito Space is a
@@ -366,6 +403,13 @@ final class SpaceManager: ObservableObject {
     /// every slot lifecycle event (and lets `rules(forSpaceId:)` answer from
     /// memory). Updated only on the main thread via the publisher sink.
     private var cachedURLRules: [SpaceURLRule] = []
+
+    /// True once the initial URL-rule snapshot from `urlRulesPublisher` has
+    /// arrived (even if empty). External URL opens are held on this in
+    /// `AppController.scheduleForwardOpenURLsToChromium`: forwarding earlier
+    /// on a cold launch would resolve the URL against a routing table pushed
+    /// without the persisted rules and silently bypass Space URL routing.
+    private(set) var hasLoadedURLRules = false
 
     /// Loaded once per bind from `AccountUserDefaults.slotsRestoreSnapshot`.
     /// Each entry describes one user-perceived slot at the moment of the
@@ -734,7 +778,7 @@ final class SpaceManager: ObservableObject {
         // cache alone would no-op exactly on the cold-launch path this
         // invariant exists for. Fall back to a direct main-context fetch;
         // every caller is on the main thread (Chromium's window-created
-        // callback), the same assumption `applyTheme` makes.
+        // callback), the same assumption `applyResolvedTheme` makes.
         var known = spaces
         if known.isEmpty, let account = boundAccount {
             known = MainActor.assumeIsolated {
@@ -1351,6 +1395,9 @@ final class SpaceManager: ObservableObject {
         // cleanup they would linger as inert rows that keep being pushed to
         // Chromium and dangle in the rules editor.
         boundAccount?.localStorage.deleteSpaceCascade(spaceId: spaceId)
+        // The per-Space theme records live in userDefaults, outside the
+        // cascade; prune them here or they linger forever.
+        clearThemeRecords(forSpaceId: spaceId)
     }
 
     /// Closes every live window this Space has, across all slots — the
@@ -1511,10 +1558,10 @@ final class SpaceManager: ObservableObject {
             return
         }
         AppLogInfo("[SpaceManager] changeProfile: \(spaceId) \(space.profileId) → \(newProfileId)")
-        // Capture before closing anything. Pinned tabs are excluded — they
-        // are per-profile by design, so the respawned window shows the new
-        // profile's pinned set — and so are new-tab pages. keySlot first so
-        // the focused window's tabs lead the reopened order.
+        // Capture before closing anything. Pinned tabs are excluded because
+        // they are restored from their configured Space/Profile/App scope;
+        // new-tab pages are excluded as well. keySlot first so the focused
+        // window's tabs lead the reopened order.
         var reopenURLs: [String] = []
         var respawnSlot: SpaceWindowSlot?
         var orderedSlots: [SpaceWindowSlot] = []
@@ -1599,18 +1646,30 @@ final class SpaceManager: ObservableObject {
 
     // MARK: - Per-Space theme
 
-    /// Returns the user-pinned theme id for `spaceId`, or nil when that
-    /// Space follows the global theme.
+    /// Returns the pinned theme id stored for `spaceId`, or nil when the
+    /// Space has no entry yet (legacy "Follow Global" Spaces awaiting the
+    /// one-shot migration, and runtime-only Spaces that were never themed).
     func themeId(forSpaceId spaceId: String) -> String? {
         boundAccount?.userDefaults.spaceThemeIds()[spaceId]
     }
 
-    /// Sets (or clears) the theme override for `spaceId`. Passing nil makes
-    /// the Space follow the global theme again; passing a registered theme
-    /// id pins the Space to that theme even when the global theme later
-    /// changes. The change is persisted and applied to every live
-    /// controller bound to that Space — a Space can now have a live
-    /// controller in multiple slots simultaneously, so we iterate.
+    /// The theme id a Space's UI shows and edits. Every Space owns a theme;
+    /// ids missing from the pin map resolve to the current global theme,
+    /// which is what those Spaces render as today.
+    func resolvedThemeId(forSpaceId spaceId: String) -> String {
+        if let pinned = themeId(forSpaceId: spaceId) {
+            return pinned
+        }
+        return MainActor.assumeIsolated { ThemeManager.shared.currentTheme.id }
+    }
+
+    /// Pins `themeId` to `spaceId` (nil only clears the stored entry — a
+    /// cleanup affordance for ids that are going away, not a user-facing
+    /// "follow global" anymore). The change is persisted, the Space's
+    /// stored `colorHex` (sidebar tint) is re-derived to match, and the
+    /// resolved theme is applied to every live controller bound to that
+    /// Space — a Space can have a live controller in multiple slots
+    /// simultaneously, so we iterate.
     func setTheme(forSpaceId spaceId: String, themeId: String?) {
         guard let account = boundAccount else { return }
         var map = account.userDefaults.spaceThemeIds()
@@ -1620,11 +1679,108 @@ final class SpaceManager: ObservableObject {
             map.removeValue(forKey: spaceId)
         }
         account.userDefaults.setSpaceThemeIds(map)
-        for slot in slots {
-            if let controller = slot.windowController(for: spaceId) {
-                applyTheme(themeId: themeId, to: controller)
+        if let themeId {
+            syncColorHexWithTheme(forSpaceId: spaceId)
+            if spaceId == LocalStore.defaultSpaceId {
+                // The default Space's theme doubles as the global theme so
+                // non-browser chrome and pre-Space fallbacks stay in step,
+                // whichever surface the edit came from (settings panes,
+                // strip picker, Spaces menu).
+                MainActor.assumeIsolated {
+                    ThemeManager.shared.switchTheme(to: themeId)
+                }
             }
         }
+        reapplyResolvedTheme(forSpaceId: spaceId)
+        postSpaceThemeDidChange(spaceId: spaceId)
+    }
+
+    /// The Space's custom overlay opacity for `appearance`, or nil when it
+    /// uses its theme's own overlay alpha.
+    func overlayOpacity(forSpaceId spaceId: String, appearance: Appearance) -> CGFloat? {
+        guard let value = boundAccount?.userDefaults
+            .spaceOverlayOpacities()[spaceId]?[Self.overlayOpacityKey(for: appearance)] else {
+            return nil
+        }
+        return CGFloat(value)
+    }
+
+    /// The overlay opacity the Space's slider should display: the custom
+    /// value when one is stored, else the resolved theme's own alpha.
+    func effectiveOverlayOpacity(forSpaceId spaceId: String, appearance: Appearance) -> CGFloat {
+        if let custom = overlayOpacity(forSpaceId: spaceId, appearance: appearance) {
+            return custom
+        }
+        return MainActor.assumeIsolated {
+            let manager = ThemeManager.shared
+            let base = manager.registeredThemes[resolvedThemeId(forSpaceId: spaceId)]
+                ?? manager.currentTheme
+            return base.windowOverlayOpacity(for: appearance)
+        }
+    }
+
+    /// Persists a custom overlay opacity for `spaceId` and applies it to
+    /// the Space's live windows.
+    func setOverlayOpacity(_ opacity: CGFloat, forSpaceId spaceId: String, appearance: Appearance) {
+        guard let account = boundAccount else { return }
+        var map = account.userDefaults.spaceOverlayOpacities()
+        var entry = map[spaceId] ?? [:]
+        entry[Self.overlayOpacityKey(for: appearance)] = Double(min(max(opacity, 0), 1))
+        map[spaceId] = entry
+        account.userDefaults.setSpaceOverlayOpacities(map)
+        reapplyResolvedTheme(forSpaceId: spaceId)
+        postSpaceThemeDidChange(spaceId: spaceId)
+    }
+
+    private static func overlayOpacityKey(for appearance: Appearance) -> String {
+        appearance.isDark ? "dark" : "light"
+    }
+
+    private func postSpaceThemeDidChange(spaceId: String) {
+        NotificationCenter.default.post(
+            name: .spaceThemeDidChange,
+            object: self,
+            userInfo: ["spaceId": spaceId]
+        )
+    }
+
+    /// Whether the Space has anything persisted that its windows must pin
+    /// (a theme id or a custom overlay opacity). Spaces with neither keep
+    /// mirroring the global theme, which is what they resolve to anyway.
+    fileprivate func hasThemeCustomization(forSpaceId spaceId: String) -> Bool {
+        if themeId(forSpaceId: spaceId) != nil {
+            return true
+        }
+        return !(boundAccount?.userDefaults.spaceOverlayOpacities()[spaceId] ?? [:]).isEmpty
+    }
+
+    /// Removes both per-Space theme maps' entries for a Space id that is
+    /// going away for good; nothing else prunes them and the id never
+    /// comes back.
+    fileprivate func clearThemeRecords(forSpaceId spaceId: String) {
+        guard let account = boundAccount else { return }
+        var pins = account.userDefaults.spaceThemeIds()
+        if pins.removeValue(forKey: spaceId) != nil {
+            account.userDefaults.setSpaceThemeIds(pins)
+        }
+        var opacities = account.userDefaults.spaceOverlayOpacities()
+        if opacities.removeValue(forKey: spaceId) != nil {
+            account.userDefaults.setSpaceOverlayOpacities(opacities)
+        }
+    }
+
+    /// Re-derives the Space's persisted `colorHex` (the sidebar tint
+    /// source) from its resolved theme — the same derivation the create
+    /// panel uses — so the tint follows theme changes instead of keeping
+    /// the creation-time color. Incognito Spaces have no store row.
+    private func syncColorHexWithTheme(forSpaceId spaceId: String) {
+        guard !Self.isIncognitoSpaceId(spaceId) else { return }
+        let hex = MainActor.assumeIsolated {
+            resolvedTheme(forSpaceId: spaceId)
+                .color(for: .windowOverlayBackground, appearance: ThemeManager.shared.currentAppearance)
+                .hexRGBString
+        }
+        recolorSpace(spaceId: spaceId, colorHex: hex)
     }
 
     // MARK: - Per-Space URL routing
@@ -2038,35 +2194,82 @@ final class SpaceManager: ObservableObject {
     }
 
     /// Applied by `SpaceWindowSlot.registerWindow` so a freshly-spawned
-    /// controller adopts any persisted per-Space override before first paint.
+    /// controller adopts its Space's theme before first paint.
     func applyPersistedTheme(to controller: MainBrowserWindowController, spaceId: String) {
-        let persisted = boundAccount?.userDefaults.spaceThemeIds()[spaceId]
-        // Only touch the context when there's actually an override to apply —
-        // leaving the default `mirrorsSharedTheme = true` alone for Spaces
-        // that follow the global theme.
-        guard persisted != nil else { return }
-        applyTheme(themeId: persisted, to: controller)
+        // Only touch the context when the Space has something persisted —
+        // leaving the default `mirrorsSharedTheme = true` (and an Incognito
+        // window's fixed incognito theme) alone otherwise.
+        guard hasThemeCustomization(forSpaceId: spaceId) else { return }
+        applyResolvedTheme(forSpaceId: spaceId, to: controller)
     }
 
-    /// Applies `themeId` to `controller`'s theme context. Nil means "follow
-    /// the global theme". Touches `ThemeManager.shared`, which is
-    /// `@MainActor`-isolated; every caller is on main already (UI menu
-    /// actions, slot.registerWindow from `NSWindowController` init), so we
-    /// assume main isolation rather than propagating the annotation through
-    /// the whole call chain.
-    fileprivate func applyTheme(themeId: String?, to controller: MainBrowserWindowController) {
+    /// The Theme instance `spaceId`'s windows display: its resolved
+    /// registry theme, copied with the Space's custom overlay opacity when
+    /// one is stored. The copy keeps the registry id so a pinned
+    /// `BrowserThemeContext` can re-resolve it after registry-wide edits.
+    func resolvedTheme(forSpaceId spaceId: String) -> Theme {
+        MainActor.assumeIsolated {
+            let manager = ThemeManager.shared
+            let base = manager.registeredThemes[resolvedThemeId(forSpaceId: spaceId)]
+                ?? manager.currentTheme
+            return applyingOverlayOpacity(forSpaceId: spaceId, to: base)
+        }
+    }
+
+    /// `base` copied with the Space's stored overlay opacity applied, or
+    /// `base` itself when the Space has none.
+    fileprivate func applyingOverlayOpacity(forSpaceId spaceId: String, to base: Theme) -> Theme {
+        let light = overlayOpacity(forSpaceId: spaceId, appearance: .light)
+        let dark = overlayOpacity(forSpaceId: spaceId, appearance: .dark)
+        guard light != nil || dark != nil else { return base }
+        let derived = base.duplicating()
+        if let light {
+            derived.setWindowOverlayOpacity(light, for: .light)
+        }
+        if let dark {
+            derived.setWindowOverlayOpacity(dark, for: .dark)
+        }
+        return derived
+    }
+
+    /// Applies `spaceId`'s resolved theme to `controller`'s theme context.
+    /// Spaces with no persisted customization mirror the global theme —
+    /// visually identical to what they resolve to. Touches
+    /// `ThemeManager.shared`, which is `@MainActor`-isolated; every caller
+    /// is on main already (UI menu actions, slot.registerWindow from
+    /// `NSWindowController` init), so we assume main isolation rather than
+    /// propagating the annotation through the whole call chain.
+    fileprivate func applyResolvedTheme(forSpaceId spaceId: String, to controller: MainBrowserWindowController) {
         MainActor.assumeIsolated {
             let manager = ThemeManager.shared
             let context = controller.browserState.themeContext
-            if let themeId, let theme = manager.registeredThemes[themeId] {
+            if hasThemeCustomization(forSpaceId: spaceId) {
                 context.mirrorsSharedTheme = false
-                context.setTheme(theme)
+                // Registry-wide edits (e.g. the General opacity slider
+                // rewriting every theme's alpha) reach pinned windows by
+                // recomputing from this Space's persisted state, which also
+                // re-applies its own overlay opacity on top.
+                context.spaceThemeResolver = { [weak self] in
+                    self?.resolvedTheme(forSpaceId: spaceId)
+                }
+                context.setTheme(resolvedTheme(forSpaceId: spaceId))
             } else {
-                // "Follow Global" — restore mirroring and snap to whatever
-                // the global theme is right now so the change is visible
-                // without waiting for the next global theme switch.
+                // Nothing persisted — restore mirroring and snap to the
+                // global theme so the change is visible without waiting for
+                // the next global theme switch.
                 context.mirrorsSharedTheme = true
+                context.spaceThemeResolver = nil
                 context.setTheme(manager.currentTheme)
+            }
+        }
+    }
+
+    /// Re-applies the Space's resolved theme to every live controller
+    /// bound to it, across all slots.
+    fileprivate func reapplyResolvedTheme(forSpaceId spaceId: String) {
+        for slot in slots {
+            if let controller = slot.windowController(for: spaceId) {
+                applyResolvedTheme(forSpaceId: spaceId, to: controller)
             }
         }
     }
@@ -2291,14 +2494,12 @@ final class SpaceManager: ObservableObject {
     }
 
     /// Drops the runtime record of an Incognito Space and republishes the
-    /// strip. Its per-Space theme override is cleared too — the id is
+    /// strip. Its per-Space theme records are cleared too — the id is
     /// runtime-only, so a leftover entry could never be read again.
     private func removeIncognitoSpaceDescriptor(_ spaceId: String) {
         guard incognitoSpaces.contains(where: { $0.spaceId == spaceId }) else { return }
         incognitoSpaces.removeAll { $0.spaceId == spaceId }
-        if themeId(forSpaceId: spaceId) != nil {
-            setTheme(forSpaceId: spaceId, themeId: nil)
-        }
+        clearThemeRecords(forSpaceId: spaceId)
         refreshIncognitoSpacePresence()
         pushSpaceStateToChromium()
     }
@@ -2339,6 +2540,7 @@ final class SpaceManager: ObservableObject {
         rulesCancellable?.cancel()
         rulesCancellable = nil
         cachedURLRules = []
+        hasLoadedURLRules = false
         spaces = []
         // Tear down each slot's NotificationCenter registrations before
         // dropping the registry — controllers may keep the slots alive past
@@ -2363,6 +2565,7 @@ final class SpaceManager: ObservableObject {
 
     private func handleURLRulesUpdate(_ rules: [SpaceURLRule]) {
         cachedURLRules = rules
+        hasLoadedURLRules = true
         pushRoutingTableToChromium()
     }
 
@@ -2375,6 +2578,7 @@ final class SpaceManager: ObservableObject {
         // shadowing a synthetic Space.
         var updated = storeSpaces.filter { !Self.isIncognitoSpaceId($0.spaceId) }
         lastStoreSpaces = updated
+        migrateLegacyFollowGlobalPinsIfNeeded(storeSpaces: updated)
         // Every live Incognito Space joins the list at its runtime position —
         // after all user Spaces (in ordinal order) until it's dragged,
         // clamped in case Spaces were deleted since. Because they flow
@@ -2724,6 +2928,14 @@ final class SpaceWindowSlot: ObservableObject {
             // would keep resolving the previously-visible window for a now-hidden
             // Space and surface it directly instead of routing through the slot.
             manager?.pushSpaceStateToChromium()
+            // Followers of "which window is the slot showing" (the docked
+            // agent console re-homes on this) need a signal that also covers
+            // PROGRAMMATIC switches: while Phi is inactive (the user is in
+            // their terminal and the code agent switches Spaces),
+            // makeKeyAndOrderFront cannot make the window key, so
+            // didBecomeKey-based following never fires.
+            NotificationCenter.default.post(
+                name: .spaceSlotVisibleWindowDidChange, object: self)
         }
     }
 
@@ -4027,19 +4239,16 @@ final class SpaceWindowSlot: ObservableObject {
         guard bandFrame.width > 0, bandFrame.height > 0 else { return nil }
 
         // Same theme choreography as the clicked push-in, except the target
-        // theme is resolved from the Space's persisted override — the target
+        // theme is resolved from the Space's persisted state — the target
         // window doesn't exist yet. Mirrors what `applyPersistedTheme` sets on
-        // the spawned controller at registration.
+        // the spawned controller at registration (including the Space's
+        // custom overlay opacity, so the ramp lands on the exact alpha the
+        // registered window will show — no pop at settle).
         let prevThemeContext = previous.browserState.themeContext
         let sourceTheme = prevThemeContext.currentTheme
         let sourceMirrors = prevThemeContext.mirrorsSharedTheme
         let targetTheme = MainActor.assumeIsolated { () -> Theme in
-            let themeManager = ThemeManager.shared
-            if let themeId = manager?.themeId(forSpaceId: spaceId),
-               let theme = themeManager.registeredThemes[themeId] {
-                return theme
-            }
-            return themeManager.currentTheme
+            manager?.resolvedTheme(forSpaceId: spaceId) ?? ThemeManager.shared.currentTheme
         }
 
         verticalSwapToken += 1
@@ -4946,8 +5155,10 @@ final class SpaceWindowSlot: ObservableObject {
     /// leftover swap overlay". No-op while a swap animates (the push-in draws on
     /// the still-front leaving window, and its overlay is legitimately live) or
     /// in a shared fullscreen Space (ordering a tab out flashes a blank
-    /// workspace). Keyed on `activeSpaceId` — the slot's source of truth — not
-    /// `visibleController`, which rapid switching can leave transiently stale.
+    /// workspace). A miniaturized active window still gets its surfaced siblings
+    /// hidden, but is not brought back on screen. Keyed on `activeSpaceId` — the
+    /// slot's source of truth — not `visibleController`, which rapid switching
+    /// can leave transiently stale.
     private func enforceSlotSingleWindowInvariant() {
         guard !isSwitchAnimationInFlight, !slotHasFullScreenWindow else { return }
         guard let activeId = activeSpaceId,
@@ -4960,9 +5171,10 @@ final class SpaceWindowSlot: ObservableObject {
             orderOutRearmingMoveToActiveSpace(window)
             hidCount += 1
         }
-        // Re-front the active window if anything was hidden or it somehow fell
-        // off screen; the guard keeps a settled slot from stealing focus.
-        if hidCount > 0 || !activeWindow.isVisible {
+        // A miniaturized active window is a valid zero-visible-window state for
+        // the slot. Keep sweeping surfaced siblings, but do not re-front the
+        // active window and undo the user's minimize action.
+        if !activeWindow.isMiniaturized && (hidCount > 0 || !activeWindow.isVisible) {
             makeKeyAndOrderFrontHidingSlotTabBar(activeWindow)
         }
         visibleController = activeController
@@ -6220,4 +6432,13 @@ private final class SidebarSwapOverlay: NSView {
         enteringImageView.layer?.removeAllAnimations()
         removeFromSuperview()
     }
+}
+
+extension Notification.Name {
+    /// Posted by a `SpaceWindowSlot` (as the notification object) whenever the
+    /// window it shows on screen changes — user switches and programmatic ones
+    /// alike. Unlike `NSWindow.didBecomeKeyNotification`, this also fires while
+    /// the app is inactive, where an ordered-front window cannot become key.
+    static let spaceSlotVisibleWindowDidChange =
+        Notification.Name("PhiSpaceSlotVisibleWindowDidChange")
 }

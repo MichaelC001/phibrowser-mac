@@ -437,7 +437,6 @@ class AuthManager {
     
     func getAccessTokenSyncly() -> String? {
         if hasReauthenticationGraceSession() {
-            recordTrace("access-token-syncly-skipped-reauthentication-required")
             return nil
         }
 

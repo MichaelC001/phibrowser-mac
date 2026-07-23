@@ -236,6 +236,13 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
 /// Returns whether Phi extensions should be kept enabled (Mac is source of truth).
 /// Called synchronously by the policy provider — must not block.
 - (BOOL)shouldEnablePhiExtensions;
+/// Whether agent tooling may operate the user's own Spaces (the Settings ▸
+/// Developer ▸ "Allow agents to operate your Spaces" toggle; Mac is the source
+/// of truth). When NO, the DevTools session gate blocks remote-debugging (CDP)
+/// clients from inspecting or driving tabs that live in the user's Spaces —
+/// their own agent-Space tabs and the user's local DevTools stay allowed.
+/// Called synchronously on the UI thread per gated command — must not block.
+- (BOOL)agentUserSpaceOperationsEnabled;
 /// Whether a backup import is in progress; preinstalled apps reads it to defer
 /// extension preinstall. Called synchronously — must not block.
 - (BOOL)isBackupImporting;
@@ -244,6 +251,16 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
 /// source of truth). Read by the Chromium-side preinstall flow. Called
 /// synchronously — must not block.
 - (BOOL)shouldAutoInstallICloudPasswords;
+/// Whether auto picture-in-picture (pop out playing video when the user
+/// switches tabs or apps) is allowed. The Mac preference is the source of
+/// truth. Called synchronously — must not block.
+- (BOOL)isAutoPictureInPictureEnabled;
+/// Whether auto picture-in-picture windows should additionally park (tuck)
+/// at the screen edge after they appear. Derived from the Mac-side
+/// three-state auto picture-in-picture setting; only meaningful when
+/// isAutoPictureInPictureEnabled is YES. The Mac preference is the source of
+/// truth. Called synchronously — must not block.
+- (BOOL)isAutoPipParkEnabled;
 - (BOOL)handleDeeplinkWithUrlString:(NSString *)urlString windowId:(int64_t)windowId;
 - (void)toggleChatSidebar:(NSNumber * _Nullable)show;
 - (void)showFeedbackDialog;
@@ -399,6 +416,15 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
 /// A subsequent newTabCreatedWithInfo + activeTabChanged provides the new tab.
 /// @param windowId The window's session id.
 - (void)windowDidExitPlaceholderMode:(int64_t)windowId;
+
+/// The current Phi account's display info, shown on the chrome://settings
+/// account row. Same nickname/email source as the Mac client's account
+/// settings page. Keys: nickname (NSString), email (NSString), avatarPNG
+/// (NSData, PNG bytes). Return nil — or omit any key — when the value is
+/// unavailable (signed out, not yet fetched); Chromium falls back per field
+/// to the local Chromium profile display. Called synchronously on the UI
+/// thread per settings page load — must not block (answer from cache).
+- (NSDictionary<NSString *, id> * _Nullable)getPhiAccountInfo;
 @end
 
 @protocol PhiChromiumBridgeProtocol <NSObject>
@@ -703,6 +729,12 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
 /// and isForcePinned. Chromium's complete snapshot is authoritative.
 - (void)getAllExtensionsWithCompletion:(void (^)(NSArray<NSDictionary *> *))completion windowId:(int64_t)windowId;
 - (void)triggerExtensionWithId:(NSString *)extensionId pointInScreen:(NSPoint)pointInScreen windowId:(int64_t)windowId;
+/// Preferred trigger: anchors the popup to the clicked icon's screen rect
+/// (Chromium screen coords, top-left origin). The popup's top edge aligns
+/// below the rect, right edge to the rect's right edge, mirroring when space
+/// runs out. The point-based selector above is a legacy thin wrapper that
+/// passes a zero-size rect.
+- (void)triggerExtensionWithId:(NSString *)extensionId rectInScreen:(NSRect)rectInScreen windowId:(int64_t)windowId;
 - (void)triggerExtensionContextMenuWithId:(NSString *)extensionId pointInScreen:(NSPoint)pointInScreen windowId:(int64_t)windowId;
 - (void)pinExtensionWithId:(NSString *)extensionId windowId:(int64_t)windowId;
 - (void)unpinExtensionWithId:(NSString *)extensionId windowId:(int64_t)windowId;
@@ -859,6 +891,20 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
 
 // Asks Chromium to rebuild the main menu after shortcut settings change.
 - (void)requestRebuildMainMenu;
+
+/// Whether UMA metrics + crash reporting is enabled — the state of the
+/// "Help improve Phi's features and performance" toggle in chrome://settings.
+/// Reflects the effective consent value (Phi defaults this to ON until the
+/// user explicitly opts out, so the backing pref may be absent from Local
+/// State). Main thread only.
+- (BOOL)isMetricsReportingEnabled;
+
+/// The UMA client id used to identify this browser install in metrics
+/// uploads — a random 36-char lowercase UUID, unrelated to any account.
+/// Returns nil while metrics reporting is disabled (opting out clears the
+/// id; re-enabling generates a fresh one) or before the id is first
+/// created. Main thread only.
+- (NSString * _Nullable)getMetricsClientId;
 
 #pragma mark - Security / Certificate
 
@@ -1051,6 +1097,26 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
 - (void)openProfileDataPage:(NSString *)profileId
                        page:(NSString *)page
                  completion:(void (^)(BOOL success, NSString * _Nullable error))completion;
+
+// ==========================================================================
+// DevTools agent transport (Mac → Chromium)
+// ==========================================================================
+
+/// Hands a connected, app-authenticated socket fd to the DevTools server,
+/// which adopts it as one CDP client connection (the FD-injection transport
+/// behind agent access — the browser listens on nothing; the Mac client owns
+/// the Unix-domain listener and vets every peer before it gets here).
+/// Callable from any thread. The browser ALWAYS takes ownership of `fd`:
+/// returns YES when the connection was handed to the DevTools server, NO when
+/// the injection transport is not running (early browser startup, before the
+/// DevTools server registers) — `fd` is closed either way, never by the caller.
+- (BOOL)attachDevToolsConnectionWithFD:(int)fd;
+
+/// Severs every injected CDP connection immediately (the user revoked agent
+/// access). Closing the app-side listener stops NEW connections; this cleans
+/// up the ones already attached, which then unwind through the DevTools
+/// server's normal EOF path. Callable from any thread.
+- (void)closeAllDevToolsConnections;
 
 @end
 

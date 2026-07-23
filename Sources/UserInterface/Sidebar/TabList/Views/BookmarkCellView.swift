@@ -7,6 +7,7 @@ import AppKit
 import Combine
 import SnapKit
 import SwiftUI
+import SVGView
 
 /// A lightweight protocol to allow the sidebar to show "virtual" bookmark items
 /// while still rendering and operating on the underlying real `Bookmark`.
@@ -33,6 +34,7 @@ private final class BookmarkCellViewState {
     var primaryTabIsLive = false
     var secondaryTabIsLive = false
     var isFolder = false
+    var isFolderExpanded = false
     var isActive = false
     var isOpened = false
     var isHovered = false
@@ -200,6 +202,7 @@ class BookmarkCellView: SidebarCellView {
         viewState.primaryTabIsLive = false
         viewState.secondaryTabIsLive = false
         viewState.isFolder = false
+        viewState.isFolderExpanded = false
         viewState.isActive = false
         viewState.isOpened = false
         viewState.isHovered = false
@@ -235,15 +238,20 @@ class BookmarkCellView: SidebarCellView {
 
     private func updateEditFieldLayout() {
         // Match the SwiftUI row chrome:
-        // `edgesSpacing` is the outer row inset, `6` is the inner leading
-        // padding before the primary favicon, `16` is the favicon width, `8`
-        // is the gap from the last favicon to the title, and split bookmarks
-        // add another `16 + 8` for the secondary favicon plus its trailing gap.
+        // `edgesSpacing` is the outer row inset. Folder icons use a 20-point
+        // slot with 4 points of leading padding, while regular bookmark
+        // favicons keep their original 16-point slot with 6 points of leading
+        // padding, so both icon centers stay aligned. Folders use a 6-point
+        // title gap; regular bookmarks retain their original 8-point gap.
+        let leadingPadding: CGFloat = viewState.isFolder ? 4 : 6
+        let primaryFaviconSlotSize: CGFloat = viewState.isFolder ? 20 : 16
+        let titleGap: CGFloat = viewState.isFolder ? 6 : 8
+        let secondaryFaviconOffset: CGFloat = viewState.showsSecondaryFavicon ? 24 : 0
         let leadingOffset = WebContentConstant.edgesSpacing
-            + 6
-            + 16
-            + 8
-            + (viewState.showsSecondaryFavicon ? 24 : 0)
+            + leadingPadding
+            + primaryFaviconSlotSize
+            + titleGap
+            + secondaryFaviconOffset
         editField.snp.remakeConstraints { make in
             make.leading.equalToSuperview().offset(leadingOffset)
             make.trailing.equalToSuperview().inset(WebContentConstant.edgesSpacing + 8)
@@ -493,7 +501,7 @@ class BookmarkCellView: SidebarCellView {
 
     private func updateFolderIcon(bookmark: Bookmark) {
         guard bookmark.isFolder else { return }
-        viewState.primaryFaviconImage = NSImage(resource: bookmark.isExpanded ? .foderOpen : .foderClose)
+        viewState.isFolderExpanded = bookmark.isExpanded
     }
 
     private func applyTitleAndSplitState(bookmark: Bookmark,
@@ -728,12 +736,13 @@ private struct SidebarBookmarkCellContentView: View {
     }
 
     var body: some View {
-        HStack(alignment: .center, spacing: 8) {
+        HStack(alignment: .center, spacing: state.isFolder ? 6 : 8) {
             BookmarkFaviconView(
                 image: state.primaryFaviconImage,
                 pageURL: state.primaryPageURL,
                 revision: state.primaryFaviconRevision,
                 isFolder: state.isFolder,
+                isFolderExpanded: state.isFolderExpanded,
                 liveTabViewModel: state.primaryTabIsLive ? primaryTabViewModel : nil,
                 onNavigateToOriginalURL: onNavigatePrimaryToOriginalURL,
                 onReturnHoverChanged: { primaryFaviconHoverAction = $0 }
@@ -751,6 +760,7 @@ private struct SidebarBookmarkCellContentView: View {
                     pageURL: state.secondaryPageURL,
                     revision: state.secondaryFaviconRevision,
                     isFolder: false,
+                    isFolderExpanded: false,
                     liveTabViewModel: state.secondaryTabIsLive ? secondaryTabViewModel : nil,
                     onNavigateToOriginalURL: onNavigateSecondaryToOriginalURL,
                     onReturnHoverChanged: { secondaryFaviconHoverAction = $0 }
@@ -791,7 +801,7 @@ private struct SidebarBookmarkCellContentView: View {
             }
         }
         .help(state.title)
-        .padding(.leading, 6)
+        .padding(.leading, state.isFolder ? 4 : 6)
         .padding(.trailing, 8)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(
@@ -816,6 +826,7 @@ private struct BookmarkFaviconView: View {
     let pageURL: String?
     let revision: Int
     let isFolder: Bool
+    let isFolderExpanded: Bool
     let liveTabViewModel: TabViewModel?
     let onNavigateToOriginalURL: (Bool) -> Void
     let onReturnHoverChanged: (BookmarkFaviconHoverAction?) -> Void
@@ -824,10 +835,15 @@ private struct BookmarkFaviconView: View {
     @State private var isCommandKeyPressed = false
     @State private var modifierFlagsMonitor: Any?
 
-    private static let slotSize: CGFloat = 16
+    private static let faviconSlotSize: CGFloat = 16
     private static let faviconSize: CGFloat = 14
+    private static let folderSize: CGFloat = 20
     private static let faviconCornerRadius: CGFloat = 3
     private static let returnButtonSize: CGFloat = 24
+
+    private var slotSize: CGFloat {
+        isFolder ? Self.folderSize : Self.faviconSlotSize
+    }
 
     private var canNavigateToOriginalURL: Bool {
         guard !isFolder,
@@ -878,7 +894,7 @@ private struct BookmarkFaviconView: View {
                     )
             )
         )
-        .frame(width: Self.slotSize, height: Self.slotSize)
+        .frame(width: slotSize, height: slotSize)
     }
 
     private func updateReturnButtonHover(_ hovering: Bool) {
@@ -923,7 +939,10 @@ private struct BookmarkFaviconView: View {
 
     @ViewBuilder
     private var faviconContent: some View {
-        if let liveTabViewModel {
+        if isFolder {
+            BookmarkFolderIconView(isExpanded: isFolderExpanded)
+                .frame(width: Self.folderSize, height: Self.folderSize)
+        } else if let liveTabViewModel {
             UnifiedTabFaviconView(viewModel: liveTabViewModel)
         } else if let image {
             faviconImage(image)
@@ -936,17 +955,128 @@ private struct BookmarkFaviconView: View {
 
     @ViewBuilder
     private func faviconImage(_ image: NSImage) -> some View {
-        if isFolder {
-            Image(nsImage: image)
-                .resizable()
-                .scaledToFit()
+        Image(nsImage: image)
+            .resizable()
+            .scaledToFit()
+            .frame(width: Self.faviconSize, height: Self.faviconSize)
+            .clipShape(RoundedRectangle(cornerRadius: Self.faviconCornerRadius, style: .continuous))
+    }
+}
+
+private struct BookmarkFolderIconView: View {
+    let isExpanded: Bool
+
+    @Environment(\.phiTheme) private var theme
+    @Environment(\.phiAppearance) private var appearance
+
+    private var resourceName: String {
+        isExpanded ? "bookmark-folder-open" : "bookmark-folder-closed"
+    }
+
+    var body: some View {
+        if let url = Bundle.main.url(forResource: resourceName, withExtension: "svg") {
+            let svgView = tintedSVGView(from: url)
+
+            svgView
+                .aspectRatio(1, contentMode: .fit)
         } else {
-            Image(nsImage: image)
+            Image(isExpanded ? .folderOpen : .folderClose)
                 .resizable()
                 .scaledToFit()
-                .frame(width: Self.faviconSize, height: Self.faviconSize)
-                .clipShape(RoundedRectangle(cornerRadius: Self.faviconCornerRadius, style: .continuous))
         }
+    }
+
+    private func tintedSVGView(from url: URL) -> SVGView {
+        let svgView = SVGView(contentsOf: url)
+        applyPalette(to: svgView)
+        return svgView
+    }
+
+    private func applyPalette(to svgView: SVGView) {
+        let palette = BookmarkFolderIconPalette(theme: theme, appearance: appearance)
+        setShape(
+            id: "folder-back-silhouette",
+            in: svgView,
+            fill: palette.backFill,
+            stroke: nil
+        )
+        setShape(
+            id: "folder-back-body",
+            in: svgView,
+            fill: palette.backFill,
+            stroke: palette.stroke
+        )
+        setShape(
+            id: "folder-front-panel",
+            in: svgView,
+            fill: palette.frontFill,
+            stroke: palette.stroke
+        )
+    }
+
+    private func setShape(id: String, in svgView: SVGView, fill: NSColor, stroke: NSColor?) {
+        guard let shape = svgView.getNode(byId: id) as? SVGShape else { return }
+
+        shape.fill = fill.svgViewColor
+        if let stroke {
+            shape.stroke = SVGStroke(fill: stroke.svgViewColor, width: 1)
+        } else {
+            shape.stroke = nil
+        }
+    }
+}
+
+private struct BookmarkFolderIconPalette {
+    let backFill: NSColor
+    let frontFill: NSColor
+    let stroke: NSColor
+
+    init(theme: Theme, appearance: Appearance) {
+        let accent = theme.color(for: .themeColor, appearance: appearance)
+        let hsb = accent.toHSBComponents()
+
+        if appearance.isDark {
+            backFill = theme.color(for: .windowBackground, appearance: appearance)
+            frontFill = Self.makeColor(
+                hue: hsb.h,
+                saturation: hsb.s + 0.07,
+                brightness: hsb.b - 0.24
+            )
+            stroke = .white
+        } else {
+            backFill = Self.makeColor(
+                hue: hsb.h,
+                saturation: 0.65,
+                brightness: hsb.b - 0.15
+            )
+            frontFill = Self.makeColor(hue: hsb.h, saturation: 0.20, brightness: 1.00)
+            stroke = Self.makeColor(hue: hsb.h, saturation: 0.65, brightness: 0.30)
+        }
+    }
+
+    private static func makeColor(
+        hue: CGFloat,
+        saturation: CGFloat,
+        brightness: CGFloat
+    ) -> NSColor {
+        NSColor(
+            calibratedHue: hue,
+            saturation: min(max(saturation, 0), 1),
+            brightness: min(max(brightness, 0), 1),
+            alpha: 1
+        )
+    }
+}
+
+private extension NSColor {
+    var svgViewColor: SVGColor {
+        let color = usingColorSpace(.sRGB) ?? self
+        return SVGColor(
+            r: Int(round(color.redComponent * 255)),
+            g: Int(round(color.greenComponent * 255)),
+            b: Int(round(color.blueComponent * 255)),
+            opacity: Double(color.alphaComponent)
+        )
     }
 }
 

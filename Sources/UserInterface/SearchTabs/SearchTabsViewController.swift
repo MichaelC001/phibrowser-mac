@@ -177,7 +177,7 @@ final class SearchTabsViewController: NSViewController {
         }
         separatorView.snp.makeConstraints { make in
             make.top.equalTo(inputContainer.snp.bottom)
-            make.leading.trailing.equalToSuperview().inset(18)
+            make.leading.trailing.equalToSuperview()
             make.height.equalTo(1)
         }
         resultsView.snp.makeConstraints { make in

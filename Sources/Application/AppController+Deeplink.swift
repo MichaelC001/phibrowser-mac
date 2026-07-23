@@ -9,18 +9,17 @@ extension AppController {
         switch page {
         case .settings(let section):
             guard let section else { return }
-            let controller = ensureSettingsWindowController()
             switch section {
             case .account:
-                controller.show(pane: .account)
+                showSettings(pane: .account)
             case .aisetting:
-                controller.show(pane: .aisettings)
+                showSettings(pane: .aisettings)
             case .general:
-                controller.show(pane: .general)
+                showSettings(pane: .general)
             case .imchannels:
-                controller.show(pane: .imchannels)
+                showSettings(pane: .imchannels)
             case .shortcus:
-                controller.show(pane: .shortcuts)
+                showSettings(pane: .shortcuts)
             }
         }
     }

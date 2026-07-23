@@ -65,6 +65,11 @@ struct SettingsDetailRow<Control: View>: View {
             Text(label)
                 .font(.system(size: 13))
                 .themedForeground(.textPrimary)
+                // Row labels are short by design; when a wide control leaves
+                // the label a sliver, keep it on one line instead of letting
+                // it wrap into a vertical letter stack.
+                .lineLimit(1)
+                .fixedSize()
             Spacer(minLength: 12)
             control
         }
@@ -85,10 +90,14 @@ struct SettingsRowDivider: View {
 /// master-detail settings lists, so the system default — which can't be deleted
 /// or moved to another profile — is identifiable at a glance.
 struct SettingsDefaultBadge: View {
+    /// White-on-accent variant for rows highlighted with the solid system
+    /// accent (the focused Space row), where the default gray pill vanishes.
+    var onAccent: Bool = false
+
     var body: some View {
         Text(NSLocalizedString("Default", comment: "Settings - badge marking the default Space or Profile"))
             .font(.system(size: 10, weight: .medium))
-            .themedForeground(.textSecondary)
+            .themedForeground(onAccent ? ThemedColor(.white) : .textSecondary)
             // Never wrap or compress: under tight row width (e.g. the Spaces list
             // row, where the profile picker takes space) the badge must keep its
             // pill on one line and let the name truncate instead.
@@ -96,6 +105,9 @@ struct SettingsDefaultBadge: View {
             .fixedSize()
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
-            .background(Color.secondary.opacity(0.15), in: Capsule())
+            .background(
+                onAccent ? Color.white.opacity(0.2) : Color.secondary.opacity(0.15),
+                in: Capsule()
+            )
     }
 }

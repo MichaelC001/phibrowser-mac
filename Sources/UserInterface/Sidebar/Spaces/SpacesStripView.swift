@@ -4,6 +4,7 @@
 // found in the LICENSE file.
 
 import AppKit
+import Combine
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -65,6 +66,85 @@ final class SpaceSwipeTracker {
     }
 }
 
+/// Turns wheel scrolling over the sidebar Spaces strip into whole-pip viewport
+/// steps, so an overflowing row can be scrolled directly instead of only
+/// sliding when the active Space changes. The strip's AppKit hosting view
+/// (SpacesStripHostingView) feeds every wheel event through `handle(_:)`;
+/// consumed events emit steps on `pipSteps`, which the SwiftUI strip receives
+/// to slide its clipped pip window (see `SpacesStripView.stepViewport`).
+///
+/// Axis handling mirrors `SpaceSwipeTracker`: a trackpad gesture latches its
+/// axis on the first non-zero delta and holds it through momentum, and
+/// horizontal gestures are NOT consumed here — they bubble up the responder
+/// chain to the sidebar's swipe-to-switch-Space handler.
+final class SpacesStripWheelTracker {
+    /// Emits viewport steps: positive slides toward the end of the row.
+    let pipSteps = PassthroughSubject<Int, Never>()
+
+    private enum Axis { case undecided, horizontal, vertical }
+    private var axis: Axis = .undecided
+    private var accumulated: CGFloat = 0
+    /// Scroll travel per pip for precise deltas — one strip item plus its gap,
+    /// so the row tracks the gesture roughly 1:1.
+    private static let stepDistance: CGFloat =
+        SpacesStripView.stripItemWidth + SpacesStripView.stripSpacing
+
+    /// Routes one wheel event. Returns true when the event was consumed (the
+    /// caller must not forward it to super), false when it should continue up
+    /// the responder chain.
+    func handle(_ event: NSEvent) -> Bool {
+        // Legacy wheel events (a physical mouse wheel — no gesture phases).
+        // The row is horizontal, so a tilt wheel's sideways notches mean the
+        // same thing as vertical ones: scroll toward the row's end.
+        guard event.phase != [] || event.momentumPhase != [] else {
+            let delta = abs(event.scrollingDeltaY) >= abs(event.scrollingDeltaX)
+                ? event.scrollingDeltaY : event.scrollingDeltaX
+            guard delta != 0 else { return false }
+            if event.hasPreciseScrollingDeltas {
+                // Continuous phase-less scrolling (Magic Mouse style):
+                // accumulate real travel like a trackpad gesture.
+                accumulate(delta)
+            } else {
+                // A classic wheel notch is a discrete event whose delta unit
+                // varies by device/acceleration — step exactly one pip per
+                // notch, in the direction a vertical list would scroll.
+                pipSteps.send(delta < 0 ? 1 : -1)
+            }
+            return true
+        }
+
+        // Trackpad gesture: latch the axis once and hold it through momentum
+        // (see SpaceSwipeTracker); only vertical gestures scroll the row.
+        if event.phase == .mayBegin || event.phase == .began {
+            axis = .undecided
+            accumulated = 0
+        }
+        if axis == .undecided {
+            let dx = abs(event.scrollingDeltaX)
+            let dy = abs(event.scrollingDeltaY)
+            if dx > dy {
+                axis = .horizontal
+            } else if dy > dx {
+                axis = .vertical
+            }
+        }
+        guard axis == .vertical else { return false }
+        accumulate(event.scrollingDeltaY)
+        return true
+    }
+
+    /// Adds precise scroll travel and emits one viewport step per
+    /// `stepDistance` points, keeping the sub-step remainder. Positive travel
+    /// (scroll up / left) reveals earlier pips, so steps are sent negated.
+    private func accumulate(_ delta: CGFloat) {
+        accumulated += delta
+        let steps = Int((accumulated / Self.stepDistance).rounded(.towardZero))
+        guard steps != 0 else { return }
+        accumulated -= CGFloat(steps) * Self.stepDistance
+        pipSteps.send(-steps)
+    }
+}
+
 /// Compact active-Space header that sits between the pinned-tab strip and
 /// the regular tab list. Shows the active Space's icon + name on the left
 /// and an ellipsis affordance on the right that opens a popover listing
@@ -94,6 +174,10 @@ struct SpacesStripView: View {
     /// request only in the window currently on screen. Nil (previews) means the
     /// strip always treats itself as the owner. See `openActiveIconPicker`.
     var resolveOwnerController: () -> MainBrowserWindowController? = { nil }
+    /// Wheel-to-pip-step feed from the strip's AppKit hosting view (see
+    /// SpacesStripWheelTracker), letting the user scroll an overflowing row
+    /// directly. Nil for the horizontal chip, which renders no pip row.
+    var wheelTracker: SpacesStripWheelTracker? = nil
     @ObservedObject private var profileManager: ProfileManager = .shared
     @ObservedObject private var agentSpaceManager: AgentSpaceManager = .shared
     @Environment(\.phiAppearance) private var windowAppearance: Appearance
@@ -191,12 +275,18 @@ struct SpacesStripView: View {
     /// keep the icon centered between the traffic lights and the first tab.
     private static let compactChipHorizontalPadding: CGFloat = 2
     private static let iconSize: CGFloat = 14
+    /// Phi icon canvas and container size in the strip.
+    private static let phiIconSize: CGFloat = 24
+    /// Produces an approximately 15pt visible emoji inside the strip item.
+    private static let emojiFontSize: CGFloat = 13
+    private static let emojiContainerSize: CGFloat = 18
     private static let iconHitSize: CGFloat = 22
     /// Uniform hit-target width of every item in the single-row strip — pips,
     /// the "…" overflow affordance, and the add button — and the gap between
-    /// them. Drives the fit arithmetic in `visiblePipCount`.
-    private static let stripItemWidth: CGFloat = 24
-    private static let stripSpacing: CGFloat = 4
+    /// them. Drives the fit arithmetic in `visiblePipCount` and the wheel
+    /// tracker's per-pip scroll distance (hence fileprivate).
+    fileprivate static let stripItemWidth: CGFloat = 24
+    fileprivate static let stripSpacing: CGFloat = 4
     /// How long a pip must stay hovered before its card appears, so brushing
     /// the cursor across the strip doesn't flash cards.
     private static let hoverCardDelay: TimeInterval = 0.3
@@ -369,14 +459,40 @@ struct SpacesStripView: View {
         activeIcon(for: space)
     }
 
+    @ViewBuilder
+    private func stripIcon(storedValue: String?,
+                           symbolWeight: Font.Weight,
+                           tint: Color) -> some View {
+        if let storedValue,
+           let selection = IconPickerSelection.fromStorageValue(storedValue) {
+            switch selection {
+            case .phiIcon:
+                IconPickerSelectionView(selection: selection, size: Self.phiIconSize)
+                    .frame(width: Self.phiIconSize, height: Self.phiIconSize)
+            case .emoji(_, let text):
+                Text(text)
+                    .font(.system(size: Self.emojiFontSize))
+                    .lineLimit(1)
+                    .fixedSize()
+                    .frame(width: Self.emojiContainerSize, height: Self.emojiContainerSize)
+            }
+        } else {
+            SpaceIconView(
+                storedValue: storedValue,
+                size: Self.iconSize,
+                symbolWeight: symbolWeight,
+                tint: tint
+            )
+        }
+    }
+
     /// The active Space's icon. Clicking the chip opens the Space-switcher menu
     /// (popped by the hosting view), not the icon picker — but this view still
     /// hosts the icon-picker popover that the menu's / tab-area "Change Icon…"
     /// entry anchors to.
     private func activeIcon(for space: SpaceModel?) -> some View {
-        SpaceIconView(
+        stripIcon(
             storedValue: space?.iconName,
-            size: Self.iconSize,
             symbolWeight: .semibold,
             tint: space.map(iconColor(for:)) ?? Color.secondary
         )
@@ -456,6 +572,9 @@ struct SpacesStripView: View {
                 guard stripDraggingId == nil else { return }
                 ensureActivePipVisible(availableWidth: geo.size.width, animated: false)
             }
+            .onReceive(wheelStepPublisher) { step in
+                stepViewport(by: step, availableWidth: geo.size.width)
+            }
         }
         .frame(height: rowHeight)
         // Reset a drag that ends off every pip (Spacer / add button / "…" /
@@ -520,9 +639,6 @@ struct SpacesStripView: View {
                 spacePip(for: space)
                     .overlay(alignment: .topTrailing) {
                         agentBadge(for: space.spaceId)
-                    }
-                    .overlay(alignment: .bottomTrailing) {
-                        agentNumberBadge(for: space.spaceId)
                     }
                     .opacity(stripDraggingId == space.spaceId ? 0.5 : 1)
                     // `.clipped()` below is visual only — pips beyond the
@@ -615,6 +731,30 @@ struct SpacesStripView: View {
         }
     }
 
+    /// The hosting view's wheel-step feed, or a never-firing publisher for the
+    /// horizontal chip and previews, which have no wheel tracker.
+    private var wheelStepPublisher: AnyPublisher<Int, Never> {
+        wheelTracker?.pipSteps.eraseToAnyPublisher() ?? Empty<Int, Never>().eraseToAnyPublisher()
+    }
+
+    /// Slides the viewport by whole pips in response to wheel scrolling over
+    /// the strip (see SpacesStripWheelTracker), clamped at the row's ends.
+    /// Purely a manual peek at off-screen pips: the next Space switch
+    /// re-anchors the window on the active pip via `ensureActivePipVisible`.
+    /// Ignored mid-drag, where the row's arrangement is transient and sliding
+    /// it under the drop targets would scramble the reorder.
+    private func stepViewport(by step: Int, availableWidth: CGFloat) {
+        guard step != 0, stripDraggingId == nil else { return }
+        let visibleCount = visiblePipCount(availableWidth: availableWidth)
+        let maxStart = max(0, stripOrderedSpaces.count - visibleCount)
+        guard maxStart > 0 else { return }
+        let next = max(0, min(clampedStripStart(visibleCount: visibleCount) + step, maxStart))
+        guard next != stripStartIndex else { return }
+        withAnimation(.easeOut(duration: 0.15)) {
+            stripStartIndex = next
+        }
+    }
+
     /// How many whole pips fit inside the sliding window, reserving the
     /// trailing slot for the add button — or the "…" affordance that replaces
     /// it when not every Space fits — plus, when overflowing, room for the
@@ -687,19 +827,37 @@ struct SpacesStripView: View {
         }
     }
 
-    /// Bottom-trailing ordinal badge (1, 2, 3…) that tells several concurrent
-    /// agent Spaces apart. Only agent Spaces carry a task, so only they show it.
+    /// The pip's icon. For a Space with a live agent task, draw the driving
+    /// agent's brand icon (Claude, Codex, Pi, …) so the pip identifies who is
+    /// working — a render-time override only: the Space keeps its stored robot
+    /// signature (the agent-Space detection/orphan-sweep depend on it), and
+    /// these icons are never added to the user's icon picker. Falls back to the
+    /// stored icon when no task is live (e.g. a persistent agent Space between
+    /// rounds).
     @ViewBuilder
-    private func agentNumberBadge(for spaceId: String) -> some View {
-        if let task = agentSpaceManager.tasksBySpaceId[spaceId] {
-            Text(verbatim: "\(task.number)")
-                .font(.system(size: 8, weight: .bold))
-                .foregroundStyle(.white)
-                .frame(minWidth: 9, minHeight: 9)
-                .padding(2)
-                .background(Circle().fill(Color.accentColor))
-                .overlay(Circle().stroke(Color(nsColor: .windowBackgroundColor), lineWidth: 1))
-                .offset(x: 3, y: 3)
+    private func pipIcon(for space: SpaceModel) -> some View {
+        if let task = agentSpaceManager.tasksBySpaceId[space.spaceId] {
+            let badge = AgentDriverBadge.make(agentName: task.agentName, origin: task.origin)
+            Group {
+                if let asset = badge.assetName {
+                    // Brand assets carry padding around their ink (see
+                    // `assetInkRatio`); widen the frame so the INK matches the
+                    // neighboring pips' SF Symbol glyphs at `iconSize`.
+                    Image(asset).renderingMode(.template).resizable().scaledToFit()
+                        .frame(width: Self.iconSize / AgentDriverBadge.assetInkRatio,
+                               height: Self.iconSize / AgentDriverBadge.assetInkRatio)
+                } else {
+                    Image(systemName: badge.symbol).resizable().scaledToFit()
+                        .frame(width: Self.iconSize, height: Self.iconSize)
+                }
+            }
+            .foregroundStyle(Color.primary)
+        } else {
+            stripIcon(
+                storedValue: space.iconName,
+                symbolWeight: .semibold,
+                tint: Color.primary
+            )
         }
     }
 
@@ -714,13 +872,7 @@ struct SpacesStripView: View {
         return Button {
             activatePip(space)
         } label: {
-            SpaceIconView(
-                storedValue: space.iconName,
-                size: Self.iconSize,
-                symbolWeight: .semibold,
-                tint: Color.primary
-            )
-            .opacity(isActive ? 1 : 0.4)
+            pipIcon(for: space)
             .frame(width: 24, height: rowHeight)
             // Publishes this pip's frame under its spaceId, for the
             // strip-level glass chip to target (see `iconStrip`).
@@ -739,6 +891,19 @@ struct SpacesStripView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(space.name)
+        // Agent pips only: a shortcut into the session console, filtered to
+        // this task. Left-click must stay "switch Space", and the hover card
+        // renders in a passthrough panel that can't host buttons — so the
+        // context menu is the pip's one interactive extra.
+        .contextMenu {
+            if let task = agentSpaceManager.tasksBySpaceId[space.spaceId] {
+                Button(NSLocalizedString(
+                    "Show Transcript",
+                    comment: "Agent pip context menu - open the agent console for this task")) {
+                    AgentTranscriptPanelController.shared.show(focusTaskId: task.taskId)
+                }
+            }
+        }
         .onHover { hovering in
             if hovering {
                 highlightedPipId = space.spaceId
@@ -956,6 +1121,7 @@ struct SpacesStripView: View {
             iconStoredValue: space.iconName,
             spaceName: space.name,
             iconColor: iconColor(for: space),
+            accentColor: hoverCardAccentColor(for: space),
             shortcutTokens: spaceShortcut(for: space)?.keycapTokens ?? []
         )
     }
@@ -1048,7 +1214,7 @@ struct SpacesStripView: View {
             },
             onChangeIcon: { manager.changeIcon(spaceId: $0, iconName: $1) },
             onSetTheme: { manager.setTheme(forSpaceId: $0, themeId: $1) },
-            currentThemeId: { manager.themeId(forSpaceId: $0) },
+            currentThemeId: { manager.resolvedThemeId(forSpaceId: $0) },
             onDelete: { space in
                 isPickerOpen = false
                 confirmDelete(space)
@@ -1075,18 +1241,25 @@ struct SpacesStripView: View {
         profileManager.profile(for: profileId)?.displayName ?? profileId
     }
 
-    /// Each Space's accent comes from its pinned theme (or the global theme
-    /// when no override is set), so the active-Space icon previews what the
-    /// window currently looks like.
+    /// A Space's effective theme, resolved through the single source of
+    /// truth (pinned theme + custom overlay opacity).
+    private func theme(for space: SpaceModel) -> Theme {
+        manager.resolvedTheme(forSpaceId: space.spaceId)
+    }
+
+    /// Each Space's accent comes from its resolved theme, so the
+    /// active-Space icon previews what the window currently looks like.
     fileprivate func iconColor(for space: SpaceModel) -> Color {
-        let theme: Theme
-        if let pinnedId = manager.themeId(forSpaceId: space.spaceId),
-           let pinned = ThemeManager.shared.registeredThemes[pinnedId] {
-            theme = pinned
-        } else {
-            theme = ThemeManager.shared.currentTheme
-        }
-        return Color(nsColor: theme.color(for: .textPrimary, appearance: windowAppearance))
+        Color(nsColor: theme(for: space).color(for: .textPrimary, appearance: windowAppearance))
+    }
+
+    /// The hover card's keycap accent: the same per-Space theme as
+    /// `iconColor(for:)` resolved through the `.themeColor` role, matching the
+    /// address bar's shortcut tooltip. Resolved here (not in the card) because
+    /// the card is hosted in a standalone panel outside the window's theme
+    /// environment.
+    private func hoverCardAccentColor(for space: SpaceModel) -> Color {
+        Color(nsColor: theme(for: space).color(for: .themeColor, appearance: windowAppearance))
     }
 
     private func promptRename(for space: SpaceModel) {
@@ -1116,10 +1289,17 @@ struct SpacesStripView: View {
             format: NSLocalizedString("Delete \u{201C}%@\u{201D}?", comment: "Title of the delete-Space confirmation"),
             space.name
         )
-        alert.informativeText = NSLocalizedString(
-            "Bookmarks belonging to this Space will also be removed. This action cannot be undone.",
-            comment: "Body of the delete-Space confirmation"
-        )
+        if AccountController.shared.account?.localStorage.pinnedTabScope() == .space {
+            alert.informativeText = NSLocalizedString(
+                "Bookmarks and pinned tabs belonging to this Space will also be removed. This action cannot be undone.",
+                comment: "Body of the delete-Space confirmation with Space-scoped pinned tabs"
+            )
+        } else {
+            alert.informativeText = NSLocalizedString(
+                "Bookmarks belonging to this Space will also be removed. This action cannot be undone.",
+                comment: "Body of the delete-Space confirmation"
+            )
+        }
         alert.alertStyle = .warning
         alert.addButton(withTitle: NSLocalizedString("Delete", comment: "Destructive button"))
         alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Cancel button"))
@@ -1139,8 +1319,8 @@ private struct SpacePickerPopup: View {
     let onActivate: (String) -> Void
     let onRename: (SpaceModel) -> Void
     let onChangeIcon: (String, String) -> Void
-    let onSetTheme: (String, String?) -> Void
-    let currentThemeId: (String) -> String?
+    let onSetTheme: (String, String) -> Void
+    let currentThemeId: (String) -> String
     let onDelete: (SpaceModel) -> Void
     let onCreate: () -> Void
     /// Spaces already shown as pips in the strip, hidden from this list so the
@@ -1259,13 +1439,7 @@ private struct SpacePickerPopup: View {
     }
 
     private func iconColor(for space: SpaceModel) -> Color {
-        let theme: Theme
-        if let pinnedId = manager.themeId(forSpaceId: space.spaceId),
-           let pinned = ThemeManager.shared.registeredThemes[pinnedId] {
-            theme = pinned
-        } else {
-            theme = ThemeManager.shared.currentTheme
-        }
+        let theme = manager.resolvedTheme(forSpaceId: space.spaceId)
         return Color(nsColor: theme.color(for: .textPrimary, appearance: windowAppearance))
     }
 
@@ -1438,15 +1612,17 @@ private struct SpacePickerRow: View {
     let onActivate: () -> Void
     let onRename: () -> Void
     let onChangeIcon: (String) -> Void
-    let onSetTheme: (String?) -> Void
-    let currentThemeId: () -> String?
+    let onSetTheme: (String) -> Void
+    let currentThemeId: () -> String
     let onDelete: () -> Void
 
     @State private var isHovering: Bool = false
     @State private var showsIconPicker: Bool = false
 
-    /// Drives the Change-Theme picker: nil = Follow Global, else a pinned id.
-    private var themeSelection: Binding<String?> {
+    /// Drives the Change-Theme picker with the Space's resolved theme id —
+    /// every Space owns a theme, so the picker always has a concrete
+    /// selection.
+    private var themeSelection: Binding<String> {
         Binding(
             get: { currentThemeId() },
             set: { onSetTheme($0) }
@@ -1462,7 +1638,6 @@ private struct SpacePickerRow: View {
                     symbolWeight: .semibold,
                     tint: isActive ? Color.white : tint
                 )
-                .frame(width: 16)
                 Text(space.name)
                     .font(.system(size: 13, weight: isActive ? .semibold : .regular))
                     .lineLimit(1)
@@ -1503,16 +1678,6 @@ private struct SpacePickerRow: View {
             }
             Menu(NSLocalizedString("Change Theme", comment: "")) {
                 Picker(NSLocalizedString("Change Theme", comment: ""), selection: themeSelection) {
-                    Label {
-                        Text(NSLocalizedString("Follow Global", comment: "Theme menu: clear per-Space override"))
-                    } icon: {
-                        Image(nsImage: .themeColorSwatch(for: ThemeManager.shared.currentTheme))
-                            .renderingMode(.original)
-                    }
-                    .tag(String?.none)
-
-                    Divider()
-
                     ForEach(ThemeManager.shared.orderedThemes, id: \.id) { theme in
                         Label {
                             Text(theme.name)
@@ -1520,7 +1685,7 @@ private struct SpacePickerRow: View {
                             Image(nsImage: .themeColorSwatch(for: theme))
                                 .renderingMode(.original)
                         }
-                        .tag(String?(theme.id))
+                        .tag(theme.id)
                     }
                 }
                 .pickerStyle(.inline)
@@ -1555,9 +1720,14 @@ private struct SpacePickerRow: View {
 
 struct SpaceIconView: View {
     let storedValue: String?
+    /// Base SF Symbol glyph size. Emoji render 2pt smaller for optical balance;
+    /// Phi icons fill the item frame, which grows from this value using the same
+    /// 20:16 canvas-to-glyph ratio as IconPicker.
     let size: CGFloat
     let symbolWeight: Font.Weight
     let tint: Color
+
+    private static let phiIconCanvasScale: CGFloat = 1.25
 
     private var storedIconValue: String {
         guard let storedValue, !storedValue.isEmpty else { return "rectangle.stack" }
@@ -1565,34 +1735,36 @@ struct SpaceIconView: View {
     }
 
     var body: some View {
-        if let selection = IconPickerSelection.fromStorageValue(storedIconValue) {
-            switch selection {
-            case .phiIcon:
-                IconPickerSelectionView(selection: selection, size: size)
-            case .emoji(_, let text):
-                Text(text)
-                    .font(.system(size: emojiFontSize))
-                    .lineLimit(1)
-                    .fixedSize()
-                    .frame(width: emojiFrameSize.width, height: emojiFrameSize.height)
+        Group {
+            if let selection = IconPickerSelection.fromStorageValue(storedIconValue) {
+                switch selection {
+                case .phiIcon:
+                    IconPickerSelectionView(selection: selection, size: contentFrameSize)
+                case .emoji(_, let text):
+                    Text(text)
+                        .font(.system(size: size - 2))
+                        .lineLimit(1)
+                        .fixedSize()
+                }
+            } else if let symbol = systemSymbolName(for: storedIconValue) {
+                Image(systemName: symbol)
+                    .font(.system(size: size, weight: symbolWeight))
+                    .foregroundStyle(tint)
+            } else {
+                Image(systemName: "rectangle.stack")
+                    .font(.system(size: size, weight: symbolWeight))
+                    .foregroundStyle(tint)
             }
-        } else if let symbol = systemSymbolName(for: storedIconValue) {
-            Image(systemName: symbol)
-                .font(.system(size: size, weight: symbolWeight))
-                .foregroundStyle(tint)
-        } else {
-            Image(systemName: "rectangle.stack")
-                .font(.system(size: size, weight: symbolWeight))
-                .foregroundStyle(tint)
         }
+        .frame(width: contentFrameSize, height: contentFrameSize)
     }
 
-    private var emojiFontSize: CGFloat {
-        size
+    private var phiIconCanvasSize: CGFloat {
+        size * Self.phiIconCanvasScale
     }
 
-    private var emojiFrameSize: CGSize {
-        CGSize(width: size + 4, height: size + 4)
+    private var contentFrameSize: CGFloat {
+        max(phiIconCanvasSize, size + 4)
     }
 
     /// A menu-ready icon for a Space's stored icon value, for use as an
@@ -1643,6 +1815,9 @@ struct SpaceHoverCard: View {
     let iconStoredValue: String?
     let spaceName: String
     let iconColor: Color
+    /// The keycaps' theme tint, pre-resolved by the strip — the panel hosting
+    /// this card sits outside the window's theme environment.
+    let accentColor: Color
     /// Per-keycap tokens (modifiers then key), or empty for Spaces without a
     /// ⌃-number binding.
     let shortcutTokens: [String]
@@ -1652,7 +1827,7 @@ struct SpaceHoverCard: View {
             HStack(spacing: 5) {
                 SpaceIconView(
                     storedValue: iconStoredValue,
-                    size: 11,
+                    size: 14,
                     symbolWeight: .semibold,
                     tint: iconColor
                 )
@@ -1701,19 +1876,20 @@ struct SpaceHoverCard: View {
             .foregroundStyle(Color.secondary.opacity(0.45))
     }
 
-    /// A single keycap badge (one modifier symbol or the character).
+    /// A single keycap badge (one modifier symbol or the character), tinted
+    /// like the address bar tooltip's keycaps.
     private func keycap(_ text: String) -> some View {
         Text(text)
             .font(.system(size: 11, weight: .medium))
-            .foregroundStyle(Color.secondary)
+            .foregroundStyle(accentColor)
             .frame(minWidth: 18, minHeight: 18)
             .background(
                 RoundedRectangle(cornerRadius: 4, style: .continuous)
-                    .fill(Color.primary.opacity(0.08))
+                    .fill(accentColor.opacity(0.14))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 4, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(0.12))
+                    .strokeBorder(accentColor.opacity(0.55))
             )
     }
 }

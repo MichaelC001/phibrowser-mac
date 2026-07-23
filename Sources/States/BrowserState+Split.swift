@@ -308,8 +308,8 @@ extension BrowserState {
         rightPinned.splitPartnerGuid = nil
         localStore.updateTabSplitPartner(leftDB, partnerGuid: nil)
         localStore.updateTabSplitPartner(rightDB, partnerGuid: nil)
-        localStore.removePinnedTab(leftPinned)
-        localStore.removePinnedTab(rightPinned)
+        localStore.removePinnedTab(leftPinned, profileId: profileId, spaceId: spaceId)
+        localStore.removePinnedTab(rightPinned, profileId: profileId, spaceId: spaceId)
         openTwoURLsAsSplit(primaryURL: leftURL, secondaryURL: rightURL, insertionIndex: insertionIndex)
     }
 
@@ -1114,6 +1114,7 @@ extension BrowserState {
         localStore.moveOrCreatePinnedTab(placeholder,
                                          after: afterGuid,
                                          profileId: profileId,
+                                         spaceId: spaceId,
                                          newGuid: UUID().uuidString)
     }
 

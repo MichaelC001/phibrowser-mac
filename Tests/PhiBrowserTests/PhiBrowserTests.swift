@@ -33,6 +33,33 @@ final class PhiBrowserTests: XCTestCase {
         XCTAssertEqual(shortcut.displayString, "⌥⌃←")
     }
 
+    func testShortcutCaptureNormalizesShiftTabToTabCharacter() throws {
+        let event = try XCTUnwrap(
+            NSEvent.keyEvent(
+                with: .keyDown,
+                location: .zero,
+                modifierFlags: [.control, .shift],
+                timestamp: 0,
+                windowNumber: 0,
+                context: nil,
+                characters: String(format: "%c", NSBackTabCharacter),
+                charactersIgnoringModifiers: String(format: "%c", NSBackTabCharacter),
+                isARepeat: false,
+                keyCode: 48
+            )
+        )
+
+        let keyChord = try XCTUnwrap(KeyChord(fromEvent: event))
+        let shortcut = ShortcutsKey(
+            characters: keyChord.characters,
+            modifiers: keyChord.modifiers
+        )
+
+        XCTAssertEqual(keyChord.characters, "\t")
+        XCTAssertEqual(keyChord.modifiers, [.control, .shift])
+        XCTAssertEqual(shortcut.displayString, "⇧⌃⇥")
+    }
+
     func testThemeSnapshotRoundTripPreservesEditableColorsAndOverlayOpacity() {
         let theme = Theme(id: "theme-snapshot-round-trip", name: "Snapshot")
         theme.setColor(
@@ -341,6 +368,48 @@ final class PhiBrowserTests: XCTestCase {
             chromiumPoint.y,
             -60,
             "Points above the primary display should remain negative after the AppKit-to-Chromium flip."
+        )
+    }
+
+    @MainActor
+    func testExtensionPopupAnchorRectFlipUsesPrimaryScreenHeight() {
+        let appKitRect = NSRect(x: 240, y: 320, width: 100, height: 24)
+        let primaryFrame = NSRect(x: 0, y: 0, width: 1920, height: 900)
+
+        let chromiumRect = ExtensionPopupAnchor.chromiumScreenRect(
+            from: appKitRect,
+            primaryScreenFrame: primaryFrame
+        )
+
+        XCTAssertEqual(chromiumRect.origin.x, 240)
+        XCTAssertEqual(
+            chromiumRect.origin.y,
+            556,
+            "Anchor rects must flip as y = primary height - maxY so the rect's top edge lands in Chromium's top-left-origin screen space."
+        )
+        XCTAssertEqual(chromiumRect.size, appKitRect.size)
+    }
+
+    @MainActor
+    func testExtensionPopupAnchorLegacyPointMatchesPointBasedConversion() {
+        let appKitRect = NSRect(x: 240, y: 320, width: 100, height: 24)
+        let primaryFrame = NSRect(x: 0, y: 0, width: 1920, height: 900)
+
+        let pointFromRect = ExtensionPopupAnchor.legacyAnchorPoint(
+            for: ExtensionPopupAnchor.chromiumScreenRect(
+                from: appKitRect,
+                primaryScreenFrame: primaryFrame
+            )
+        )
+        let pointFromBottomLeft = ExtensionPopupAnchor.chromiumScreenPoint(
+            from: NSPoint(x: appKitRect.minX, y: appKitRect.minY),
+            primaryScreenFrame: primaryFrame
+        )
+
+        XCTAssertEqual(
+            pointFromRect,
+            pointFromBottomLeft,
+            "The old-framework fallback must reproduce the icon's visual bottom-left corner exactly as the point-based path did."
         )
     }
 

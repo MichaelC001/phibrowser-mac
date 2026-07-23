@@ -6,10 +6,11 @@
 import SwiftData
 import Foundation
 
-typealias TabDataModel = TabDataModelSchemaV8.TabDataModel
-typealias ProfileModel = TabDataModelSchemaV8.ProfileModel
-typealias SpaceModel = TabDataModelSchemaV8.SpaceModel
-typealias SpaceURLRule = TabDataModelSchemaV8.SpaceURLRule
+typealias TabDataModel = TabDataModelSchemaV9.TabDataModel
+typealias ProfileModel = TabDataModelSchemaV9.ProfileModel
+typealias SpaceModel = TabDataModelSchemaV9.SpaceModel
+typealias SpaceURLRule = TabDataModelSchemaV9.SpaceURLRule
+typealias BrowserDataSettingsModel = TabDataModelSchemaV9.BrowserDataSettingsModel
 
 extension TabDataModel: CustomStringConvertible {
     var description: String {
@@ -28,11 +29,12 @@ enum TabDataModelMigrationPlan: SchemaMigrationPlan {
             TabDataModelSchemaV6.self,
             TabDataModelSchemaV7.self,
             TabDataModelSchemaV8.self,
+            TabDataModelSchemaV9.self,
         ]
     }
 
     static var stages: [MigrationStage] {
-        [migrateV1toV2, migrateV2toV3, migrateV3toV4, migrateV4toV5, migrateV5toV6, migrateV6toV7, migrateV7toV8]
+        [migrateV1toV2, migrateV2toV3, migrateV3toV4, migrateV4toV5, migrateV5toV6, migrateV6toV7, migrateV7toV8, migrateV8toV9]
     }
 
     nonisolated(unsafe) static var v1TypeMapping: [String: Int] = [:]
@@ -135,6 +137,28 @@ enum TabDataModelMigrationPlan: SchemaMigrationPlan {
     static let migrateV7toV8 = MigrationStage.lightweight(
         fromVersion: TabDataModelSchemaV7.self,
         toVersion: TabDataModelSchemaV8.self
+    )
+
+    /// Existing pinned tabs are profile-scoped. Give each one a stable
+    /// logical identity and materialize the default preference alongside the
+    /// schema upgrade so later scope changes can migrate atomically.
+    static let migrateV8toV9 = MigrationStage.custom(
+        fromVersion: TabDataModelSchemaV8.self,
+        toVersion: TabDataModelSchemaV9.self,
+        willMigrate: { _ in },
+        didMigrate: { context in
+            let pinnedRaw = TabDataType.pinnedTab.rawValue
+            let tabs = try context.fetch(FetchDescriptor<TabDataModelSchemaV9.TabDataModel>())
+            for tab in tabs where tab.type == pinnedRaw && tab.pinLineageId == nil {
+                tab.pinLineageId = tab.guid
+            }
+
+            let settings = try context.fetch(FetchDescriptor<TabDataModelSchemaV9.BrowserDataSettingsModel>())
+            if settings.isEmpty {
+                context.insert(TabDataModelSchemaV9.BrowserDataSettingsModel())
+            }
+            try context.save()
+        }
     )
 
     static let migrateV2toV3 = MigrationStage.custom(

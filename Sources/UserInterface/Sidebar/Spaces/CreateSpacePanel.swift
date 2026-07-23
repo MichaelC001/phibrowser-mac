@@ -8,8 +8,8 @@ import SwiftUI
 
 /// Rich "Create a Space" panel. Replaces the bare name-only NSAlert that used
 /// to back both the File menu and the Spaces picker's "New Space" row. Lets the
-/// user name the Space, bind it to a profile, and pick its theme (or Follow
-/// Global) before committing.
+/// user name the Space, bind it to a profile, and pick its theme before
+/// committing.
 ///
 /// Self-contained: the only side effect is `manager.createSpace(...)` on
 /// confirm. Presented in a chrome-light floating window via `present(...)`,
@@ -30,16 +30,26 @@ struct CreateSpacePanel: View {
     /// from the sidebar, or the menu's active-window profile.
     let initialProfileId: String?
     let onClose: () -> Void
+    /// Live theme preview while the form is up: called with the resolved theme
+    /// whenever the selection changes — including the initial random pick —
+    /// so the sidebar overlay hosting the form can re-tint to the new Space's
+    /// look. Nil for the window style, which has no hosting surface to
+    /// preview on.
+    var onThemeSelectionChange: ((Theme) -> Void)? = nil
 
     @State private var name: String = ""
     /// Icon/emoji pinned to the new Space, chosen from the same picker the
     /// Spaces settings pane uses. Defaults to the picker's first Phi icon.
     @State private var selectedIcon: IconPickerSelection = .defaultSelection
     @State private var selectedProfileId: String = ""
-    /// Theme pinned to the new Space, or `nil` to follow the global theme via
-    /// the "Follow Global" toggle above the swatches. `onAppear` pre-selects a
-    /// random built-in theme; the user can switch to Follow Global or another.
-    @State private var selectedThemeId: String? = nil
+    /// Theme pinned to the new Space. Every Space owns a theme — there is no
+    /// "follow global" anymore. `onAppear` pre-selects a random built-in.
+    @State private var selectedThemeId: String = Theme.default.id
+    /// Overlay-opacity slider position. Follows the selected theme's own
+    /// alpha until the user drags it; from then on it's a deliberate choice
+    /// that survives theme switches and is persisted on the new Space.
+    @State private var opacitySliderValue: Double = 50
+    @State private var userAdjustedOpacity = false
     @FocusState private var nameFocused: Bool
 
     @Environment(\.phiAppearance) private var appearance
@@ -53,12 +63,18 @@ struct CreateSpacePanel: View {
                 // Give every new Space a fresh random look out of the box — a
                 // random Phi icon and a random built-in theme — so Spaces are
                 // visually distinct instead of all defaulting to the same first
-                // icon and the inherited theme. The user can still override both
-                // before creating: a pinned theme, or "Follow Global" to track
-                // the global theme instead of pinning one.
+                // icon and theme. The user can still override both before
+                // creating.
                 selectedIcon = .phiIcon(id: PhiIconCatalog.allIds.randomElement() ?? PhiIconCatalog.allIds[0])
                 selectedThemeId = Theme.builtInThemes.randomElement()?.id ?? Theme.default.id
+                syncOpacityToSelectedTheme()
                 DispatchQueue.main.async { nameFocused = true }
+            }
+            .onChange(of: selectedThemeId) { _ in
+                if !userAdjustedOpacity {
+                    syncOpacityToSelectedTheme()
+                }
+                onThemeSelectionChange?(effectiveTheme())
             }
     }
 
@@ -203,7 +219,7 @@ struct CreateSpacePanel: View {
 
     private var profilePill: some View {
         Menu {
-            ForEach(profileManager.profiles, id: \.profileId) { profile in
+            ForEach(profileManager.userAssignableProfiles, id: \.profileId) { profile in
                 Button(profile.displayName) { selectedProfileId = profile.profileId }
             }
             Divider()
@@ -235,45 +251,45 @@ struct CreateSpacePanel: View {
         .fixedSize()
     }
 
-    private static let themeColumns = 4
-    private static let themeColumnSpacing: CGFloat = 8
-    private static let themeRowSpacing: CGFloat = 12
-    private static let themeDotRing: CGFloat = 30
-    private static let followGlobalToggleHeight: CGFloat = 30
-
+    /// Color + opacity chooser matching the Spaces settings card: one row of
+    /// theme dots (selected one ringed), a divider, then the overlay-opacity
+    /// slider. Dots spread evenly across the bounded column and shrink with
+    /// the sidebar.
     private var colorBlock: some View {
-        let columns = Array(
-            repeating: GridItem(.flexible(), spacing: Self.themeColumnSpacing),
-            count: Self.themeColumns
-        )
-        return VStack(spacing: 14) {
-            // A "Follow Global" toggle above the swatches: it and the theme dots
-            // form one selection group, so the new Space either follows the
-            // global theme or pins one of the eight built-ins. A GeometryReader
-            // gives the row width so the toggle insets its ends to line up with
-            // the first/last dot rather than the wider grid bounds.
-            GeometryReader { geo in
-                followGlobalToggle
-                    .padding(.horizontal, followGlobalToggleInset(forWidth: geo.size.width))
-            }
-            .frame(height: Self.followGlobalToggleHeight)
-            // Lay the eight built-in themes out as two rows of four rather than a
-            // single cramped strip, so each swatch is big enough to read its hue
-            // and tap comfortably. Flexible columns spread the swatches evenly
-            // across the bounded column and shrink with the sidebar.
-            LazyVGrid(columns: columns, spacing: Self.themeRowSpacing) {
+        VStack(spacing: 12) {
+            HStack(spacing: 0) {
                 ForEach(Theme.builtInThemes, id: \.id) { theme in
-                    themeDot(theme, ringDiameter: Self.themeDotRing)
+                    ThemeSwatchView(
+                        fillColor: theme == .pure
+                            ? .white
+                            : Color(theme.color(for: .themeColor, appearance: appearance)),
+                        ringColor: Color(theme.color(for: .themeColor, appearance: appearance)),
+                        selected: selectedThemeId == theme.id,
+                        title: nil,
+                        showsContrastBorder: theme == .pure,
+                        dotDiameter: 16,
+                        ringDiameter: 20,
+                        action: { selectedThemeId = theme.id }
+                    )
+                    .help(theme.name)
+                    .frame(maxWidth: .infinity)
                 }
             }
-            // The current theme's name, as a plain muted caption beneath the
-            // swatches.
-            Text(selectedThemeName)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(Color.primary.opacity(0.5))
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
-                .animation(.easeInOut(duration: 0.15), value: selectedThemeId)
+
+            Divider()
+
+            // The slider follows the live column width (the sidebar overlay
+            // shrinks with the sidebar), so read it from a GeometryReader
+            // rather than fixing a width.
+            GeometryReader { geo in
+                ThemeOpacitySliderView(
+                    value: opacityBinding,
+                    trackColor: effectiveTheme().color(for: .windowOverlayBackground, appearance: appearance),
+                    borderColor: ThemedColor.border.resolve(theme: effectiveTheme(), appearance: appearance),
+                    width: geo.size.width
+                )
+            }
+            .frame(height: 20)
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 12)
@@ -281,114 +297,27 @@ struct CreateSpacePanel: View {
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
-    /// Horizontal inset that lines the full-width toggle up with the swatch row:
-    /// each flexible column centers a `themeDotRing`-wide dot, leaving half the
-    /// leftover column width as slack between the outer dots and the row's edges.
-    /// Matching that slack puts the toggle's ends under the first/last dot.
-    private func followGlobalToggleInset(forWidth width: CGFloat) -> CGFloat {
-        guard width > 0 else { return 0 }
-        let gaps = Self.themeColumnSpacing * CGFloat(Self.themeColumns - 1)
-        let column = (width - gaps) / CGFloat(Self.themeColumns)
-        return max(0, (column - Self.themeDotRing) / 2)
-    }
-
-    /// Full-width "Follow Global" toggle above the swatch grid. It and the theme
-    /// dots form one selection group: tapping it clears the pin
-    /// (`selectedThemeId = nil`) so the new Space tracks the global theme, and a
-    /// checkmark marks it active — matching the dots' selected read. A leading
-    /// dot previews the current global theme color.
-    private var followGlobalToggle: some View {
-        let globalTheme = ThemeManager.shared.currentTheme
-        let isPure = globalTheme == .pure
-        let globalAccent = Color(globalTheme.color(for: .themeColor, appearance: appearance))
-        let isSelected = selectedThemeId == nil
-        return Button {
-            selectedThemeId = nil
-        } label: {
-            HStack(spacing: 8) {
-                Circle()
-                    .fill(isPure ? Color.white : globalAccent)
-                    .frame(width: 14, height: 14)
-                    .overlay {
-                        Circle().stroke(Color.black.opacity(0.12), lineWidth: 0.5)
-                    }
-                Text(NSLocalizedString("Follow Global",
-                    comment: "Create-Space panel — toggle so the new Space follows the global theme"))
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(Color.primary.opacity(0.85))
-                    .lineLimit(1)
-                Spacer(minLength: 0)
-                if isSelected {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(Self.accentColor)
-                }
+    private var opacityBinding: Binding<Double> {
+        Binding(
+            get: { opacitySliderValue },
+            set: { newValue in
+                opacitySliderValue = newValue
+                userAdjustedOpacity = true
+                onThemeSelectionChange?(effectiveTheme())
             }
-            .padding(.horizontal, 10)
-            .frame(height: Self.followGlobalToggleHeight)
-            .frame(maxWidth: .infinity)
-            .background(isSelected ? Self.accentColor.opacity(0.14) : Color.primary.opacity(0.05))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .overlay {
-                RoundedRectangle(cornerRadius: 8)
-                    .strokeBorder(isSelected ? Self.accentColor : Color.clear, lineWidth: 1.5)
-            }
-            .contentShape(RoundedRectangle(cornerRadius: 8))
-        }
-        .buttonStyle(.plain)
-        .help(NSLocalizedString("Follow Global",
-            comment: "Create-Space panel — toggle so the new Space follows the global theme"))
-        .animation(.easeInOut(duration: 0.15), value: isSelected)
+        )
     }
 
-    /// One picker dot for a built-in theme. The colored dot keeps a 3pt margin
-    /// inside the ring; the selected swatch carries a check for an unmistakable
-    /// read that the ring alone can't give against a same-hue dot.
-    @ViewBuilder
-    private func themeDot(_ theme: Theme, ringDiameter: CGFloat) -> some View {
-        let isPure = theme == .pure
-        let accent = Color(theme.color(for: .themeColor, appearance: appearance))
-        let isSelected = selectedThemeId == theme.id
-        let dot = max(ringDiameter - 6, 0)
-        Button {
-            selectedThemeId = theme.id
-        } label: {
-            Circle()
-                .fill(isPure ? Color.white : accent)
-                .frame(width: dot, height: dot)
-                .frame(width: ringDiameter, height: ringDiameter)
-                .overlay {
-                    Circle()
-                        .stroke(Color.black.opacity(isPure ? 0.12 : 0), lineWidth: 0.5)
-                        .frame(width: dot, height: dot)
-                }
-                .overlay {
-                    if isSelected {
-                        Image(systemName: "checkmark")
-                            .font(.system(size: max(dot * 0.5, 8), weight: .bold))
-                            .foregroundStyle(isPure ? Color.black.opacity(0.55) : Color.white)
-                    }
-                }
-                .overlay {
-                    Circle()
-                        .stroke(isSelected ? accent : Color.clear, lineWidth: 2)
-                }
-                .shadow(color: Color.black.opacity(0.12), radius: 3, y: 1)
-                .contentShape(Circle())
-        }
-        .buttonStyle(.plain)
-        .help(theme.name)
-        .animation(.easeInOut(duration: 0.15), value: isSelected)
+    /// Snaps the slider to the selected theme's own overlay alpha — the
+    /// value the new Space inherits unless the user drags the slider.
+    private func syncOpacityToSelectedTheme() {
+        let alpha = effectiveTheme().windowOverlayOpacity(for: appearance)
+        opacitySliderValue = OverlayOpacityScale.sliderValue(forOpacityPercent: Double(alpha) * 100)
     }
 
-    /// Caption under the swatches: the pinned theme's name, or "Follow Global"
-    /// when no theme is pinned.
-    private var selectedThemeName: String {
-        if selectedThemeId == nil {
-            return NSLocalizedString("Follow Global",
-                comment: "Create-Space panel — toggle so the new Space follows the global theme")
-        }
-        return effectiveTheme().name
+    /// The overlay alpha the slider currently encodes.
+    private var selectedOverlayAlpha: CGFloat {
+        CGFloat(OverlayOpacityScale.opacityPercent(forSlider: opacitySliderValue) / 100)
     }
 
     private var actions: some View {
@@ -400,7 +329,9 @@ struct CreateSpacePanel: View {
                     .foregroundStyle(Color.white.opacity(0.95))
                     .padding(.horizontal, 16)
                     .padding(.vertical, 6)
-                    .background(Self.accentColor)
+                    // System accent, matching the selection chrome elsewhere,
+                    // rather than the panel's fixed brand blue.
+                    .background(Color.accentColor)
                     .clipShape(Capsule())
             }
             .buttonStyle(.plain)
@@ -418,35 +349,40 @@ struct CreateSpacePanel: View {
     // MARK: - Color math
 
     /// The theme id used to resolve the swatch fill, caption, and derived
-    /// `colorHex`. Follow-Global (`nil`) resolves to the current global theme so
-    /// those track whatever the global theme is.
+    /// `colorHex`.
     private var effectiveThemeId: String {
-        selectedThemeId ?? ThemeManager.shared.currentTheme.id
+        selectedThemeId
     }
 
     /// The Space's stored `colorHex` (which drives the sidebar tint) is derived
     /// from the resolved theme's overlay color, so the tint matches the Space's
-    /// pinned theme — or the global theme when it follows global.
+    /// pinned theme.
     private func resolvedColorHex() -> String {
         effectiveTheme().color(for: .windowOverlayBackground, appearance: appearance).hexRGBString
     }
 
-    /// The theme backing the new Space, resolved from the selection (or the
-    /// global theme when following global).
+    /// The theme backing the new Space: the selected theme, with the
+    /// user's custom overlay opacity applied on a palette copy once the
+    /// slider has been touched — so the live sidebar preview shows the
+    /// exact look the Space will have.
     private func effectiveTheme() -> Theme {
-        ThemeManager.shared.registeredThemes[effectiveThemeId]
+        let base = ThemeManager.shared.registeredThemes[effectiveThemeId]
             ?? Theme.builtInThemes.first(where: { $0.id == effectiveThemeId })
             ?? ThemeManager.shared.currentTheme
+        guard userAdjustedOpacity else { return base }
+        let derived = base.duplicating()
+        derived.setWindowOverlayOpacity(selectedOverlayAlpha, for: appearance)
+        return derived
     }
 
     // MARK: - Profiles
 
     private var resolvedInitialProfileId: String {
         if let id = initialProfileId,
-           profileManager.profiles.contains(where: { $0.profileId == id }) {
+           profileManager.userAssignableProfiles.contains(where: { $0.profileId == id }) {
             return id
         }
-        return profileManager.profiles.first?.profileId ?? LocalStore.defaultProfileId
+        return profileManager.userAssignableProfiles.first?.profileId ?? LocalStore.defaultProfileId
     }
 
     private var selectedProfileName: String {
@@ -479,11 +415,16 @@ struct CreateSpacePanel: View {
             iconName: selectedIcon.storageValue,
             profileId: profileId
         )
-        // Apply the chosen theme to the new Space: a pinned id pins it, `nil`
-        // (Follow Global) clears the override so it tracks the global theme.
-        // Persisted now; applied when its window spawns in activateInFocusedWindow.
+        // Pin the chosen theme (and, when the user touched the slider, the
+        // custom overlay opacity) to the new Space. Persisted now; applied
+        // when its window spawns in activateInFocusedWindow.
         if let newSpaceId {
             manager.setTheme(forSpaceId: newSpaceId, themeId: selectedThemeId)
+            if userAdjustedOpacity {
+                manager.setOverlayOpacity(selectedOverlayAlpha,
+                                          forSpaceId: newSpaceId,
+                                          appearance: appearance)
+            }
         }
         onClose()
         // Bring the freshly created Space to the front of the active window.

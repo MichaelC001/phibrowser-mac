@@ -10,6 +10,10 @@ import Combine
 public extension Notification.Name {
     static let themeDidChange = Notification.Name("PhiThemeDidChangeNotification")
     static let appearanceDidChange = Notification.Name("PhiAppearanceDidChangeNotification")
+    /// Posted by `SpaceManager` when a Space's pinned theme or custom
+    /// overlay opacity changes (`userInfo["spaceId"]`), so the settings
+    /// panes can resync values edited from another surface.
+    static let spaceThemeDidChange = Notification.Name("PhiSpaceThemeDidChangeNotification")
 }
 
 /// User-selectable appearance modes.

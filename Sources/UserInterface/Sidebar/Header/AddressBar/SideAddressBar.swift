@@ -368,12 +368,11 @@ class SideAddressBar: NSView {
     @objc private func extensionButtonClicked(_ sender: NSView) {
         guard let extensionId = sender.identifier?.rawValue else { return }
 
-        let point = ExtensionPopupAnchor.pointBelowView(sender)
-            ?? ExtensionPopupAnchor.mouseFallback()
-
         // A disabled action doesn't run; fall back to the context menu like
         // Chrome (ExecuteUserAction).
         if unsafeBrowserState?.extensionManager.badges[extensionId]?.enabled == false {
+            let point = ExtensionPopupAnchor.pointBelowView(sender)
+                ?? ExtensionPopupAnchor.mouseFallback()
             ChromiumLauncher.sharedInstance().bridge?.triggerExtensionContextMenu(
                 withId: extensionId,
                 pointInScreen: point,
@@ -383,7 +382,7 @@ class SideAddressBar: NSView {
         }
         ChromiumLauncher.sharedInstance().bridge?.triggerExtension(
             withId: extensionId,
-            pointInScreen: point,
+            anchorRect: ExtensionPopupAnchor.rectOfView(sender),
             windowId: unsafeBrowserState?.windowId.int64Value ?? 0
         )
     }

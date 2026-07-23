@@ -55,7 +55,7 @@ final class EmojiRuntimeSupportDetectorTests: XCTestCase {
         )
         XCTAssertEqual(
             IconPickerSelection.fromStorageValue("phi:phi-icon-1", emojiCatalog: catalog),
-            .phiIcon(id: "phi-icon-1")
+            .phiIcon(id: "phi-icon-rss")
         )
     }
 }

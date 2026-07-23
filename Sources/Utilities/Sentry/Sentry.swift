@@ -220,17 +220,22 @@ struct TimeMachineSentryTraceStore {
         if let traceStoreDrainError {
             AppLogError("[TimeMachine] Failed to drain pending Sentry traces: \(traceStoreDrainError.localizedDescription)")
         }
+        configureUser(AccountController.shared.account)
         flushPendingTimeMachineTraces(pendingTimeMachineTraces)
     }
     
-    static func configureUser(_ account: Account) {
-        guard let userInfo = account.userInfo else {
+    static func configureUser(_ account: Account?) {
+        guard hasStarted else { return }
+        guard ChromiumLauncher.sharedInstance().bridge?.isMetricsReportingEnabled() ?? false,
+              let userInfo = account?.userInfo,
+              let sub = userInfo.sub else {
+            SentrySDK.setUser(nil)
             return
         }
         
         let user = Sentry.User()
         user.email = userInfo.email
-        user.userId = userInfo.sub
+        user.userId = sub
         user.username = userInfo.name
         SentrySDK.setUser(user)
     }

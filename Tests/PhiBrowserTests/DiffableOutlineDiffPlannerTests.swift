@@ -56,6 +56,40 @@ final class DiffableOutlineDiffPlannerTests: XCTestCase {
         XCTAssertEqual(plan.operations, [.remove(id: "b", parentID: "folder", index: 1)])
     }
 
+    func testStableParentLosingLastChildProducesRemove() {
+        let folder = item("folder")
+        let child = item("child")
+        let old = snapshot(["folder"], [
+            "folder": (nil, ["child"]),
+            "child": ("folder", []),
+        ], items: ["folder": folder, "child": child])
+        let new = snapshot(["folder"], [
+            "folder": (nil, []),
+        ], items: ["folder": folder])
+
+        let plan = DiffableOutlineDiffPlanner.plan(from: old, to: new)
+
+        XCTAssertEqual(plan.operations, [.remove(id: "child", parentID: "folder", index: 0)])
+        XCTAssertTrue(plan.isSafe)
+    }
+
+    func testStableParentGainingFirstChildProducesInsert() {
+        let folder = item("folder")
+        let child = item("child")
+        let old = snapshot(["folder"], [
+            "folder": (nil, []),
+        ], items: ["folder": folder])
+        let new = snapshot(["folder"], [
+            "folder": (nil, ["child"]),
+            "child": ("folder", []),
+        ], items: ["folder": folder, "child": child])
+
+        let plan = DiffableOutlineDiffPlanner.plan(from: old, to: new)
+
+        XCTAssertEqual(plan.operations, [.insert(id: "child", parentID: "folder", index: 0)])
+        XCTAssertTrue(plan.isSafe)
+    }
+
     func testSubtreeDeleteOnlyRemovesHighestDeletedNode() {
         let old = snapshot(["folder"], [
             "folder": (nil, ["child"]),
@@ -210,6 +244,52 @@ final class DiffableOutlineDiffPlannerTests: XCTestCase {
         XCTAssertEqual(plan.operations, [.replace(id: "folder", parentID: nil, index: 0)])
     }
 
+    func testNestedReplacementWithAncestorInsertionRemainsIncremental() {
+        let folder = item("folder")
+        let oldGroup = item("old-group")
+        let newGroup = item("new-group")
+        let stable = item("stable")
+        let inserted = item("inserted")
+        let a = item("a")
+        let b = item("b")
+        let old = snapshot(["folder"], [
+            "folder": (nil, ["group", "stable"]),
+            "group": ("folder", ["a", "b"]),
+            "stable": ("folder", []),
+            "a": ("group", []),
+            "b": ("group", []),
+        ], items: [
+            "folder": folder,
+            "group": oldGroup,
+            "stable": stable,
+            "a": a,
+            "b": b,
+        ])
+        let new = snapshot(["folder"], [
+            "folder": (nil, ["group", "stable", "inserted"]),
+            "group": ("folder", ["b", "a"]),
+            "stable": ("folder", []),
+            "inserted": ("folder", []),
+            "a": ("group", []),
+            "b": ("group", []),
+        ], items: [
+            "folder": folder,
+            "group": newGroup,
+            "stable": stable,
+            "inserted": inserted,
+            "a": a,
+            "b": b,
+        ])
+
+        let plan = DiffableOutlineDiffPlanner.plan(from: old, to: new)
+
+        XCTAssertTrue(plan.isSafe)
+        XCTAssertEqual(plan.operations, [
+            .insert(id: "inserted", parentID: "folder", index: 2),
+            .replace(id: "group", parentID: "folder", index: 0),
+        ])
+    }
+
     func testReplacementSiblingWithSameParentMoveIsUnsafe() {
         let oldProxy = item("old-proxy")
         let newProxy = item("new-proxy")
@@ -230,6 +310,96 @@ final class DiffableOutlineDiffPlannerTests: XCTestCase {
 
         XCTAssertFalse(plan.isSafe)
         XCTAssertTrue(plan.operations.isEmpty)
+    }
+
+    func testReplacementSiblingWithStructuralRemovalIsUnsafe() {
+        let a = item("a")
+        let oldProxy = item("old-proxy")
+        let newProxy = item("new-proxy")
+        let b = item("b")
+        let old = snapshot(["a", "proxy", "b"], [
+            "a": (nil, []),
+            "proxy": (nil, []),
+            "b": (nil, []),
+        ], items: ["a": a, "proxy": oldProxy, "b": b])
+        let new = snapshot(["b", "proxy"], [
+            "b": (nil, []),
+            "proxy": (nil, []),
+        ], items: ["b": b, "proxy": newProxy])
+
+        let plan = DiffableOutlineDiffPlanner.plan(from: old, to: new)
+
+        XCTAssertFalse(plan.isSafe)
+        XCTAssertTrue(plan.operations.isEmpty)
+    }
+
+    func testReplacementSiblingWithStructuralInsertionIsUnsafe() {
+        let a = item("a")
+        let oldProxy = item("old-proxy")
+        let newProxy = item("new-proxy")
+        let b = item("b")
+        let old = snapshot(["b", "proxy"], [
+            "b": (nil, []),
+            "proxy": (nil, []),
+        ], items: ["b": b, "proxy": oldProxy])
+        let new = snapshot(["a", "proxy", "b"], [
+            "a": (nil, []),
+            "proxy": (nil, []),
+            "b": (nil, []),
+        ], items: ["a": a, "proxy": newProxy, "b": b])
+
+        let plan = DiffableOutlineDiffPlanner.plan(from: old, to: new)
+
+        XCTAssertFalse(plan.isSafe)
+        XCTAssertTrue(plan.operations.isEmpty)
+    }
+
+    func testReplacementSiblingWithTrailingInsertionRemainsIncremental() {
+        let oldProxy = item("old-proxy")
+        let newProxy = item("new-proxy")
+        let b = item("b")
+        let c = item("c")
+        let old = snapshot(["proxy", "b"], [
+            "proxy": (nil, []),
+            "b": (nil, []),
+        ], items: ["proxy": oldProxy, "b": b])
+        let new = snapshot(["proxy", "b", "c"], [
+            "proxy": (nil, []),
+            "b": (nil, []),
+            "c": (nil, []),
+        ], items: ["proxy": newProxy, "b": b, "c": c])
+
+        let plan = DiffableOutlineDiffPlanner.plan(from: old, to: new)
+
+        XCTAssertTrue(plan.isSafe)
+        XCTAssertEqual(plan.operations, [
+            .insert(id: "c", parentID: nil, index: 2),
+            .replace(id: "proxy", parentID: nil, index: 0),
+        ])
+    }
+
+    func testReplacementSiblingWithTrailingRemovalRemainsIncremental() {
+        let oldProxy = item("old-proxy")
+        let newProxy = item("new-proxy")
+        let b = item("b")
+        let c = item("c")
+        let old = snapshot(["proxy", "b", "c"], [
+            "proxy": (nil, []),
+            "b": (nil, []),
+            "c": (nil, []),
+        ], items: ["proxy": oldProxy, "b": b, "c": c])
+        let new = snapshot(["proxy", "b"], [
+            "proxy": (nil, []),
+            "b": (nil, []),
+        ], items: ["proxy": newProxy, "b": b])
+
+        let plan = DiffableOutlineDiffPlanner.plan(from: old, to: new)
+
+        XCTAssertTrue(plan.isSafe)
+        XCTAssertEqual(plan.operations, [
+            .remove(id: "c", parentID: nil, index: 2),
+            .replace(id: "proxy", parentID: nil, index: 0),
+        ])
     }
 
     func testReplacementThatAlsoChangesSiblingIndexIsUnsafe() {

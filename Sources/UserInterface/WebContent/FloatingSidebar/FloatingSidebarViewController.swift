@@ -51,15 +51,18 @@ class FloatingSidebarViewController: NSViewController {
     /// nav row, above the address bar — mirroring the docked sidebar so the
     /// floating panel offers the same Space switching.
     private lazy var spacesStripHostingView: SpacesStripHostingView = {
+        let wheelTracker = SpacesStripWheelTracker()
         let hostingView = SpacesStripHostingView(
             rootView: SpacesStripView(
                 manager: SpaceManager.shared,
                 slot: spacesStripSlot,
                 rowHeight: SpacesStripView.sidebarHeight,
-                resolveOwnerController: { [weak state] in state?.windowController }
+                resolveOwnerController: { [weak state] in state?.windowController },
+                wheelTracker: wheelTracker
             ),
             themeSource: state.themeContext
         )
+        hostingView.wheelTracker = wheelTracker
         if #available(macOS 13.0, *) {
             hostingView.sizingOptions = []
         }
@@ -254,6 +257,7 @@ class FloatingSidebarViewController: NSViewController {
         // whose writes land in the default Space. Skip it entirely, matching
         // the docked sidebar (see SidebarViewController.setupStackView).
         if !state.isIncognito {
+            pinnedTabViewController.enableContextMenuClickRouting()
             pinnedTabsContainerView.addSubview(pinnedTabViewController.view)
             pinnedTabViewController.view.snp.makeConstraints { make in
                 make.edges.equalToSuperview()
@@ -269,6 +273,7 @@ class FloatingSidebarViewController: NSViewController {
         }
 
         // 5. Tab list
+        tabList.enableContextMenuClickRouting()
         mainStackView.addArrangedSubview(tabList.view)
         tabList.view.snp.makeConstraints { make in
             make.leading.trailing.equalToSuperview()
@@ -449,9 +454,12 @@ class FloatingSidebarViewController: NSViewController {
         bottomBarSwiftUI.setChatHidden(shouldHideChat)
     }
 
+    /// Hide the AI memory button when Phi AI is disabled or in incognito mode,
+    /// mirroring the docked sidebar (`SidebarViewController`).
     private func updateMemoryButtonVisibility() {
         let phiAIEnabled = UserDefaults.standard.bool(forKey: PhiPreferences.AISettings.phiAIEnabled.rawValue)
-        bottomBarSwiftUI.setMemoryHidden(!phiAIEnabled)
+        let shouldHideMemory = state.isIncognito || !phiAIEnabled
+        bottomBarSwiftUI.setMemoryHidden(shouldHideMemory)
     }
 
     private func updateBottomBarHeight(_ newHeight: CGFloat) {

@@ -27,6 +27,7 @@ extension AppController {
     static let spacesDeleteProfileParentItemTag = 500016
     static let viewMenuPhiSectionSeparatorTag = 500023
     static let agentAutoViewItemTag = 500024
+    static let agentTranscriptItemTag = 500036
     static let spacesProfileSeparatorTag = 500020
     static let deleteProfileSubmenuIdentifier = NSUserInterfaceItemIdentifier("phi.spaces.deleteProfile")
     static let spacesMenuItemTag = 500018
@@ -81,7 +82,8 @@ extension AppController {
                     item.tag == AppController.layoutModeNavigationAtTopItemTag ||
                     item.tag == AppController.layoutModeTraditionalItemTag ||
                     item.tag == AppController.layoutModeTitleItemTag ||
-                    item.tag == AppController.agentAutoViewItemTag
+                    item.tag == AppController.agentAutoViewItemTag ||
+                    item.tag == AppController.agentTranscriptItemTag
                 }
 
                 if submenu.items.last?.isSeparatorItem == false {
@@ -173,6 +175,13 @@ extension AppController {
                     agentAutoViewItem.tag = AppController.agentAutoViewItemTag
                     agentAutoViewItem.target = self
                     submenu.addItem(agentAutoViewItem)
+
+                    let agentTranscriptItem = NSMenuItem(title: NSLocalizedString("Agent Transcript", comment: "View menu - Toggle for the console mirroring the driving agent's session"),
+                                                         action: #selector(toggleAgentTranscript(_:)),
+                                                         keyEquivalent: "")
+                    agentTranscriptItem.tag = AppController.agentTranscriptItemTag
+                    agentTranscriptItem.target = self
+                    submenu.addItem(agentTranscriptItem)
                 }
             } else
             
@@ -524,14 +533,18 @@ extension AppController {
         return bookmarkableTabsCount > 1
     }
 
-    /// Export is meaningful only when the active window's Space has at least
-    /// one bookmark. Incognito windows never load a bookmark tree, so the
-    /// empty-tree check disables them too.
+    /// Export is meaningful only when its output would be non-empty: the
+    /// active Space's bookmark tree or the window's visible pinned
+    /// collection has at least one item. Incognito windows never load a
+    /// bookmark tree and keep `pinnedTabs` empty, so the predicate disables
+    /// them too.
     private func canExportBookmarks() -> Bool {
         guard let state = MainBrowserWindowControllersManager.shared.activeWindowController?.browserState else {
             return false
         }
-        return !state.bookmarkManager.rootFolder.children.isEmpty
+        return BookmarkHTMLExporter.hasExportableContent(
+            bookmarks: state.bookmarkManager.rootFolder.children,
+            pinnedTabs: state.pinnedTabs)
     }
 
     private func installOrUpdateCopyURLMenuItem(in menu: NSMenu) {
@@ -619,6 +632,14 @@ extension AppController {
         }
     }
 
+    /// View ▸ Agent Transcript — the console mirroring the driving
+    /// code agent's session (live transcript + command prompt).
+    @objc func toggleAgentTranscript(_ sender: Any?) {
+        MainActor.assumeIsolated {
+            AgentTranscriptPanelController.shared.toggle()
+        }
+    }
+
     @objc func toggleBookmarkBarOnNewTab(_ sender: Any?) {
         let currentValue = PhiPreferences.GeneralSettings.showBookmarkBarOnNewTabPage.loadValue()
         UserDefaults.standard.set(!currentValue, forKey: PhiPreferences.GeneralSettings.showBookmarkBarOnNewTabPage.rawValue)
@@ -661,15 +682,18 @@ extension AppController {
     static var inFlightBookmarkExportWrites = 0
     static var bookmarkExportTerminationPending = false
 
-    /// Exports the active window's current Space's bookmark tree to a
-    /// Netscape-format HTML file. The system save panel handles the
-    /// same-name replace confirmation; the write is atomic so a mid-write
-    /// failure leaves any existing file intact.
+    /// Exports the active window's current Space's bookmark tree — preceded
+    /// by a Favorites folder carrying the window's visible pinned tabs, when
+    /// it has any — to a Netscape-format HTML file. The system save panel
+    /// handles the same-name replace confirmation; the write is atomic so a
+    /// mid-write failure leaves any existing file intact.
     @objc func exportBookmarks(_ sender: Any?) {
         guard let windowController = MainBrowserWindowControllersManager.shared.activeWindowController,
               let window = windowController.window else { return }
         let state = windowController.browserState
-        guard !state.bookmarkManager.rootFolder.children.isEmpty else { return }
+        guard BookmarkHTMLExporter.hasExportableContent(
+            bookmarks: state.bookmarkManager.rootFolder.children,
+            pinnedTabs: state.pinnedTabs) else { return }
 
         // Menu actions are dispatched on the main thread.
         let spaceName = MainActor.assumeIsolated {
@@ -684,14 +708,22 @@ extension AppController {
                                                                           date: Date())
         panel.beginSheetModal(for: window) { response in
             guard response == .OK, let url = panel.url else { return }
-            // Read the tree at confirmation time, not when the sheet was
-            // presented — edits made while the panel was open must export.
+            // Read the tree and pinned collection at confirmation time, not
+            // when the sheet was presented — edits made while the panel was
+            // open must export.
             let bookmarks = state.bookmarkManager.rootFolder.children
-            guard !bookmarks.isEmpty else { return }
+            let pinnedTabs = state.pinnedTabs
+            guard BookmarkHTMLExporter.hasExportableContent(bookmarks: bookmarks,
+                                                            pinnedTabs: pinnedTabs) else { return }
             // Serialize on the main thread (the Bookmark tree is main-thread
             // state), but write off it — the destination may be a slow
             // network or cloud volume and must not block the UI.
-            let html = BookmarkHTMLExporter.htmlDocument(for: bookmarks)
+            let html = BookmarkHTMLExporter.htmlDocument(
+                for: bookmarks,
+                pinnedTabs: pinnedTabs,
+                favoritesFolderTitle: NSLocalizedString(
+                    "Favorites",
+                    comment: "Bookmark export - name of the exported folder carrying the window's pinned tabs"))
             AppController.inFlightBookmarkExportWrites += 1
             DispatchQueue.global(qos: .userInitiated).async {
                 let result = Result { try Data(html.utf8).write(to: url, options: .atomic) }
@@ -1138,7 +1170,7 @@ extension AppController {
             item.target = self
             item.representedObject = space.spaceId
             item.state = (space.spaceId == activeSpaceId) ? .on : .off
-            item.image = spaceMenuIcon(for: space.iconName)
+            item.image = spaceMenuIcon(for: space)
             item.attributedTitle = spaceMenuTitle(name: space.name, profileId: space.profileId)
             menu.addItem(item)
         }
@@ -1182,13 +1214,33 @@ extension AppController {
         return title
     }
 
-    /// A menu-ready icon for a Space, shared with the URL rules editor's target
-    /// picker. Always called on the main thread during menu tracking, but this
-    /// synchronous menu-build path isn't `@MainActor`-isolated, so assume the
-    /// isolation `SpaceIconView.menuImage` requires rather than ripple the
-    /// annotation through it.
-    private func spaceMenuIcon(for storedValue: String) -> NSImage? {
-        MainActor.assumeIsolated { SpaceIconView.menuImage(for: storedValue) }
+    /// A menu-ready icon for a Space row. A Space with a live agent task wears
+    /// the driving agent's brand icon — the same render-time override as the
+    /// strip's pip (`SpacesStripView.pipIcon`), so the menu and the switcher
+    /// agree on who is working; the Space's stored robot signature stays
+    /// untouched. Always called on the main thread during menu tracking, but
+    /// this synchronous menu-build path isn't `@MainActor`-isolated, so assume
+    /// the isolation the helpers require rather than ripple the annotation
+    /// through it.
+    private func spaceMenuIcon(for space: SpaceModel) -> NSImage? {
+        MainActor.assumeIsolated {
+            guard let task = AgentSpaceManager.shared.tasksBySpaceId[space.spaceId] else {
+                return SpaceIconView.menuImage(for: space.iconName)
+            }
+            let badge = AgentDriverBadge.make(agentName: task.agentName, origin: task.origin)
+            if let asset = badge.assetName,
+               let image = NSImage(named: asset)?.copy() as? NSImage {
+                // Menu glyphs are 16pt; the brand assets pad their ink to
+                // `assetInkRatio` of the canvas, so size the canvas up for the
+                // INK to match. Copied first — NSImage(named:) is a shared
+                // cache instance.
+                let canvas = 16 / AgentDriverBadge.assetInkRatio
+                image.size = NSSize(width: canvas, height: canvas)
+                return image
+            }
+            return NSImage(systemSymbolName: badge.symbol,
+                           accessibilityDescription: badge.label)
+        }
     }
 
     private func applyEffectiveShortcut(_ command: CommandWrapper, to item: NSMenuItem) {
@@ -1307,7 +1359,7 @@ extension AppController {
                 item.target = self
                 item.representedObject = space.spaceId
                 item.state = (space.spaceId == activeSpaceId) ? .on : .off
-                item.image = spaceMenuIcon(for: space.iconName)
+                item.image = spaceMenuIcon(for: space)
                 menu.addItem(item)
             }
         }
@@ -1356,25 +1408,9 @@ extension AppController {
 
     private func makeSpacesThemeSubmenu(for spaceId: String?) -> NSMenu {
         let menu = NSMenu(title: NSLocalizedString("Edit Theme", comment: "Spaces menu - Submenu to set a theme override for the active Space"))
-        let pinnedId = spaceId.flatMap { SpaceManager.shared.themeId(forSpaceId: $0) }
+        let pinnedId = spaceId.map { SpaceManager.shared.resolvedThemeId(forSpaceId: $0) }
 
-        let followGlobal = NSMenuItem(
-            title: NSLocalizedString("Follow Global", comment: "Spaces menu - Theme submenu entry that clears the per-Space override"),
-            action: #selector(selectSpaceTheme(_:)),
-            keyEquivalent: ""
-        )
-        followGlobal.target = self
-        followGlobal.representedObject = nil
-        followGlobal.state = (pinnedId == nil) ? .on : .off
-        followGlobal.image = .themeColorSwatch(for: ThemeManager.shared.currentTheme)
-        menu.addItem(followGlobal)
-
-        let themes = ThemeManager.shared.orderedThemes
-
-        if !themes.isEmpty {
-            menu.addItem(.separator())
-        }
-        for theme in themes {
+        for theme in ThemeManager.shared.orderedThemes {
             let item = NSMenuItem(
                 title: theme.name,
                 action: #selector(selectSpaceTheme(_:)),
@@ -1391,7 +1427,9 @@ extension AppController {
 
     private func makeSpacesProfileSubmenu(for space: SpaceModel?) -> NSMenu {
         let menu = NSMenu(title: NSLocalizedString("Change Profile", comment: "Spaces menu - Submenu to re-bind the active Space to another profile"))
-        for profile in ProfileManager.shared.profiles {
+        // The agent's fallback profile belongs to the agent — the user can't
+        // re-bind a normal Space to it (matches the create-Space pickers).
+        for profile in ProfileManager.shared.userAssignableProfiles {
             let item = NSMenuItem(
                 title: profile.displayName,
                 action: #selector(selectSpaceProfile(_:)),
@@ -1509,8 +1547,8 @@ extension AppController {
 
     @objc func selectSpaceTheme(_ sender: Any?) {
         guard let menuItem = sender as? NSMenuItem,
-              let space = currentActiveSpace() else { return }
-        let themeId = menuItem.representedObject as? String
+              let space = currentActiveSpace(),
+              let themeId = menuItem.representedObject as? String else { return }
         SpaceManager.shared.setTheme(forSpaceId: space.spaceId, themeId: themeId)
     }
 
@@ -1530,10 +1568,26 @@ extension AppController {
             format: NSLocalizedString("Change Profile to \u{201C}%@\u{201D}?", comment: "Title of the change-Space-profile confirmation"),
             profile.displayName
         )
-        alert.informativeText = NSLocalizedString(
-            "This Space's window will be reopened with the new profile and its open tabs will be reloaded there. Site logins won't carry over. Bookmarks stay with the Space; pinned tabs will be the new profile's.",
-            comment: "Body of the change-Space-profile confirmation"
-        )
+        let pinnedTabScope = MainActor.assumeIsolated {
+            AccountController.shared.account?.localStorage.pinnedTabScope() ?? .profile
+        }
+        switch pinnedTabScope {
+        case .space:
+            alert.informativeText = NSLocalizedString(
+                "This Space's window will be reopened with the new profile and its open tabs will be reloaded there. Site logins won't carry over. Bookmarks and pinned tabs stay with the Space.",
+                comment: "Body of the change-Space-profile confirmation with Space-scoped pinned tabs"
+            )
+        case .profile:
+            alert.informativeText = NSLocalizedString(
+                "This Space's window will be reopened with the new profile and its open tabs will be reloaded there. Site logins won't carry over. Bookmarks stay with the Space; pinned tabs will be the new profile's.",
+                comment: "Body of the change-Space-profile confirmation with Profile-scoped pinned tabs"
+            )
+        case .app:
+            alert.informativeText = NSLocalizedString(
+                "This Space's window will be reopened with the new profile and its open tabs will be reloaded there. Site logins won't carry over. Bookmarks stay with the Space; pinned tabs remain shared across the app.",
+                comment: "Body of the change-Space-profile confirmation with App-scoped pinned tabs"
+            )
+        }
         alert.addButton(withTitle: NSLocalizedString("Change Profile", comment: "Confirm button of the change-Space-profile confirmation"))
         alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Cancel button"))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
@@ -1548,10 +1602,20 @@ extension AppController {
             format: NSLocalizedString("Delete \u{201C}%@\u{201D}?", comment: "Title of the delete-Space confirmation"),
             space.name
         )
-        alert.informativeText = NSLocalizedString(
-            "Pinned tabs and bookmarks belonging to this Space will also be removed. This action cannot be undone.",
-            comment: "Body of the delete-Space confirmation"
-        )
+        let usesSpaceScopedPinnedTabs = MainActor.assumeIsolated {
+            AccountController.shared.account?.localStorage.pinnedTabScope() == .space
+        }
+        if usesSpaceScopedPinnedTabs {
+            alert.informativeText = NSLocalizedString(
+                "Bookmarks and pinned tabs belonging to this Space will also be removed. This action cannot be undone.",
+                comment: "Body of the delete-Space confirmation with Space-scoped pinned tabs"
+            )
+        } else {
+            alert.informativeText = NSLocalizedString(
+                "Bookmarks belonging to this Space will also be removed. This action cannot be undone.",
+                comment: "Body of the delete-Space confirmation"
+            )
+        }
         alert.alertStyle = .warning
         alert.addButton(withTitle: NSLocalizedString("Delete", comment: "Destructive button"))
         alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Cancel button"))
@@ -1785,6 +1849,15 @@ extension AppController {
             }
         }
 
+        if item.action == #selector(toggleAgentTranscript(_:)) {
+            if let menuItem = item as? NSMenuItem {
+                menuItem.state = MainActor.assumeIsolated {
+                    AgentTranscriptPanelController.shared.isVisible
+                } ? .on : .off
+                return LoginController.shared.isLoggedin()
+            }
+        }
+
         let traditionalLayout = PhiPreferences.GeneralSettings.loadLayoutMode().isTraditional
         if item.action == #selector(toggleBookmarkBar(_:)) {
             if let menuItem = item as? NSMenuItem {
@@ -1876,8 +1949,8 @@ extension AppController {
             if action == #selector(selectSpaceTheme(_:)) {
                 guard currentActiveSpace() != nil else { return false }
                 if let menuItem = item as? NSMenuItem {
-                    let pinnedId = currentActiveSpace().flatMap {
-                        SpaceManager.shared.themeId(forSpaceId: $0.spaceId)
+                    let pinnedId = currentActiveSpace().map {
+                        SpaceManager.shared.resolvedThemeId(forSpaceId: $0.spaceId)
                     }
                     let representedId = menuItem.representedObject as? String
                     menuItem.state = (pinnedId == representedId) ? .on : .off

@@ -36,6 +36,29 @@ enum LayoutMode: String, CaseIterable, Identifiable {
     var showsNavigationAtTop: Bool { self != .performance }
 }
 
+/// Three-state auto picture-in-picture behavior. Stored as a single enum so
+/// the illegal "off but parked" combination cannot be represented; Chromium
+/// reads it through two bridge getters derived from the mode. Manual
+/// picture-in-picture is unaffected in every mode.
+enum AutoPictureInPictureMode: String, CaseIterable, Identifiable {
+    case off     // never pop out automatically
+    case normal  // pop out and stay where it appears (default)
+    case parked  // pop out, then park at the screen edge until clicked
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .off:
+            return NSLocalizedString("Off", comment: "Auto picture-in-picture option - never pop out automatically; manual picture-in-picture is unaffected")
+        case .normal:
+            return NSLocalizedString("Normal", comment: "Auto picture-in-picture option - pop out and stay in place")
+        case .parked:
+            return NSLocalizedString("Park at edge", comment: "Auto picture-in-picture option - pop out, then park at the screen edge until clicked")
+        }
+    }
+}
+
 enum PhiPreferences: String {
     case phiMainDebugMenuEnabled
     case phiLoginPhase
@@ -82,6 +105,25 @@ extension PhiPreferences {
 
         func loadValue() -> Bool {
             UserDefaults.standard.bool(forKey: rawValue, default: defaultValue)
+        }
+
+        static let autoPictureInPictureModeKey = "autoPictureInPictureMode"
+
+        static func loadAutoPictureInPictureMode(
+            from defaults: UserDefaults = .standard
+        ) -> AutoPictureInPictureMode {
+            if let rawValue = defaults.string(forKey: Self.autoPictureInPictureModeKey),
+               let mode = AutoPictureInPictureMode(rawValue: rawValue) {
+                return mode
+            }
+            return .normal
+        }
+
+        static func saveAutoPictureInPictureMode(
+            _ mode: AutoPictureInPictureMode,
+            to defaults: UserDefaults = .standard
+        ) {
+            defaults.set(mode.rawValue, forKey: Self.autoPictureInPictureModeKey)
         }
 
         static let layoutModeKey = "layoutMode"
@@ -193,18 +235,84 @@ extension PhiPreferences {
 
     enum AgentSpaces {
         private static let autoCloseKey = "PhiAgentSpaceAutoCloseOnSuccess"
-        private static let remoteDebuggingPortKey = "PhiRemoteDebuggingPort"
+        private static let cdpAgentAccessKey = "PhiCDPAgentAccessEnabled"
+        private static let rememberedAgentGrantsKey = "PhiCDPRememberedAgentGrants"
         private static let autoViewKey = "PhiAgentSpaceAutoView"
         private static let skillFeatureKey = "PhiBrowserSkillFeatureEnabled"
+        private static let userSpaceOperationsKey = "PhiAgentUserSpaceOperationsEnabled"
+        private static let disallowedAgentProfilesKey = "PhiAgentDisallowedProfileIds"
+        private static let agentFallbackProfileKey = "PhiAgentFallbackProfileId"
 
         /// Master gate for the phi-browser skill's UI surfaces — the Developer
         /// settings tab and View ▸ Agent Autoview (same pattern as
         /// `GeneralSettings.spacesFeatureEnabled`). Defaults on, no user-facing
         /// toggle: flip with `defaults write <bundle id>
+        /// 
         /// PhiBrowserSkillFeatureEnabled -bool false`. The Settings window
         /// re-reads it on every open; the menu item applies on relaunch.
         static var skillFeatureEnabled: Bool {
             UserDefaults.standard.bool(forKey: skillFeatureKey, default: false)
+        }
+
+        /// Settings ▸ Developer ▸ Agent permissions: whether agent tooling may
+        /// operate the user's own browsing data and windows over the
+        /// management surface — Spaces, profiles, URL rules, pinned tabs,
+        /// bookmarks, and the tab layout of user windows. When off, agents can
+        /// only work inside their own agent Spaces. Read live by the message
+        /// router, so changes apply without a relaunch. Default on.
+        static var userSpaceOperationsEnabled: Bool {
+            get { UserDefaults.standard.bool(forKey: userSpaceOperationsKey, default: true) }
+            set { UserDefaults.standard.set(newValue, forKey: userSpaceOperationsKey) }
+        }
+
+        /// Settings ▸ Developer ▸ Agent permissions: profiles the agent may NOT
+        /// create agent Spaces in, by profileId. Stored as a blocklist so the
+        /// default (empty) preserves "any profile allowed"; the UI presents it
+        /// as a per-profile "allow" toggle. Keyed by profileId (stable across
+        /// renames). Enforced at `agentSpace.create`.
+        static var disallowedAgentProfileIds: Set<String> {
+            get { Set(UserDefaults.standard.stringArray(forKey: disallowedAgentProfilesKey) ?? []) }
+            set {
+                if newValue.isEmpty {
+                    UserDefaults.standard.removeObject(forKey: disallowedAgentProfilesKey)
+                } else {
+                    UserDefaults.standard.set(Array(newValue), forKey: disallowedAgentProfilesKey)
+                }
+            }
+        }
+
+        /// Whether the agent may create agent Spaces bound to `profileId`.
+        static func isProfileAgentSpaceAllowed(_ profileId: String) -> Bool {
+            !disallowedAgentProfileIds.contains(profileId)
+        }
+
+        /// Reserved display name of the agent's fallback profile. Deliberately
+        /// one a user would not normally pick, so identifying the profile by
+        /// name never hides a user's own profile.
+        static let agentFallbackProfileName = "Phi Agent (reserved)"
+
+        /// Profile the app auto-created as the agent's fallback (see
+        /// `AgentSpaceManager.ensureAgentFallbackProfile`), recorded so it can
+        /// still be identified after a rename — that profile belongs to the
+        /// agent. nil when no fallback has been created.
+        static var agentFallbackProfileId: String? {
+            get { UserDefaults.standard.string(forKey: agentFallbackProfileKey) }
+            set {
+                if let newValue, !newValue.isEmpty {
+                    UserDefaults.standard.set(newValue, forKey: agentFallbackProfileKey)
+                } else {
+                    UserDefaults.standard.removeObject(forKey: agentFallbackProfileKey)
+                }
+            }
+        }
+
+        /// THE single source of truth for "is this the agent's fallback
+        /// profile" — by reserved name or recorded id. Everything that lists
+        /// profiles for the user to choose from filters on this so the agent
+        /// profile never appears in a user picker.
+        static func isAgentFallbackProfile(profileId: String, displayName: String) -> Bool {
+            displayName == agentFallbackProfileName
+                || (!profileId.isEmpty && profileId == agentFallbackProfileId)
         }
 
         /// When `true`, a successfully completed agent Space that the user never
@@ -225,25 +333,33 @@ extension PhiPreferences {
             set { UserDefaults.standard.set(newValue, forKey: autoViewKey) }
         }
 
-        /// Opt-in CDP endpoint for agent tooling, consumed by ChromiumLauncher
-        /// at process launch (a relaunch is required for changes to apply).
-        /// nil (key absent) = disabled; 0 = ephemeral port written to
-        /// `<user data dir>/DevToolsActivePort`; >0 = fixed port.
-        static var remoteDebuggingPort: Int? {
-            get {
-                guard UserDefaults.standard.object(forKey: remoteDebuggingPortKey) != nil else {
-                    return nil
-                }
-                return UserDefaults.standard.integer(forKey: remoteDebuggingPortKey)
-            }
+        /// Settings ▸ Developer ▸ Remote debugging: master switch for agent CDP
+        /// access over the app-owned Unix-domain socket (see
+        /// `AgentCDPListener`). Read live — flipping it starts or stops the
+        /// listener immediately, no relaunch. Default off: while on, an
+        /// approved agent process can drive the browser.
+        static var cdpAgentAccessEnabled: Bool {
+            get { UserDefaults.standard.bool(forKey: cdpAgentAccessKey) }
+            set { UserDefaults.standard.set(newValue, forKey: cdpAgentAccessKey) }
+        }
+
+        /// Agent code-signing identities the user chose to remember (Allow &
+        /// Remember in the CDP consent prompt), so a returning agent connects
+        /// without re-prompting. Each entry is an `AgentIdentity.key`
+        /// ("teamId:signingId", or "unsigned:path" for an unsigned peer).
+        /// Empty by default; removing an entry here is how the Settings list
+        /// revokes a remembered agent.
+        static var rememberedAgentGrants: Set<String> {
+            get { Set(UserDefaults.standard.stringArray(forKey: rememberedAgentGrantsKey) ?? []) }
             set {
-                if let newValue {
-                    UserDefaults.standard.set(newValue, forKey: remoteDebuggingPortKey)
+                if newValue.isEmpty {
+                    UserDefaults.standard.removeObject(forKey: rememberedAgentGrantsKey)
                 } else {
-                    UserDefaults.standard.removeObject(forKey: remoteDebuggingPortKey)
+                    UserDefaults.standard.set(Array(newValue), forKey: rememberedAgentGrantsKey)
                 }
             }
         }
+
     }
 
     // MARK: - Theme Settings

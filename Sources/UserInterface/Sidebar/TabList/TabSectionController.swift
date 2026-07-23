@@ -9,6 +9,10 @@ import Combine
 /// Describes tab-section rows whose cells need extra rebinding after the
 /// root sidebar snapshot has been applied.
 struct TabSectionChange {
+    /// Whether the ordered root rows changed by stable id or object identity.
+    /// A false value lets the consumer keep group/split cell updates local
+    /// without rebuilding the bookmark-heavy shared outline snapshot.
+    let rootItemsChanged: Bool
     /// Group tokens whose live `state.normalTabs.filter { groupToken == token }`
     /// child list changed (membership added/removed or intra-group reorder).
     /// The consumer updates only these wrappers' cells — adding an
@@ -21,6 +25,13 @@ struct TabSectionChange {
     /// the consumer re-binds these rows' cells so titles/favicons/subscriptions
     /// attach to the new Tab.
     let affectedSplitIds: Set<String>
+
+    /// PHI-1099's outer-outline repair is safe only when the root change is
+    /// isolated from group membership and split-pair mutations that the outer
+    /// snapshot intentionally does not represent.
+    var allowsInsertedRootTabLayoutRepair: Bool {
+        rootItemsChanged && affectedGroupTokens.isEmpty && affectedSplitIds.isEmpty
+    }
 }
 
 class TabSectionController: NSObject {
@@ -28,7 +39,7 @@ class TabSectionController: NSObject {
     /// Per-group inner subscriptions. Refreshed whenever `browserState.groups`
     /// changes (groups created/closed) so that title/color/isCollapsed
     /// edits and membership-mutation `objectWillChange.send()` calls
-    /// (kJoined/kLeft/pending-claim drain) trigger an outline rebuild.
+    /// (kJoined/kLeft/pending-claim drain) trigger tab-section reconciliation.
     private var groupContentsCancellables = Set<AnyCancellable>()
 
     private(set) var tabItems: [SidebarItem] = []
@@ -163,7 +174,7 @@ class TabSectionController: NSObject {
     /// (Re)subscribes to every current `WebContentGroupInfo`'s
     /// `objectWillChange`. Any change to title / color / isCollapsed plus
     /// membership-driven nudges from `BrowserState.handleTabJoined/Left/
-    /// drainPendingGroupClaim` trigger a rebuild on the next runloop tick
+    /// drainPendingGroupClaim` trigger reconciliation on the next runloop tick
     /// (deferral matters because objectWillChange fires before the new
     /// value is stored).
     private func subscribeToGroupContents() {
@@ -291,11 +302,13 @@ class TabSectionController: NSObject {
     }
 
     private func refreshTabItems(_ tabs: [Tab]) {
+        let previousItems = tabItems
         guard let browserState else {
             tabItems = []
             previousGroupMembers = [:]
             previousSplitMembers = [:]
             delegate?.tabSectionDidUpdate(with: TabSectionChange(
+                rootItemsChanged: !previousItems.isEmpty,
                 affectedGroupTokens: [],
                 affectedSplitIds: []
             ))
@@ -309,15 +322,27 @@ class TabSectionController: NSObject {
         let newSplitMembers = Self.computeSplitMembers(items: items)
         let affectedSplits = Self.affectedSplitIds(old: previousSplitMembers,
                                                    new: newSplitMembers)
+        let rootItemsChanged = Self.rootItemsChanged(from: previousItems, to: items)
 
         self.tabItems = items
         self.previousGroupMembers = newGroupMembers
         self.previousSplitMembers = newSplitMembers
 
         delegate?.tabSectionDidUpdate(with: TabSectionChange(
+            rootItemsChanged: rootItemsChanged,
             affectedGroupTokens: affectedTokens,
             affectedSplitIds: affectedSplits
         ))
+    }
+
+    /// Compares the exact identity contract used by the outline snapshot.
+    /// Stable ids preserve row location, while stable object identity keeps
+    /// the data source and AppKit's identity-keyed row state aligned.
+    static func rootItemsChanged(from oldItems: [SidebarItem], to newItems: [SidebarItem]) -> Bool {
+        guard oldItems.count == newItems.count else { return true }
+        return zip(oldItems, newItems).contains { oldItem, newItem in
+            oldItem.id != newItem.id || ObjectIdentifier(oldItem) != ObjectIdentifier(newItem)
+        }
     }
 
     /// Snapshot of each group's ordered guid list. Compared frame-over-frame

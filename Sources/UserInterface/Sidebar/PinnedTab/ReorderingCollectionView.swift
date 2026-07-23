@@ -23,7 +23,28 @@ protocol ReorderingCollectionViewDelegate: AnyObject {
 
 class ReorderingCollectionView: NSCollectionView {
     weak var reorderDelegate: ReorderingCollectionViewDelegate?
+    var capturesContextMenuClicks = false
     private var lastDragTargetIndexPath: IndexPath?
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        // Avoid collection-item lookups while AppKit is already resolving a
+        // contextual event; walking the resolved hierarchy cannot re-enter hit testing.
+        let hitView = super.hitTest(point)
+        guard capturesContextMenuClicks,
+              ContextMenuEvent.isMouseDown(NSApp.currentEvent),
+              let hitView else {
+            return hitView
+        }
+
+        var candidate: NSView? = hitView
+        while let view = candidate, view !== self {
+            if view.menu != nil, !view.isHidden, view.alphaValue > 0 {
+                return view
+            }
+            candidate = view.superview
+        }
+        return hitView
+    }
 
     // Pinned-extension reorders bypass NSCollectionView's dropping machinery
     // entirely: its internal drop-target inference reports "no destination"

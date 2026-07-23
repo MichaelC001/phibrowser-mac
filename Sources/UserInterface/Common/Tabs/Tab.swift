@@ -154,13 +154,24 @@ class Tab: WebContentRepresentable {
     let subTabs: [Tab] = []
     var guid: Int
     var guidInLocalDB: String? = nil
+    /// Stable logical identity retained when a pinned record is copied to a
+    /// different scope and receives a new physical database guid.
+    var pinnedLineageId: String?
     var profileId: String?
+    /// Whether a profile-scoped repository result can update this tab's
+    /// persisted favicon snapshot. App-scoped pinned rows have no profile
+    /// owner, so their profile-specific fallback remains display-only.
+    var allowsProfileScopedFaviconPersistence = true
     var windowId: Int = 0
     var isOpenned = true
     /// DB-persisted title that bypasses title KVO from `webContentWrapper`.
     var storedTitle: String?
     /// Original URL persisted in the database for pinned tabs, immune to navigation KVO.
     var pinnedUrl: String?
+    /// Creation date persisted on the pinned-tab record, exported as
+    /// ADD_DATE by the Netscape bookmark HTML export. nil for tabs not
+    /// built from a pinned record.
+    var pinnedCreatedDate: Date?
     var lastSeen: Date?
     /// guid of the pinned-tab record that forms the other half of a pinned
     /// split. Mirrors `TabDataModel.splitPartnerGuid` for the in-memory copy
@@ -333,6 +344,15 @@ class Tab: WebContentRepresentable {
     }
     
     func setWebContentsWrapper(wrapper: (WebContentWrapper & NSObject)?) {
+        if let currentWrapper = webContentWrapper,
+           let wrapper,
+           currentWrapper === wrapper {
+            return
+        }
+        if webContentWrapper == nil, wrapper == nil {
+            return
+        }
+
         self.webContentWrapper = wrapper
         setupObservers(for: wrapper)
     }
@@ -345,6 +365,16 @@ class Tab: WebContentRepresentable {
         guard let data, cachedFaviconData != data else { return }
         cachedFaviconData = data
         faviconSnapshotUpdater?(data)
+    }
+
+    func hydrateCachedFaviconData(_ data: Data?) {
+        guard let data, cachedFaviconData != data else { return }
+        cachedFaviconData = data
+    }
+
+    func updateProfileScopedFaviconData(_ data: Data?) {
+        guard allowsProfileScopedFaviconPersistence else { return }
+        updateCachedFaviconData(data)
     }
 
     private func clearFaviconDataIfPageURLChanged(from oldURLString: String?, to newURLString: String?) {
@@ -386,11 +416,10 @@ class Tab: WebContentRepresentable {
         return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
     }
     
-    /// Persists a custom title and rebinds observers so KVO no longer overwrites it.
+    /// Applies a stored custom title. The title observer reads this value on every update.
     func applyStoredTitle(_ title: String) {
         storedTitle = title
         self.title = title
-        setWebContentsWrapper(wrapper: webContentWrapper)
     }
 
     /// Placeholder title for native-NTP (off-the-record) new-tab pages.
@@ -642,9 +671,13 @@ extension Tab {
                   faviconData: dbModel.favicon)
         self.isOpenned = false
         self.isPinned = (dbModel.dataType == .pinnedTab)
+        self.allowsProfileScopedFaviconPersistence =
+            dbModel.profile != nil || dbModel.profileId?.isEmpty == false
         self.storedTitle = dbModel.title
         if dbModel.dataType == .pinnedTab {
+            self.pinnedLineageId = dbModel.pinLineageId ?? dbModel.guid
             self.pinnedUrl = dbModel.url.absoluteString
+            self.pinnedCreatedDate = dbModel.createdDate
             self.splitPartnerGuid = dbModel.splitPartnerGuid
             self.lastSeen = dbModel.lastSeen
         }

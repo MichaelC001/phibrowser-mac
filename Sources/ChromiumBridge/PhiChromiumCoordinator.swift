@@ -32,10 +32,25 @@ import SwiftUI
 extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
     func shouldEnablePhiExtensions() -> Bool { PhiPreferences.AISettings.phiAIEnabled.loadValue() }
 
+    /// Source of truth for the browser-process DevTools gate that blocks
+    /// remote-debugging clients from the user's own Spaces. Read live per gated
+    /// command, so the Settings toggle applies without a relaunch.
+    func agentUserSpaceOperationsEnabled() -> Bool {
+        PhiPreferences.AgentSpaces.userSpaceOperationsEnabled
+    }
+
     func isBackupImporting() -> Bool { isBackupImportInProgress }
 
     func shouldAutoInstallICloudPasswords() -> Bool {
         PhiPreferences.PasswordManagerSettings.autoInstallICloudPasswords.loadValue()
+    }
+
+    func isAutoPictureInPictureEnabled() -> Bool {
+        PhiPreferences.GeneralSettings.loadAutoPictureInPictureMode() != .off
+    }
+
+    func isAutoPipParkEnabled() -> Bool {
+        PhiPreferences.GeneralSettings.loadAutoPictureInPictureMode() == .parked
     }
     
     func handleExtensionMessage(_ type: String, payload: String, requestId: String, senderId: String) -> String? {
@@ -159,18 +174,12 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
                 ordered.append(incognitoTarget)
             }
 
-            // Resolve each Space's theme color (its pinned theme, or the
-            // current theme when none) for the source window's appearance, so a
-            // row's tint matches what that Space actually looks like.
+            // Resolve each Space's theme (pinned theme + custom overlay
+            // opacity) for the source window's appearance, so a row's tint
+            // matches what that Space actually looks like.
             let appearance = sourceWindow.effectiveAppearance.phiAppearance
             let items: [SpaceChooserItem] = ordered.map { space in
-                let theme: Theme
-                if let pinnedId = manager.themeId(forSpaceId: space.spaceId),
-                   let pinned = ThemeManager.shared.registeredThemes[pinnedId] {
-                    theme = pinned
-                } else {
-                    theme = ThemeManager.shared.currentTheme
-                }
+                let theme = manager.resolvedTheme(forSpaceId: space.spaceId)
                 let themeNSColor = theme.color(for: .themeColor, appearance: appearance)
                 // Contrast is computed on the opaque color, then the row is
                 // tinted with the theme's overlay opacity (the Opacity setting)
@@ -191,16 +200,9 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
                     textColor: Color(nsColor: legible))
             }
 
-            // The box's translucency follows the current Space's theme overlay
-            // opacity (the Opacity setting in General settings), so it matches
-            // the window it sits over.
-            let currentTheme: Theme
-            if let pinnedId = manager.themeId(forSpaceId: currentSpaceId),
-               let pinned = ThemeManager.shared.registeredThemes[pinnedId] {
-                currentTheme = pinned
-            } else {
-                currentTheme = ThemeManager.shared.currentTheme
-            }
+            // The box's translucency follows the current Space's resolved
+            // overlay opacity, so it matches the window it sits over.
+            let currentTheme = manager.resolvedTheme(forSpaceId: currentSpaceId)
             let boxBackground = Color(
                 nsColor: currentTheme.color(for: .windowOverlayBackground, appearance: appearance))
 
@@ -329,6 +331,29 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
         let isLoggedIn = AuthManager.shared.checkLoginStatusOnChromiumLaunch()
         AppLogDebug("🌐 [Chromium] isUserLoggedIn check: \(isLoggedIn)")
         return isLoggedIn
+    }
+
+    /// Returns the current Phi account identity from the same per-account
+    /// profile cache used by the Mac account settings page. The ID-token
+    /// identity covers the short window before the init prefetch completes.
+    func getPhiAccountInfo() -> [String: Any]? {
+        guard let account = AccountController.shared.account else { return nil }
+        let profile: Profile? = account.userDefaults.codableValue(
+            forKey: AccountUserDefaults.DefaultsKey.cachedProfile.rawValue
+        )
+
+        var info: [String: Any] = [:]
+        if let profile, profile.auth0_id == account.userID {
+            if !profile.name.isEmpty { info["nickname"] = profile.name }
+            if !profile.email.isEmpty { info["email"] = profile.email }
+        } else if let user = account.userInfo {
+            if let name = user.name, !name.isEmpty { info["nickname"] = name }
+            if let email = user.email, !email.isEmpty { info["email"] = email }
+        }
+        if let avatarPNG = AccountController.shared.avatarPNG(for: account) {
+            info["avatarPNG"] = avatarPNG
+        }
+        return info.isEmpty ? nil : info
     }
     
     func showLoginUI() {

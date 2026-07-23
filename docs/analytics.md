@@ -37,11 +37,10 @@ A plain Xcode Run/Debug compiles the empty-value default and runs without PostHo
 
 | Boundary | PostHog call | Location |
 | --- | --- | --- |
-| Login success | `identify(auth0.sub, userProperties)` | `LoginViewController.swift`, `LoginController.swift` |
-| Account creation (post-login) | `identify(auth0.sub)` alongside `EventTracker.updateUserProfile` | `AccountController/Account.swift` |
+| Active account changed | `identify(auth0.sub, userProperties)` | `AccountController/Account.swift` |
 | Logout | `capture("user_logged_out")` then `reset()` | `Onboarding/AuthManager.swift` |
 
-Distinct ID == Auth0 `sub`.
+Distinct ID == Auth0 `sub`. When Chromium metrics reporting is enabled, identify also sets `chromium_metrics_client_id` to Chromium's UMA client ID. A temporarily unavailable client ID does not prevent identification.
 
 ## Super properties
 

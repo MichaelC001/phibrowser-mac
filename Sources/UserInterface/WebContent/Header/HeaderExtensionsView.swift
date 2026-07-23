@@ -370,7 +370,7 @@ private struct PinnedExtensionButton: View {
                         ext,
                         manager: manager,
                         windowId: windowId,
-                        anchorPoint: anchorView.flatMap(ExtensionPopupAnchor.pointBelowView)
+                        anchorRect: anchorView.flatMap(ExtensionPopupAnchor.rectOfView)
                     )
                 },
                 secondaryAction: {
@@ -417,10 +417,11 @@ private func executePinnedExtensionAction(
     _ ext: Extension,
     manager: ExtensionManager,
     windowId: Int64,
-    anchorPoint: NSPoint?
+    anchorRect: NSRect?
 ) {
-    let point = anchorPoint ?? ExtensionPopupAnchor.mouseFallback()
     if manager.badges[ext.id]?.enabled == false {
+        let point = anchorRect.map(ExtensionPopupAnchor.legacyAnchorPoint(for:))
+            ?? ExtensionPopupAnchor.mouseFallback()
         ChromiumLauncher.sharedInstance().bridge?.triggerExtensionContextMenu(
             withId: ext.id,
             pointInScreen: point,
@@ -430,7 +431,7 @@ private func executePinnedExtensionAction(
     }
     ChromiumLauncher.sharedInstance().bridge?.triggerExtension(
         withId: ext.id,
-        pointInScreen: point,
+        anchorRect: anchorRect,
         windowId: windowId
     )
 }
@@ -599,7 +600,7 @@ final class HeaderExtensionReorderView: NSView {
                 pinnedExtensions[index],
                 manager: manager,
                 windowId: windowId,
-                anchorPoint: ExtensionPopupAnchor.pointBelowRect(
+                anchorRect: ExtensionPopupAnchor.rectOfRect(
                     slotButtonRect(at: index), in: self)
             )
         }

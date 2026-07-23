@@ -406,6 +406,11 @@ class SidebarTabCellView: SidebarCellView {
 class SidebarSplitPairCellView: SidebarCellView {
     private static let closeButtonSize: CGFloat = 24
     private static let titleTrailingSpacing: CGFloat = 5
+    /// The left pane is already inset 2 points from the row background, so
+    /// 4 points aligns its favicon at the normal tab's 6-point leading edge.
+    private static let leftIconLeadingSpacing: CGFloat = 4
+    /// Keep extra breathing room between the divider and the right favicon.
+    private static let rightIconLeadingSpacing: CGFloat = 8
     private let outerBackground = HoverableView()
     private let leftPane = HoverableView()
     private let rightPane = HoverableView()
@@ -541,6 +546,7 @@ class SidebarSplitPairCellView: SidebarCellView {
 
         leftMuteWidth = configurePane(leftPane,
                                       icon: leftIconView,
+                                      iconLeadingSpacing: Self.leftIconLeadingSpacing,
                                       title: leftTitleLabel,
                                       mute: leftMuteHost,
                                       recording: leftRecordingHost,
@@ -549,6 +555,7 @@ class SidebarSplitPairCellView: SidebarCellView {
                                       closeTrailing: &leftTitleCloseTrailing)
         rightMuteWidth = configurePane(rightPane,
                                        icon: rightIconView,
+                                       iconLeadingSpacing: Self.rightIconLeadingSpacing,
                                        title: rightTitleLabel,
                                        mute: rightMuteHost,
                                        recording: rightRecordingHost,
@@ -627,6 +634,7 @@ class SidebarSplitPairCellView: SidebarCellView {
     @discardableResult
     private func configurePane(_ pane: HoverableView,
                                icon: NSImageView,
+                               iconLeadingSpacing: CGFloat,
                                title: NSTextField,
                                mute: NSView,
                                recording: NSView,
@@ -652,7 +660,7 @@ class SidebarSplitPairCellView: SidebarCellView {
         pane.addSubview(icon)
         icon.snp.makeConstraints { make in
             make.centerY.equalToSuperview()
-            make.leading.equalToSuperview().offset(8)
+            make.leading.equalToSuperview().offset(iconLeadingSpacing)
             make.size.equalTo(CGSize(width: 16, height: 16))
         }
 
@@ -698,8 +706,12 @@ class SidebarSplitPairCellView: SidebarCellView {
         title.snp.makeConstraints { make in
             make.centerY.equalToSuperview()
             make.leading.equalTo(mute.snp.trailing).offset(4)
-            paneTrailing = make.trailing.lessThanOrEqualToSuperview().offset(-Self.titleTrailingSpacing).constraint
-            closeTrailing = make.trailing.lessThanOrEqualTo(close.snp.leading).offset(-Self.titleTrailingSpacing).constraint
+            // Fill the available region so the trailing fade only overlaps
+            // text when the title actually reaches the pane or close button.
+            // The title's low compression resistance lets mute/close controls
+            // keep their required widths as this region shrinks.
+            paneTrailing = make.trailing.equalToSuperview().offset(-Self.titleTrailingSpacing).constraint
+            closeTrailing = make.trailing.equalTo(close.snp.leading).offset(-Self.titleTrailingSpacing).constraint
         }
         closeTrailing?.deactivate()
 
@@ -936,7 +948,7 @@ class SidebarSplitPairCellView: SidebarCellView {
         handle = ProfileScopedFaviconRepository.shared.loadFavicon(for: request) { [weak imageView, weak tab] result in
             imageView?.image = result.image
             if result.source == .chromium, let data = result.data {
-                tab?.updateCachedFaviconData(data)
+                tab?.updateProfileScopedFaviconData(data)
             }
         }
     }

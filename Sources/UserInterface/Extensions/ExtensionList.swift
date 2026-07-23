@@ -229,6 +229,10 @@ struct ExtensionList<Manager: ExtensionManagerProtocol>: View {
         }
     }
 
+    /// `anchor` is the button that opened this list, not the tapped row: the
+    /// row dies with the popover dismissed just below, and Chrome anchors an
+    /// overflowed action to the overflow button too (see
+    /// ToolbarActionView::GetReferenceButtonForPopupInternal).
     private func triggerExtension(_ ext: Extension, anchor: NSView) {
         // A disabled action doesn't run; fall back to the context menu like
         // Chrome (ExecuteUserAction).
@@ -240,13 +244,11 @@ struct ExtensionList<Manager: ExtensionManagerProtocol>: View {
         // the popover's fade-out animation runs in parallel with the popup's
         // appearance instead of overlapping it visually.
         onRequestDismiss?()
-        let point = ExtensionPopupAnchor.pointBelowView(anchor)
-            ?? ExtensionPopupAnchor.mouseFallback()
         let windowId = MainBrowserWindowControllersManager.shared
             .activeWindowController?.browserState.windowId
         ChromiumLauncher.sharedInstance().bridge?.triggerExtension(
             withId: ext.id,
-            pointInScreen: point,
+            anchorRect: ExtensionPopupAnchor.rectOfView(anchor),
             windowId: windowId?.int64Value ?? 0
         )
     }

@@ -475,6 +475,7 @@ extension AppController {
             ProfileModel.self,
             SpaceModel.self,
             SpaceURLRule.self,
+            BrowserDataSettingsModel.self,
             migrationPlan: TabDataModelMigrationPlan.self,
             configurations: configuration
         )
