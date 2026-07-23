@@ -246,6 +246,7 @@
 		8EB01BE53010BCED0043E59D /* AccountDeletionCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EB01BE43010BCED0043E59D /* AccountDeletionCoordinator.swift */; };
 		8EB01BE73010BCED0043E59D /* AccountDeletionFlowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EB01BE63010BCED0043E59D /* AccountDeletionFlowView.swift */; };
 		8EB01BE93010BCED0043E59D /* AccountDeletionFakeResponses.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EB01BE83010BCED0043E59D /* AccountDeletionFakeResponses.swift */; };
+		8EB01BEB3010BCED0043E59D /* UserDataRemoval.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EB01BEA3010BCED0043E59D /* UserDataRemoval.swift */; };
 		8EC502132F67AE2300CE7338 /* DownloadSafetyTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EC502122F67AE2300CE7338 /* DownloadSafetyTypes.swift */; };
 		8EC502152F67AF7F00CE7338 /* DownloadSafety.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 8EC502142F67AF7F00CE7338 /* DownloadSafety.xcstrings */; };
 		8EC70DB52F0A5E04009FE2CD /* BookmarkBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EC70DB42F0A5DFD009FE2CD /* BookmarkBar.swift */; };
@@ -818,6 +819,7 @@
 		8EB01BE43010BCED0043E59D /* AccountDeletionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountDeletionCoordinator.swift; sourceTree = "<group>"; };
 		8EB01BE63010BCED0043E59D /* AccountDeletionFlowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountDeletionFlowView.swift; sourceTree = "<group>"; };
 		8EB01BE83010BCED0043E59D /* AccountDeletionFakeResponses.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountDeletionFakeResponses.swift; sourceTree = "<group>"; };
+		8EB01BEA3010BCED0043E59D /* UserDataRemoval.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserDataRemoval.swift; sourceTree = "<group>"; };
 		8EC502122F67AE2300CE7338 /* DownloadSafetyTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadSafetyTypes.swift; sourceTree = "<group>"; };
 		8EC502142F67AF7F00CE7338 /* DownloadSafety.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = DownloadSafety.xcstrings; sourceTree = "<group>"; };
 		8EC70DB42F0A5DFD009FE2CD /* BookmarkBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookmarkBar.swift; sourceTree = "<group>"; };
@@ -1853,6 +1855,7 @@
 				CC98F8A12E8BCE0900DAD237 /* AppController+Settings.swift */,
 				CC8B76B02EA8D7B70075F58C /* AppController+Debug.swift */,
 				CC8B76B22EA8D7B70075F58C /* AppController+UserDataBackup.swift */,
+				8EB01BEA3010BCED0043E59D /* UserDataRemoval.swift */,
 				CC9AF3432EC192BC00C27C98 /* AppControlle+LaunchInfo.swift */,
 				CCBF0F9F2ECEC1AE005E729B /* AppController+Deeplink.swift */,
 				3703C9832F6956E600E7CF6D /* SentinelHelper.swift */,
@@ -2596,6 +2599,7 @@
 				CCB53DD02E6EC437004BF233 /* OmniBoxContainerViewController.swift in Sources */,
 				CC8B76B12EA8D7B70075F58C /* AppController+Debug.swift in Sources */,
 				CC8B76B32EA8D7B70075F58C /* AppController+UserDataBackup.swift in Sources */,
+				8EB01BEB3010BCED0043E59D /* UserDataRemoval.swift in Sources */,
 				CCBF8F352E61AB3A00B9A99E /* SideAddressBar.swift in Sources */,
 				CC24EF082E89251D00CE9DD7 /* AuthManager.swift in Sources */,
 				8EC70E162F0BBF3D009FE2CD /* BookmarkItemView.swift in Sources */,

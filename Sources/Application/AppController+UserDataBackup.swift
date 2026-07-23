@@ -125,11 +125,13 @@ extension AppController {
             }
         }
 
-        _clearUserData()
         if includeAuthReset {
             AuthManager.shared.clearLocalCredentials()
             LoginController.shared.phase = .login
         }
+        // Last step before terminating: any defaults write after the
+        // preferences domain is dropped would resurrect it in cfprefsd.
+        UserDataRemoval.beginRemoval(of: .currentProduct)
         NSApp.terminate(nil)
     }
 
@@ -767,30 +769,5 @@ extension AppController {
 
     private static func shellSingleQuotedForSh(_ path: String) -> String {
         "'" + path.replacingOccurrences(of: "'", with: "'\\''") + "'"
-    }
-
-    private func _clearUserData() {
-        let appDir = FileSystemUtils.applicationSupportDirctory()
-        let cachDir = FileSystemUtils.cacheDirctory()
-        let plistPath = FileSystemUtils.plistPath()
-        let fm = FileManager.default
-
-        do {
-            if fm.fileExists(atPath: appDir) {
-                try fm.removeItem(atPath: appDir)
-            }
-            if fm.fileExists(atPath: cachDir) {
-                try fm.removeItem(atPath: cachDir)
-            }
-
-            if fm.fileExists(atPath: plistPath) {
-                try fm.removeItem(atPath: plistPath)
-            }
-        } catch {
-            let nsError = error as NSError
-            if nsError.domain != NSCocoaErrorDomain || nsError.code != NSFileNoSuchFileError {
-                NSLog("[Debug] Failed to remove appDir at \(appDir): \(nsError)")
-            }
-        }
     }
 }
