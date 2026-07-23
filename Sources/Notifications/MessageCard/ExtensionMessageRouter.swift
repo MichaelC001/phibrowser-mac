@@ -176,6 +176,15 @@ final class ExtensionMessageRouter {
         registerUserSpaceManaged(type: "agentSpace.spaces.listTabs") { context in
             return AgentSpaceRouter.handleSpacesListTabs(context: context)
         }
+        registerUserSpaceManaged(type: "agentSpace.spaces.openTab") { context in
+            return AgentSpaceRouter.handleSpacesOpenTab(context: context)
+        }
+        registerUserSpaceManaged(type: "agentSpace.spaces.activate") { context in
+            return AgentSpaceRouter.handleSpacesActivate(context: context)
+        }
+        registerUserSpaceManaged(type: "agentSpace.spaces.focus") { context in
+            return AgentSpaceRouter.handleSpacesFocus(context: context)
+        }
         registerUserSpaceManaged(type: "agentSpace.profiles.create") { context in
             AgentSpaceRouter.handleProfilesCreate(context: context)
             return nil  // async reply via ExtensionMessaging

@@ -43,6 +43,9 @@ const VIEWPORT_MAX = 4096
 const state = {
   cdp: null,            // CdpClient (browser target)
   task: null,           // {taskId, spaceId, windowId, ownership, status}
+  userSpace: null,      // {spaceId, name, windowId} when bound to a USER
+                        // Space via ensureUserSpace instead of a task —
+                        // mutually exclusive with `task` (see ensureUserSpace)
   sessionId: null,      // current page session (flat mode)
   targetId: null,       // current page target
   contextId: null,      // main frame's default execution context (tracked)
@@ -116,7 +119,9 @@ const CRED_PROMPT_TIMEOUT_MS = 190000
 
 function requireTask() {
   if (!state.task) {
-    throw new Error('No agent space selected — call ensureAgentSpace(name) first')
+    throw new Error(
+      'No agent space selected — call ensureAgentSpace(name) first ' +
+      '(or ensureUserSpace(space) to work in a user Space)')
   }
   return state.task
 }
@@ -134,6 +139,10 @@ function requireSession() {
  * own — ask the user and wait.
  */
 async function guardAgentControl() {
+  // User-space mode has no ownership model: the user's own window is the
+  // working surface and they are inherently in control alongside the agent.
+  // No takeover guard, no agent viewport, no task keep-alive.
+  if (!state.task && state.userSpace) return
   const task = requireTask()
   // The cached bit is kept live by the ownershipChanged broadcast, but a single
   // dropped event would leave it stale as 'agent' while the user is actually
@@ -212,6 +221,7 @@ export async function ensureAgentSpace(name, { profile = '', persistent = false 
     await wait(1.6)
   }
   state.task = task
+  state.userSpace = null  // task binding supersedes any user-space binding
   // Start (or re-target) the session mirror: the driving session's prompts
   // and prose flow into this Space's console, and console commands flow
   // back into the session (see scripts/mirror-tailer.mjs).
@@ -355,7 +365,9 @@ export async function spaceStatus({ shots = false } = {}) {
 
 export async function listTabs() {
   const client = await cdpClient()
-  const task = requireTask()
+  const boundWindowId = state.task ? requireTask().windowId
+                                   : state.userSpace?.windowId
+  if (!boundWindowId) requireTask()  // standard guidance error
   const { targetInfos } = await client.send('Target.getTargets')
   const out = []
   for (const t of targetInfos) {
@@ -363,7 +375,7 @@ export async function listTabs() {
     try {
       const { windowId } = await client.send('Browser.getWindowForTarget',
                                              { targetId: t.targetId })
-      if (windowId === task.windowId) {
+      if (windowId === boundWindowId) {
         out.push({ targetId: t.targetId, url: t.url, title: t.title,
                    current: t.targetId === state.targetId })
       }
@@ -509,7 +521,9 @@ async function applyAgentViewport(client, sessionId, targetId, request = null) {
  */
 async function maybeTrackWindowResize() {
   if (!state.sessionId || !state.targetId) return
-  if (state.task?.ownership === 'user') return
+  // Agent-window emulation only: a user-Space tab is visible and sized for
+  // real — never impose device metrics on it.
+  if (!state.task || state.task.ownership === 'user') return
   const now = Date.now()
   if (now - state.windowBoundsCheckedAt < 1000) return
   state.windowBoundsCheckedAt = now
@@ -718,6 +732,9 @@ async function attachTabNow(targetId) {
   state.openDialog = null
   state.contextId = null
   if (state.task) writeLastTargetId(state.task.taskId, targetId)
+  else if (state.userSpace) {
+    writeLastTargetId(`space:${state.userSpace.spaceId}`, targetId)
+  }
   // Session-scoped subscription that is cleaned up on the next attach.
   const on = (method, fn) =>
     state.sessionDisposers.push(client.on(method, fn, sessionId))
@@ -801,8 +818,9 @@ async function attachTabNow(targetId) {
   })
   await client.send('Network.enable', {}, sessionId).catch(() => {})
   // Restore this tab's viewport override if one was set earlier this round
-  // (switching back keeps it); default = the real window size.
-  if (!userDriving) {
+  // (switching back keeps it); default = the real window size. Agent-window
+  // tabs only — a user-Space tab is visible and needs no emulation.
+  if (!userDriving && state.task) {
     await applyAgentViewport(client, sessionId, targetId,
                              state.viewportByTarget.get(targetId)?.request ?? null)
   }
@@ -899,6 +917,16 @@ async function prepareTab(client, targetId, { navigateTo = null, acceptCookies }
  * the current tab, so switchTab before acting on a specific one.
  */
 export async function openTab(url, { acceptCookies = true, reuseBlank = true } = {}) {
+  // User-space mode: open in the bound user Space's window and attach —
+  // page state (blank-tab reuse, consent pass) stays the user's own.
+  if (!state.task && state.userSpace) {
+    const tab = await openSpaceTab(state.userSpace.spaceId, url)
+    if (!tab.targetId) {
+      throw new Error(`openTab: new user-space tab for ${url} has no CDP target`)
+    }
+    await attachTab(tab.targetId)
+    return { targetId: tab.targetId, windowId: tab.windowId, tabId: tab.tabId }
+  }
   await guardAgentControl()
   const task = requireTask()
   const client = await cdpClient()
@@ -2928,7 +2956,8 @@ export async function setViewport({ width, height } = {}) {
 // Fire-and-forget: the overlay cursor is cosmetic, so don't spend an app-bus
 // round trip of latency on every click/hover waiting for it.
 function mirrorCursor(x, y) {
-  const task = requireTask()
+  const task = state.task
+  if (!task) return  // no overlay in user-space mode
   phiSend('agentSpace.cursor', { taskId: task.taskId, x, y }).catch(() => {})
 }
 
@@ -2937,7 +2966,8 @@ function mirrorCursor(x, y) {
 // native overlay. Coordinates are widget space (like mirrorCursor); cosmetic,
 // so never block input on it.
 function mirrorEffect(kind, props = {}) {
-  const task = requireTask()
+  const task = state.task
+  if (!task) return  // no overlay in user-space mode
   phiSend('agentSpace.effect', { taskId: task.taskId, kind, ...props }).catch(() => {})
 }
 
@@ -3325,6 +3355,9 @@ export async function handleDialog(accept = true, promptText = undefined) {
 // Presence / ownership / lifecycle
 
 export async function setStatus(caption) {
+  // User-space mode has no overlay pill or transcript console — narration
+  // belongs in chat there. Quiet no-op so shared flows need no branching.
+  if (!state.task && state.userSpace) return
   const task = requireTask()
   await phiSend('agentSpace.setState', { taskId: task.taskId, caption: String(caption) })
 }
@@ -3414,6 +3447,7 @@ async function reportRunState(running) {
 }
 
 export async function markError(message) {
+  if (!state.task && state.userSpace) return  // no badge surface in user-space mode
   const task = requireTask()
   await phiSend('agentSpace.markError', { taskId: task.taskId, message: String(message) })
 }
@@ -4541,6 +4575,133 @@ export async function listSpaceTabs(space) {
   const { tabs } = await phiSend('agentSpace.spaces.listTabs', { spaceId })
   const byTabId = await targetIdsByTabId()
   return tabs.map((t) => ({ ...t, targetId: byTabId.get(t.tabId) ?? null }))
+}
+
+/** Opens `url` as a new tab in a USER Space's open window — the user-Space
+ *  counterpart of the agent-window openTab. App-level like the rest of
+ *  browser management: no agent Space, no control ownership. `activate`
+ *  (default true) selects the new tab in the user's window. Returns the new
+ *  tab as {tabId, targetId, url, title, active, windowId}, settled by
+ *  diffing the Space's tab strip. Fails with `space_not_open` when the
+ *  Space has no open window. */
+export async function openSpaceTab(space, url, { activate = true } = {}) {
+  if (!url || typeof url !== 'string') {
+    throw new Error('openSpaceTab(space, url): url is required')
+  }
+  const spaceId = await resolveSpaceId(space)
+  const before = new Set((await listSpaceTabs(spaceId)).map((t) => t.tabId))
+  const { windowId } = await phiSend('agentSpace.spaces.openTab',
+                                     { spaceId, url, activate })
+  let tab = null
+  await settle(async () => {
+    tab = (await listSpaceTabs(spaceId)).find((t) => !before.has(t.tabId))
+    return !!tab
+  }, { timeout: 10 })
+  if (!tab) throw new Error(`openSpaceTab: no new tab appeared for ${url}`)
+  return { ...tab, windowId }
+}
+
+/** Where the user currently is: {spaceId, spaceName, isAgentSpace,
+ *  isIncognito, windowId?, tab?} — `tab` is the active Space's selected tab
+ *  as {tabId, targetId, url, title}, present only when the Space has an
+ *  open window (and never for Incognito Spaces). */
+export async function userFocus() {
+  const r = await phiSend('agentSpace.spaces.focus')
+  const focus = {
+    spaceId: r.spaceId, spaceName: r.spaceName,
+    isAgentSpace: r.isAgentSpace ?? false,
+    isIncognito: r.isIncognito ?? false,
+  }
+  if (r.windowId !== undefined) focus.windowId = r.windowId
+  if (r.tab) {
+    const byTabId = await targetIdsByTabId()
+    focus.tab = { ...r.tab, targetId: byTabId.get(r.tab.tabId) ?? null }
+  }
+  return focus
+}
+
+/** Surfaces a user Space in the user's focused window, opening its window
+ *  when it has none — the programmatic Space-switcher click. On-screen
+ *  change the user sees immediately: only on their ask. */
+export async function activateSpace(space) {
+  const spaceId = await resolveSpaceId(space)
+  await phiSend('agentSpace.spaces.activate', { spaceId })
+  return { spaceId }
+}
+
+/**
+ * Binds this round to a USER Space so the page helpers (observe, click,
+ * fillInput, goto, openTab, switchTab, …) drive ITS window. The agent Space
+ * stays the DEFAULT working surface — reach for this only when the user
+ * explicitly asks for work in their own Space ("in my space", "go to space
+ * X and …"). What user-space mode does NOT have: no ownership guard or
+ * handoff (the user is inherently in control of their own window — every
+ * action lands in their live view), no keep-alive or complete(), no
+ * overlay/status/transcript surface (setStatus/narrate are no-ops — report
+ * in chat), and no emulated viewport (the window is visible and sized for
+ * real).
+ *
+ * Resolution: an unknown name is created as a new Space when `create` is
+ * true (then activated — a window must exist to drive); an existing Space
+ * with no open window is opened via activation; `{activate: true}` also
+ * surfaces an already-open Space in the user's focused window. Attaches to
+ * the Space's selected tab (falling back to the tab last driven here, then
+ * any live tab) and returns {spaceId, name, windowId, created, tabs}.
+ */
+export async function ensureUserSpace(space, { profile = '', create = true,
+                                               activate = false } = {}) {
+  if (!space || typeof space !== 'string') {
+    throw new Error('ensureUserSpace(space): space (name or spaceId) is required')
+  }
+  let spaceId
+  let created = false
+  try {
+    spaceId = await resolveSpaceId(space)
+  } catch (err) {
+    if (!create || !/unknown space/.test(String(err?.message))) throw err
+    ;({ spaceId } = await createSpace(space, profile ? { profile } : {}))
+    created = true
+  }
+  // A window must exist to drive: activation is the only way to open one.
+  let reply = null
+  if (!created && !activate) {
+    try { reply = await phiSend('agentSpace.spaces.listTabs', { spaceId }) }
+    catch (err) {
+      if (!/space_not_open/.test(String(err?.message))) throw err
+    }
+  }
+  if (!reply) {
+    await phiSend('agentSpace.spaces.activate', { spaceId })
+    await settle(async () => {
+      reply = await phiSend('agentSpace.spaces.listTabs', { spaceId })
+        .catch(() => null)
+      return !!(reply && reply.tabs.length > 0)
+    }, { timeout: 10 })
+    if (!reply) {
+      throw new Error(`ensureUserSpace: space '${space}' did not open a window`)
+    }
+  }
+  const entry = (await listSpaces()).find((s) => s.spaceId === spaceId)
+  state.task = null  // user-space binding supersedes any task binding
+  state.userSpace = { spaceId, name: entry?.name ?? space,
+                      windowId: reply.windowId }
+  state.sessionId = null
+  state.targetId = null
+  const byTabId = await targetIdsByTabId()
+  const tabs = reply.tabs.map((t) => ({
+    ...t, targetId: byTabId.get(t.tabId) ?? null,
+  }))
+  // The user's own selected tab is authoritative — attaching to it changes
+  // nothing on screen. The remembered last-driven tab only matters when the
+  // selected one has no live target (e.g. a discarded tab).
+  const last = readLastTargetId(`space:${spaceId}`)
+  const pick = tabs.find((t) => t.active && t.targetId) ??
+               tabs.find((t) => t.targetId && t.targetId === last) ??
+               tabs.find((t) => t.targetId)
+  if (pick) await attachTab(pick.targetId)
+  return { spaceId, name: state.userSpace.name, windowId: reply.windowId,
+           created, mode: 'userSpace',
+           tabs: tabs.map((t) => ({ ...t, current: t.targetId === state.targetId })) }
 }
 
 /** The target window's tab groups, as [{token, title, color, collapsed,

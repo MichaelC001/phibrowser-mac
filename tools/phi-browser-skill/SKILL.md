@@ -72,7 +72,7 @@ The heredoc body is a Node.js script; all helpers below are preloaded.
 - Diagnostics: `readConsole({errors, max})` (console messages incl. buffered history), `readNetwork({failedOnly, max})` (requests captured this round), `diffUrls(url1, url2)` (prose diff of two pages) — see "Console, network, and page diffs"
 - Saved state: `saveState(name, {allDomains})`, `loadState(name, {openTabs})` — cookies + tab URLs on disk, survive Space completion; `importCookies(source, {url})` — inject cookies the user handed you (one-call session bootstrap) — see "Saved state"
 - Export: `savePdf(path?, opts?)`, `archivePage(path?)` (MHTML), `scrapeMedia(opts?)` (bulk media download) — see "Page export and media"
-- Browser management (app-level — no agent Space needed): Spaces `listSpaces()`, `createSpace(name, opts?)`, `updateSpace(space, opts?)`, `deleteSpace(space)`; profiles `createProfile(name)`, `renameProfile(profileId, name)`; URL rules `listUrlRules()`, `addUrlRule({space, host, pathPrefix, ask})`, `updateUrlRule(id, opts?)`, `deleteUrlRule(id)`; pinned tabs `listPinnedTabs({profile})`, `addPinnedTab(url, opts?)`, `updatePinnedTab(guid, opts?)`, `removePinnedTab(guid)`; bookmarks `listBookmarks({space})`, `addBookmark(url, opts?)`, `addBookmarkFolder(title, opts?)`, `updateBookmark(guid, opts?)`, `moveBookmark(guid, opts?)`, `removeBookmark(guid)` — see "Browser management"
+- Browser management (app-level — no agent Space needed): Spaces `listSpaces()`, `createSpace(name, opts?)`, `updateSpace(space, opts?)`, `deleteSpace(space)`, `openSpaceTab(space, url, {activate})` (open a URL in a user Space's window), `activateSpace(space)` (surface a Space in the user's focused window), `userFocus()` (the Space + tab the user is looking at right now), `ensureUserSpace(space, opts?)` (bind the page helpers to a USER Space's window — explicit opt-in only, see "Working in a user Space"); profiles `createProfile(name)`, `renameProfile(profileId, name)`; URL rules `listUrlRules()`, `addUrlRule({space, host, pathPrefix, ask})`, `updateUrlRule(id, opts?)`, `deleteUrlRule(id)`; pinned tabs `listPinnedTabs({profile})`, `addPinnedTab(url, opts?)`, `updatePinnedTab(guid, opts?)`, `removePinnedTab(guid)`; bookmarks `listBookmarks({space})`, `addBookmark(url, opts?)`, `addBookmarkFolder(title, opts?)`, `updateBookmark(guid, opts?)`, `moveBookmark(guid, opts?)`, `removeBookmark(guid)` — see "Browser management"
 - Tab layout (agent window by default; `{space}` targets a user Space's open window, `listSpaceTabs(space)` enumerates its tabs): tab groups `listTabGroups(opts?)`, `createTabGroup(targets, {title, color, space})`, `updateTabGroup(token, opts?)`, `addTabsToGroup(token, targets, opts?)`, `removeTabsFromGroup(targets, opts?)`, `ungroupTabGroup(token, opts?)`, `closeTabGroup(token, opts?)`; split view `listSplitViews(opts?)`, `createSplitView(target1, target2, {layout, space})`, `updateSplitView(splitId, {ratio, layout, space})`, `swapSplitView(splitId, opts?)`, `removeSplitView(splitId, opts?)` — see "Tab groups and split view"
 - Downloads (per-profile; agent window by default, `{space}` targets a user Space's window): `listDownloads(opts?)`, `getDownload(guid, opts?)`, `pauseDownload(guid, opts?)`, `resumeDownload(guid, opts?)`, `cancelDownload(guid, opts?)`, `removeDownload(guid, opts?)` — see "Downloads"
 - Input: `click(target | x, y)`, `hover(target | x, y)`, `fillInput(target, text, {instant})` (types at a watchable pace, verified by readback, deterministic-setter fallback; `{instant: true}` sets in one shot), `fillCredential(target, domain, {field})` (fill a login field straight from the password manager — the secret never enters your context — see "Credentials"), `uploadFile(target, ...paths)`, `typeText(text)`, `pressKey(key)`, `scroll({dy, x, y})`. Clicks and typing are mirrored to the watching user as cursor movement + overlay animations, so actions carry a small deliberate pace.
@@ -324,6 +324,19 @@ Space.
 - `addPinnedTab` creates the pinned entry as a closed pinned tab (it opens
   when clicked). Mutation helpers settle before returning — they poll until
   their own write is readable — so a list right after a mutation reflects it.
+- `openSpaceTab(space, url, {activate})` — open a URL as a new tab in a user
+  Space's open window ("open X in my space"), returning the new tab row
+  `{tabId, targetId, url, title, active, windowId}`. `activate` defaults
+  true (the tab is selected — the user asked to see it); pass
+  `{activate: false}` for background bulk opens. Fails with
+  `space_not_open` when the Space has no open window. This changes the
+  user's visible window — do it on their ask, not as a side effect.
+- `userFocus()` — where the user is right now: `{spaceId, spaceName,
+  isAgentSpace, isIncognito, windowId?, tab?}`, `tab` being the selected tab
+  `{tabId, targetId, url, title}` of the active Space's window. Use it to
+  resolve asks like "my current space" / "this page" before acting; `tab` is
+  absent when the Space has no open window or is Incognito (deliberately
+  not exposed).
 
 Management changes are visible to the user instantly (sidebar, Space
 switcher). For bulk edits the user didn't spell out — reorganizing their
@@ -336,6 +349,47 @@ When it's off, these helpers fail with `user_space_operations_disabled` —
 don't retry or work around it; tell the user to flip the toggle if they want
 the operation, and continue inside the agent Space otherwise. Agent-Space
 work is never affected.
+
+### Working in a user Space
+
+`ensureUserSpace(space, {profile, create, activate})` binds the round to a
+USER Space so every page helper (observe, click, fillInput, goto, openTab,
+switchTab, closeTab, …) drives its window instead of an agent window.
+
+**The agent Space stays the default.** Bind to a user Space ONLY when the
+user explicitly asks for work in their own Space ("go to my space 1 and …",
+"open X in my space") — never as a convenience, and switch back to
+`ensureAgentSpace` for the next ordinary task. Everything you do there
+happens in the user's REAL, visible window: tabs open, navigate, and close
+before their eyes, and `attachTab`/`switchTab` select the tab on screen.
+
+Semantics and differences from a task Space:
+
+- Resolution: `space` is a Space name or spaceId. An unknown name is
+  created as a new Space when `create` is true (default); a Space with no
+  open window is opened by activating it in the user's focused window;
+  `{activate: true}` also surfaces an already-open Space. It attaches to
+  the Space's currently selected tab and returns `{spaceId, name, windowId,
+  created, tabs}`.
+- No ownership model: there is no handoff/takeover and no "user is
+  controlling" stop — the user is inherently in control of their own
+  window. Expect their clicks and yours to interleave; act in small steps,
+  re-observe often, and stop when the page state says the user intervened.
+- No task lifecycle: no keep-alive, no `complete()` (just stop driving),
+  no overlay pill or transcript console — `setStatus`/`narrate`/`markError`
+  are quiet no-ops; report progress in chat instead.
+- No viewport emulation: the window is visible and sized for real, so
+  layout is exactly what the user sees; `setViewport` still works but
+  visibly changes their tab — leave it alone.
+- `openTab(url)` in this mode routes through `openSpaceTab` into the bound
+  Space's window (no blank-tab reuse, no automatic consent pass — the user
+  can see the banner; `acceptCookies()` still works after attach).
+- Same gate as the rest of this surface: everything fails with
+  `user_space_operations_disabled` until the user enables agent Space
+  operations.
+
+Credentials, downloads, exports and the observation stack all work
+unchanged — they are tab-scoped, not Space-scoped.
 
 ## Credentials
 
