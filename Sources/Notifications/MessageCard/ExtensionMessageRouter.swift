@@ -284,6 +284,25 @@ final class ExtensionMessageRouter {
             return AgentSpaceRouter.handleBookmarksRemove(context: context)
         }
 
+        // Credential surface (AgentSpaceRouter+Credentials.swift): an agent can
+        // check provider readiness and, after an explicit user approval, fetch a
+        // credential or TOTP. User data, so gated by the "Agent permissions"
+        // switch and, inside the handlers, by the Bitwarden enable toggle; each
+        // secret-returning call replies asynchronously after the approval
+        // prompt and provider lookup resolve.
+        registerUserSpaceManaged(type: "credentials.status") { context in
+            return AgentSpaceRouter.handleCredentialsStatus(context: context)
+        }
+        registerUserSpaceManaged(type: "credentials.get") { context in
+            return AgentSpaceRouter.handleCredentialsGet(context: context)
+        }
+        registerUserSpaceManaged(type: "credentials.getTotp") { context in
+            return AgentSpaceRouter.handleCredentialsGetTotp(context: context)
+        }
+        registerUserSpaceManaged(type: "credentials.autofill") { context in
+            return AgentSpaceRouter.handleCredentialsAutofill(context: context)
+        }
+
         register(type: "farringdon.organizeDidFinish") { _ in
             DispatchQueue.main.async {
                 NotificationCenter.default.post(name: .farringdonOrganizeDidFinish, object: nil)

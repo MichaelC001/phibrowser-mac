@@ -235,26 +235,27 @@ extension PhiPreferences {
 
     enum AgentSpaces {
         private static let autoCloseKey = "PhiAgentSpaceAutoCloseOnSuccess"
+        private static let developerModeKey = "PhiDeveloperModeEnabled"
         private static let cdpAgentAccessKey = "PhiCDPAgentAccessEnabled"
         private static let rememberedAgentGrantsKey = "PhiCDPRememberedAgentGrants"
         private static let autoViewKey = "PhiAgentSpaceAutoView"
-        private static let skillFeatureKey = "PhiBrowserSkillFeatureEnabled"
         private static let userSpaceOperationsKey = "PhiAgentUserSpaceOperationsEnabled"
         private static let disallowedAgentProfilesKey = "PhiAgentDisallowedProfileIds"
         private static let agentFallbackProfileKey = "PhiAgentFallbackProfileId"
 
-        /// Master gate for the phi-browser skill's UI surfaces — the Developer
-        /// settings tab and View ▸ Agent Autoview (same pattern as
-        /// `GeneralSettings.spacesFeatureEnabled`). Defaults on, no user-facing
-        /// toggle: flip with `defaults write <bundle id>
-        /// 
-        /// PhiBrowserSkillFeatureEnabled -bool false`. The Settings window
-        /// re-reads it on every open; the menu item applies on relaunch.
-        static var skillFeatureEnabled: Bool {
-            UserDefaults.standard.bool(forKey: skillFeatureKey, default: true)
+        /// Master gate for the developer surfaces — the Developer settings tab
+        /// and the features configured there. Driven by the "Developer mode"
+        /// toggle in Settings ▸ General. Turning it OFF is a kill-switch, not
+        /// just UI hiding: agent CDP access and the agent password manager are
+        /// disabled with it (see `AppController.setDeveloperModeEnabled`).
+        /// Turning it back ON re-enables nothing automatically — each feature
+        /// is re-enabled individually in the Developer tab. Defaults on.
+        static var developerModeEnabled: Bool {
+            get { UserDefaults.standard.bool(forKey: developerModeKey, default: true) }
+            set { UserDefaults.standard.set(newValue, forKey: developerModeKey) }
         }
 
-        /// Settings ▸ Developer ▸ Agent permissions: whether agent tooling may
+        /// Settings ▸ Developer ▸ Agent control: whether agent tooling may
         /// operate the user's own browsing data and windows over the
         /// management surface — Spaces, profiles, URL rules, pinned tabs,
         /// bookmarks, and the tab layout of user windows. When off, agents can
@@ -265,7 +266,7 @@ extension PhiPreferences {
             set { UserDefaults.standard.set(newValue, forKey: userSpaceOperationsKey) }
         }
 
-        /// Settings ▸ Developer ▸ Agent permissions: profiles the agent may NOT
+        /// Settings ▸ Developer ▸ Agent control: profiles the agent may NOT
         /// create agent Spaces in, by profileId. Stored as a blocklist so the
         /// default (empty) preserves "any profile allowed"; the UI presents it
         /// as a per-profile "allow" toggle. Keyed by profileId (stable across
@@ -336,8 +337,9 @@ extension PhiPreferences {
         /// Settings ▸ Developer ▸ Remote debugging: master switch for agent CDP
         /// access over the app-owned Unix-domain socket (see
         /// `AgentCDPListener`). Read live — flipping it starts or stops the
-        /// listener immediately, no relaunch. Default off: while on, an
-        /// approved agent process can drive the browser.
+        /// listener immediately, no relaunch, and shows or hides the View ▸
+        /// Agent Autoview / Agent Transcript menu items. Default off: while
+        /// on, an approved agent process can drive the browser.
         static var cdpAgentAccessEnabled: Bool {
             get { UserDefaults.standard.bool(forKey: cdpAgentAccessKey) }
             set { UserDefaults.standard.set(newValue, forKey: cdpAgentAccessKey) }
@@ -406,10 +408,17 @@ extension PhiPreferences {
     /// during onboarding; new profiles then auto-install the iCloud extension.
     enum PasswordManagerSettings: String, CaseIterable {
         case autoInstallICloudPasswords
+        /// `true` when the user enabled Bitwarden (onboarding or the Phi & AI
+        /// settings card). Drives the master toggle and, like
+        /// `autoInstallICloudPasswords`, is the OOBE choice that newly created
+        /// profiles mirror to auto-install the Bitwarden extension.
+        case bitwardenEnabled
 
         var defaultValue: Bool {
             switch self {
             case .autoInstallICloudPasswords:
+                return false
+            case .bitwardenEnabled:
                 return false
             }
         }

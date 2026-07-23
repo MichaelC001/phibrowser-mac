@@ -8,23 +8,26 @@ import SwiftUI
 
 /// Settings pane content for developer tooling, moved out of the General pane
 /// into its own tab. The "Allow agents to control Phi (CDP)" switch is the
-/// pane's master gate: while it is off only that card shows; turning it on
-/// reveals the phi-browser skill installer and the allowed-agent list right
-/// under it, plus the agent permissions section. Sections use the shared
-/// `SettingsDetailCard` chrome so the pane reads like General's cards.
+/// Agent control section's master gate: while it is off only that card shows;
+/// turning it on reveals the phi-browser skill installer, the allowed-agent
+/// list, and the agent permission cards right under it, all in the one
+/// section. The password manager (agent credential provider) section is
+/// always visible — vault settings stay reachable with agent access off.
+/// Sections use the shared `SettingsDetailCard` chrome so the pane reads like
+/// General's cards.
 struct DeveloperSettingsView: View {
-    // Master switch state lives here (not in the remote-debugging section) so
-    // the sibling sections can gate on it.
+    // Master switch state lives here (not in the agent-control section) so
+    // sibling sections can gate on it too.
     @State private var agentAccessEnabled: Bool =
         PhiPreferences.AgentSpaces.cdpAgentAccessEnabled
 
     var body: some View {
         ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 24) {
-                RemoteDebuggingSectionView(agentAccessEnabled: $agentAccessEnabled)
-                if agentAccessEnabled {
-                    AgentPermissionsSectionView()
-                }
+                AgentControlSectionView(agentAccessEnabled: $agentAccessEnabled)
+                // Deliberately outside the CDP gate: vault login and session
+                // settings stay reachable while agent access is off.
+                PasswordManagerSectionView()
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, 36)
@@ -52,9 +55,9 @@ private struct DeveloperSectionView<Content: View>: View {
     }
 }
 
-// MARK: - Remote debugging (CDP)
+// MARK: - Agent control (CDP access, skill install, grants, permissions)
 
-private struct RemoteDebuggingSectionView: View {
+private struct AgentControlSectionView: View {
     // Live master switch for agent CDP access over the app-owned Unix socket.
     // Flipping it starts/stops the listener immediately — no relaunch.
     @Binding var agentAccessEnabled: Bool
@@ -62,18 +65,31 @@ private struct RemoteDebuggingSectionView: View {
     // session's "Allow Once"). Read live from the listener on appear.
     @State private var allowedGrants: [AgentGrant] =
         AgentCDPListener.shared.allowedGrants()
+    @State private var userSpaceOperationsEnabled: Bool =
+        PhiPreferences.AgentSpaces.userSpaceOperationsEnabled
+    @ObservedObject private var profileManager = ProfileManager.shared
+    // Profiles the agent may NOT create Spaces in (blocklist mirror; empty =
+    // all allowed). Kept in @State for toggle reactivity, written through to
+    // the pref on each change.
+    @State private var disallowedProfileIds: Set<String> =
+        PhiPreferences.AgentSpaces.disallowedAgentProfileIds
 
     var body: some View {
-        DeveloperSectionView(title: NSLocalizedString("Remote debugging", comment: "Developer settings - Remote debugging section title")) {
+        DeveloperSectionView(title: NSLocalizedString("Agent control", comment: "Developer settings - Agent control section title")) {
             VStack(alignment: .leading, spacing: 16) {
                 enableCard
                 if agentAccessEnabled {
                     SkillInstallCardView()
                     grantsCard
+                    operateSpacesCard
+                    agentProfilesCard
                 }
             }
         }
-        .onAppear { allowedGrants = AgentCDPListener.shared.allowedGrants() }
+        .onAppear {
+            allowedGrants = AgentCDPListener.shared.allowedGrants()
+            profileManager.refresh()
+        }
     }
 
     private var enableCard: some View {
@@ -155,40 +171,6 @@ private struct RemoteDebuggingSectionView: View {
         }
     }
 
-    /// Second line: how the grant was given, and its team when known.
-    private static func subtitle(for grant: AgentGrant) -> String {
-        let scope = grant.remembered
-            ? NSLocalizedString("Always allowed", comment: "Developer settings - persisted CDP grant")
-            : NSLocalizedString("Allowed this session", comment: "Developer settings - session-only CDP grant")
-        if let teamId = grant.teamId, !teamId.isEmpty {
-            return String(format: NSLocalizedString("%@ · Team %@", comment: "Developer settings - CDP grant scope and team"), scope, teamId)
-        }
-        return scope
-    }
-}
-
-// MARK: - Agent permissions
-
-private struct AgentPermissionsSectionView: View {
-    @State private var userSpaceOperationsEnabled: Bool =
-        PhiPreferences.AgentSpaces.userSpaceOperationsEnabled
-    @ObservedObject private var profileManager = ProfileManager.shared
-    // Profiles the agent may NOT create Spaces in (blocklist mirror; empty =
-    // all allowed). Kept in @State for toggle reactivity, written through to
-    // the pref on each change.
-    @State private var disallowedProfileIds: Set<String> =
-        PhiPreferences.AgentSpaces.disallowedAgentProfileIds
-
-    var body: some View {
-        DeveloperSectionView(title: NSLocalizedString("Agent permissions", comment: "Developer settings - Agent permissions section title")) {
-            VStack(alignment: .leading, spacing: 16) {
-                operateSpacesCard
-                agentProfilesCard
-            }
-        }
-        .onAppear { profileManager.refresh() }
-    }
-
     private var operateSpacesCard: some View {
         SettingsDetailCard {
             HStack(alignment: .top, spacing: 12) {
@@ -265,6 +247,17 @@ private struct AgentPermissionsSectionView: View {
             .padding(.vertical, 12)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+
+    /// Second line: how the grant was given, and its team when known.
+    private static func subtitle(for grant: AgentGrant) -> String {
+        let scope = grant.remembered
+            ? NSLocalizedString("Always allowed", comment: "Developer settings - persisted CDP grant")
+            : NSLocalizedString("Allowed this session", comment: "Developer settings - session-only CDP grant")
+        if let teamId = grant.teamId, !teamId.isEmpty {
+            return String(format: NSLocalizedString("%@ · Team %@", comment: "Developer settings - CDP grant scope and team"), scope, teamId)
+        }
+        return scope
     }
 }
 

@@ -19,7 +19,12 @@ import PostHog
     @objc static private(set)var shared: AppController!
     
     var settingsWindowController: SettingsWindowController?
-    
+    /// Whether `settingsWindowController` was built with the Developer pane.
+    /// The pane list is fixed at window creation, so this goes stale when the
+    /// General-tab "Developer mode" toggle changes while the window is open;
+    /// `developerModeDidChange()` consults it to rebuild the window.
+    var settingsPanesIncludeDeveloper = false
+
     var container: ModelContainer?
     var updater: SPUUpdater?
     var sparkleUserDriver: PhiSparkleUserDriver?

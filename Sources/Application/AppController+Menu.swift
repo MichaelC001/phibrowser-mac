@@ -27,7 +27,9 @@ extension AppController {
     static let spacesDeleteProfileParentItemTag = 500016
     static let viewMenuPhiSectionSeparatorTag = 500023
     static let agentAutoViewItemTag = 500024
-    static let agentTranscriptItemTag = 500036
+    // 500025: was 500036, which collided with spacesChangeProfileParentTag
+    // (harmless across submenus, but tags must stay unique to grep sanely).
+    static let agentTranscriptItemTag = 500025
     static let spacesProfileSeparatorTag = 500020
     static let deleteProfileSubmenuIdentifier = NSUserInterfaceItemIdentifier("phi.spaces.deleteProfile")
     static let spacesMenuItemTag = 500018
@@ -56,6 +58,14 @@ extension AppController {
         }
     }
     
+    /// Re-runs the main-menu hook so pref-gated items appear or disappear
+    /// without waiting for Chromium's next menu swap — the View ▸ agent items
+    /// follow the agent CDP switch (`AgentCDPListener.setEnabled` calls this).
+    /// Safe to call repeatedly: the hook is remove-then-insert idempotent.
+    func refreshPrefGatedMenuItems() {
+        hookAndRebuildMainMenu()
+    }
+
     private func hookAndRebuildMainMenu() {
         guard let mainMenu = NSApp.mainMenu else {
             return
@@ -165,7 +175,11 @@ extension AppController {
                 newConversationItem.target = self
                 submenu.addItem(newConversationItem)
 
-                if PhiPreferences.AgentSpaces.skillFeatureEnabled {
+                // The agent view items follow the CDP master switch, not
+                // developer mode: they matter exactly while agents can drive
+                // the browser, and `AgentCDPListener.setEnabled` refreshes the
+                // menu so they appear/disappear the moment the switch flips.
+                if PhiPreferences.AgentSpaces.cdpAgentAccessEnabled {
                     let agentAutoViewSeparator = NSMenuItem.separator()
                     agentAutoViewSeparator.tag = AppController.viewMenuPhiSectionSeparatorTag
                     submenu.addItem(agentAutoViewSeparator)

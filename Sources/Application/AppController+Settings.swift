@@ -32,10 +32,52 @@ extension AppController {
          IMChannelsSettingViewController(),
          ShortcutsSettingViewController(),
         ]
-        if PhiPreferences.AgentSpaces.skillFeatureEnabled {
+        settingsPanesIncludeDeveloper = PhiPreferences.AgentSpaces.developerModeEnabled
+        if settingsPanesIncludeDeveloper {
             panes.append(DeveloperSettingViewController())
         }
         return panes
+    }
+
+    /// Applies the General-tab "Developer mode" toggle. Off is a kill-switch,
+    /// not just UI hiding: the Developer tab disappears AND the features it
+    /// governs shut off — agent CDP access (listener, View-menu items,
+    /// transcript panel) and the agent password manager (provider disabled,
+    /// session grants dropped, vault locked; the account stays on disk).
+    /// Turning developer mode back on re-enables nothing automatically.
+    /// SwiftUI callers must defer to the next runloop turn: the window
+    /// rebuild closes the window hosting the toggle's own view.
+    @MainActor
+    func setDeveloperModeEnabled(_ enabled: Bool) {
+        PhiPreferences.AgentSpaces.developerModeEnabled = enabled
+        if !enabled {
+            if PhiPreferences.AgentSpaces.cdpAgentAccessEnabled {
+                AgentCDPListener.shared.setEnabled(false)
+            }
+            if PhiPreferences.PasswordManagerSettings.bitwardenEnabled.loadValue() {
+                // Mirrors the password manager card's own disable path.
+                UserDefaults.standard.set(
+                    false, forKey: PhiPreferences.PasswordManagerSettings.bitwardenEnabled.rawValue)
+                CredentialAccessCoordinator.shared.clearGrants()
+                Task { await BitwardenService.shared.lock() }
+            }
+        }
+        developerModeDidChange()
+    }
+
+    /// Rebuilds an open settings window when its toolbar no longer matches the
+    /// developer-mode gate (the pane list is fixed at window creation), staying
+    /// on the General pane, where the toggle lives.
+    @MainActor
+    private func developerModeDidChange() {
+        guard settingsWindowController != nil,
+              settingsPanesIncludeDeveloper != PhiPreferences.AgentSpaces.developerModeEnabled
+        else { return }
+        settingsWindowController?.close()
+        settingsWindowController = nil
+        let controller = ensureSettingsWindowController()
+        controller.show(pane: .general)
+        controller.window?.orderFront(self)
     }
     
     /// Returns the shared settings window controller, creating it on first access.

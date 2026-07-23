@@ -56,17 +56,20 @@ const names = Object.keys(surface)
 const values = names.map((n) => surface[n])
 
 let exitCode = 0
+// Error output reaches the agent's context like cliLog does — scrub any
+// secret the round handled out of it.
+const scrub = surface.__scrubSessionSecrets ?? ((t) => t)
 try {
   const fn = new AsyncFunction(...names, source)
   await fn(...values)
 } catch (err) {
-  console.error(`phi-browser error: ${err?.message || err}`)
+  console.error(scrub(`phi-browser error: ${err?.message || err}`))
   // A few stack frames locate the failing line inside the heredoc (the
   // script compiles as an anonymous async function, so frames read
   // "<anonymous>:LINE"). Skip the message line already printed above.
   const frames = String(err?.stack || '')
     .split('\n').slice(1, 6).join('\n')
-  if (frames) console.error(frames)
+  if (frames) console.error(scrub(frames))
   exitCode = 1
 } finally {
   await __dispose().catch(() => {})

@@ -9,6 +9,7 @@ import {
   mkdirSync, readFileSync, writeFileSync, unlinkSync, readdirSync, existsSync,
 } from 'node:fs'
 import { spawn } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { tmpdir, homedir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -95,14 +96,23 @@ export async function cdp(method, params = {}) {
   return client.send(method, params, browserLevel ? undefined : requireSession())
 }
 
-async function phiSend(type, payload) {
+async function phiSend(type, payload, timeoutMs) {
   const client = await cdpClient()
-  const parsed = await client.phi.send(type, payload ?? {})
+  const parsed = await client.phi.send(type, payload ?? {}, timeoutMs)
   if (parsed && parsed.ok === false) {
-    throw new Error(`${type}: ${parsed.error || 'failed'}`)
+    // The full reply rides along for handlers that need more than the error
+    // code (e.g. an ambiguous credential lookup's candidate list).
+    const err = new Error(`${type}: ${parsed.error || 'failed'}`)
+    err.reply = parsed
+    throw err
   }
   return parsed
 }
+
+// Credential requests can legitimately sit behind the app's 60s approval
+// prompt AND a 60s in-flow vault-unlock prompt; the app's transport allows
+// them 180s, so sit just past that and let its cleaner error arrive first.
+const CRED_PROMPT_TIMEOUT_MS = 190000
 
 function requireTask() {
   if (!state.task) {
@@ -1788,14 +1798,19 @@ const PHI_SCAN_FN = `function (opts) {
     }
     if (tag === 'input') {
       const nm = nameOf(el)
+      // Never echo a password field's content into the scan (and thus into
+      // the agent's context) — report only that a value is present. Covers
+      // secrets the agent filled AND ones the user typed during a handoff.
+      const secretVal = (el.type || '').toLowerCase() === 'password'
+      const shownVal = el.value ? (secretVal ? '•••' : String(el.value).slice(0, 120)) : ''
       const { n, loc } = record(el, 'input', {
         name: nm, type: el.type || 'text',
-        value: el.value ? String(el.value).slice(0, 120) : '',
+        value: shownVal,
       })
       out.push('[' + fmtAnno(n, loc) + ' input' + hid() + ' type=' + (el.type || 'text') +
                (el.name ? ' name=' + el.name : '') +
                (el.placeholder ? ' placeholder="' + el.placeholder + '"' : '') +
-               (el.value ? ' value="' + String(el.value).slice(0, 80) + '"' : '') + ']')
+               (shownVal ? ' value="' + shownVal.slice(0, 80) + '"' : '') + ']')
       return
     }
     if (tag === 'textarea' || tag === 'select') {
@@ -3124,7 +3139,12 @@ export async function fillInput(target, text, { instant = false } = {}) {
   }
   const str = String(text)
   logAction(`fill ${describeTarget(target)}`, `${str.length} chars`)
+  return await fillTargetValue(spec, target, str, { instant })
+}
 
+/** Shared fill machinery behind fillInput and fillCredential: resolve, focus,
+ *  type-or-set, verify. Does not log — callers write their own action line. */
+async function fillTargetValue(spec, target, str, { instant = false, label = 'fillInput' } = {}) {
   // One pass: scroll into view, focus, select-all (so typed text REPLACES the
   // current value), classify, and measure for the overlay's typing pulse.
   // Resolution rides the same short grace as click (see retryResolve); the
@@ -3165,7 +3185,7 @@ export async function fillInput(target, text, { instant = false } = {}) {
     return { typeable: typeable, rect: rect,
              focused: el.ownerDocument.activeElement === el }
   }`))
-  if (!prep) throw new Error('fillInput: target not found: ' + describeTarget(target))
+  if (!prep) throw new Error(label + ': target not found: ' + describeTarget(target))
 
   let pulse = null
   if (prep.rect) {
@@ -3213,8 +3233,8 @@ export async function fillInput(target, text, { instant = false } = {}) {
     }
     return { ok: false, err: 'not an editable element (' + tag + ')' }
   }`, [str])
-  if (!res) throw new Error('fillInput: target not found: ' + describeTarget(target))
-  if (!res.ok) throw new Error('fillInput: ' + (res.err || 'failed'))
+  if (!res) throw new Error(label + ': target not found: ' + describeTarget(target))
+  if (!res.ok) throw new Error(label + ': ' + (res.err || 'failed'))
   return { done: true }
 }
 
@@ -4047,6 +4067,380 @@ export async function removeBookmark(guid) {
   return { guid, deleted: true }
 }
 
+// --- Credentials -------------------------------------------------------------
+//
+// Fetch logins from the user's password manager (Bitwarden). Every
+// secret-touching call pops an approve/deny prompt in Phi first; the user may
+// grant a 10-minute remember for the same site. Gated by Settings ▸ Developer ▸
+// Agent permissions. fillCredential is the fill-first path: Phi fills the page
+// field itself, so the secret never enters this process at all. Values returned
+// by getCredential DO enter the agent's context — prefer fillCredential /
+// runWithCredential, then field-limited requests, and never log the values.
+// TOTP is deliberately not exposed (the app answers totp_not_supported):
+// releasing a live 2FA code to an agent collapses both factors behind one
+// approval prompt — 2FA steps stay with the user via handOff().
+
+function normalizeCredentialQuery(query) {
+  if (typeof query === 'string') return { domain: query }
+  if (query && (query.domain || query.id || query.search)) return query
+  throw new Error('credential query must be a domain string or {domain|id|search}')
+}
+
+/** Lowercase host of a URI, tolerating a missing scheme; null when unparsable.
+ *  Feeds the origin check, so the parse must not be spoofable: the authority
+ *  is isolated BEFORE userinfo is stripped — stripping at an `@` first would
+ *  let "https://evil.com/x@github.com" read as github.com. Mirrors the
+ *  app-side `hostOfURI`. */
+function hostOfUri(uri) {
+  const trimmed = String(uri || '').trim()
+  const afterScheme = trimmed.includes('://') ? trimmed.split('://')[1] : trimmed
+  const authority = afterScheme.split(/[/?#]/)[0]
+  const afterUserinfo = authority.includes('@')
+    ? authority.slice(authority.lastIndexOf('@') + 1) : authority
+  const host = afterUserinfo.split(':')[0].toLowerCase()
+  return host || null
+}
+
+/** Whether the page's host and a credential's host belong together: equal, or
+ *  one a subdomain of the other (github.com ↔ auth.github.com). The subdomain
+ *  arm requires the parent to have at least two labels, so a bare public suffix
+ *  ("com") can't be treated as the parent of every host under it — otherwise
+ *  this origin guard would pass a fill to the wrong site. Mirrors the helper's
+ *  `host_matches`; a full public-suffix list is future work. */
+function credHostMatches(pageHost, credHost) {
+  const a = String(pageHost || '').toLowerCase()
+  const b = String(credHost || '').toLowerCase()
+  if (!a || !b) return false
+  if (a === b) return true
+  return (b.includes('.') && a.endsWith('.' + b))
+      || (a.includes('.') && b.endsWith('.' + a))
+}
+
+/** Password-manager readiness: {status: 'ready'|'locked'|'logged_out'|
+ *  'not_installed'|'unavailable', ready: boolean}. No approval, no secret. */
+export async function credentialStatus() {
+  return await phiSend('credentials.status', {})
+}
+
+/** For an `ambiguous` credential error: a message naming the (non-secret)
+ *  candidate accounts and how to narrow; null for any other error. Phi never
+ *  picks among several matching vault items — the right account is the user's
+ *  call, made by narrowing the query, not a default taken on their behalf. */
+function ambiguousCredentialMessage(label, err) {
+  const reply = err?.reply
+  if (!reply || reply.error !== 'ambiguous') return null
+  const names = (reply.candidates || [])
+    .map((c) => c.username || (c.credentialId ? `id ${c.credentialId}` : null))
+    .filter(Boolean)
+  return `${label}: ${reply.matches || 'several'} vault items match this query ` +
+    'and Phi will not pick one — narrow it to a single account with ' +
+    '{domain, username} (or {id: credentialId})' +
+    (names.length ? `. Candidates: ${names.join(', ')}` : '') +
+    (Array.isArray(reply.candidates) && reply.matches > reply.candidates.length
+      ? ` (first ${reply.candidates.length} of ${reply.matches})` : '')
+}
+
+/** Fetches a credential for a site after the user approves in Phi. `query` is
+ *  a domain string or {domain|id|search}; a domain query also takes a
+ *  `username` to pick one of several accounts on the same site. opts.fields
+ *  limits returned fields (default username/password/uri/domain; notes
+ *  require an explicit ask); opts.purpose is a short line shown in the
+ *  approval prompt saying why the credential is needed. Returns the credential
+ *  object; a served credential is always the query's UNIQUE match — when
+ *  several vault items fit, Phi releases no secret and this throws
+ *  'ambiguous' with the candidate usernames, so narrow with {domain,
+ *  username} (or {id}) and call again. Throws 'user_denied' if the user
+ *  declines. */
+export async function getCredential(query, { fields, purpose } = {}) {
+  const payload = { query: normalizeCredentialQuery(query), mode: 'reveal' }
+  if (Array.isArray(fields)) payload.fields = fields
+  if (purpose) payload.purpose = String(purpose)
+  let res
+  try {
+    res = await phiSend('credentials.get', payload, CRED_PROMPT_TIMEOUT_MS)
+  } catch (err) {
+    const ambiguous = ambiguousCredentialMessage('getCredential', err)
+    if (ambiguous) throw new Error(ambiguous)
+    throw err
+  }
+  return { ...res.credential,
+           ...(Number.isInteger(res.matches) ? { matches: res.matches } : {}) }
+}
+
+/**
+ * Fills a login field from the password manager WITHOUT the secret ever
+ * reaching this runner or the agent. The element is resolved here with the
+ * full target machinery and stamped with a one-time `data-phi-autofill`
+ * marker; Phi then opens its own DevTools session on this tab, finds the
+ * marker, and sets the value itself (`credentials.autofill`): the value goes
+ * app → page, and this call gets back only {filled, field}. The filled value
+ * is always the query's UNIQUE vault match — several matches throw
+ * 'ambiguous' with candidate usernames (no secret moves); narrow with
+ * {domain, username} or {id} and retry. `field` is 'password' (default) or
+ * 'username'. 2FA/TOTP steps are the user's — hand off.
+ *
+ * On an older Phi build without the in-app dispatch this throws
+ * `autofill_not_available` — it deliberately does NOT fall back to fetching
+ * the secret here, because a fill must never quietly become a reveal. If the
+ * value genuinely has to enter the agent, use getCredential, which shares it
+ * explicitly.
+ *
+ * Origin-bound: a domain query is refused with origin_mismatch when the current
+ * page's host doesn't belong to the credential's site — a misdirected fill is
+ * exactly how a prompt-injected agent would leak a login to the wrong site.
+ * Pre-checked here (no approval spent), and enforced again by the app against
+ * the page's real URL and the item's own uri/domain (id/search queries are
+ * only checkable there). `{allowCrossOrigin: true}` overrides — only when the
+ * user confirmed the page (e.g. an SSO portal that legitimately takes another
+ * site's login); the app then shows the destination in the approval prompt.
+ */
+export async function fillCredential(target, query,
+                                     { field = 'password', allowCrossOrigin = false } = {}) {
+  await guardAgentControl()
+  const spec = normalizeTarget(target)
+  if (spec.coords) {
+    throw new Error('fillCredential needs an element target (selector/@ref/loc), not coordinates')
+  }
+  if (!['password', 'username'].includes(field)) {
+    throw new Error("fillCredential: field must be 'password' or 'username'")
+  }
+  const q = normalizeCredentialQuery(query)
+  const scope = q.domain || q.id || q.search
+
+  // Origin pre-check for a domain query: refuse a misdirected fill before the
+  // vault is even asked (no approval spent). The app re-derives the page host
+  // from the browser side and enforces this again — this early check just
+  // fails fast and words the error usefully.
+  const pageHost = hostOfUri(await evalInPage('location.hostname'))
+  if (!allowCrossOrigin && q.domain && !credHostMatches(pageHost, q.domain)) {
+    throw new Error(
+      `fillCredential: origin_mismatch — the page is on "${pageHost}" but the ` +
+      `credential is for "${q.domain}". If the user confirmed this page should ` +
+      `take that login (e.g. an SSO portal), retry with {allowCrossOrigin: true}.`)
+  }
+
+  logAction(`fill ${field} for ${scope}`, 'from password manager')
+
+  // Resolve the element with the same machinery every acting helper uses
+  // (selector/@ref/loc, same-origin frames, short mount grace) and stamp it
+  // with a one-time marker for Phi to find — no selector scheme crosses the
+  // app boundary. Field-shape problems fail HERE, before any approval prompt.
+  const token = randomUUID()
+  const tagged = await retryResolve(() => callOnTarget(spec, `function (token, field) {
+    var el = this
+    if (el.tagName !== 'INPUT') {
+      return { ok: false, err: 'not an <input> (' + el.tagName.toLowerCase() + ')' }
+    }
+    var type = (el.getAttribute('type') || 'text').toLowerCase()
+    if (field === 'password' && type !== 'password') {
+      return { ok: false, err: 'not a password field (type=' + type + ')' }
+    }
+    if (field === 'username' && ['text', 'email', 'tel'].indexOf(type) < 0) {
+      return { ok: false, err: 'not a username field (type=' + type + ')' }
+    }
+    try { el.scrollIntoView({ block: 'center' }) } catch (e) {}
+    el.setAttribute('data-phi-autofill', token)
+    return { ok: true }
+  }`, [token, field]))
+  if (!tagged) {
+    throw new Error('fillCredential: target not found: ' + describeTarget(target))
+  }
+  if (!tagged.ok) throw new Error(`fillCredential: ${tagged.err}`)
+
+  const purpose = `fill the ${field} field on ${pageHost || 'the current page'}`
+  // The fill happens IN PHI — the value goes app → page and never enters this
+  // runner or the agent's context. We hand Phi the marker + query and get back
+  // only {filled}. Contrast getCredential, which returns the value to the agent.
+  let res
+  try {
+    res = await phiSend('credentials.autofill', {
+      query: q, field, token, targetId: state.targetId, purpose, allowCrossOrigin,
+    }, CRED_PROMPT_TIMEOUT_MS)
+  } catch (err) {
+    // A fill attempt consumes the marker in-page; on failures that never
+    // reached the page, sweep it off so no stale attribute lingers.
+    await removeAutofillMarker(token).catch(() => {})
+    throw new Error(remapAutofillError(err))
+  }
+  const matches = res.matches
+  return { filled: true, field, ...(Number.isInteger(matches) ? { matches } : {}) }
+}
+
+/** Rewords app-side `credentials.autofill` failures that have a useful next
+ *  step; everything else passes through under the fillCredential label. */
+function remapAutofillError(err) {
+  const ambiguous = ambiguousCredentialMessage('fillCredential', err)
+  if (ambiguous) return ambiguous
+  const msg = String(err?.message || err)
+  if (msg.includes('autofill_not_available')) {
+    return 'fillCredential: in-app autofill is not available in this Phi build. ' +
+      'By design Phi will not release the password to the agent for a fill, so ' +
+      'there is no client-side fallback. If the value genuinely needs to enter ' +
+      'the agent, use getCredential (which shares it with the agent).'
+  }
+  if (msg.includes('target_not_found')) {
+    return 'fillCredential: the field disappeared while the fill was pending ' +
+      '(the page navigated or re-rendered, e.g. during the approval prompt) — ' +
+      're-observe and retry.'
+  }
+  if (msg.includes('origin_mismatch')) {
+    return 'fillCredential: origin_mismatch — Phi refused to fill this ' +
+      'credential into the current page (it does not belong to the ' +
+      "credential's site). If the user confirmed this page should take that " +
+      'login, retry with {allowCrossOrigin: true}.'
+  }
+  return `fillCredential: ${msg.replace(/^credentials\.autofill:\s*/, '')}`
+}
+
+/** Best-effort removal of a stale autofill marker (top document + same-origin
+ *  frames), for fills that failed before Phi consumed it. */
+async function removeAutofillMarker(token) {
+  await evalInPage(`(function (token) {
+    var docs = [document]
+    var collect = function (win) {
+      for (var i = 0; i < win.frames.length; i++) {
+        try {
+          var d = win.frames[i].document
+          if (d) { docs.push(d); collect(win.frames[i]) }
+        } catch (e) {}
+      }
+    }
+    try { collect(window) } catch (e) {}
+    for (var i = 0; i < docs.length; i++) {
+      try {
+        var el = docs[i].querySelector('input[data-phi-autofill="' + token + '"]')
+        if (el) { el.removeAttribute('data-phi-autofill'); return true }
+      } catch (e) {}
+    }
+    return false
+  })(${JSON.stringify(token)})`)
+}
+
+const CRED_RUN_FIELDS =
+  ['username', 'password', 'uri', 'notes', 'domain', 'credentialId']
+// Values scrubbed from captured child output; the rest are not secret.
+const CRED_SECRET_FIELDS = ['password', 'notes']
+
+/** Replaces every occurrence of each secret in `text` with •••. */
+function scrubSecrets(text, secrets) {
+  let out = String(text)
+  for (const s of secrets) {
+    if (s) out = out.split(s).join('•••')
+  }
+  return out
+}
+
+// Secret values this round has handled (filled into a page or injected into a
+// child process). Everything that leaves the runner for the agent's context —
+// cliLog and the runner's error printer — is scrubbed of their exact values,
+// so a secret can't ride back in through a page readback (a "show password"
+// toggle flipping the input to type=text, a js() probe, an echoing page).
+const sessionSecrets = new Set()
+
+/** Tiny values are not registered: scrubbing 1–3 chars would shred output. */
+function registerSecret(value) {
+  if (typeof value === 'string' && value.length >= 4) sessionSecrets.add(value)
+}
+
+/** Scrubs every session-handled secret out of text bound for the agent. */
+export function __scrubSessionSecrets(text) {
+  return scrubSecrets(text, sessionSecrets)
+}
+
+/**
+ * Runs a command with vault fields injected as environment variables — the
+ * CLI/API counterpart of fillCredential: secrets go browser → this process →
+ * the child's environment, never through the agent's context. `command` is
+ * an argv array (no shell). `env` maps variable names to credential fields
+ * (`{PGPASSWORD: 'password'}`); `{envAll: true}` injects every present
+ * field as PHI_CRED_<FIELD>. Valid fields: username, password, uri, notes,
+ * domain, credentialId.
+ *
+ * Returns {code, stdout, stderr, timedOut} with secret values scrubbed to
+ * ••• in the captured output. That catches an accidental echo (a connection
+ * string in an error message), NOT a command that transforms a secret
+ * (base64, substrings) — only run commands you'd run with the secret anyway.
+ */
+export async function runWithCredential(query, command,
+                                        { env = {}, envAll = false, cwd,
+                                          timeoutSeconds = 120, input } = {}) {
+  if (!Array.isArray(command) || command.length === 0 ||
+      command.some((a) => typeof a !== 'string')) {
+    throw new Error('runWithCredential: command must be a non-empty array of strings')
+  }
+  const mappings = Object.entries(env)
+  for (const [name, field] of mappings) {
+    if (!name) throw new Error('runWithCredential: empty env variable name')
+    if (!CRED_RUN_FIELDS.includes(field)) {
+      throw new Error(`runWithCredential: unknown field '${field}' in env mapping — ` +
+                      `valid: ${CRED_RUN_FIELDS.join(', ')}`)
+    }
+  }
+  if (!envAll && mappings.length === 0) {
+    throw new Error('runWithCredential: give an env mapping or {envAll: true}')
+  }
+  const q = normalizeCredentialQuery(query)
+  const scope = q.domain || q.id || q.search
+  logAction(`run ${command[0]} with ${scope} credential`,
+            envAll ? 'env: all fields' : `env: ${mappings.map(([n]) => n).join(', ')}`)
+
+  const purpose = `run '${command[0]}' with the credential in its environment`
+  const wantedFields = envAll ? CRED_RUN_FIELDS : [...new Set(mappings.map(([, f]) => f))]
+  let res
+  try {
+    res = await phiSend('credentials.get',
+                        { query: q, fields: wantedFields, purpose, mode: 'run' },
+                        CRED_PROMPT_TIMEOUT_MS)
+  } catch (err) {
+    const ambiguous = ambiguousCredentialMessage('runWithCredential', err)
+    if (ambiguous) throw new Error(ambiguous)
+    throw err
+  }
+  const cred = res.credential || {}
+
+  const vars = {}
+  if (envAll) {
+    for (const f of CRED_RUN_FIELDS) {
+      if (typeof cred[f] === 'string' && cred[f]) {
+        vars['PHI_CRED_' + f.replace(/([A-Z])/g, '_$1').toUpperCase()] = cred[f]
+      }
+    }
+  }
+  for (const [name, field] of mappings) {
+    if (typeof cred[field] === 'string' && cred[field]) vars[name] = cred[field]
+  }
+  const secrets = CRED_SECRET_FIELDS.map((f) => cred[f]).filter(Boolean)
+  secrets.forEach(registerSecret)
+
+  const child = spawn(command[0], command.slice(1), {
+    env: { ...process.env, ...vars },
+    ...(cwd ? { cwd } : {}),
+    stdio: ['pipe', 'pipe', 'pipe'],
+  })
+  if (input != null) child.stdin.write(String(input))
+  child.stdin.end()
+
+  let stdout = '', stderr = '', timedOut = false
+  child.stdout.setEncoding('utf8').on('data', (d) => { stdout += d })
+  child.stderr.setEncoding('utf8').on('data', (d) => { stderr += d })
+  const timer = setTimeout(() => { timedOut = true; child.kill('SIGKILL') },
+                           timeoutSeconds * 1000)
+  const code = await new Promise((resolve, reject) => {
+    child.on('error', (e) => {
+      clearTimeout(timer)
+      reject(new Error(`runWithCredential: failed to run '${command[0]}': ` +
+                       scrubSecrets(e.message, secrets)))
+    })
+    child.on('close', (c) => { clearTimeout(timer); resolve(c) })
+  })
+  return {
+    code,
+    stdout: scrubSecrets(stdout, secrets),
+    stderr: scrubSecrets(stderr, secrets),
+    timedOut,
+  }
+}
+
 // --- Tab groups & split view -------------------------------------------------
 //
 // Default target: the current agent Space's window (task required, mutations
@@ -4322,11 +4716,10 @@ export async function removeDownload(guid, { space } = {}) {
 // Misc
 
 export function cliLog(value) {
-  if (typeof value === 'string') {
-    console.log(value)
-  } else {
-    console.log(JSON.stringify(value, null, 2))
-  }
+  const text = typeof value === 'string' ? value : JSON.stringify(value, null, 2)
+  // The one channel into the agent's context — never let a handled secret
+  // ride through it, whatever page readback or probe picked it up.
+  console.log(__scrubSessionSecrets(text))
 }
 
 export function wait(seconds) {

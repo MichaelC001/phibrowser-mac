@@ -79,4 +79,7 @@ struct DefaultExtensionManifestWriter {
 /// auto-install in `ProfileManager`.
 enum PhiExtensionID {
     static let icloudPasswords = "pejdijmoenmkgeppbflobdenhhabjlaj"
+    /// Chrome Web Store id of the Bitwarden Password Manager extension. Shared
+    /// by the OOBE password-manager screen and the per-new-profile auto-install.
+    static let bitwarden = "nngceckbapebfimnlniiiahkandclblb"
 }

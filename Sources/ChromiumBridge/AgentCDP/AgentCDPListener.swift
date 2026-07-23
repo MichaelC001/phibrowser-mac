@@ -51,13 +51,23 @@ final class AgentCDPListener {
     }
 
     /// Flips the preference and applies it live: starts or stops the listener
-    /// now, with no relaunch. Call from the Settings toggle.
+    /// now, with no relaunch. Call from the Settings toggle. Also refreshes
+    /// the main menu, whose View ▸ Agent Autoview / Agent Transcript items
+    /// are gated on this switch.
     func setEnabled(_ enabled: Bool) {
         PhiPreferences.AgentSpaces.cdpAgentAccessEnabled = enabled
         if enabled {
             start()
         } else {
             stop()
+        }
+        DispatchQueue.main.async {
+            AppController.shared?.refreshPrefGatedMenuItems()
+            // No agent can drive with the switch off, so an open transcript
+            // panel is a dead surface — take it down with the menu items.
+            if !enabled {
+                AgentTranscriptPanelController.shared.dismiss()
+            }
         }
     }
 

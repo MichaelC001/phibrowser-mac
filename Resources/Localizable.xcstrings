@@ -25,13 +25,60 @@
     "“%@” already exists and isn’t a link created by Phi Browser. Replace it with a link to this app’s bundled skill?" : {
       "comment" : "Developer settings - Skill overwrite prompt body"
     },
+    "“%@” needs a credential for %@, but your vault is locked. Enter your master password to unlock." : {
+      "comment" : "Credential unlock - body",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "“%1$@” needs a credential for %2$@, but your vault is locked. Enter your master password to unlock."
+          }
+        }
+      }
+    },
     "“%@” wants to control Phi Browser" : {
       "comment" : "CDP consent - title"
+    },
+    "“%@” wants to fill your %@ login" : {
+      "comment" : "Credential approval - fill title",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "“%1$@” wants to fill your %2$@ login"
+          }
+        }
+      }
+    },
+    "“%@” wants to use your %@ credential in a command" : {
+      "comment" : "Credential approval - run title",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "“%1$@” wants to use your %2$@ credential in a command"
+          }
+        }
+      }
+    },
+    "“%@” wants your %@ credential" : {
+      "comment" : "Credential approval - reveal title",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "“%1$@” wants your %2$@ credential"
+          }
+        }
+      }
     },
     "❯" : {
 
     },
     "@%@" : {
+
+    },
+    "*" : {
 
     },
     "/**/Appearance" : {
@@ -236,6 +283,12 @@
     "© %d Phinomenon. All rights reserved." : {
       "comment" : "About window - Copyright notice at bottom"
     },
+    "1 hour" : {
+      "comment" : "Bitwarden session timeout - 1 hour"
+    },
+    "4 hours" : {
+      "comment" : "Bitwarden session timeout - 4 hours"
+    },
     "A new version of Phi is available" : {
       "comment" : "Sparkle update window - Title"
     },
@@ -244,6 +297,9 @@
     },
     "A profile with this name already exists." : {
       "comment" : "Validation shown when a new or renamed profile name duplicates an existing profile"
+    },
+    "Accessing:" : {
+      "comment" : "Bitwarden login sheet - server region prefix"
     },
     "Active" : {
       "comment" : "Search Tabs - Trailing label for the active tab result"
@@ -290,11 +346,23 @@
     "Additional info (optional)" : {
       "comment" : "Feedback form - Section header for optional additional information"
     },
+    "Agent access, permissions, and the password manager live in the Developer tab." : {
+      "comment" : "General settings - Hint under the developer mode toggle pointing at the Developer settings pane"
+    },
     "Agent Autoview" : {
       "comment" : "View menu - Toggle that automatically switches to the Space of an operating agent"
     },
+    "Agent Credential Approvals" : {
+      "comment" : "Approvals sheet - title"
+    },
+    "Agent Credential Approvals…" : {
+      "comment" : "Phi & AI settings - approvals row title"
+    },
     "agent idle — command starts or queues its next round" : {
       "comment" : "Agent console - hint for sending a command to an idle agent"
+    },
+    "Agent Password Manager" : {
+      "comment" : "Phi & AI settings - Agent Password Manager section title"
     },
     "Agent permissions" : {
       "comment" : "Developer settings - Agent permissions section title"
@@ -309,7 +377,7 @@
       "comment" : "AI settings - Section title for AI sidebar options"
     },
     "All agents" : {
-      "comment" : "Developer settings - Menu item installing the skill for every agent"
+      "comment" : "Approvals sheet - all-agents grantee\nDeveloper settings - Menu item installing the skill for every agent"
     },
     "All connected Connectors will be disconnected." : {
       "comment" : "AI settings - Alert message explaining consequences of disabling connectors"
@@ -320,14 +388,26 @@
     "All Downloads" : {
       "comment" : "Downloads list - Button to open full downloads page"
     },
+    "All sites" : {
+      "comment" : "Approvals sheet - all-sites scope"
+    },
     "All tasks" : {
       "comment" : "Agent console - feed filter: every task"
+    },
+    "Allow access to all passwords" : {
+      "comment" : "Approvals sheet - all-access toggle title"
+    },
+    "Allow agents to access all passwords?" : {
+      "comment" : "Approvals sheet - all-access confirm title"
     },
     "Allow agents to control Phi (CDP)" : {
       "comment" : "Developer settings - Toggle title for the Chrome DevTools Protocol endpoint"
     },
     "Allow agents to operate your Spaces" : {
       "comment" : "Developer settings - Toggle title for agent user-space operations"
+    },
+    "Allow All" : {
+      "comment" : "Approvals sheet - all-access confirm button"
     },
     "Allow Once" : {
       "comment" : "CDP consent - allow for this session"
@@ -338,8 +418,11 @@
     "Allowed this session" : {
       "comment" : "Developer settings - session-only CDP grant"
     },
+    "Always" : {
+      "comment" : "Approvals sheet - permanent grant"
+    },
     "Always Allow" : {
-      "comment" : "CDP consent - allow and remember"
+      "comment" : "CDP consent - allow and remember\nCredential approval - approve permanently"
     },
     "Always allowed" : {
       "comment" : "Developer settings - persisted CDP grant"
@@ -362,6 +445,9 @@
     "An import is still adding bookmarks to this Space. Wait for it to finish, then try again." : {
       "comment" : "Body shown when a Space action is blocked by an in-progress import\nBody shown when deleting a Space is blocked by an in-progress import"
     },
+    "Any agent may use any saved login without asking. The per-site grants below are unnecessary while this is on." : {
+      "comment" : "Approvals sheet - all-access toggle explanation"
+    },
     "Any unsaved changes may be lost." : {
       "comment" : "Quit confirmation message"
     },
@@ -376,6 +462,18 @@
     },
     "Apply theme to text selection on web pages" : {
       "comment" : "General settings - Toggle title for tinting ::selection on third-party pages with the window theme accent"
+    },
+    "Apply to all agents, not just this one" : {
+      "comment" : "Credential approval - all-agents checkbox"
+    },
+    "Approve for 10 min" : {
+      "comment" : "Credential approval - approve and remember"
+    },
+    "Approve Once" : {
+      "comment" : "Credential approval - approve once"
+    },
+    "Approving shares the username and password with the agent, which may record them in its context. Only approve for agents and sites you trust." : {
+      "comment" : "Credential approval - reveal body"
     },
     "Aqua" : {
       "comment" : "Aqua theme color name"
@@ -424,6 +522,15 @@
     },
     "Balanced" : {
       "comment" : "Layout option - Vertical tabs with address bar at the top of webcontent\nOnboarding layout selection - Balanced option"
+    },
+    "Bitwarden" : {
+      "comment" : "Onboarding password manager - Bitwarden option"
+    },
+    "Bitwarden helper not available" : {
+      "comment" : "Phi & AI settings - Bitwarden helper missing status"
+    },
+    "Bitwarden password manager" : {
+      "comment" : "Phi & AI settings - Bitwarden toggle title"
     },
     "Blue" : {
       "comment" : "Tab Groups - color name shown in auto-named group title and color picker"
@@ -483,7 +590,7 @@
       "comment" : "Import browser data - Alert title when import is invoked from an incognito window or the Incognito Space"
     },
     "Cancel" : {
-      "comment" : "AI settings - Cancel button in disable-AI confirmation alert\nAI settings - Cancel button in disable-connectors confirmation alert\nAccount settings - Cancel button in logout confirmation dialog\nAccount settings - Cancel button in rename dialog\nCancel\nCancel button\nDebug clear data - Alert button to cancel clearing user data\nDebug import user data - Alert button to cancel importing user data\nDeveloper settings - Skill overwrite cancel button\nDownload item row - Tooltip for cancel button during safety scan\nDownload item row - Tooltip for cancel download button\nEditor - Cancel button title\nGeneric - Cancel button to dismiss an alert\nNew folder dialog cancel button title\nTab group rename alert - Cancel button\nTooltip for cancel button during safety scan in living downloads toast"
+      "comment" : "AI settings - Cancel button in disable-AI confirmation alert\nAI settings - Cancel button in disable-connectors confirmation alert\nAccount settings - Cancel button in logout confirmation dialog\nAccount settings - Cancel button in rename dialog\nApprovals sheet - all-access cancel button\nCancel\nCancel button\nCredential unlock - cancel button\nDebug clear data - Alert button to cancel clearing user data\nDebug import user data - Alert button to cancel importing user data\nDeveloper settings - Skill overwrite cancel button\nDownload item row - Tooltip for cancel button during safety scan\nDownload item row - Tooltip for cancel download button\nEditor - Cancel button title\nGeneric - Cancel button to dismiss an alert\nNew folder dialog cancel button title\nTab group rename alert - Cancel button\nTooltip for cancel button during safety scan in living downloads toast"
     },
     "Canceled" : {
       "comment" : "Download item row - Status label when download was cancelled"
@@ -496,6 +603,9 @@
     },
     "Certificate is valid" : {
       "comment" : "Address bar menu - Certificate validity status"
+    },
+    "Change" : {
+      "comment" : "Bitwarden login sheet - change email link"
     },
     "Change Color" : {
       "comment" : "Tab group context menu - Submenu to change the group color"
@@ -614,6 +724,9 @@
     "Comfortable" : {
       "comment" : "Layout option - Horizontal tabs\nOnboarding layout selection - Comfortable option"
     },
+    "Command env" : {
+      "comment" : "Approvals sheet - run-kind tag"
+    },
     "Completed" : {
       "comment" : "Download state"
     },
@@ -649,6 +762,9 @@
     },
     "Connector authorization failed." : {
       "comment" : "AI settings - OAuth authorization failure"
+    },
+    "Continue" : {
+      "comment" : "Bitwarden login sheet - continue button"
     },
     "Cookies" : {
       "comment" : "Import data type - Cookies toggle label"
@@ -789,13 +905,16 @@
       "comment" : "Download item row - Status label when downloaded file was deleted"
     },
     "Deny" : {
-      "comment" : "CDP consent - deny"
+      "comment" : "CDP consent - deny\nCredential approval - deny"
     },
     "Describe the issue in detail" : {
       "comment" : "Feedback form - Section header prompting user to describe the issue"
     },
     "Developer" : {
-      "comment" : "Settings - Tab title for developer tooling"
+      "comment" : "General settings - Developer section title\nSettings - Tab title for developer tooling"
+    },
+    "Developer mode" : {
+      "comment" : "General settings - Toggle title for enabling developer mode (Developer settings tab and agent tooling)"
     },
     "Discard" : {
       "comment" : "Download item row - Tooltip for discard button on blocked download\nDownload item row - Tooltip for discard button on safety warning\nTooltip for discard button on blocked download in living downloads toast\nTooltip for discard button on safety warning in living downloads toast"
@@ -823,6 +942,9 @@
     },
     "Domain suffix" : {
       "comment" : "URL rule match type: host plus all subdomains"
+    },
+    "Done" : {
+      "comment" : "Approvals sheet - done button"
     },
     "Download image" : {
       "comment" : "Account settings - Button to download profile card as image"
@@ -902,6 +1024,9 @@
     "Edit..." : {
       "comment" : "Edit bookmark url menu item title\nPinned tab context menu - Edit pinned tab menu item"
     },
+    "Email address" : {
+      "comment" : "Bitwarden login sheet - email field label"
+    },
     "Emoji" : {
 
     },
@@ -926,8 +1051,17 @@
     "Enter a new name for this Space." : {
       "comment" : "Body of the rename-Space dialog"
     },
+    "Enter a valid self-hosted server URL." : {
+      "comment" : "Bitwarden login sheet - invalid self-hosted URL error"
+    },
+    "Enter your email address." : {
+      "comment" : "Bitwarden login sheet - missing email error"
+    },
     "Error" : {
       "comment" : "Phi Link - Custom bot generic error text"
+    },
+    "Every agent will be able to use any login in your vault without asking you first. A misled agent could fill or reveal a password anywhere. You can turn this off here at any time." : {
+      "comment" : "Approvals sheet - all-access confirm message"
     },
     "example" : {
       "comment" : "URL rule value placeholder for Domain contains match"
@@ -986,6 +1120,9 @@
     "Feedback" : {
       "comment" : "Feedback - Sidebar feedback button title\nFeedback - Tooltip text for icon-only feedback button\nHeader more menu - Feedback action"
     },
+    "Fill only" : {
+      "comment" : "Approvals sheet - fill-kind tag"
+    },
     "Find shortcut keys" : {
       "comment" : "Shortcuts settings - Search field placeholder to find shortcuts"
     },
@@ -1015,6 +1152,9 @@
     },
     "From Safari" : {
       "comment" : "Import browser data page - Option label to import data from Safari browser"
+    },
+    "Full access" : {
+      "comment" : "Approvals sheet - reveal-kind tag"
     },
     "General" : {
       "comment" : "Settings - Tab title for general settings"
@@ -1051,6 +1191,9 @@
     },
     "https://example.com/path" : {
       "comment" : "URL rule value placeholder for URL (host + path) match"
+    },
+    "https://vault.example.com" : {
+
     },
     "I'll setup my own" : {
       "comment" : "Onboarding password manager - Manual setup option"
@@ -1106,8 +1249,14 @@
     "Incognito %d" : {
       "comment" : "Incognito Space name when several are open; %d is its number"
     },
+    "Install" : {
+      "comment" : "Phi & AI settings - Button that installs the Bitwarden browser extension"
+    },
     "Install and Relaunch" : {
       "comment" : "Sparkle update window - Install downloaded update and relaunch button"
+    },
+    "Install Bitwarden Extension?" : {
+      "comment" : "Phi & AI settings - Alert title suggesting the Bitwarden browser extension install"
     },
     "Install on Quit" : {
       "comment" : "Sparkle update window - Install downloaded update on quit button"
@@ -1202,8 +1351,26 @@
     "Local browser data is unavailable." : {
       "comment" : "Pinned-tab scope migration error when the local store cannot be opened"
     },
+    "Lock" : {
+      "comment" : "Bitwarden timeout action - lock"
+    },
+    "Locked" : {
+      "comment" : "Phi & AI settings - Bitwarden locked status"
+    },
     "Log in" : {
-      "comment" : "Onboarding Login button title"
+      "comment" : "Bitwarden login sheet - submit button\nBitwarden login sheet - title\nOnboarding Login button title"
+    },
+    "Log In…" : {
+      "comment" : "Phi & AI settings - Bitwarden log in action"
+    },
+    "Log out" : {
+      "comment" : "Bitwarden timeout action - log out"
+    },
+    "Log Out" : {
+      "comment" : "Phi & AI settings - Bitwarden log out action"
+    },
+    "Logins for Phi and agent requests, held by a separate helper — passwords never touch the browser process." : {
+      "comment" : "Phi & AI settings - Bitwarden toggle explanation"
     },
     "Logout" : {
       "comment" : "Account settings - Logout button\nAccount settings - Logout button in logout confirmation dialog"
@@ -1216,6 +1383,9 @@
     },
     "Manage User Data" : {
       "comment" : "Help menu - Parent menu item for exporting and importing Phi user data backup"
+    },
+    "Master password" : {
+      "comment" : "Bitwarden login sheet - master password field label"
     },
     "Message the agent (→ %@)" : {
       "comment" : "Agent console - prompt placeholder naming the target task's Space"
@@ -1261,6 +1431,9 @@
     },
     "Name is too long (maximum 100 characters)" : {
       "comment" : "Set name page - Error message when user name exceeds 100 characters"
+    },
+    "Never" : {
+      "comment" : "Bitwarden session timeout - never"
     },
     "Never pop out automatically; manual picture-in-picture still works" : {
       "comment" : "General settings - Hint for the Off auto picture-in-picture mode"
@@ -1373,6 +1546,9 @@
     "No release notes available." : {
       "comment" : "Sparkle update window - Missing release notes placeholder"
     },
+    "No remembered approvals." : {
+      "comment" : "Approvals sheet - empty state"
+    },
     "No results" : {
       "comment" : "Icon picker - Empty state when search has no matching icons"
     },
@@ -1397,6 +1573,12 @@
     "Not linked" : {
       "comment" : "Phi Link - Official bot not linked status"
     },
+    "Not Now" : {
+      "comment" : "Phi & AI settings - Button that dismisses the Bitwarden extension install suggestion"
+    },
+    "Not signed in" : {
+      "comment" : "Phi & AI settings - Bitwarden signed-out status"
+    },
     "Not used" : {
       "comment" : "Profiles settings - tag for a profile with no Spaces"
     },
@@ -1418,11 +1600,20 @@
     "Omnibox" : {
       "comment" : "General settings - Option to open Omnibox search when pressing ⌘+T"
     },
+    "On browser restart" : {
+      "comment" : "Bitwarden session timeout - on browser restart"
+    },
+    "On system lock" : {
+      "comment" : "Bitwarden session timeout - on system lock"
+    },
     "Opacity" : {
       "comment" : "General settings - Theme opacity row title for adjusting the selected theme overlay transparency\nSpaces settings - theme opacity row label for the per-Space window overlay transparency"
     },
     "Open as Split" : {
       "comment" : "Bookmark context menu - Open this bookmark as a new tab paired with the current tab in a split\nTab context menu - Open a new tab as the second pane in a split with this tab\nTab multi-selection context menu - split exactly two selected tabs into paired panes"
+    },
+    "Open Developer settings…" : {
+      "comment" : "General settings - Link that jumps to the Developer settings pane"
     },
     "Open in" : {
       "comment" : "Leading label for a URL rule's target Space"
@@ -1481,6 +1672,9 @@
     "Phi could not start Time Machine restore: %@" : {
       "comment" : "Help menu - Time Machine restore launch failure body"
     },
+    "Phi fills the saved login into the page itself. The agent triggers the fill but never receives the username or password." : {
+      "comment" : "Credential approval - fill body"
+    },
     "Phi is not your default browser" : {
       "comment" : "Account settings - Status text when Phi is not the default browser"
     },
@@ -1492,6 +1686,9 @@
     },
     "Phi needs Full Disk Access to import your data from Safari." : {
       "comment" : "Import browser data page - Description explaining why Full Disk Access permission is needed"
+    },
+    "Phi releases the saved value to the agent so the command it runs can use it. A trustworthy agent uses it only for that, but Phi can’t stop it from keeping the value — only approve for agents and sites you trust." : {
+      "comment" : "Credential approval - run body"
     },
     "Phi Sentinel" : {
       "comment" : "AI settings - Section title for Phi Sentinel background helper"
@@ -1628,6 +1825,9 @@
     "Relink" : {
       "comment" : "Phi Link - Official bot relink action"
     },
+    "Remember email" : {
+      "comment" : "Bitwarden login sheet - remember email toggle"
+    },
     "Remind Me Later" : {
       "comment" : "Sparkle update window - Remind later button"
     },
@@ -1727,6 +1927,15 @@
     "Reverse Panes" : {
       "comment" : "Tab context menu - Swap the left/right (or top/bottom) panes of the split this tab belongs to"
     },
+    "Review and revoke which agents may use your saved logins without asking" : {
+      "comment" : "Phi & AI settings - tooltip for the approvals row"
+    },
+    "Revoke" : {
+      "comment" : "Approvals sheet - revoke one button"
+    },
+    "Revoke All" : {
+      "comment" : "Approvals sheet - revoke all button"
+    },
     "Right Name" : {
       "comment" : "Bookmark editor - Label for the right (secondary) title input field on a split-view bookmark"
     },
@@ -1769,6 +1978,12 @@
     "Select Phi User Data Backup" : {
       "comment" : "Debug import user data - NSOpenPanel title for choosing a Phi user data zip"
     },
+    "self-hosted" : {
+      "comment" : "Bitwarden login sheet - self-hosted server option"
+    },
+    "Self-hosted server URL" : {
+      "comment" : "Bitwarden login sheet - self-hosted server URL field label"
+    },
     "Send" : {
       "comment" : "Feedback form - Send button to submit feedback"
     },
@@ -1783,6 +1998,9 @@
     },
     "Service issue" : {
       "comment" : "Phi Link - Custom bot service issue status\nPhi Link - Official bot service issue status"
+    },
+    "Session timeout" : {
+      "comment" : "Phi & AI settings - Row title for how long the unlocked Bitwarden vault lasts"
     },
     "Set as default" : {
       "comment" : "Account settings - Button to set Phi as default browser"
@@ -1822,6 +2040,12 @@
     },
     "Sign in again to continue" : {
       "comment" : "Auth reauthentication - Alert title when the access token can no longer be renewed"
+    },
+    "Signed in" : {
+      "comment" : "Phi & AI settings - Bitwarden ready status"
+    },
+    "Signed in as %@" : {
+      "comment" : "Phi & AI settings - Bitwarden ready status with account"
     },
     "Site Settings" : {
       "comment" : "Address bar menu - Settings menu item\nAddress bar menu - Settings submenu title"
@@ -1912,8 +2136,14 @@
     "The agent needs you" : {
       "comment" : "Agent handoff prompt - title"
     },
+    "The agent says it needs this to: %@" : {
+      "comment" : "Credential approval - purpose line"
+    },
     "The archive does not contain a top-level Phi folder." : {
       "comment" : "Debug import user data - Error message when zip does not include the expected Phi directory at archive root"
+    },
+    "The Bitwarden browser extension autofills your vault logins on web pages. Phi can install it from the Chrome Web Store now." : {
+      "comment" : "Phi & AI settings - Alert message explaining the suggested Bitwarden extension install"
     },
     "The connector authorization URL is invalid." : {
       "comment" : "AI settings - OAuth authorization URL error"
@@ -1932,6 +2162,9 @@
     },
     "Theme" : {
       "comment" : "General settings - Theme section title"
+    },
+    "These grants let agents use your saved logins without asking each time. “Always” grants persist until you revoke them here." : {
+      "comment" : "Approvals sheet - explanation"
     },
     "This action cannot be undone." : {
       "comment" : "Bookmark multi-selection delete confirmation irreversible warning"
@@ -1969,6 +2202,9 @@
     "Time Machine Restore Failed" : {
       "comment" : "Help menu - Time Machine restore failure alert title"
     },
+    "Timeout action" : {
+      "comment" : "Phi & AI settings - Row title for what happens when the Bitwarden session times out"
+    },
     "Today" : {
       "comment" : "Download item row - Relative time when download completed today"
     },
@@ -1990,6 +2226,9 @@
     "Turn Off Connectors?" : {
       "comment" : "AI settings - Confirmation alert title when disabling external data connectors"
     },
+    "Two-step login code (if enabled)" : {
+      "comment" : "Bitwarden login sheet - 2FA field label"
+    },
     "Unable to open connector authorization." : {
       "comment" : "AI settings - OAuth authorization open error"
     },
@@ -2008,6 +2247,15 @@
     "Unlink" : {
       "comment" : "Phi Link - Official bot unlink button"
     },
+    "Unlock" : {
+      "comment" : "Bitwarden unlock sheet - submit button\nBitwarden unlock sheet - title\nCredential unlock - unlock button"
+    },
+    "Unlock Bitwarden to continue" : {
+      "comment" : "Credential unlock - title"
+    },
+    "Unlock…" : {
+      "comment" : "Phi & AI settings - Bitwarden unlock action"
+    },
     "Unpin" : {
       "comment" : "Tab context menu - Menu item to unpin the selected tab"
     },
@@ -2022,6 +2270,9 @@
     },
     "Unsupported image format" : {
       "comment" : "Image preview error"
+    },
+    "until %@" : {
+      "comment" : "Approvals sheet - timed grant expiry"
     },
     "Untitled" : {
       "comment" : "Default name for new bookmark folder\nDefault name for new bookmark folder in root"

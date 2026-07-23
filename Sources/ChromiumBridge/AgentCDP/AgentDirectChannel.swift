@@ -75,7 +75,8 @@ final class AgentDirectChannelRegistry {
 
     /// Registers a request awaiting an async app reply, arming a timeout that
     /// fails it if the handler never responds.
-    func registerPending(requestId: String, connectionId: String, clientId: Int) {
+    func registerPending(requestId: String, connectionId: String, clientId: Int,
+                         timeoutSeconds: TimeInterval = 60) {
         let timeout = DispatchWorkItem { [weak self] in
             _ = self?.deliverError(requestId: requestId, error: "timed out")
         }
@@ -83,7 +84,7 @@ final class AgentDirectChannelRegistry {
         pending[requestId] = Pending(connectionId: connectionId, clientId: clientId,
                                      timeout: timeout)
         lock.unlock()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 60, execute: timeout)
+        DispatchQueue.main.asyncAfter(deadline: .now() + timeoutSeconds, execute: timeout)
     }
 
     /// Delivers an app response to the originating direct connection. Returns
@@ -300,8 +301,13 @@ final class AgentDirectConnection {
     /// then reply synchronously or await the async app response.
     private func route(clientId: Int, type: String, payloadJson: String) {
         let requestId = "agentdirect:\(id):\(clientId)"
+        // Credential requests can legitimately sit behind the 60s approval
+        // prompt AND a 60s in-flow unlock prompt; don't let the transport kill
+        // them under the user's nose. Everything else keeps the tight timeout.
+        let timeout: TimeInterval = type.hasPrefix("credentials.") ? 180 : 60
         AgentDirectChannelRegistry.shared.registerPending(
-            requestId: requestId, connectionId: id, clientId: clientId)
+            requestId: requestId, connectionId: id, clientId: clientId,
+            timeoutSeconds: timeout)
         let sync = ExtensionMessageRouter.shared.handle(
             type: type, payload: payloadJson, requestId: requestId, senderId: "cdp",
             agentName: agentName)

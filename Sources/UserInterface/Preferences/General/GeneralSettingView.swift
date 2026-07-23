@@ -33,6 +33,7 @@ struct GeneralSettingView: View {
                 }
                 AppearanceSectionView()
                 BrowsingSectionView()
+                DeveloperModeSectionView()
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, 36)
@@ -446,6 +447,51 @@ private struct BrowsingSectionView: View {
             .activeWindowController?
             .browserState
             .createTab("chrome://settings")
+    }
+}
+
+/// The "Developer mode" master toggle. Turning it OFF is a kill-switch, not
+/// just UI hiding: the Developer settings tab disappears and the features it
+/// governs shut off with it — agent CDP access and the agent password manager
+/// (see `AppController.setDeveloperModeEnabled`). Turning it back on reveals
+/// the tab again but re-enables nothing automatically.
+private struct DeveloperModeSectionView: View {
+    @State private var developerModeEnabled = PhiPreferences.AgentSpaces.developerModeEnabled
+
+    var body: some View {
+        GeneralSectionView(title: NSLocalizedString("Developer", comment: "General settings - Developer section title")) {
+            GeneralContainerView {
+                GeneralRowView(title: NSLocalizedString("Developer mode", comment: "General settings - Toggle title for developer mode; turning it off also disables agent access and the agent password manager")) {
+                    Toggle("", isOn: $developerModeEnabled)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .controlSize(.mini)
+                        .themedTint(.themeColor)
+                }
+
+                Divider()
+                hintRow
+            }
+        }
+        .onChange(of: developerModeEnabled) { _, newValue in
+            // Deferred: applying the change rebuilds the settings window,
+            // which closes the window hosting this very view — that must not
+            // happen mid view-update.
+            DispatchQueue.main.async {
+                AppController.shared?.setDeveloperModeEnabled(newValue)
+            }
+        }
+    }
+
+    private var hintRow: some View {
+        Text(developerModeEnabled
+            ? NSLocalizedString("Agent access, permissions, and the password manager live in the Developer tab.", comment: "General settings - Hint under the developer mode toggle pointing at the Developer settings pane")
+            : NSLocalizedString("Turning developer mode off also turns off agent access and the agent password manager.", comment: "General settings - Hint under the developer mode toggle explaining the kill-switch behavior"))
+            .font(.system(size: 11))
+            .themedForeground(.textTertiary)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.vertical, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
