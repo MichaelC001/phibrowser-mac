@@ -1098,6 +1098,16 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
                        page:(NSString *)page
                  completion:(void (^)(BOOL success, NSString * _Nullable error))completion;
 
+/// Lists `profileId`'s installed extensions (enabled and disabled, excluding
+/// built-in component entries, apps, and themes). `completion` fires on the UI
+/// thread with one dict per extension — keys @"id" (Chrome Web Store id),
+/// @"name", @"enabled", @"icon" (a `data:image/png;base64,...` URL, empty when
+/// unavailable) — or nil on failure. Loads the profile and waits for its
+/// extension system first if needed, so it may be async for a profile that
+/// isn't currently in memory.
+- (void)listProfileExtensions:(NSString *)profileId
+                   completion:(void (^)(NSArray<NSDictionary<NSString *, id> *> * _Nullable extensions))completion;
+
 // ==========================================================================
 // DevTools agent transport (Mac → Chromium)
 // ==========================================================================

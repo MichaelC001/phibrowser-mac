@@ -74,12 +74,23 @@ struct DefaultExtensionManifestWriter {
     }
 }
 
-/// Chrome Web Store id of Apple's iCloud Passwords extension. Single source of
-/// truth shared by the OOBE password-manager screen and the per-new-profile
-/// auto-install in `ProfileManager`.
+/// Chrome Web Store ids of well-known extensions. Single source of truth
+/// shared by the OOBE password-manager screen, the per-new-profile
+/// auto-install in `ProfileManager`, and the Profiles pane's password-manager
+/// section.
 enum PhiExtensionID {
     static let icloudPasswords = "pejdijmoenmkgeppbflobdenhhabjlaj"
     /// Chrome Web Store id of the Bitwarden Password Manager extension. Shared
     /// by the OOBE password-manager screen and the per-new-profile auto-install.
     static let bitwarden = "nngceckbapebfimnlniiiahkandclblb"
+    static let onePassword = "aeblfdkhhhdcdjpifhhbdiojplfjncoa"
+    static let lastPass = "hdokiejnpimakedhajhdlcegeplioahd"
+    static let dashlane = "fdjamakpfbbddfjaooikfcpapjohcfmg"
+    static let protonPass = "ghmbeldphafepmbegfdlkpapadhbakde"
+    static let nordPass = "eiaeiblijfjekdanodkjadfinkhbfgcd"
+    /// NordPass's previous store listing, now titled "NordPass (legacy)".
+    /// Detection-only — installs use `nordPass`.
+    static let nordPassLegacy = "fooolghllnmhmmndgjiamiiodkpenpbb"
+    static let keeper = "bfogiafebfohielmmehodmfbbebbbpei"
+    static let keePassXC = "oboonakemofpalcgghocfoadofidjkkk"
 }

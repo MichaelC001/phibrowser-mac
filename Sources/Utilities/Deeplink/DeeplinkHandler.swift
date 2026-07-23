@@ -59,8 +59,8 @@ extension DeeplinkHandler {
         static let key = "page"
     }
     enum SettingsPage: String {
-        case account, general, aisetting, imchannels, shortcus
-        
+        case account, general, aisetting, imchannels, shortcus, profiles
+
         static let key = "section"
     }
 }
