@@ -30,11 +30,27 @@ import WebKit
 ///    all-types sweep as the debug menu's Login Status item — but bounded:
 ///    the finalize promised a quit, so a stalled WebKit daemon must not
 ///    hold it hostage.
-/// 3. The "Phi Safe Storage" keychain item — Chromium's profile encryption
-///    key. Harmless once the profiles are gone, but it is Phi residue.
-///    Skipped when a sibling channel (canary ↔ release) still has data:
-///    both channels share the one item, so deleting it would strand the
-///    sibling's encrypted profile data.
+/// 3. The Bitwarden vault session keychain item — the app-persisted
+///    session (email, master password, 2FA token) a restart would
+///    otherwise silently restore. It lives in the data-protection
+///    keychain, outside the data roots above, so the wipe misses it;
+///    `BitwardenSessionStore.clear()` removes it. The helper's own vault
+///    data is written under the data root (`PHI_BROWSER_DATA_DIR`), so it
+///    goes with the wipe. A no-op when Bitwarden was never configured.
+///
+/// The "Phi Safe Storage" keychain item — Chromium's profile encryption
+/// key — is deliberately NOT removed. Once the profiles are gone it
+/// guards nothing decryptable (an empty envelope), and Chromium itself
+/// never deletes it, so leaving it is the upstream default. It also must
+/// not be deleted: the service/account names are compile-time constants
+/// shared by every Phi channel (`Phi Safe Storage`/`Phi` in the fork's
+/// `keychain_password_mac.mm`), so removing it would brick a sibling
+/// channel's still-encrypted data — including a full Time Machine upgrade
+/// snapshot the sibling may hold even with no live data root. One inert,
+/// unusable key is the accepted residue direction. The deletion path is
+/// kept (dormant) in `removeSafeStorageKeychainItem` for the day channels
+/// adopt per-channel key names, when deleting the running channel's own
+/// key becomes safe.
 ///
 /// `beginRemoval` drops the standard defaults domain, and any later write
 /// would resurrect it in cfprefsd. The removal's own steps are safe — the
@@ -56,7 +72,12 @@ enum AccountDeletionLocalDataRemoval {
         let targets = UserDataRemoval.Targets.currentProductIncludingTimeMachine
         UserDataRemoval.beginRemoval(of: targets)
         await removeWebsiteData()
-        removeSafeStorageKeychainItem()
+        // Intentionally not called: the Safe Storage key is shared across Phi
+        // channels and is deliberately kept (see the type doc). The
+        // implementation below is complete but has no caller today — uncomment
+        // this line to enable deletion once channels use per-channel key names.
+        // removeSafeStorageKeychainItem()
+        BitwardenSessionStore.clear()
         UserDefaults.standard.removePersistentDomain(forName: targets.preferencesDomain)
     }
 
@@ -111,14 +132,16 @@ enum AccountDeletionLocalDataRemoval {
         }
     }
 
-    /// Chromium stores the profile encryption key as a generic password
-    /// with service "Phi Safe Storage" and account "Phi" (see
-    /// `components/os_crypt/common/keychain_password_mac.mm` in the fork).
-    /// The names are compile-time constants shared by every Phi channel,
-    /// so the item is only deleted when no sibling channel still keeps a
-    /// data root — deleting it under a live sibling would make that
-    /// channel's encrypted cookies and passwords undecryptable. A missing
-    /// item is fine — it only exists once a profile encrypted something.
+    /// Deletes the "Phi Safe Storage" keychain item (Chromium's profile
+    /// encryption key), guarded so a live sibling channel keeps the shared
+    /// key. **Has no caller today** — its only call site, in `removeAll()`,
+    /// is commented out because the finalize deliberately keeps the key
+    /// (see the type doc): every Phi channel shares this one
+    /// compile-time-constant item, so deleting it would brick a sibling's
+    /// still-encrypted data. Kept intact rather than removed so it can be
+    /// re-enabled unchanged the day channels adopt per-channel key names —
+    /// then deleting the running channel's own key becomes safe and this
+    /// sibling guard drops out.
     private static func removeSafeStorageKeychainItem() {
         if let sibling = siblingProductDataRootURL(),
            FileManager.default.fileExists(atPath: sibling.path) {
@@ -141,7 +164,10 @@ enum AccountDeletionLocalDataRemoval {
     /// The bundle identifier of the other Phi channel: canary and release
     /// pair up by inserting or removing the ".canary" component
     /// (com.phibrowser.Mac ↔ com.phibrowser.canary.Mac). Nil when the
-    /// identifier has no dot to pivot on.
+    /// identifier has no dot to pivot on. Reached only through the dormant
+    /// `removeSafeStorageKeychainItem` above, so it has no live caller
+    /// either; kept because the tests pin the pairing, keeping it correct
+    /// for the day deletion is re-enabled.
     nonisolated static func siblingProductBundleID(for bundleID: String) -> String? {
         if bundleID.contains(".canary.") {
             return bundleID.replacingOccurrences(of: ".canary.", with: ".")
