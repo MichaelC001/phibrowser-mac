@@ -352,6 +352,9 @@
     "Agent Autoview" : {
       "comment" : "View menu - Toggle that automatically switches to the Space of an operating agent"
     },
+    "Agent control" : {
+      "comment" : "Developer settings - Agent control section title"
+    },
     "Agent Credential Approvals" : {
       "comment" : "Approvals sheet - title"
     },
@@ -363,9 +366,6 @@
     },
     "Agent Password Manager" : {
       "comment" : "Phi & AI settings - Agent Password Manager section title"
-    },
-    "Agent permissions" : {
-      "comment" : "Developer settings - Agent permissions section title"
     },
     "Agent Transcript" : {
       "comment" : "Agent console panel - window title\nView menu - Toggle for the console mirroring the driving agent's session"
@@ -914,7 +914,7 @@
       "comment" : "General settings - Developer section title\nSettings - Tab title for developer tooling"
     },
     "Developer mode" : {
-      "comment" : "General settings - Toggle title for enabling developer mode (Developer settings tab and agent tooling)"
+      "comment" : "General settings - Toggle title for developer mode; turning it off also disables agent access and the agent password manager"
     },
     "Discard" : {
       "comment" : "Download item row - Tooltip for discard button on blocked download\nDownload item row - Tooltip for discard button on safety warning\nTooltip for discard button on blocked download in living downloads toast\nTooltip for discard button on safety warning in living downloads toast"
@@ -1612,9 +1612,6 @@
     "Open as Split" : {
       "comment" : "Bookmark context menu - Open this bookmark as a new tab paired with the current tab in a split\nTab context menu - Open a new tab as the second pane in a split with this tab\nTab multi-selection context menu - split exactly two selected tabs into paired panes"
     },
-    "Open Developer settings…" : {
-      "comment" : "General settings - Link that jumps to the Developer settings pane"
-    },
     "Open in" : {
       "comment" : "Leading label for a URL rule's target Space"
     },
@@ -1830,9 +1827,6 @@
     },
     "Remind Me Later" : {
       "comment" : "Sparkle update window - Remind later button"
-    },
-    "Remote debugging" : {
-      "comment" : "Developer settings - Remote debugging section title"
     },
     "Remove" : {
       "comment" : "Bookmark editor - Remove bookmark button title (CMD+D toggle)\nDeveloper settings - Revoke an allowed CDP agent\nDownload item row - Tooltip for remove download button\nIM Channels - Custom bot remove action"
@@ -2225,6 +2219,9 @@
     },
     "Turn Off Connectors?" : {
       "comment" : "AI settings - Confirmation alert title when disabling external data connectors"
+    },
+    "Turning developer mode off also turns off agent access and the agent password manager." : {
+      "comment" : "General settings - Hint under the developer mode toggle explaining the kill-switch behavior"
     },
     "Two-step login code (if enabled)" : {
       "comment" : "Bitwarden login sheet - 2FA field label"

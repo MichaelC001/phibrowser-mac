@@ -513,12 +513,16 @@ class Tab: WebContentRepresentable {
               let route = TabSplitActionRoute.resolve(
                   selectedTabId: guid,
                   focusedTabId: focusedTab.guid,
-                  // `splitMembership(forCellTab:)` rather than a plain
-                  // `splitGroup(forTabId:)`: this cell may be a pinned record
-                  // whose synthetic guid hides a live pane — or a closed
-                  // pinned split pair — and both must keep click-to-restore.
-                  selectedTabIsInSplit: browserState.splitMembership(forCellTab: self) != nil,
-                  focusedTabIsInSplit: browserState.splitGroup(forTabId: focusedTab.guid) != nil
+                  // Keep the direct live-group check fail-closed while a
+                  // partner pane is still arriving. Membership also catches
+                  // pinned records whose synthetic guid hides a live pane,
+                  // plus persisted pinned pairs with no live group yet.
+                  selectedTabIsInSplit:
+                      browserState.splitGroup(forTabId: guid) != nil ||
+                      browserState.splitMembership(forCellTab: self) != nil,
+                  focusedTabIsInSplit:
+                      browserState.splitGroup(forTabId: focusedTab.guid) != nil ||
+                      browserState.splitMembership(forCellTab: focusedTab) != nil
               ) else {
             return false
         }

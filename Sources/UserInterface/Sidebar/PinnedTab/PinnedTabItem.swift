@@ -20,7 +20,7 @@ class PinnedTabItem: NSCollectionViewItem, NSMenuDelegate {
     private weak var themeProvider: ThemeStateProvider?
     private var themeSubscription: AnyObject?
 
-    var itemClicked: ((Tab?) -> Void)?
+    var itemClicked: ((Tab?, NSEvent.ModifierFlags) -> Void)?
     var itemDoubleClicked: ((Tab?, NSEvent.ModifierFlags) -> Void)?
     // Shared context menu bound to the entire pinned item.
     private lazy var contextMenu: NSMenu = {
@@ -61,8 +61,8 @@ class PinnedTabItem: NSCollectionViewItem, NSMenuDelegate {
         backgroundView.hoveredColor = .sidebarTabHoveredColorEmphasized
         backgroundView.selectedColor = .sidebarTabSelected
         backgroundView.enableClickAnimation = true
-        backgroundView.clickAction = { [weak self] in
-            self?.itemClicked?(self?.tab)
+        backgroundView.clickActionWithModifierFlags = { [weak self] modifierFlags in
+            self?.itemClicked?(self?.tab, modifierFlags)
         }
         backgroundView.doubleClickAction = { [weak self] event in
             self?.itemDoubleClicked?(self?.tab, event.modifierFlags)

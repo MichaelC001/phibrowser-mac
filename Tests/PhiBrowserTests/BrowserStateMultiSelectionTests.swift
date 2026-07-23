@@ -294,7 +294,11 @@ final class BrowserStateMultiSelectionTests: XCTestCase {
         state.toggleMultiSelection(for: state.tabs[1])
         let controller = SidebarTabListViewController(state: state)
 
-        controller.outlineView(SideBarOutlineView(), didClickRow: -1)
+        controller.outlineView(
+            SideBarOutlineView(),
+            didClickRow: -1,
+            modifierFlags: []
+        )
 
         XCTAssertFalse(state.multiSelection.isActive)
     }

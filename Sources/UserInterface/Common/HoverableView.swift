@@ -18,6 +18,7 @@ class HoverableView: NSView {
             hoverStateChanged?(mouseEntered)
         }
     }
+    private var mouseDownModifierFlags: NSEvent.ModifierFlags?
     
     private(set) var responseToHoverAnimation = false
     
@@ -31,6 +32,9 @@ class HoverableView: NSView {
     var enableClickAnimation = false
     
     var clickAction: (() -> Void)?
+    /// Single-click callback that preserves the mouse-down modifiers.
+    /// When set, it replaces `clickAction` for single clicks.
+    var clickActionWithModifierFlags: ((NSEvent.ModifierFlags) -> Void)?
     var doubleClickAction: ((NSEvent) -> Void)?
     var secondaryClickAction: (() -> Void)?
     var hoverStateChanged: ((Bool) -> Void)?
@@ -111,12 +115,14 @@ class HoverableView: NSView {
     
     override func mouseDown(with event: NSEvent) {
         super.mouseDown(with: event)
+        mouseDownModifierFlags = event.modifierFlags
         if responseToClickAction && enableClickAnimation {
             animateScaleDown()
         }
     }
     
     override func mouseUp(with event: NSEvent) {
+        defer { mouseDownModifierFlags = nil }
         super.mouseUp(with: event)
         if responseToClickAction && enableClickAnimation {
             animateScaleUp()
@@ -124,6 +130,8 @@ class HoverableView: NSView {
         if responseToClickAction {
             if event.clickCount == 2, let doubleClickAction {
                 doubleClickAction(event)
+            } else if let clickActionWithModifierFlags {
+                clickActionWithModifierFlags(mouseDownModifierFlags ?? event.modifierFlags)
             } else {
                 clickAction?()
             }
