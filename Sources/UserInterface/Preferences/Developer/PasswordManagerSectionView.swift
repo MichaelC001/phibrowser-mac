@@ -35,22 +35,23 @@ struct PasswordManagerSectionView: View {
                 .themedForeground(.textSecondary)
 
             VStack(spacing: 10) {
-                // The provider and its account state.
+                // The provider: account state and session policy — all
+                // Bitwarden settings live in this one card.
                 VStack(spacing: 0) {
                     enableRow
                     if bitwardenEnabled {
                         Divider()
                         statusRow
+                        Divider()
+                        BitwardenSessionTimeoutRows()
                     }
                 }
                 .padding(.horizontal, 12)
                 .settingsCardChrome()
 
-                // Vault session policy and what agents may do with the vault.
+                // What agents may do with the vault — its own card.
                 if bitwardenEnabled {
                     VStack(spacing: 0) {
-                        BitwardenSessionTimeoutRows()
-                        Divider()
                         approvalsRow
                     }
                     .padding(.horizontal, 12)
