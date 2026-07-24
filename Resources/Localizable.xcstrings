@@ -475,7 +475,7 @@
     "Approve Once" : {
       "comment" : "Credential approval - approve once"
     },
-    "Approving shares the username and password with the agent, which may record them in its context. Only approve for agents and sites you trust." : {
+    "Approving shares the saved item — a password, note, card, identity, or key — with the agent, which may record it in its context. Only approve for agents and items you trust." : {
       "comment" : "Credential approval - reveal body"
     },
     "Aqua" : {
@@ -1270,6 +1270,9 @@
     "Install" : {
       "comment" : "Phi & AI settings - Button that installs the Bitwarden browser extension"
     },
+    "Install a password manager" : {
+      "comment" : "Profiles settings - tooltip on the install password manager menu"
+    },
     "Install and Relaunch" : {
       "comment" : "Sparkle update window - Install downloaded update and relaunch button"
     },
@@ -1284,6 +1287,12 @@
     },
     "Install Update" : {
       "comment" : "Sparkle update window - Install update button"
+    },
+    "Install…" : {
+      "comment" : "Profiles settings - install password manager menu label"
+    },
+    "Installing %@" : {
+      "comment" : "Profiles settings - tooltip on the spinner of a password manager mid-install"
     },
     "Invalid image source" : {
       "comment" : "Image preview error"
@@ -1662,6 +1671,12 @@
     },
     "Park at edge" : {
       "comment" : "Auto picture-in-picture option - pop out, then park at the screen edge until clicked"
+    },
+    "Password Manager" : {
+      "comment" : "Profiles settings - password manager row label"
+    },
+    "Passwords" : {
+      "comment" : "Profiles settings - data link to saved passwords"
     },
     "Passwords Manager" : {
       "comment" : "Onboarding password manager - Page title"

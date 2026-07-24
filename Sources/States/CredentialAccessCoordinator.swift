@@ -231,99 +231,44 @@ final class CredentialAccessCoordinator {
     /// locked). Returns the entered password, or `nil` if cancelled / timed out.
     /// The password is handed straight to the helper by the caller and never
     /// stored by the app — keeping the "browser holds no secrets" boundary.
+    /// `CredentialUnlockAlert` auto-cancels when unattended.
     func promptForUnlock(agentName: String, scope: String) -> String? {
-        let alert = NSAlert()
-        alert.alertStyle = .informational
-        alert.messageText = NSLocalizedString("Unlock Bitwarden to continue", comment: "Credential unlock - title")
-        alert.informativeText = String(
-            format: NSLocalizedString(
-                "“%@” needs a credential for %@, but your vault is locked. Enter your master password to unlock.",
-                comment: "Credential unlock - body"),
-            agentName, scope)
-
-        let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
-        alert.accessoryView = field
-
-        alert.addButton(withTitle: NSLocalizedString("Unlock", comment: "Credential unlock - unlock button"))
-        alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Credential unlock - cancel button"))
-
-        // Auto-cancel if unattended, matching the approval prompt. A run-loop
-        // timer, NOT DispatchQueue.main.asyncAfter: this runs inside a
-        // main-actor dispatch block, and the main queue cannot drain further
-        // blocks while one is executing — a queued work item would wait out
-        // the modal it is supposed to end. runModal's nested run loop DOES
-        // fire common-modes timers.
-        let timeout = Timer(timeInterval: 60, repeats: false) { _ in NSApp.abortModal() }
-        RunLoop.main.add(timeout, forMode: .common)
-        alert.window.initialFirstResponder = field
-        let response = alert.runModal()
-        timeout.invalidate()
-
-        guard response == .alertFirstButtonReturn else { return nil }
-        let password = field.stringValue
-        return password.isEmpty ? nil : password
+        var password: String?
+        _ = NSApp.runPhiAlert { dismiss in
+            CredentialUnlockAlert(agentName: agentName, scope: scope) { entered in
+                password = entered
+                dismiss(entered == nil ? .cancel : .alertFirstButtonReturn)
+            }
+        }
+        guard let password, !password.isEmpty else { return nil }
+        return password
     }
 
+    /// Presents `CredentialApprovalAlert` and maps its choice onto the grant
+    /// model. The alert owns the wording, the duration picker (whose
+    /// all-agents checkbox only applies to remembering grants), and the
+    /// auto-deny timeout for unattended prompts; an alert dismissed any other
+    /// way (e.g. its host window closing) reads as denied.
     private func prompt(agentName: String, scope: String, kind: CredentialAccessKind,
                         purpose: String?) -> Decision {
-        let alert = NSAlert()
-        alert.alertStyle = .warning
-        switch kind {
-        case .fill:
-            alert.messageText = String(
-                format: NSLocalizedString("“%@” wants to fill your %@ login", comment: "Credential approval - fill title"),
-                agentName, scope)
-            alert.informativeText = NSLocalizedString(
-                "Phi fills the saved login into the page itself. The agent triggers the fill but never receives the username or password.",
-                comment: "Credential approval - fill body")
-        case .run:
-            alert.messageText = String(
-                format: NSLocalizedString("“%@” wants to use your %@ credential in a command", comment: "Credential approval - run title"),
-                agentName, scope)
-            alert.informativeText = NSLocalizedString(
-                "Phi releases the saved value to the agent so the command it runs can use it. A trustworthy agent uses it only for that, but Phi can’t stop it from keeping the value — only approve for agents and sites you trust.",
-                comment: "Credential approval - run body")
-        case .reveal:
-            alert.messageText = String(
-                format: NSLocalizedString("“%@” wants your %@ credential", comment: "Credential approval - reveal title"),
-                agentName, scope)
-            alert.informativeText = NSLocalizedString(
-                "Approving shares the saved item — a password, note, card, identity, or key — with the agent, which may record it in its context. Only approve for agents and items you trust.",
-                comment: "Credential approval - reveal body")
+        var decision = Decision.denied
+        _ = NSApp.runPhiAlert { dismiss in
+            CredentialApprovalAlert(
+                agentName: agentName, scope: scope, kind: kind, purpose: purpose
+            ) { choice in
+                switch choice {
+                case .deny:
+                    decision = .denied
+                case .allow(let duration, let allAgents):
+                    switch duration {
+                    case .once: decision = .once
+                    case .tenMinutes: decision = .remember(allAgents: allAgents)
+                    case .always: decision = .always(allAgents: allAgents)
+                    }
+                }
+                dismiss(.alertFirstButtonReturn)
+            }
         }
-        if let purpose {
-            // Agent-supplied context. Labeled as the agent's own words so a
-            // misleading purpose reads as a claim, not as app UI.
-            alert.informativeText += "\n\n" + String(
-                format: NSLocalizedString("The agent says it needs this to: %@",
-                                          comment: "Credential approval - purpose line"),
-                purpose)
-        }
-        // The suppression checkbox widens whichever remembering grant is
-        // chosen to every agent; it has no effect on Approve Once / Deny.
-        alert.showsSuppressionButton = true
-        alert.suppressionButton?.title = NSLocalizedString(
-            "Apply to all agents, not just this one",
-            comment: "Credential approval - all-agents checkbox")
-        alert.addButton(withTitle: NSLocalizedString("Approve Once", comment: "Credential approval - approve once"))
-        alert.addButton(withTitle: NSLocalizedString("Approve for 10 min", comment: "Credential approval - approve and remember"))
-        alert.addButton(withTitle: NSLocalizedString("Always Allow", comment: "Credential approval - approve permanently"))
-        alert.addButton(withTitle: NSLocalizedString("Deny", comment: "Credential approval - deny"))
-        // Auto-deny if the user doesn't respond, so an agent request can't hang
-        // indefinitely on an unattended prompt. A run-loop timer, NOT
-        // DispatchQueue.main.asyncAfter — see promptForUnlock for why (a
-        // queued main-queue block cannot run while this one is inside
-        // runModal, so the deadline would never fire).
-        let timeout = Timer(timeInterval: 60, repeats: false) { _ in NSApp.abortModal() }
-        RunLoop.main.add(timeout, forMode: .common)
-        let response = alert.runModal()
-        timeout.invalidate()
-        let allAgents = alert.suppressionButton?.state == .on
-        switch response {
-        case .alertFirstButtonReturn: return .once
-        case .alertSecondButtonReturn: return .remember(allAgents: allAgents)
-        case .alertThirdButtonReturn: return .always(allAgents: allAgents)
-        default: return .denied   // deny button, or the auto-deny timeout
-        }
+        return decision
     }
 }

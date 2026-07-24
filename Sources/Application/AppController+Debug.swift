@@ -178,6 +178,22 @@ extension AppController {
 
         fakeDeletionItem.submenu = fakeDeletionMenu
         debugMenu.addItem(fakeDeletionItem)
+
+        let credentialPromptItem = NSMenuItem(title: "Credential Prompts", action: nil, keyEquivalent: "")
+        let credentialPromptSubmenu = NSMenu(title: "Credential Prompts")
+        for (title, kind) in [("Approval — Fill", "fill"),
+                              ("Approval — Run", "run"),
+                              ("Approval — Reveal", "reveal"),
+                              ("Vault Unlock", "unlock")] {
+            let item = NSMenuItem(title: title,
+                                  action: #selector(debugShowCredentialPrompt(_:)),
+                                  keyEquivalent: "")
+            item.target = self
+            item.representedObject = kind
+            credentialPromptSubmenu.addItem(item)
+        }
+        credentialPromptItem.submenu = credentialPromptSubmenu
+        debugMenu.addItem(credentialPromptItem)
 #endif
         
         let themeMenuItem = NSMenuItem(title: "Debug Theme", action: nil, keyEquivalent: "")
@@ -593,6 +609,35 @@ extension AppController {
             }
             AppLogInfo("[AgentSpace][debug] simulated agent Space \(spaceId); switch to its pip to watch")
             AgentSpaceManager.shared.setStatusCaption(taskId: taskId, caption: "Reading the page…")
+        }
+    }
+
+    /// Test harness for the credential dialogs: runs the real coordinator flow
+    /// (so a remembered debug grant shows up — and is revocable — in Settings)
+    /// without needing an agent connection or a configured provider.
+    @MainActor
+    @objc func debugShowCredentialPrompt(_ sender: NSMenuItem) {
+        switch sender.representedObject as? String {
+        case "fill":
+            let approved = CredentialAccessCoordinator.shared.requestApproval(
+                agentName: "claude", scope: "github.com", kind: .fill,
+                purpose: "fill the password field on the GitHub sign-in page")
+            AppLogInfo("[Credentials][debug] fill prompt approved=\(approved)")
+        case "run":
+            let approved = CredentialAccessCoordinator.shared.requestApproval(
+                agentName: "deploy-bot", scope: "registry.npmjs.org", kind: .run,
+                purpose: "publish the package with npm publish")
+            AppLogInfo("[Credentials][debug] run prompt approved=\(approved)")
+        case "reveal":
+            let approved = CredentialAccessCoordinator.shared.requestApproval(
+                agentName: "An agent", scope: "github.com", kind: .reveal, purpose: nil)
+            AppLogInfo("[Credentials][debug] reveal prompt approved=\(approved)")
+        case "unlock":
+            let entered = CredentialAccessCoordinator.shared.promptForUnlock(
+                agentName: "claude", scope: "github.com")
+            AppLogInfo("[Credentials][debug] unlock prompt entered=\(entered != nil)")
+        default:
+            break
         }
     }
     #endif

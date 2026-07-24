@@ -617,6 +617,7 @@ final class PhiAlertPresenter {
     private enum PresentationStyle {
         case none
         case sheet
+        case standalone
     }
 
     private weak var sourceWindow: NSWindow?
@@ -666,6 +667,23 @@ final class PhiAlertPresenter {
         return presenter.runSheetSynchronously(content: content(dismiss))
     }
 
+    /// Synchronous presentation for callers with no visible window to host a
+    /// sheet (e.g. an agent request arriving while every browser window is
+    /// closed): the alert floats as its own centered panel, themed from the
+    /// shared fallback source.
+    static func runStandaloneSynchronously<Content: View>(
+        @ViewBuilder content: (PhiAlertDismissAction) -> Content
+    ) -> NSApplication.ModalResponse {
+        let presenter = PhiAlertPresenter(
+            sourceWindow: nil,
+            onDismiss: nil
+        )
+        let dismiss = PhiAlertDismissAction { [weak presenter] response in
+            presenter?.dismiss(response)
+        }
+        return presenter.runStandaloneSynchronously(content: content(dismiss))
+    }
+
     func dismiss(_ response: NSApplication.ModalResponse = .cancel) {
         guard let alertWindow else { return }
 
@@ -677,7 +695,7 @@ final class PhiAlertPresenter {
                 alertWindow.close()
                 completeDismissal(response)
             }
-        case .none:
+        case .none, .standalone:
             alertWindow.close()
             completeDismissal(response)
         }
@@ -697,19 +715,46 @@ final class PhiAlertPresenter {
         }
     }
 
+    private func presentStandalone<Content: View>(content: Content) {
+        let alertWindow = makeAlertWindow(
+            content: content,
+            themeProvider: ThemeManager.shared
+        )
+        presentationStyle = .standalone
+        isPresented = true
+        alertWindow.level = .modalPanel
+        alertWindow.center()
+        NSApp.activate(ignoringOtherApps: false)
+        alertWindow.makeKeyAndOrderFront(nil)
+    }
+
     private func runSheetSynchronously<Content: View>(
         content: Content
     ) -> NSApplication.ModalResponse {
         var response: NSApplication.ModalResponse?
         onDismiss = { response = $0 }
         presentSheet(content: content)
+        pumpEvents(while: { response == nil && isPresented })
+        return response ?? .cancel
+    }
 
-        // Chromium owns the outer NSApplication event loop. A nested RunLoop
-        // alone does not dequeue NSEvents, so explicitly pump and dispatch them
-        // while preserving the synchronous API for the attached sheet.
-        while response == nil, isPresented {
+    private func runStandaloneSynchronously<Content: View>(
+        content: Content
+    ) -> NSApplication.ModalResponse {
+        var response: NSApplication.ModalResponse?
+        onDismiss = { response = $0 }
+        presentStandalone(content: content)
+        pumpEvents(while: { response == nil && isPresented })
+        return response ?? .cancel
+    }
+
+    // Chromium owns the outer NSApplication event loop. A nested RunLoop
+    // alone does not dequeue NSEvents, so explicitly pump and dispatch them
+    // while preserving the synchronous API for the presented alert.
+    private func pumpEvents(while shouldContinue: () -> Bool) {
+        while shouldContinue() {
             for mode in Self.synchronousEventPumpModes {
-                guard response == nil, isPresented else { break }
+                guard shouldContinue() else { break }
                 autoreleasepool {
                     let waitUntil = Date(
                         timeIntervalSinceNow: Self.synchronousEventPumpSliceDuration
@@ -725,8 +770,6 @@ final class PhiAlertPresenter {
                 }
             }
         }
-
-        return response ?? .cancel
     }
 
     private func makeAlertWindow<Content: View>(
@@ -833,8 +876,12 @@ extension NSApplication {
         relativeTo sourceWindow: NSWindow? = nil,
         @ViewBuilder content: (PhiAlertDismissAction) -> Content
     ) -> NSApplication.ModalResponse {
-        guard let sourceWindow = resolvedPhiAlertSourceWindow(sourceWindow) else {
-            return .cancel
+        // Without a visible host window the alert floats standalone instead of
+        // silently resolving to .cancel — an agent-initiated prompt must reach
+        // the user even when every browser window is closed.
+        guard let sourceWindow = resolvedPhiAlertSourceWindow(sourceWindow),
+              sourceWindow.isVisible else {
+            return PhiAlertPresenter.runStandaloneSynchronously(content: content)
         }
 
         return PhiAlertPresenter.runSheetSynchronously(
