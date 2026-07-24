@@ -323,7 +323,11 @@ Space.
   earlier round (`addUrlRule` returns the new rule row, id included).
 - `addPinnedTab` creates the pinned entry as a closed pinned tab (it opens
   when clicked). Mutation helpers settle before returning — they poll until
-  their own write is readable — so a list right after a mutation reflects it.
+  their own write is readable — so a list right after a mutation reflects
+  it. On a slow write the poll can lapse: the return then carries
+  `settled: false` (or `deleted`/`closed`/`removed`/`ungrouped: false`) —
+  the operation was SENT but unconfirmed, not failed; re-list to check
+  before assuming either way.
 - `openSpaceTab(space, url, {activate})` — open a URL as a new tab in a user
   Space's open window ("open X in my space"), returning the new tab row
   `{tabId, targetId, url, title, active, windowId}`. `activate` defaults
@@ -379,11 +383,18 @@ Semantics and differences from a task Space:
   no overlay pill or transcript console — `setStatus`/`narrate`/`markError`
   are quiet no-ops; report progress in chat instead.
 - No viewport emulation: the window is visible and sized for real, so
-  layout is exactly what the user sees; `setViewport` still works but
-  visibly changes their tab — leave it alone.
+  layout is exactly what the user sees. `setViewport` and `diffUrls` refuse
+  in this mode (the first would visibly reshape the user's tab, the second
+  churns a temporary tab through their strip) — use an agent Space for
+  both.
 - `openTab(url)` in this mode routes through `openSpaceTab` into the bound
-  Space's window (no blank-tab reuse, no automatic consent pass — the user
-  can see the banner; `acceptCookies()` still works after attach).
+  Space's window and returns once the document is ready (no blank-tab
+  reuse). Neither `openTab` nor `goto` runs the automatic cookie-consent
+  pass here — consent in the user's own window is the user's choice;
+  an explicit `acceptCookies()` call still works.
+- Tab layout and downloads helpers (`listTabGroups`, `createSplitView`,
+  `listDownloads`, …) target the bound Space's window automatically, same
+  as they target the task window in agent mode; `{space}` still overrides.
 - Same gate as the rest of this surface: everything fails with
   `user_space_operations_disabled` until the user enables agent Space
   operations.
@@ -974,3 +985,8 @@ hand off or ask. A plain "we use cookies" notice is not one of them.
   denied, read `references/install.md` and follow it (enable Settings ▸
   Developer ▸ Remote debugging — no relaunch — and approve the consent prompt),
   then return to the task.
+- Endpoint discovery prefers Phi Canary over stable Phi when BOTH advertise
+  a live endpoint (dead leftovers are probed and skipped). To target a
+  specific install, set `PHI_USER_DATA_DIR` to its Application Support dir
+  (e.g. `~/Library/Application Support/com.phibrowser.Mac` for stable) when
+  invoking the runner.

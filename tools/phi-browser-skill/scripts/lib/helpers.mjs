@@ -317,6 +317,11 @@ export async function spaceStatus({ shots = false } = {}) {
     throw new Error("spaceStatus: only {shots: 'current'} is supported — " +
                     'background tabs of the hidden window do not paint')
   }
+  if (!state.task && state.userSpace) {
+    throw new Error('spaceStatus is agent-space only (there is no task ' +
+                    'record for a user Space) — in user-space mode use ' +
+                    'listTabs(), userFocus(), or screenshot() instead')
+  }
   const task = requireTask()
   const tasks = await listAgentSpaces()
   const t = tasks.find((x) => x.taskId === task.taskId)
@@ -917,12 +922,36 @@ async function prepareTab(client, targetId, { navigateTo = null, acceptCookies }
  * the current tab, so switchTab before acting on a specific one.
  */
 export async function openTab(url, { acceptCookies = true, reuseBlank = true } = {}) {
-  // User-space mode: open in the bound user Space's window and attach —
-  // page state (blank-tab reuse, consent pass) stays the user's own.
+  // User-space mode: open in the bound user Space's window and attach.
+  // {acceptCookies} and {reuseBlank} deliberately do not apply here: consent
+  // stays the user's own choice, and there is no agent seed tab to reuse.
   if (!state.task && state.userSpace) {
     const tab = await openSpaceTab(state.userSpace.spaceId, url)
-    if (!tab.targetId) {
-      throw new Error(`openTab: new user-space tab for ${url} has no CDP target`)
+    // Wait for the document on a DEDICATED session (concurrent opens must
+    // not contend for the shared current-tab session — same reason
+    // prepareTab exists), then do the cheap final attach. The spaces.openTab
+    // reply predates the navigation's commit, and the initial about:blank
+    // document reports readyState 'complete', so require the real page to
+    // have committed before trusting readiness.
+    const client = await cdpClient()
+    const { sessionId } = await client.send('Target.attachToTarget',
+      { targetId: tab.targetId, flatten: true })
+    try {
+      const deadline = Date.now() + 20000
+      while (Date.now() < deadline) {
+        const s = await evalOnSession(sessionId,
+          "document.readyState + '|' + location.href", 4000).catch(() => null)
+        if (s) {
+          const sep = String(s).indexOf('|')
+          const ready = String(s).slice(0, sep)
+          const href = String(s).slice(sep + 1)
+          const committed = url === 'about:blank' || href !== 'about:blank'
+          if (committed && (ready === 'complete' || ready === 'interactive')) break
+        }
+        await wait(0.25)
+      }
+    } finally {
+      client.send('Target.detachFromTarget', { sessionId }).catch(() => {})
     }
     await attachTab(tab.targetId)
     return { targetId: tab.targetId, windowId: tab.windowId, tabId: tab.tabId }
@@ -1011,8 +1040,10 @@ export async function goto(url, { timeout = 25, acceptCookies = true } = {}) {
   // Dismiss a cookie-consent banner with the static rule set (CMP selectors
   // only — high precision, no model turn), polling briefly for a late-injected
   // banner to surface. Opt out with {acceptCookies:false}; tune the wait by
-  // passing an options object, e.g. {acceptCookies:{waitMs:8000}}.
-  if (acceptCookies) {
+  // passing an options object, e.g. {acceptCookies:{waitMs:8000}}. Skipped in
+  // user-space mode like openTab's pass: consent in the user's own window is
+  // the user's choice (an explicit acceptCookies() call still works).
+  if (acceptCookies && !(state.userSpace && !state.task)) {
     await autoAcceptConsent(typeof acceptCookies === 'object' ? acceptCookies : {})
   }
   // The navigation itself succeeded; a page probe that still fails (busy or
@@ -1829,7 +1860,11 @@ const PHI_SCAN_FN = `function (opts) {
       // Never echo a password field's content into the scan (and thus into
       // the agent's context) — report only that a value is present. Covers
       // secrets the agent filled AND ones the user typed during a handoff.
-      const secretVal = (el.type || '').toLowerCase() === 'password'
+      // data-phi-filled is the app's durable vault-fill marker: it keeps
+      // the mask on even after a show-password toggle flips the input to
+      // type=text (the type check alone would then leak the value).
+      const secretVal = (el.type || '').toLowerCase() === 'password' ||
+                        el.hasAttribute('data-phi-filled')
       const shownVal = el.value ? (secretVal ? '•••' : String(el.value).slice(0, 120)) : ''
       const { n, loc } = record(el, 'input', {
         name: nm, type: el.type || 'text',
@@ -2189,6 +2224,14 @@ export async function readNetwork({ failedOnly = false, max = 100 } = {}) {
  * line-multiset format as snapshotText({diff: true})), enveloped.
  */
 export async function diffUrls(url1, url2) {
+  // The temp-tab contract ("the current tab is untouched") cannot hold in a
+  // visible user window: every open/attach/close there flips the tab the
+  // user is looking at. Run comparisons from an agent Space.
+  if (!state.task && state.userSpace) {
+    throw new Error('diffUrls is agent-space only — it churns a temporary ' +
+                    'tab, which would visibly flip tabs in the user\'s ' +
+                    'window; run it from an agent Space (ensureAgentSpace)')
+  }
   await guardAgentControl()
   const prevTarget = state.targetId
   // A separate tab is the contract here (it is closed in the finally): reusing
@@ -2931,6 +2974,15 @@ export async function scrapeMedia({ types = ['image'], within = null, dir,
  * applied {width, height, scale}.
  */
 export async function setViewport({ width, height } = {}) {
+  // The emulation override exists for the HIDDEN agent window (0×0 without
+  // it). A user-Space tab is visible and sized for real — imposing metrics
+  // there would visibly reshape the user's own tab and nothing would clear
+  // it. Test responsive layouts from an agent Space instead.
+  if (!state.task && state.userSpace) {
+    throw new Error('setViewport is agent-space only — a user-Space tab is ' +
+                    'visible and sized for real; use an agent Space to test ' +
+                    'explicit viewport sizes')
+  }
   await guardAgentControl()
   const clamp = (v, name) => {
     if (v === undefined) return undefined
@@ -3798,8 +3850,10 @@ export async function importCookies(source, { url } = {}) {
 
 /** Management writes commit on a background queue in the app; this polls
  *  `check` until it returns a truthy value (the settled read) or the timeout
- *  lapses (best effort: returns the last value, no throw), so every mutation
- *  helper reads its own write before returning. */
+ *  lapses (best effort: returns the last value, no throw). Mutation helpers
+ *  surface the outcome as a `settled` flag (or their `deleted`/`closed`/…
+ *  confirmation boolean) — false means the write was SENT but not yet
+ *  readable within the wait, not that it failed; re-list to check. */
 async function settle(check, { timeout = 4, poll = 0.15 } = {}) {
   const deadline = Date.now() + timeout * 1000
   let last
@@ -3877,13 +3931,13 @@ export async function updateSpace(space, { name, colorHex, iconName } = {}) {
     ...(colorHex ? { colorHex } : {}),
     ...(iconName ? { iconName } : {}),
   })
-  await settle(async () => {
+  const settled = !!(await settle(async () => {
     const s = (await listSpaces()).find((x) => x.spaceId === spaceId)
     return s && (!name || s.name === name) &&
            (!colorHex || s.colorHex === colorHex) &&
            (!iconName || s.iconName === iconName)
-  })
-  return { spaceId }
+  }))
+  return { spaceId, settled }
 }
 
 /** Deletes a Space: closes its windows and cascade-deletes its bookmarks and
@@ -3892,9 +3946,9 @@ export async function updateSpace(space, { name, colorHex, iconName } = {}) {
 export async function deleteSpace(space) {
   const spaceId = await resolveSpaceId(space)
   await phiSend('agentSpace.spaces.delete', { spaceId })
-  await settle(async () =>
-    !(await listSpaces()).some((s) => s.spaceId === spaceId))
-  return { spaceId, deleted: true }
+  const settled = !!(await settle(async () =>
+    !(await listSpaces()).some((s) => s.spaceId === spaceId)))
+  return { spaceId, deleted: settled }
 }
 
 /** Creates a browser profile (its own cookies/logins). Returns {profileId}.
@@ -3950,17 +4004,17 @@ export async function updateUrlRule(id, { host, pathPrefix, ask, space } = {}) {
   if (ask !== undefined) payload.ask = !!ask
   if (space !== undefined) payload.spaceId = await resolveSpaceId(space)
   await phiSend('agentSpace.urlRules.update', payload)
-  await settle(async () =>
-    !(await listUrlRules()).some((r) => r.id === id))
-  return { id }
+  const settled = !!(await settle(async () =>
+    !(await listUrlRules()).some((r) => r.id === id)))
+  return { id, settled }
 }
 
 /** Deletes one rule by id (from a FRESH listUrlRules()). */
 export async function deleteUrlRule(id) {
   await phiSend('agentSpace.urlRules.delete', { id })
-  await settle(async () =>
-    !(await listUrlRules()).some((r) => r.id === id))
-  return { id, deleted: true }
+  const settled = !!(await settle(async () =>
+    !(await listUrlRules()).some((r) => r.id === id)))
+  return { id, deleted: settled }
 }
 
 /** The profile's pinned tabs (pinned tabs are per-profile, shared by all of
@@ -3983,10 +4037,10 @@ export async function addPinnedTab(url, { title, profile = '', index } = {}) {
     ...(profile ? { profileId: profile } : {}),
     ...(Number.isInteger(index) ? { index } : {}),
   })
-  await settle(async () =>
+  const settled = !!(await settle(async () =>
     (await listPinnedTabs({ profile: created.profileId }))
-      .some((p) => p.guid === created.guid))
-  return { guid: created.guid, profileId: created.profileId }
+      .some((p) => p.guid === created.guid)))
+  return { guid: created.guid, profileId: created.profileId, settled }
 }
 
 /** Edits a pinned tab's {url, title} by guid (from listPinnedTabs()). */
@@ -3996,20 +4050,20 @@ export async function updatePinnedTab(guid, { url, title } = {}) {
     ...(url !== undefined ? { url } : {}),
     ...(title !== undefined ? { title } : {}),
   })
-  await settle(async () => {
+  const settled = !!(await settle(async () => {
     const p = (await listPinnedTabs()).find((x) => x.guid === guid)
     return p && (url === undefined || p.url === url) &&
            (title === undefined || p.title === title)
-  })
-  return { guid }
+  }))
+  return { guid, settled }
 }
 
 /** Unpins (deletes the pinned record) by guid. */
 export async function removePinnedTab(guid) {
   await phiSend('agentSpace.pinnedTabs.remove', { guid })
-  await settle(async () =>
-    !(await listPinnedTabs()).some((p) => p.guid === guid))
-  return { guid, deleted: true }
+  const settled = !!(await settle(async () =>
+    !(await listPinnedTabs()).some((p) => p.guid === guid)))
+  return { guid, deleted: settled }
 }
 
 /** The Space's bookmark tree (bookmarks are per-Space). Folders carry
@@ -4031,12 +4085,12 @@ export async function addBookmark(url, { title, space, folder, index } = {}) {
   if (folder) payload.parentGuid = folder
   if (Number.isInteger(index)) payload.index = index
   const created = await phiSend('agentSpace.bookmarks.add', payload)
-  await settle(async () => {
+  const settled = !!(await settle(async () => {
     const tree = await phiSend('agentSpace.bookmarks.list',
       payload.spaceId ? { spaceId: payload.spaceId } : {})
     return findBookmarkNode(tree.bookmarks, created.guid)
-  })
-  return { guid: created.guid }
+  }))
+  return { guid: created.guid, settled }
 }
 
 /** Creates a bookmark folder. Options: {space, parent (folder guid), index}.
@@ -4048,12 +4102,12 @@ export async function addBookmarkFolder(title, { space, parent, index } = {}) {
   if (parent) payload.parentGuid = parent
   if (Number.isInteger(index)) payload.index = index
   const created = await phiSend('agentSpace.bookmarks.addFolder', payload)
-  await settle(async () => {
+  const settled = !!(await settle(async () => {
     const tree = await phiSend('agentSpace.bookmarks.list',
       payload.spaceId ? { spaceId: payload.spaceId } : {})
     return findBookmarkNode(tree.bookmarks, created.guid)
-  })
-  return { guid: created.guid }
+  }))
+  return { guid: created.guid, settled }
 }
 
 /** Edits a bookmark's {title, url} by guid; folders take title only. */
@@ -4063,14 +4117,14 @@ export async function updateBookmark(guid, { title, url } = {}) {
     ...(title !== undefined ? { title } : {}),
     ...(url !== undefined ? { url } : {}),
   })
-  await settle(async () => {
+  const settled = !!(await settle(async () => {
     const tree = await phiSend('agentSpace.bookmarks.list', { spaceId: res.spaceId })
     const node = findBookmarkNode(tree.bookmarks, guid)
     return node && (title === undefined || node.title === title)
     // URL is normalized by the app (scheme, trailing slash), so it is not
     // string-compared here; the title check settles the same write.
-  })
-  return { guid }
+  }))
+  return { guid, settled }
 }
 
 /** Moves a bookmark/folder. Options: {folder: parent folder guid (omit for
@@ -4081,24 +4135,24 @@ export async function moveBookmark(guid, { folder, index } = {}) {
     ...(folder ? { parentGuid: folder } : {}),
     ...(Number.isInteger(index) ? { index } : {}),
   })
-  await settle(async () => {
+  const settled = !!(await settle(async () => {
     const tree = await phiSend('agentSpace.bookmarks.list', { spaceId: res.spaceId })
     if (!folder) return findBookmarkNode(tree.bookmarks, guid) // at root or anywhere: moved
     const parent = findBookmarkNode(tree.bookmarks, folder)
     return parent && findBookmarkNode(parent.children ?? [], guid)
-  })
-  return { guid }
+  }))
+  return { guid, settled }
 }
 
 /** Deletes a bookmark — or a folder with everything in it. DESTRUCTIVE for
  *  folders: only on the user's explicit ask. */
 export async function removeBookmark(guid) {
   const res = await phiSend('agentSpace.bookmarks.remove', { guid })
-  await settle(async () => {
+  const settled = !!(await settle(async () => {
     const tree = await phiSend('agentSpace.bookmarks.list', { spaceId: res.spaceId })
     return !findBookmarkNode(tree.bookmarks, guid)
-  })
-  return { guid, deleted: true }
+  }))
+  return { guid, deleted: settled }
 }
 
 // --- Credentials -------------------------------------------------------------
@@ -4562,6 +4616,11 @@ async function targetIdsByTabId() {
  *  when mutating). */
 async function layoutScope(space, { mutating = true } = {}) {
   if (space) return { spaceId: await resolveSpaceId(space) }
+  // User-space mode: the bound Space is the implicit target, same as the
+  // task window is in agent mode.
+  if (!state.task && state.userSpace) {
+    return { spaceId: state.userSpace.spaceId }
+  }
   if (mutating) await guardAgentControl()
   return { taskId: requireTask().taskId }
 }
@@ -4584,6 +4643,12 @@ export async function listSpaceTabs(space) {
  *  tab as {tabId, targetId, url, title, active, windowId}, settled by
  *  diffing the Space's tab strip. Fails with `space_not_open` when the
  *  Space has no open window. */
+// Tabs already claimed by an openSpaceTab call this round. Concurrent opens
+// (Promise.all over URLs) each diff the same tab strip, so every call must
+// claim its tab synchronously inside the settle check — mirroring openTab's
+// claimedTabs — or two calls could return the same new tab.
+const claimedSpaceTabs = new Set()
+
 export async function openSpaceTab(space, url, { activate = true } = {}) {
   if (!url || typeof url !== 'string') {
     throw new Error('openSpaceTab(space, url): url is required')
@@ -4594,7 +4659,12 @@ export async function openSpaceTab(space, url, { activate = true } = {}) {
                                      { spaceId, url, activate })
   let tab = null
   await settle(async () => {
-    tab = (await listSpaceTabs(spaceId)).find((t) => !before.has(t.tabId))
+    // Require a live targetId: the tab row can appear in the strip a poll
+    // before its CDP target materializes, and callers need the target. The
+    // find-then-add is synchronous — that's what makes the claim race-free.
+    const fresh = (await listSpaceTabs(spaceId)).find((t) =>
+      !before.has(t.tabId) && !claimedSpaceTabs.has(t.tabId) && t.targetId)
+    if (fresh) { claimedSpaceTabs.add(fresh.tabId); tab = fresh }
     return !!tab
   }, { timeout: 10 })
   if (!tab) throw new Error(`openSpaceTab: no new tab appeared for ${url}`)
@@ -4670,6 +4740,9 @@ export async function ensureUserSpace(space, { profile = '', create = true,
       if (!/space_not_open/.test(String(err?.message))) throw err
     }
   }
+  // An open window with an empty tab strip is broken, not usable — send it
+  // through activation too (surfacing a Space seeds a tab).
+  if (reply && reply.tabs.length === 0) reply = null
   if (!reply) {
     await phiSend('agentSpace.spaces.activate', { spaceId })
     await settle(async () => {
@@ -4677,11 +4750,24 @@ export async function ensureUserSpace(space, { profile = '', create = true,
         .catch(() => null)
       return !!(reply && reply.tabs.length > 0)
     }, { timeout: 10 })
-    if (!reply) {
-      throw new Error(`ensureUserSpace: space '${space}' did not open a window`)
+    // `reply` is assigned on every poll — a timeout can leave it non-null
+    // but tabless, so the usable-window test is the tab count, not `reply`.
+    if (!reply || reply.tabs.length === 0) {
+      throw new Error(
+        `ensureUserSpace: space '${space}' did not open a window with tabs`)
     }
   }
   const entry = (await listSpaces()).find((s) => s.spaceId === spaceId)
+  // Rebinding away from a live agent task: release its busy badge and grant
+  // the inter-round grace now — __dispose skips both once task is null, and
+  // without the ping an ephemeral Space would expire ~120s into the gap.
+  if (state.task && state.task.ownership === 'agent') {
+    await reportRunState(false)
+    await phiSend('agentSpace.ping', {
+      taskId: state.task.taskId,
+      ttlSeconds: INTER_ROUND_KEEPALIVE_SECONDS,
+    }).catch(() => {})
+  }
   state.task = null  // user-space binding supersedes any task binding
   state.userSpace = { spaceId, name: entry?.name ?? space,
                       windowId: reply.windowId }
@@ -4729,11 +4815,11 @@ export async function createTabGroup(targets, { title, color, space } = {}) {
   })
   // Group state flows back from the browser asynchronously — settle until
   // the new group is listable so follow-up ops (update, addTabs) can trust it.
-  await settle(async () => {
+  const settled = !!(await settle(async () => {
     const { groups } = await phiSend('agentSpace.tabGroups.list', scope)
     return groups.some((g) => g.token === created.token)
-  })
-  return { token: created.token }
+  }))
+  return { token: created.token, settled }
 }
 
 /** Edits a group's {title, color, collapsed}, each optional. */
@@ -4769,22 +4855,22 @@ export async function removeTabsFromGroup(targets, { space } = {}) {
 export async function ungroupTabGroup(token, { space } = {}) {
   const scope = await layoutScope(space)
   await phiSend('agentSpace.tabGroups.ungroup', { ...scope, token })
-  await settle(async () => {
+  const settled = !!(await settle(async () => {
     const { groups } = await phiSend('agentSpace.tabGroups.list', scope)
     return !groups.some((g) => g.token === token)
-  })
-  return { token, ungrouped: true }
+  }))
+  return { token, ungrouped: settled }
 }
 
 /** Closes a group AND every tab in it. */
 export async function closeTabGroup(token, { space } = {}) {
   const scope = await layoutScope(space)
   await phiSend('agentSpace.tabGroups.close', { ...scope, token })
-  await settle(async () => {
+  const settled = !!(await settle(async () => {
     const { groups } = await phiSend('agentSpace.tabGroups.list', scope)
     return !groups.some((g) => g.token === token)
-  })
-  return { token, closed: true }
+  }))
+  return { token, closed: settled }
 }
 
 /** The target window's splits, as [{splitId, layout, ratio,
@@ -4810,11 +4896,11 @@ export async function createSplitView(primaryTarget, secondaryTarget,
   const created = await phiSend('agentSpace.splitView.create', {
     ...scope, primaryTabId, secondaryTabId, layout,
   })
-  await settle(async () => {
+  const settled = !!(await settle(async () => {
     const { splits } = await phiSend('agentSpace.splitView.list', scope)
     return splits.some((s) => s.splitId === created.splitId)
-  })
-  return { splitId: created.splitId }
+  }))
+  return { splitId: created.splitId, settled }
 }
 
 /** Adjusts a split: {ratio} (0–1, the primary pane's share) and/or {layout}. */
@@ -4839,11 +4925,11 @@ export async function swapSplitView(splitId, { space } = {}) {
 export async function removeSplitView(splitId, { space } = {}) {
   const scope = await layoutScope(space)
   await phiSend('agentSpace.splitView.remove', { ...scope, splitId })
-  await settle(async () => {
+  const settled = !!(await settle(async () => {
     const { splits } = await phiSend('agentSpace.splitView.list', scope)
     return !splits.some((s) => s.splitId === splitId)
-  })
-  return { splitId, removed: true }
+  }))
+  return { splitId, removed: settled }
 }
 
 // ---------------------------------------------------------------------------

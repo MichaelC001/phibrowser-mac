@@ -44,26 +44,47 @@ const TCP_ONLY_MESSAGE =
   'Phi (CDP)”. The debugging port serves raw CDP tools only.'
 
 /**
- * Locates the endpoint: the app-owned Unix socket (pointer file
- * `CDPAgentSocket`). Also detects the `--remote-debugging-port` TCP override so
- * connectBrowser can explain why the skill can't use it.
- * Returns `{ kind: 'uds', socketPath }` or `{ kind: 'tcp' }`.
+ * All plausible endpoints in precedence order — the PHI_USER_DATA_DIR
+ * override, then canary, then stable: UDS pointers first (across ALL dirs),
+ * then any `--remote-debugging-port` TCP override. A pointer or socket FILE
+ * can outlive a crashed app (a crash skips the clean-quit unlink), so
+ * existence is not liveness — callers walk the list and probe, see
+ * discoverLiveEndpoint. Each entry is `{kind: 'uds', socketPath}` or
+ * `{kind: 'tcp'}`.
  */
-export function discoverEndpoint() {
+export function discoverEndpoints() {
+  const out = []
   for (const dir of CANDIDATE_DIRS) {
     const pointer = join(dir, 'CDPAgentSocket')
-    if (existsSync(pointer)) {
-      const socketPath = readFileSync(pointer, 'utf8')
-        .split('\n').map((l) => l.trim()).filter(Boolean)[0]
-      if (socketPath && existsSync(socketPath)) {
-        return { kind: 'uds', socketPath }
-      }
-    }
-    if (existsSync(join(dir, 'DevToolsActivePort'))) {
-      return { kind: 'tcp' }
+    if (!existsSync(pointer)) continue
+    const socketPath = readFileSync(pointer, 'utf8')
+      .split('\n').map((l) => l.trim()).filter(Boolean)[0]
+    if (socketPath && existsSync(socketPath)) {
+      out.push({ kind: 'uds', socketPath })
     }
   }
-  throw new Error(NOT_FOUND_MESSAGE)
+  for (const dir of CANDIDATE_DIRS) {
+    if (existsSync(join(dir, 'DevToolsActivePort'))) out.push({ kind: 'tcp' })
+  }
+  return out
+}
+
+/** True for errors meaning "this socket file has no listener behind it" —
+ *  a crash-orphaned socket refuses instantly (a crash skips the clean-quit
+ *  unlink), so walking on to the next candidate is safe. Anything else is a
+ *  real answer from a live endpoint (denial, sandbox wall, timeout) and
+ *  must propagate. NEVER probe with a naked connect(2) instead: a zero-byte
+ *  connection reaches the app's serial consent pipeline as an unidentifiable
+ *  peer — liveness is only checked with real, identified requests. */
+export function isDeadSocketError(err) {
+  return /ECONNREFUSED|ENOENT/.test(String(err?.message || err))
+}
+
+/** Legacy sync discovery: the first candidate by precedence, unprobed. */
+export function discoverEndpoint() {
+  const all = discoverEndpoints()
+  if (all.length === 0) throw new Error(NOT_FOUND_MESSAGE)
+  return all[0]
 }
 
 /**
@@ -549,20 +570,35 @@ export class DirectPhiChannel {
 }
 
 export async function connectBrowser({ agentPid = null } = {}) {
-  const endpoint = discoverEndpoint()
-  if (endpoint.kind !== 'uds') {
+  const candidates = discoverEndpoints()
+  if (candidates.length === 0) throw new Error(NOT_FOUND_MESSAGE)
+  const uds = candidates.filter((c) => c.kind === 'uds')
+  if (uds.length === 0) {
     // The --remote-debugging-port override has no authenticated agent-Space
     // surface, so the skill can't drive agent Spaces over it.
     throw new Error(TCP_ONLY_MESSAGE)
   }
-  const { browserWsPath } = await verifyEndpoint(endpoint, { agentPid })
-  const client = new CdpClient({ socketPath: endpoint.socketPath,
-                                 wsPath: browserWsPath, agentPid })
-  await client.connect()
-  // Management + lifecycle go straight to the app over a second WS on the same
-  // socket (/phi-agent); page automation stays on the Chromium browser-target
-  // WS above.
-  client.phi = await new DirectPhiChannel({ socketPath: endpoint.socketPath,
-                                            agentPid }).connect()
-  return client
+  let lastErr = null
+  for (const endpoint of uds) {
+    let browserWsPath
+    try {
+      ({ browserWsPath } = await verifyEndpoint(endpoint, { agentPid }))
+    } catch (err) {
+      // A crashed app's leftover socket refuses instantly — walk on so a
+      // dead canary pointer can never shadow a live stable Phi. Real
+      // answers (denial, sandbox wall, no-WS) propagate.
+      if (isDeadSocketError(err)) { lastErr = err; continue }
+      throw err
+    }
+    const client = new CdpClient({ socketPath: endpoint.socketPath,
+                                   wsPath: browserWsPath, agentPid })
+    await client.connect()
+    // Management + lifecycle go straight to the app over a second WS on the
+    // same socket (/phi-agent); page automation stays on the Chromium
+    // browser-target WS above.
+    client.phi = await new DirectPhiChannel({ socketPath: endpoint.socketPath,
+                                              agentPid }).connect()
+    return client
+  }
+  throw lastErr ?? new Error(NOT_FOUND_MESSAGE)
 }

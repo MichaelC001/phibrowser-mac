@@ -121,6 +121,8 @@ final class AgentCDPListener {
             return
         }
 
+        Self.sweepOrphanedSocketDirs(
+            keeping: (paths.socket as NSString).deletingLastPathComponent)
         guard Self.prepareSocketDirectory(for: paths.socket) else { return }
         unlink(paths.socket)  // clear a stale socket from a previous run
 
@@ -215,9 +217,17 @@ final class AgentCDPListener {
         // Peek (never consume) the request head up front: the first line
         // routes the connection, and any request may carry the agent-session
         // pid claim used for the consent identity below.
-        let requestHead = Self.peekRequestHead(fd)
+        // A connection that never sent a request — a port probe, a liveness
+        // check, a peer that hung up immediately — must not reach consent
+        // evaluation: an unidentifiable zero-byte peer would pop an "Unknown
+        // process" prompt and, on this serial queue, wedge every legitimate
+        // connection behind it. Close it quietly.
+        guard let requestHead = Self.peekRequestHead(fd) else {
+            close(fd)
+            return
+        }
         let requestLine = requestHead
-            .flatMap { $0.split(separator: "\r\n", maxSplits: 1).first }
+            .split(separator: "\r\n", maxSplits: 1).first
             .map(String.init)
         let isPhiAgent = requestLine?.hasPrefix("GET /phi-agent") ?? false
 
@@ -233,8 +243,7 @@ final class AgentCDPListener {
             ?? AgentIdentity(key: "unknown", displayName: "Unknown process",
                              teamId: nil, verified: false, executablePath: "",
                              pid: nil)
-        if let requestHead,
-           let claimedPid = Self.claimedAgentPid(inRequestHead: requestHead),
+        if let claimedPid = Self.claimedAgentPid(inRequestHead: requestHead),
            let claimed = AgentPeerIdentity.resolveClaimed(pid: claimedPid) {
             AppLogInfo("[AgentCDP] peer \(identity.displayName) acts for agent pid "
                        + "\(claimedPid) (\(claimed.displayName))")
@@ -375,13 +384,23 @@ final class AgentCDPListener {
         let pointer: String
     }
 
+    /// Stable per-bundle suffix (FNV-1a of the bundle id). `String.hashValue`
+    /// is seeded per process, which moved the socket directory on every
+    /// launch: the stale-socket unlink at start could never fire across
+    /// launches, and crash-orphaned dirs accumulated in /tmp until reboot.
+    private static func stableSuffix(_ s: String) -> String {
+        var hash: UInt32 = 0x811C_9DC5
+        for byte in s.utf8 { hash = (hash ^ UInt32(byte)) &* 0x0100_0193 }
+        return String(format: "%08x", hash)
+    }
+
     /// The bound socket lives at a short `/tmp` path (bind() caps sun_path at
     /// ~104 bytes, mirroring SentinelIPCClient); the pointer file, which has no
     /// length limit, sits in the app-support dir where the skill looks for it.
     private static func resolveSocketPaths() -> SocketPaths? {
         let uid = getuid()
         let bundleId = FileSystemUtils.bundleId
-        let hash = String(format: "%08x", bundleId.hashValue & 0xFFFF_FFFF)
+        let hash = stableSuffix(bundleId)
         let dir = "/tmp/phi-cdp-\(uid).\(hash)"
         let socket = (dir as NSString).appendingPathComponent("agent.sock")
         guard socket.utf8.count < 104 else {
@@ -418,8 +437,42 @@ final class AgentCDPListener {
         }
     }
 
-    private static func bind(fd: Int32, to path: String) -> Bool {
+    /// Best-effort sweep of crash-orphaned socket dirs — including the
+    /// per-launch-suffixed ones older builds left behind, which a crash
+    /// stranded in /tmp until reboot. A sibling dir whose socket no longer
+    /// accepts is dead weight; a live one (the other Phi flavor's channel)
+    /// is left alone.
+    private static func sweepOrphanedSocketDirs(keeping ownDir: String) {
+        let prefix = "phi-cdp-\(getuid())."
+        let fm = FileManager.default
+        guard let entries = try? fm.contentsOfDirectory(atPath: "/tmp") else { return }
+        for entry in entries where entry.hasPrefix(prefix) {
+            let dir = "/tmp/" + entry
+            guard dir != ownDir else { continue }
+            let sock = (dir as NSString).appendingPathComponent("agent.sock")
+            guard !socketAccepts(sock) else { continue }
+            try? fm.removeItem(atPath: dir)
+        }
+    }
+
+    /// connect(2) probe: a live listener accepts immediately; a
+    /// crash-orphaned socket file refuses in ~0 ms.
+    private static func socketAccepts(_ path: String) -> Bool {
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard fd >= 0 else { return false }
+        defer { close(fd) }
         var addr = sockaddr_un()
+        guard fillSunPath(&addr, with: path) else { return false }
+        let len = socklen_t(MemoryLayout<sockaddr_un>.size)
+        let rc = withUnsafePointer(to: &addr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.connect(fd, $0, len)
+            }
+        }
+        return rc == 0
+    }
+
+    private static func fillSunPath(_ addr: inout sockaddr_un, with path: String) -> Bool {
         addr.sun_family = sa_family_t(AF_UNIX)
         let pathBytes = path.utf8CString
         let capacity = MemoryLayout.size(ofValue: addr.sun_path)
@@ -431,6 +484,12 @@ final class AgentCDPListener {
                 }
             }
         }
+        return true
+    }
+
+    private static func bind(fd: Int32, to path: String) -> Bool {
+        var addr = sockaddr_un()
+        guard fillSunPath(&addr, with: path) else { return false }
         let len = socklen_t(MemoryLayout<sockaddr_un>.size)
         let rc = withUnsafePointer(to: &addr) {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {

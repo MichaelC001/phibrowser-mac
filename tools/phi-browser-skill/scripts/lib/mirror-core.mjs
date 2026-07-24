@@ -23,7 +23,7 @@ import {
 import { execFileSync, spawn } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join, basename } from 'node:path'
-import { discoverEndpoint, DirectPhiChannel } from './cdp.mjs'
+import { discoverEndpoints, isDeadSocketError, DirectPhiChannel } from './cdp.mjs'
 
 // Same directory as helpers.mjs's task files — path derived identically on
 // both sides so writer (heredoc) and reader (daemon) always agree.
@@ -185,9 +185,21 @@ function sanitizeKey(id) {
  * (the detached daemon) that no longer shares the agent's ancestry.
  */
 export async function openPhiChannel({ agentPid = null } = {}) {
-  const endpoint = discoverEndpoint()
-  if (endpoint.kind !== 'uds') throw new Error('no app socket endpoint')
-  return new DirectPhiChannel({ socketPath: endpoint.socketPath, agentPid }).connect()
+  const uds = discoverEndpoints().filter((c) => c.kind === 'uds')
+  if (uds.length === 0) throw new Error('no app socket endpoint')
+  let lastErr = null
+  for (const endpoint of uds) {
+    try {
+      return await new DirectPhiChannel({ socketPath: endpoint.socketPath,
+                                          agentPid }).connect()
+    } catch (err) {
+      // Crash-orphaned socket file — walk on to the next candidate. (Never
+      // probe with a naked connect: see isDeadSocketError in cdp.mjs.)
+      if (isDeadSocketError(err)) { lastErr = err; continue }
+      throw err
+    }
+  }
+  throw lastErr
 }
 
 /**

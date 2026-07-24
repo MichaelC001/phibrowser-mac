@@ -489,6 +489,13 @@ extension AgentSpaceRouter {
           var win = el.ownerDocument.defaultView || window
           var setter = Object.getOwnPropertyDescriptor(win.HTMLInputElement.prototype, 'value').set
           setter.call(el, value)
+          if (field === 'password') {
+            // Durable marker (unlike the consumed one-time token): the
+            // skill's page scans mask any input carrying it, so the value
+            // stays masked even after a show-password toggle flips the
+            // element to type=text.
+            try { el.setAttribute('data-phi-filled', '1') } catch (e) {}
+          }
           el.dispatchEvent(new Event('input', { bubbles: true }))
           el.dispatchEvent(new Event('change', { bubbles: true }))
           return { ok: true }
