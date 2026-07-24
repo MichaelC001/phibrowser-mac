@@ -11,15 +11,12 @@ class PasswordManagerViewController: OnboardingBaseViewController {
 
     enum PasswordManager {
         case icloudPasswords
-        case bitwarden
         case manual
 
         var extensionId: String? {
             switch self {
             case .icloudPasswords:
                 return PhiExtensionID.icloudPasswords
-            case .bitwarden:
-                return PhiExtensionID.bitwarden
             case .manual:
                 return nil
             }
@@ -81,25 +78,10 @@ class PasswordManagerViewController: OnboardingBaseViewController {
         return view
     }()
 
-    private lazy var bitwardenOptionView: PasswordManagerOptionView = {
-        let view = PasswordManagerOptionView(
-            icon: NSImage(resource: .bitwardenIcon),
-            title: NSLocalizedString(
-                "Bitwarden",
-                comment: "Onboarding password manager - Bitwarden option"
-            ),
-            subtitle: nil,
-            isSelected: selectedManager == .bitwarden
-        )
-        view.onTap = { [weak self] in
-            self?.selectManager(.bitwarden)
-        }
-        return view
-    }()
-
     private lazy var manualOptionView: PasswordManagerOptionView = {
         let icons: [NSImage] = [
             NSImage(resource: .onepasswordIcon),
+            NSImage(resource: .bitwardenIcon),
             NSImage(resource: .lastpassIcon),
             NSImage(resource: .enpassIcon)
         ]
@@ -151,7 +133,7 @@ class PasswordManagerViewController: OnboardingBaseViewController {
         view.addSubview(optionsContainer)
         optionsContainer.addSubview(optionsStackView)
 
-        let optionViews = [icloudOptionView, bitwardenOptionView, manualOptionView]
+        let optionViews = [icloudOptionView, manualOptionView]
         for optionView in optionViews {
             optionsStackView.addArrangedSubview(optionView)
             optionView.snp.makeConstraints { make in
@@ -174,7 +156,6 @@ class PasswordManagerViewController: OnboardingBaseViewController {
     private func selectManager(_ manager: PasswordManager) {
         selectedManager = manager
         icloudOptionView.setSelected(manager == .icloudPasswords)
-        bitwardenOptionView.setSelected(manager == .bitwarden)
         manualOptionView.setSelected(manager == .manual)
         AppLogInfo("[PasswordManager] Selected: \(manager)")
     }
@@ -182,14 +163,9 @@ class PasswordManagerViewController: OnboardingBaseViewController {
     // MARK: - Actions
 
     override func nextButtonTapped(_ sender: NSButton? = nil) {
-        // Record the OOBE choice for both managers so newly created profiles can
-        // mirror it (Phase 3 auto-install), then install the chosen extension.
-        // The two flags are mutually exclusive at onboarding time.
         let wantsICloud = (selectedManager == .icloudPasswords)
-        let wantsBitwarden = (selectedManager == .bitwarden)
         PhiPreferences.PasswordManagerSettings.autoInstallICloudPasswords.save(wantsICloud)
-        PhiPreferences.PasswordManagerSettings.bitwardenEnabled.save(wantsBitwarden)
-        if wantsICloud || wantsBitwarden {
+        if wantsICloud {
             installExtension()
         }
         nextClosure?(true)
