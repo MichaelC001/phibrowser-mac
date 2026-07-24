@@ -39,39 +39,6 @@
     "“%@” wants to control Phi Browser" : {
       "comment" : "CDP consent - title"
     },
-    "“%@” wants to fill your %@ login" : {
-      "comment" : "Credential approval - fill title",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "“%1$@” wants to fill your %2$@ login"
-          }
-        }
-      }
-    },
-    "“%@” wants to use your %@ credential in a command" : {
-      "comment" : "Credential approval - run title",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "“%1$@” wants to use your %2$@ credential in a command"
-          }
-        }
-      }
-    },
-    "“%@” wants your %@ credential" : {
-      "comment" : "Credential approval - reveal title",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "“%1$@” wants your %2$@ credential"
-          }
-        }
-      }
-    },
     "❯" : {
 
     },
@@ -179,17 +146,6 @@
         }
       }
     },
-    "%@ · Team %@" : {
-      "comment" : "Developer settings - CDP grant scope and team",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "%1$@ · Team %2$@"
-          }
-        }
-      }
-    },
     "%@ and %@ will be deleted." : {
       "comment" : "Bookmark multi-selection delete confirmation body for mixed folders and bookmarks",
       "localizations" : {
@@ -267,6 +223,9 @@
     "%d Spaces" : {
       "comment" : "Profiles settings - Count of Spaces bound to a profile"
     },
+    "%d standing approvals" : {
+      "comment" : "Phi & AI settings - approvals subtitle grant count"
+    },
     "%lld/%lld" : {
       "localizations" : {
         "en" : {
@@ -300,6 +259,9 @@
     },
     "A profile with this name already exists." : {
       "comment" : "Validation shown when a new or renamed profile name duplicates an existing profile"
+    },
+    "Access to all passwords is on" : {
+      "comment" : "Phi & AI settings - approvals subtitle when the master grant is on"
     },
     "Accessing:" : {
       "comment" : "Bitwarden login sheet - server region prefix"
@@ -348,6 +310,9 @@
     },
     "Additional info (optional)" : {
       "comment" : "Feedback form - Section header for optional additional information"
+    },
+    "Agent" : {
+      "comment" : "Credential approval - agent row"
     },
     "Agent access, permissions, and the password manager live in the Developer tab." : {
       "comment" : "General settings - Hint under the developer mode toggle pointing at the Developer settings pane"
@@ -418,17 +383,11 @@
     "Allowed agents" : {
       "comment" : "Developer settings - Title for the allowed CDP agent list"
     },
-    "Allowed this session" : {
-      "comment" : "Developer settings - session-only CDP grant"
-    },
     "Always" : {
-      "comment" : "Approvals sheet - permanent grant"
+      "comment" : "Approvals sheet - permanent grant\nCredential approval - duration segment\nDeveloper settings - persisted CDP grant pill"
     },
     "Always Allow" : {
       "comment" : "CDP consent - allow and remember\nCredential approval - approve permanently"
-    },
-    "Always allowed" : {
-      "comment" : "Developer settings - persisted CDP grant"
     },
     "Always Show Bookmark Bar" : {
       "comment" : "View menu - Menu item to always show the bookmark bar"
@@ -469,14 +428,14 @@
     "Apply to all agents, not just this one" : {
       "comment" : "Credential approval - all-agents checkbox"
     },
+    "Approve an agent request for 10 minutes or always and it will appear here." : {
+      "comment" : "Approvals sheet - empty state hint"
+    },
     "Approve for 10 min" : {
       "comment" : "Credential approval - approve and remember"
     },
     "Approve Once" : {
       "comment" : "Credential approval - approve once"
-    },
-    "Approving shares the saved item — a password, note, card, identity, or key — with the agent, which may record it in its context. Only approve for agents and items you trust." : {
-      "comment" : "Credential approval - reveal body"
     },
     "Aqua" : {
       "comment" : "Aqua theme color name"
@@ -492,6 +451,21 @@
     },
     "Auto picture-in-picture" : {
       "comment" : "General settings - Row title for the three-state auto picture-in-picture mode"
+    },
+    "Auto-cancels in %d s" : {
+      "comment" : "Credential unlock - auto-cancel countdown"
+    },
+    "Auto-denies in %d s" : {
+      "comment" : "Credential approval - auto-deny countdown"
+    },
+    "Autofill only" : {
+      "comment" : "Approvals sheet - fill-kind tag"
+    },
+    "Autofill only — the secret stays in Phi" : {
+      "comment" : "Credential approval - fill headline"
+    },
+    "Autofill request from “%@”" : {
+      "comment" : "Credential approval - fill title"
     },
     "Automatically add current tab as context to new conversation" : {
       "comment" : "AI settings - Toggle to auto-add current tab as context when starting new AI conversation"
@@ -727,7 +701,7 @@
     "Comfortable" : {
       "comment" : "Layout option - Horizontal tabs\nOnboarding layout selection - Comfortable option"
     },
-    "Command env" : {
+    "Command use" : {
       "comment" : "Approvals sheet - run-kind tag"
     },
     "Completed" : {
@@ -831,6 +805,12 @@
     },
     "Create Space" : {
       "comment" : "Confirm button in the create-Space panel"
+    },
+    "Credential" : {
+      "comment" : "Credential approval - credential row"
+    },
+    "Credential request from “%@”" : {
+      "comment" : "Credential approval - title"
     },
     "Credit Cards" : {
       "comment" : "Profiles settings - data link to payment methods"
@@ -1093,6 +1073,12 @@
     "Expanding rollback package..." : {
       "comment" : "Time Machine restore progress stage"
     },
+    "expires in %d min" : {
+      "comment" : "Approvals sheet - timed grant remaining"
+    },
+    "expires in under a minute" : {
+      "comment" : "Approvals sheet - grant about to lapse"
+    },
     "Export" : {
       "comment" : "Help menu - NSSavePanel primary button title for confirming log export save location"
     },
@@ -1138,9 +1124,6 @@
     "Feedback" : {
       "comment" : "Feedback - Sidebar feedback button title\nFeedback - Tooltip text for icon-only feedback button\nHeader more menu - Feedback action"
     },
-    "Fill only" : {
-      "comment" : "Approvals sheet - fill-kind tag"
-    },
     "Find shortcut keys" : {
       "comment" : "Shortcuts settings - Search field placeholder to find shortcuts"
     },
@@ -1152,6 +1135,9 @@
     },
     "Folder Name" : {
       "comment" : "Folder editor - Placeholder for folder name input\nNew folder dialog input placeholder"
+    },
+    "For 10 min" : {
+      "comment" : "Credential approval - duration segment"
     },
     "Forward" : {
       "comment" : "Web content header - Accessibility description for forward navigation button"
@@ -1188,6 +1174,9 @@
     },
     "Go to the browser to complete log in" : {
       "comment" : "Waiting view title shown during login process in onboarding"
+    },
+    "Granted %@" : {
+      "comment" : "Approvals sheet - grant date tooltip"
     },
     "Green" : {
       "comment" : "Tab Groups - color name shown in auto-named group title and color picker"
@@ -1412,7 +1401,7 @@
       "comment" : "Help menu - Parent menu item for exporting and importing Phi user data backup"
     },
     "Master password" : {
-      "comment" : "Bitwarden login sheet - master password field label"
+      "comment" : "Bitwarden login sheet - master password field label\nCredential unlock - field placeholder"
     },
     "Message the agent (→ %@)" : {
       "comment" : "Agent console - prompt placeholder naming the target task's Space"
@@ -1573,8 +1562,8 @@
     "No release notes available." : {
       "comment" : "Sparkle update window - Missing release notes placeholder"
     },
-    "No remembered approvals." : {
-      "comment" : "Approvals sheet - empty state"
+    "No remembered approvals" : {
+      "comment" : "Approvals sheet - empty state title"
     },
     "No results" : {
       "comment" : "Icon picker - Empty state when search has no matching icons"
@@ -1587,6 +1576,9 @@
     },
     "No share actions available" : {
       "comment" : "Address bar menu - Empty share submenu item"
+    },
+    "No standing approvals" : {
+      "comment" : "Phi & AI settings - approvals subtitle with no grants"
     },
     "Normal" : {
       "comment" : "Auto picture-in-picture option - pop out and stay in place"
@@ -1632,6 +1624,9 @@
     },
     "On system lock" : {
       "comment" : "Bitwarden session timeout - on system lock"
+    },
+    "Only once" : {
+      "comment" : "Credential approval - duration segment"
     },
     "Opacity" : {
       "comment" : "General settings - Theme opacity row title for adjusting the selected theme overlay transparency\nSpaces settings - theme opacity row label for the per-Space window overlay transparency"
@@ -1717,7 +1712,7 @@
     "Phi needs Full Disk Access to import your data from Safari." : {
       "comment" : "Import browser data page - Description explaining why Full Disk Access permission is needed"
     },
-    "Phi releases the saved value to the agent so the command it runs can use it. A trustworthy agent uses it only for that, but Phi can’t stop it from keeping the value — only approve for agents and sites you trust." : {
+    "Phi releases the saved value to the agent so the command it runs can use it. Phi can’t stop the agent from keeping the value — only approve for agents and sites you trust." : {
       "comment" : "Credential approval - run body"
     },
     "Phi Sentinel" : {
@@ -1852,6 +1847,9 @@
     "Refresh connector status" : {
       "comment" : "AI settings - Tooltip for refreshing connector status"
     },
+    "Released into a command" : {
+      "comment" : "Credential approval - run headline"
+    },
     "Relink" : {
       "comment" : "Phi Link - Official bot relink action"
     },
@@ -1956,6 +1954,9 @@
     },
     "Return to Bookmark URL" : {
       "comment" : "Bookmark favicon button - Navigate the open bookmark tab back to its saved URL"
+    },
+    "Revealed to the agent" : {
+      "comment" : "Credential approval - reveal headline"
     },
     "Reverse Panes" : {
       "comment" : "Tab context menu - Swap the left/right (or top/bottom) panes of the split this tab belongs to"
@@ -2080,6 +2081,9 @@
     "Sign Out and Quit" : {
       "comment" : "Account deletion - Button confirming the finalize: Phi clears its local data, signs out and quits"
     },
+    "Signed · Team %@" : {
+      "comment" : "Developer settings - CDP grant signing team"
+    },
     "Signed in" : {
       "comment" : "Phi & AI settings - Bitwarden ready status"
     },
@@ -2088,6 +2092,9 @@
     },
     "Signing you out and removing Phi's data from this Mac…" : {
       "comment" : "Account deletion - Progress text while the finalize clears local data, right before the app quits"
+    },
+    "Site" : {
+      "comment" : "Credential approval - site row"
     },
     "Site Settings" : {
       "comment" : "Address bar menu - Settings menu item\nAddress bar menu - Settings submenu title"
@@ -2110,11 +2117,11 @@
     "Something went wrong when logging out" : {
       "comment" : "Account settings - Alert message when logout fails"
     },
-    "Something went wrong. Please try again later." : {
-      "comment" : "Account deletion - Generic error; deliberately vague so it cannot reveal whether an account exists"
-    },
     "Something went wrong? " : {
       "comment" : "Retry hint prefix text shown when login fails in onboarding"
+    },
+    "Something went wrong. Please try again later." : {
+      "comment" : "Account deletion - Generic error; deliberately vague so it cannot reveal whether an account exists"
     },
     "Space" : {
       "comment" : "Spaces settings - Space pinned-tab scope option"
@@ -2133,6 +2140,15 @@
     },
     "Split with Current" : {
       "comment" : "Tab context menu - Pair this tab with the currently focused tab in a split"
+    },
+    "Standing approvals" : {
+      "comment" : "Approvals sheet - list section title"
+    },
+    "Standing approvals · %d" : {
+      "comment" : "Approvals sheet - list section title with count"
+    },
+    "Standing approvals can be reviewed and revoked anytime in Settings." : {
+      "comment" : "Credential approval - always hint"
     },
     "Starting restore..." : {
       "comment" : "Time Machine restore progress stage"
@@ -2187,8 +2203,8 @@
     "The agent needs you" : {
       "comment" : "Agent handoff prompt - title"
     },
-    "The agent says it needs this to: %@" : {
-      "comment" : "Credential approval - purpose line"
+    "The agent says it needs this to:" : {
+      "comment" : "Credential approval - purpose label"
     },
     "The archive does not contain a top-level Phi folder." : {
       "comment" : "Debug import user data - Error message when zip does not include the expected Phi directory at archive root"
@@ -2210,6 +2226,9 @@
     },
     "The restored Phi user data is not a directory." : {
       "comment" : "Debug import user data - Error message when extracted Phi item is not a directory"
+    },
+    "The saved item — a password, note, card, identity, or key — is shared with the agent, which may record it in its context. Only approve for agents and items you trust." : {
+      "comment" : "Credential approval - reveal body"
     },
     "The selected Time Machine backup is no longer available." : {
       "comment" : "Help menu - Time Machine restore error when a selected backup disappears"
@@ -2234,6 +2253,9 @@
     },
     "This replaces the Phi user data folder with the archive and restarts Phi. Save your work first." : {
       "comment" : "Debug import user data - Confirmation alert body warning data replacement and relaunch"
+    },
+    "This session" : {
+      "comment" : "Developer settings - session-only CDP grant pill"
     },
     "This Space's window will be reopened with the new profile and its open tabs will be reloaded there. Site logins won't carry over. Bookmarks and pinned tabs stay with the Space." : {
       "comment" : "Body of the change-Space-profile confirmation with Space-scoped pinned tabs"
@@ -2334,11 +2356,11 @@
     "unsigned" : {
       "comment" : "CDP consent - no valid signature"
     },
+    "Unsigned" : {
+      "comment" : "Developer settings - CDP grant with no code signature"
+    },
     "Unsupported image format" : {
       "comment" : "Image preview error"
-    },
-    "until %@" : {
-      "comment" : "Approvals sheet - timed grant expiry"
     },
     "Untitled" : {
       "comment" : "Default name for new bookmark folder\nDefault name for new bookmark folder in root"

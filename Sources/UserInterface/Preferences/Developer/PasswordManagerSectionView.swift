@@ -20,6 +20,7 @@ import SwiftUI
 /// and the section-title styling.
 struct PasswordManagerSectionView: View {
     @ObservedObject private var bitwarden = BitwardenService.shared
+    @ObservedObject private var grantStore = CredentialGrantStore.shared
 
     @AppStorage(PhiPreferences.PasswordManagerSettings.bitwardenEnabled.rawValue)
     private var bitwardenEnabled: Bool = PhiPreferences.PasswordManagerSettings.bitwardenEnabled.defaultValue
@@ -136,16 +137,21 @@ struct PasswordManagerSectionView: View {
 
     /// Entry point to the remembered-approvals list: which agents may fetch
     /// which site's credentials without being asked again. A whole-row
-    /// disclosure like the Spaces pane's "URL Rules…" row.
+    /// disclosure like the Spaces pane's "URL Rules…" row, with a live
+    /// subtitle so the pane shows at a glance whether any standing access
+    /// exists — the all-passwords master grant in warning red.
     private var approvalsRow: some View {
         Button {
             showApprovalList = true
         } label: {
             HStack(spacing: 12) {
                 SettingsIconChip(systemName: "key.fill", color: .indigo)
-                Text(NSLocalizedString("Agent Credential Approvals\u{2026}", comment: "Phi & AI settings - approvals row title"))
-                    .font(.system(size: 13))
-                    .themedForeground(.textPrimary)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(NSLocalizedString("Agent Credential Approvals\u{2026}", comment: "Phi & AI settings - approvals row title"))
+                        .font(.system(size: 13))
+                        .themedForeground(.textPrimary)
+                    approvalsSubtitle
+                }
                 Spacer(minLength: 8)
                 Image(systemName: "chevron.right")
                     .font(.system(size: 11, weight: .semibold))
@@ -158,6 +164,24 @@ struct PasswordManagerSectionView: View {
         .buttonStyle(.plain)
         .help(NSLocalizedString("Review and revoke which agents may use your saved logins without asking",
                                 comment: "Phi & AI settings - tooltip for the approvals row"))
+    }
+
+    @ViewBuilder
+    private var approvalsSubtitle: some View {
+        if grantStore.hasUniversalGrant {
+            Text(NSLocalizedString("Access to all passwords is on", comment: "Phi & AI settings - approvals subtitle when the master grant is on"))
+                .font(.system(size: 11))
+                .foregroundStyle(Color(nsColor: .systemRed))
+        } else {
+            let count = grantStore.grants.filter {
+                !$0.isUniversal && ($0.expires.map { $0 > Date() } ?? true)
+            }.count
+            Text(count == 0
+                ? NSLocalizedString("No standing approvals", comment: "Phi & AI settings - approvals subtitle with no grants")
+                : String(format: NSLocalizedString("%d standing approvals", comment: "Phi & AI settings - approvals subtitle grant count"), count))
+                .font(.system(size: 11))
+                .themedForeground(.textTertiary)
+        }
     }
 
     // MARK: - Status → text/color/action
@@ -318,69 +342,42 @@ extension BitwardenLoginSheet.Mode: Identifiable {
 }
 
 /// The remembered-approvals list: every live credential grant — who (an agent
-/// or all agents), for which site, for how long — each revocable, with a
-/// revoke-all. Backed live by `CredentialGrantStore`, so a grant added by an
-/// approval prompt while the sheet is open appears immediately.
+/// or all agents), for which site, with what exposure, for how long — each
+/// revocable, with a revoke-all. Backed live by `CredentialGrantStore`, so a
+/// grant added by an approval prompt while the sheet is open appears
+/// immediately. Visual language matches the approval dialog: the same
+/// green / orange / red exposure coding, scope-first rows, and named agents.
 struct CredentialApprovalListSheet: View {
     @ObservedObject private var store = CredentialGrantStore.shared
     @Environment(\.dismiss) private var dismiss
     @State private var showAllAccessConfirm = false
 
-    /// The per-site grants shown as rows; the universal grant is represented
-    /// by the toggle above the list instead.
-    private var listedGrants: [CredentialGrant] {
-        store.grants.filter { !$0.isUniversal }
-    }
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(NSLocalizedString("Agent Credential Approvals", comment: "Approvals sheet - title"))
-                .font(.system(size: 15, weight: .semibold))
-                .themedForeground(.textPrimary)
-            Text(NSLocalizedString("These grants let agents use your saved logins without asking each time. “Always” grants persist until you revoke them here.", comment: "Approvals sheet - explanation"))
-                .font(.system(size: 11))
-                .themedForeground(.textTertiary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            allAccessRow
-
-            if listedGrants.isEmpty {
-                Text(NSLocalizedString("No remembered approvals.", comment: "Approvals sheet - empty state"))
-                    .font(.system(size: 12))
-                    .themedForeground(.textSecondary)
-                    .frame(maxWidth: .infinity, minHeight: 120)
-            } else {
-                ScrollView {
-                    VStack(spacing: 0) {
-                        ForEach(listedGrants) { grant in
-                            grantRow(grant)
-                            if grant.id != listedGrants.last?.id {
-                                Divider()
-                            }
-                        }
+        // The periodic tick keeps the "expires in …" labels honest and drops
+        // timed grants the moment they lapse (the store only prunes lazily).
+        TimelineView(.periodic(from: .now, by: 30)) { context in
+            let grants = listedGrants(now: context.date)
+            VStack(alignment: .leading, spacing: 14) {
+                header
+                allAccessRow
+                listHeader(grants)
+                if grants.isEmpty {
+                    emptyState
+                } else {
+                    grantList(grants, now: context.date)
+                }
+                HStack {
+                    Spacer()
+                    Button(NSLocalizedString("Done", comment: "Approvals sheet - done button")) {
+                        dismiss()
                     }
-                    .padding(.horizontal, 12)
+                    .controlSize(.small)
+                    .keyboardShortcut(.defaultAction)
                 }
-                .frame(minHeight: 120, maxHeight: 280)
-                .settingsCardChrome()
             }
-
-            HStack {
-                Button(NSLocalizedString("Revoke All", comment: "Approvals sheet - revoke all button")) {
-                    store.revokeAll()
-                }
-                .controlSize(.small)
-                .disabled(store.grants.isEmpty)
-                Spacer()
-                Button(NSLocalizedString("Done", comment: "Approvals sheet - done button")) {
-                    dismiss()
-                }
-                .controlSize(.small)
-                .keyboardShortcut(.defaultAction)
-            }
+            .padding(20)
         }
-        .padding(20)
-        .frame(width: 440)
+        .frame(width: 460)
         .alert(
             NSLocalizedString("Allow agents to access all passwords?", comment: "Approvals sheet - all-access confirm title"),
             isPresented: $showAllAccessConfirm
@@ -394,9 +391,33 @@ struct CredentialApprovalListSheet: View {
         }
     }
 
+    /// The per-site grants shown as rows: the universal grant is represented
+    /// by the toggle instead, and a lapsed timed grant is display-pruned —
+    /// it no longer covers anything, so it must not read as live.
+    private func listedGrants(now: Date) -> [CredentialGrant] {
+        store.grants.filter { !$0.isUniversal && ($0.expires.map { $0 > now } ?? true) }
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(NSLocalizedString("Agent Credential Approvals", comment: "Approvals sheet - title"))
+                .font(.system(size: 15, weight: .semibold))
+                .themedForeground(.textPrimary)
+            Text(NSLocalizedString("These grants let agents use your saved logins without asking each time. “Always” grants persist until you revoke them here.", comment: "Approvals sheet - explanation"))
+                .font(.system(size: 11))
+                .themedForeground(.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
     /// Master switch: the (all agents, all sites, never expires) grant.
+    /// Styled as the danger it is — red chip, red switch, and a red outline
+    /// while it stands.
     private var allAccessRow: some View {
         HStack(spacing: 12) {
+            SettingsIconChip(
+                systemName: store.hasUniversalGrant ? "exclamationmark.triangle.fill" : "key.fill",
+                color: .red)
             VStack(alignment: .leading, spacing: 4) {
                 Text(NSLocalizedString("Allow access to all passwords", comment: "Approvals sheet - all-access toggle title"))
                     .font(.system(size: 13))
@@ -420,29 +441,96 @@ struct CredentialApprovalListSheet: View {
             .labelsHidden()
             .toggleStyle(.switch)
             .controlSize(.mini)
-            .themedTint(.themeColor)
+            .tint(Color(nsColor: .systemRed))
         }
         .padding(12)
         .settingsCardChrome()
+        .overlay {
+            if store.hasUniversalGrant {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .strokeBorder(Color(nsColor: .systemRed).opacity(0.55))
+            }
+        }
     }
 
-    private func grantRow(_ grant: CredentialGrant) -> some View {
+    private func listHeader(_ grants: [CredentialGrant]) -> some View {
+        HStack {
+            Text(grants.isEmpty
+                ? NSLocalizedString("Standing approvals", comment: "Approvals sheet - list section title")
+                : String(format: NSLocalizedString("Standing approvals · %d", comment: "Approvals sheet - list section title with count"), grants.count))
+                .font(.system(size: 12))
+                .themedForeground(.textSecondary)
+            Spacer()
+            Button(NSLocalizedString("Revoke All", comment: "Approvals sheet - revoke all button")) {
+                store.revokeAll()
+            }
+            .controlSize(.small)
+            .disabled(store.grants.isEmpty)
+        }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 6) {
+            Image(systemName: "key.slash")
+                .font(.system(size: 22, weight: .medium))
+                .themedForeground(.textTertiary)
+                .padding(.bottom, 4)
+            Text(NSLocalizedString("No remembered approvals", comment: "Approvals sheet - empty state title"))
+                .font(.system(size: 12, weight: .medium))
+                .themedForeground(.textSecondary)
+            Text(NSLocalizedString("Approve an agent request for 10 minutes or always and it will appear here.", comment: "Approvals sheet - empty state hint"))
+                .font(.system(size: 11))
+                .themedForeground(.textTertiary)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity, minHeight: 140)
+        .settingsCardChrome()
+    }
+
+    private func grantList(_ grants: [CredentialGrant], now: Date) -> some View {
+        ScrollView {
+            VStack(spacing: 0) {
+                ForEach(grants) { grant in
+                    grantRow(grant, now: now)
+                    if grant.id != grants.last?.id {
+                        Divider()
+                    }
+                }
+            }
+            .padding(.horizontal, 12)
+        }
+        .frame(minHeight: 140, maxHeight: 280)
+        .settingsCardChrome()
+    }
+
+    private func grantRow(_ grant: CredentialGrant, now: Date) -> some View {
         HStack(spacing: 12) {
+            SettingsIconChip(systemName: scopeSymbol(grant), color: kindColor(grant.accessKind))
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(grant.scope
                         ?? NSLocalizedString("All sites", comment: "Approvals sheet - all-sites scope"))
-                        .font(.system(size: 13))
+                        .font(.system(size: 13, weight: .medium))
                         .themedForeground(.textPrimary)
                         .lineLimit(1)
                         .truncationMode(.middle)
                     kindTag(grant.accessKind)
                 }
-                Text(grantDetail(grant))
-                    .font(.system(size: 11))
-                    .themedForeground(.textTertiary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+                HStack(spacing: 4) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 9))
+                    Text(grant.agent
+                        ?? NSLocalizedString("All agents", comment: "Approvals sheet - all-agents grantee"))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    Text(verbatim: "·")
+                    Image(systemName: grant.expires == nil ? "infinity" : "clock")
+                        .font(.system(size: 9))
+                    Text(expiryText(grant, now: now))
+                        .lineLimit(1)
+                }
+                .font(.system(size: 11))
+                .themedForeground(.textTertiary)
             }
             Spacer(minLength: 12)
             Button(NSLocalizedString("Revoke", comment: "Approvals sheet - revoke one button")) {
@@ -452,24 +540,42 @@ struct CredentialApprovalListSheet: View {
         }
         .padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .help(String(
+            format: NSLocalizedString("Granted %@", comment: "Approvals sheet - grant date tooltip"),
+            grant.grantedAt.formatted(date: .abbreviated, time: .shortened)))
     }
 
-    /// The access kind as a colored pill: green = the agent never sees the
-    /// value, orange = a command receives it, red = the agent receives it.
+    // MARK: - Row pieces
+
+    /// Same scope iconography as the approval dialog: a site reads as a
+    /// globe, an item/search scope as a key.
+    private func scopeSymbol(_ grant: CredentialGrant) -> String {
+        guard let scope = grant.scope else { return "globe" }
+        return scope.contains(".") && !scope.hasPrefix("item ") ? "globe" : "key.fill"
+    }
+
+    /// Same exposure coding as the approval dialog's banner: green = the
+    /// agent never sees the value, orange = a command receives it, red = the
+    /// agent receives it.
+    private func kindColor(_ kind: CredentialAccessKind) -> Color {
+        switch kind {
+        case .fill: return Color(nsColor: .systemGreen)
+        case .run: return Color(nsColor: .systemOrange)
+        case .reveal: return Color(nsColor: .systemRed)
+        }
+    }
+
     private func kindTag(_ kind: CredentialAccessKind) -> some View {
         let label: String
-        let color: Color
         switch kind {
         case .fill:
-            label = NSLocalizedString("Fill only", comment: "Approvals sheet - fill-kind tag")
-            color = .green
+            label = NSLocalizedString("Autofill only", comment: "Approvals sheet - fill-kind tag")
         case .run:
-            label = NSLocalizedString("Command env", comment: "Approvals sheet - run-kind tag")
-            color = .orange
+            label = NSLocalizedString("Command use", comment: "Approvals sheet - run-kind tag")
         case .reveal:
             label = NSLocalizedString("Full access", comment: "Approvals sheet - reveal-kind tag")
-            color = .red
         }
+        let color = kindColor(kind)
         return Text(label)
             .font(.system(size: 10, weight: .medium))
             .foregroundStyle(color)
@@ -480,18 +586,16 @@ struct CredentialApprovalListSheet: View {
             .background(color.opacity(0.15), in: Capsule())
     }
 
-    private func grantDetail(_ grant: CredentialGrant) -> String {
-        let agent = grant.agent
-            ?? NSLocalizedString("All agents", comment: "Approvals sheet - all-agents grantee")
-        let duration: String
-        if let expires = grant.expires {
-            duration = String(
-                format: NSLocalizedString("until %@", comment: "Approvals sheet - timed grant expiry"),
-                expires.formatted(date: .omitted, time: .shortened))
-        } else {
-            duration = NSLocalizedString("Always", comment: "Approvals sheet - permanent grant")
+    private func expiryText(_ grant: CredentialGrant, now: Date) -> String {
+        guard let expires = grant.expires else {
+            return NSLocalizedString("Always", comment: "Approvals sheet - permanent grant")
         }
-        let granted = grant.grantedAt.formatted(date: .abbreviated, time: .shortened)
-        return "\(agent) · \(duration) · \(granted)"
+        let minutes = Int((expires.timeIntervalSince(now) / 60).rounded(.up))
+        guard minutes > 1 else {
+            return NSLocalizedString("expires in under a minute", comment: "Approvals sheet - grant about to lapse")
+        }
+        return String(
+            format: NSLocalizedString("expires in %d min", comment: "Approvals sheet - timed grant remaining"),
+            minutes)
     }
 }
