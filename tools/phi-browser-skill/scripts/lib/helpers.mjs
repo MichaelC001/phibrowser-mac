@@ -103,16 +103,62 @@ export async function cdp(method, params = {}) {
   return client.send(method, params, browserLevel ? undefined : requireSession())
 }
 
+// Incremental reveal: SKILL.md carries only each domain's hard rules and
+// defers the full semantics to references/*.md. These hooks surface the right
+// file at the moment it is needed, so an agent that skipped SKILL.md's
+// routing table still gets pointed there: a failed domain call names the file
+// in its error, and the first successful call into a domain prints a one-line
+// nudge on stderr.
+const DOMAIN_DOCS = [
+  [/^credentials\./, 'credentials'],
+  [/^agentSpace\.(spaces|profiles|urlRules|pinnedTabs|bookmarks|tabGroups|splitView|downloads)\./,
+   'management'],
+]
+const ERROR_DOCS = {
+  user_space_operations_disabled: 'management',
+  space_not_open: 'management',
+  profile_not_agent_allowed: 'lifecycle',
+}
+
+function domainDocFor(type, errorCode) {
+  if (errorCode && ERROR_DOCS[errorCode]) return ERROR_DOCS[errorCode]
+  const hit = DOMAIN_DOCS.find(([re]) => re.test(type))
+  return hit ? hit[1] : null
+}
+
+// One nudge per (task, domain), recorded beside the task's tab memory so it
+// survives heredoc rounds. Best-effort: losing it only repeats the one-liner.
+function revealDomainDocs(type) {
+  const domain = domainDocFor(type, null)
+  if (!domain) return
+  try {
+    const key = encodeURIComponent(state.task?.taskId || '_app')
+    mkdirSync(TASK_DIR, { recursive: true })
+    const file = join(TASK_DIR, `${key}.docs.json`)
+    let seen = {}
+    try { seen = JSON.parse(readFileSync(file, 'utf8')) } catch {}
+    if (seen[domain]) return
+    seen[domain] = true
+    writeFileSync(file, JSON.stringify(seen))
+    process.stderr.write(
+      `ℹ phi-browser: first ${domain} call this task — full semantics: ` +
+      `<skill-dir>/references/${domain}.md\n`)
+  } catch {}
+}
+
 async function phiSend(type, payload, timeoutMs) {
   const client = await cdpClient()
   const parsed = await client.phi.send(type, payload ?? {}, timeoutMs)
   if (parsed && parsed.ok === false) {
     // The full reply rides along for handlers that need more than the error
     // code (e.g. an ambiguous credential lookup's candidate list).
-    const err = new Error(`${type}: ${parsed.error || 'failed'}`)
+    const doc = domainDocFor(type, parsed.error)
+    const err = new Error(`${type}: ${parsed.error || 'failed'}` +
+      (doc ? ` — see references/${doc}.md` : ''))
     err.reply = parsed
     throw err
   }
+  revealDomainDocs(type)
   return parsed
 }
 
@@ -196,7 +242,8 @@ export async function listProfiles() {
  * the first profile); {persistent: true} — a PERMANENT workspace: named
  * `name` in the Space switcher, never expired by the keep-alive sweep,
  * kept on complete(), surviving app relaunches, and re-bound to by a later
- * call with the same name (see SKILL.md "Persistent Spaces"). Persistence
+ * call with the same name (see references/lifecycle.md "Persistent
+ * Spaces"). Persistence
  * is decided when the Space is first created; on a re-bind both options are
  * ignored (the Space keeps its own profile).
  */
@@ -1396,7 +1443,7 @@ export async function pageInfo() {
  * Observation only — not ownership-gated. NEVER try to solve or wait out a
  * challenge: hand off to the user the FIRST time one appears (the widget is a
  * cross-origin iframe and synthetic input is exactly what it scores). See
- * SKILL.md ("Cloudflare challenges").
+ * SKILL.md ("Cloudflare challenges") and references/challenges.md.
  */
 export async function detectChallenge() {
   if (state.openDialog) return { dialog: state.openDialog }
@@ -4388,7 +4435,8 @@ function ambiguousCredentialMessage(label, err) {
     '{domain, username} (or {id: credentialId})' +
     (names.length ? `. Candidates: ${names.join(', ')}` : '') +
     (Array.isArray(reply.candidates) && reply.matches > reply.candidates.length
-      ? ` (first ${reply.candidates.length} of ${reply.matches})` : '')
+      ? ` (first ${reply.candidates.length} of ${reply.matches})` : '') +
+    ' — see references/credentials.md'
 }
 
 /** Fetches a vault item after the user approves in Phi. `query` is a domain

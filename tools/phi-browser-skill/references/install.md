@@ -150,6 +150,12 @@ needed): `node scripts/selftest-mirror.mjs`.
   running (canary vs release), so no `CDPAgentSocket` pointer file exists. Turn
   on Settings ▸ Developer ▸ Remote debugging (no relaunch). Set
   `PHI_USER_DATA_DIR` to override the user-data-dir candidates.
+- **Wrong install answers (canary vs stable)**: endpoint discovery prefers
+  Phi Canary over stable Phi when BOTH advertise a live endpoint (dead
+  leftovers are probed and skipped). To target a specific install, set
+  `PHI_USER_DATA_DIR` to its Application Support dir (e.g.
+  `~/Library/Application Support/com.phibrowser.Mac` for stable) when
+  invoking the runner.
 - **Console shows browser steps but not the conversation**: the session
   couldn't be identified (Claude Code: update the CLI so it exports
   `CLAUDE_CODE_SESSION_ID`; Hermes: the session must export
