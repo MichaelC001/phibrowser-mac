@@ -458,12 +458,18 @@ class AuthManager {
         setAccountDeletionInProgress(true)
         clearAccountDeletionReplacementLoginToken()
         guard SharedTokenLock.shared.lockWithTimeout(5) else {
+            // Roll back the in-progress flag: the preflight aborts before any
+            // durable fence is written, and the coordinator restores its state
+            // for a retry, so leaving the flag set would fence every credential
+            // path (login/renew/token access) for the rest of the session.
+            setAccountDeletionInProgress(false)
             AppLogError("[AccountDeletion] Failed to acquire the shared-token lock")
             return false
         }
         let fenceActivated = accountDeletionCredentialFence.activate()
         guard fenceActivated else {
             SharedTokenLock.shared.unlock()
+            setAccountDeletionInProgress(false)
             AppLogError("[AccountDeletion] Failed to persist the credential fence")
             return false
         }
