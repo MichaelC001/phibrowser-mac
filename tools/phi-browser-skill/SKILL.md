@@ -77,7 +77,10 @@ The heredoc body is a Node.js script; all helpers below are preloaded.
 - Downloads (per-profile; agent window by default, `{space}` targets a user Space's window): `listDownloads(opts?)`, `getDownload(guid, opts?)`, `pauseDownload(guid, opts?)`, `resumeDownload(guid, opts?)`, `cancelDownload(guid, opts?)`, `removeDownload(guid, opts?)` — see "Downloads"
 - Input: `click(target | x, y)`, `hover(target | x, y)`, `fillInput(target, text, {instant})` (types at a watchable pace, verified by readback, deterministic-setter fallback; `{instant: true}` sets in one shot), `fillCredential(target, domain, {field})` (fill a login field straight from the password manager — the secret never enters your context — see "Credentials"), `uploadFile(target, ...paths)`, `typeText(text)`, `pressKey(key)`, `scroll({dy, x, y})`. Clicks and typing are mirrored to the watching user as cursor movement + overlay animations, so actions carry a small deliberate pace.
 - Viewport: `setViewport({width?, height?})` — override the current tab's viewport; exceptional cases only (the default tracks the real window's content panel — see "Viewport")
-- Dialogs: `handleDialog(accept, promptText?)`
+- Dialogs: `handleDialog(accept, promptText?)` (current tab — also closes a
+  dialog inherited from an earlier round), `dismissDialog(targetId, accept,
+  promptText?)` (browser-level, needs no page session — frees any tab wedged
+  behind a dialog, including non-current ones)
 - Page JS: `js(expression)` — Runtime.evaluate, returns by value
 - Presence: `setStatus(caption)` — shown to the watching user (alias `narrate(text)` — same call, named for the transcript console), `markError(message)`, `say(text, {role})` — mirror your own conversation into the console (assistant prose, or `{role:'user'}` to echo the user) when no session mirror is running (it is automatic under Claude Code, Codex, and Pi)
 - User console: `readUserMessages()` — drain commands the user typed into Phi's Agent Transcript panel, `waitForUserMessage({timeout})` — block until one arrives — see "User commands from the browser"
@@ -962,7 +965,15 @@ hand off or ask. A plain "we use cookies" notice is not one of them.
   finish stays the current tab, so `switchTab` to a specific tab before
   acting on it.
 - If `pageInfo()` returns `{dialog: ...}`, page JS is blocked — call
-  `handleDialog(true|false)` before anything else.
+  `handleDialog(true|false)` before anything else. This holds ACROSS rounds:
+  a native dialog (e.g. a beforeunload "Leave page?" prompt) blocks the
+  tab's renderer, but `ensureAgentSpace`/`switchTab` still attach — they
+  detect the dialog browser-side and surface it on `pageInfo()` — and
+  `handleDialog(accept)` closes it while keeping the tab (for beforeunload:
+  `accept: true` leaves the page, `false` stays). Renderer-gated helpers
+  (`js`, `observe`, `screenshot`, …) fail fast with a "dialog is open" error
+  instead of hanging until then. For a dialog wedging a NON-current tab, use
+  `dismissDialog(targetId, accept)`.
 - `js()` takes a string. For multi-step page logic use one self-invoking
   closure and return once. Inside a normal template string, double regex
   backslashes or use `String.raw`.

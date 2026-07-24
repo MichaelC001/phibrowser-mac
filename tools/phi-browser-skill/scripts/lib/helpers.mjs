@@ -50,6 +50,10 @@ const state = {
   targetId: null,       // current page target
   contextId: null,      // main frame's default execution context (tracked)
   openDialog: null,     // {type, message} while a JS dialog blocks the page
+  dialogBlocked: false, // true when the attach was DEGRADED: a dialog was
+                        // already holding the renderer, so the renderer-gated
+                        // session setup was skipped — handleDialog() closes
+                        // the dialog browser-level and completes the attach
   ownerCheckedAt: 0,    // epoch ms of the last authoritative ownership read
   network: null,        // {requests: Map<id,entry>, order: [id]} — capture for
                         // the CURRENT tab, armed at attach (see readNetwork)
@@ -718,6 +722,60 @@ function attachTab(targetId) {
   return run
 }
 
+// ---------------------------------------------------------------------------
+// Browser-level JavaScript-dialog recovery (PhiAgentSpace domain)
+//
+// A JavaScript dialog (alert/confirm/prompt/beforeunload) parks the tab's
+// renderer main thread inside a modal IPC, so every renderer-gated command —
+// Page.enable (its response comes from the renderer), Runtime.evaluate,
+// Page.captureScreenshot — hangs until the dialog closes. A session attached
+// AFTER the dialog opened can neither see it (no javascriptDialogOpening
+// replay) nor close it (Page.handleJavaScriptDialog only reaches dialogs its
+// own session saw open). These helpers ride the BROWSER session instead, so
+// they answer regardless of renderer state.
+
+/** {open, type?, message?} for the target's displayed dialog, or null when
+ *  the probe is unavailable (an app build that predates the command). */
+async function browserDialogState(targetId) {
+  const client = await cdpClient()
+  try {
+    return await client.send('PhiAgentSpace.getJavaScriptDialogState',
+                             { targetId }, undefined, 5000)
+  } catch { return null }
+}
+
+/** Closes the target's dialog from the browser process. Returns {handled},
+ *  or null when the app build predates the command; other errors propagate. */
+async function browserHandleDialog(targetId, accept, promptText) {
+  const client = await cdpClient()
+  const params = { targetId, accept: !!accept }
+  if (promptText !== undefined) params.promptText = String(promptText)
+  try {
+    return await client.send('PhiAgentSpace.handleJavaScriptDialog',
+                             params, undefined, 8000)
+  } catch (err) {
+    if (/wasn't found|not found/i.test(String(err?.message || ''))) return null
+    throw err
+  }
+}
+
+/** Degraded-attach check: when the target is wedged behind a displayed
+ *  dialog, surface it on state.openDialog and skip the renderer-gated setup
+ *  (the attach still succeeds — pageInfo() reports the dialog and
+ *  handleDialog(accept) closes it and completes the attach). */
+async function dialogBlockedAttach(targetId) {
+  const st = await browserDialogState(targetId)
+  if (!st || !st.open) return false
+  state.openDialog = { type: st.type || 'dialog', message: st.message || '' }
+  state.dialogBlocked = true
+  // Network capture never armed for this tab — drop the previous tab's
+  // buffer so readNetwork can't report stale requests as this tab's.
+  state.network = { requests: new Map(), order: [] }
+  logAction('tab blocked by dialog',
+            `${state.openDialog.type} — handleDialog(accept?) to close it`)
+  return true
+}
+
 async function attachTabNow(targetId) {
   const client = await cdpClient()
   // Detach the previous page session so sessions don't accumulate across a
@@ -735,6 +793,7 @@ async function attachTabNow(targetId) {
   state.sessionId = sessionId
   state.targetId = targetId
   state.openDialog = null
+  state.dialogBlocked = false
   state.contextId = null
   if (state.task) writeLastTargetId(state.task.taskId, targetId)
   else if (state.userSpace) {
@@ -743,6 +802,18 @@ async function attachTabNow(targetId) {
   // Session-scoped subscription that is cleaned up on the next attach.
   const on = (method, fn) =>
     state.sessionDisposers.push(client.on(method, fn, sessionId))
+  // Armed BEFORE the domain enables (and re-armed by the deaf-session retry
+  // below): a dialog that opens while the setup is still in flight must not
+  // be missed — it is the only signal the CDP side ever sends about it.
+  const armDialogListeners = () => {
+    on('Page.javascriptDialogOpening', (params) => {
+      state.openDialog = { type: params.type, message: params.message }
+    })
+    on('Page.javascriptDialogClosed', () => {
+      state.openDialog = null
+    })
+  }
+  armDialogListeners()
   // While the USER controls the Space, attach stays passive — no tab
   // activation, no viewport override below — so their live view never shifts
   // under them; takeOver()/waitForAgentControl restores agent presentation.
@@ -754,17 +825,25 @@ async function attachTabNow(targetId) {
   if (!userDriving) {
     await client.send('Target.activateTarget', { targetId }).catch(() => {})
   }
+  // A tab wedged behind a dialog from an EARLIER round would hang every
+  // renderer-gated command below — probe browser-side and degrade instead of
+  // timing out (see dialogBlockedAttach).
+  if (await dialogBlockedAttach(targetId)) return sessionId
   try {
     await client.send('Page.enable', {}, sessionId, 15000)
   } catch (err) {
+    if (!/timed out/i.test(String(err?.message || ''))) throw err
+    // A dialog can also have opened in the race window after the probe
+    // above — re-check before treating the session as deaf.
+    if (await dialogBlockedAttach(targetId)) return sessionId
     // A just-created session can go deaf under a storm of simultaneous target
     // attaches (its commands dropped, never answered). One fresh session
     // recovers it; any other failure is real.
-    if (!/timed out/i.test(String(err?.message || ''))) throw err
     client.send('Target.detachFromTarget', { sessionId }).catch(() => {})
     ;({ sessionId } = await client.send('Target.attachToTarget',
                                         { targetId, flatten: true }))
     state.sessionId = sessionId
+    armDialogListeners()
     await client.send('Page.enable', {}, sessionId)
   }
   // Track the main frame's default execution context and pin evaluations to
@@ -829,12 +908,6 @@ async function attachTabNow(targetId) {
     await applyAgentViewport(client, sessionId, targetId,
                              state.viewportByTarget.get(targetId)?.request ?? null)
   }
-  on('Page.javascriptDialogOpening', (params) => {
-    state.openDialog = { type: params.type, message: params.message }
-  })
-  on('Page.javascriptDialogClosed', () => {
-    state.openDialog = null
-  })
   return sessionId
 }
 
@@ -1223,6 +1296,12 @@ export async function waitForNetworkIdle({ timeout = 30, idleMs = 500, maxInflig
 }
 
 async function evalInPage(expression, timeoutMs = 20000, depth = 0) {
+  // Fail fast instead of burning the timeout: an open dialog holds the
+  // renderer main thread, so the evaluate below could never run.
+  if (state.openDialog) {
+    throw new Error(`a JavaScript dialog is open (${state.openDialog.type}) — ` +
+                    'call handleDialog(accept) first')
+  }
   const client = await cdpClient()
   const params = { expression, returnByValue: true, awaitPromise: true }
   // Pin to the tracked main-frame context (see attachTab); retry unpinned
@@ -2539,6 +2618,12 @@ async function locateObjectId(target) {
 
 /** PNG screenshot of the current tab. Returns the file path. */
 export async function screenshot(path) {
+  // An open dialog blocks the renderer — the capture below would time out
+  // after 30s instead of ever painting.
+  if (state.openDialog) {
+    throw new Error(`a JavaScript dialog is open (${state.openDialog.type}) — ` +
+                    'call handleDialog(accept) first')
+  }
   await maybeTrackWindowResize()
   await maybePing()
   logAction('screenshot')
@@ -2572,6 +2657,9 @@ export async function screenshotBrowser(path) {
   const webFile = join(tmpdir(), `phi-web-${Date.now()}.png`)
   let webPath
   try {
+    // A dialog-blocked renderer cannot paint — skip straight to the
+    // chrome-only shot instead of stalling 30s on the capture.
+    if (state.openDialog) throw new Error('dialog open')
     const { data } = await client.send('Page.captureScreenshot',
                                        { format: 'png' }, requireSession(), 30000)
     writeFileSync(webFile, Buffer.from(data, 'base64'))
@@ -3397,10 +3485,74 @@ export async function scroll({ dy = 600, dx = 0, x = 400, y = 300 } = {}) {
 export async function handleDialog(accept = true, promptText = undefined) {
   const client = await cdpClient()
   logAction(accept ? 'accept dialog' : 'dismiss dialog')
-  const params = { accept }
-  if (promptText !== undefined) params.promptText = promptText
-  await client.send('Page.handleJavaScriptDialog', params, requireSession())
+  const targetId = state.targetId
+  const wasBlocked = state.dialogBlocked
+  // The per-session path reaches only dialogs THIS session saw open (Page
+  // enabled at the time). A dialog inherited from an earlier round — the
+  // degraded-attach case — needs the browser-level command instead.
+  if (!wasBlocked) {
+    const params = { accept }
+    if (promptText !== undefined) params.promptText = promptText
+    try {
+      await client.send('Page.handleJavaScriptDialog', params, requireSession())
+      state.openDialog = null
+      return
+    } catch (err) {
+      // Fall through: the browser-level path below can still close a dialog
+      // this session never witnessed. Unavailable there → rethrow this.
+      const fallback = await browserHandleDialog(targetId, accept, promptText)
+        .catch(() => null)
+      if (!fallback) throw err
+      state.openDialog = null
+      return
+    }
+  }
+  const res = await browserHandleDialog(targetId, accept, promptText)
+  if (!res) {
+    throw new Error(
+      'handleDialog: a dialog from an earlier round blocks this tab, and ' +
+      'this Phi build has no browser-level dialog handling ' +
+      '(PhiAgentSpace.handleJavaScriptDialog) — update Phi Browser, or drop ' +
+      'the tab with closeTab()')
+  }
   state.openDialog = null
+  // The degraded attach skipped the renderer-gated session setup; the
+  // renderer is unblocked now, so complete it with a full re-attach.
+  state.dialogBlocked = false
+  await attachTab(targetId)
+}
+
+/**
+ * Browser-level dialog control that needs NO attached page session:
+ * PhiAgentSpace.handleJavaScriptDialog resolves the tab in the browser
+ * process and closes its dialog there, so it reaches tabs whose renderer is
+ * blocked and tabs other than the current one — without touching the attach
+ * flow. Prefer handleDialog(accept) for the current tab; use this to free a
+ * NON-current tab (targetIds from listTabs()). accept=false keeps a
+ * beforeunload'd page in place; accept=true lets the navigation proceed.
+ * Returns {handled} — false means no dialog was showing.
+ */
+export async function dismissDialog(targetId, accept = false, promptText = undefined) {
+  if (!targetId || typeof targetId !== 'string') {
+    throw new Error('dismissDialog(targetId, accept): targetId is required')
+  }
+  logAction(accept ? 'accept dialog (browser-level)'
+                   : 'dismiss dialog (browser-level)',
+            `target ${String(targetId).slice(0, 8)}…`)
+  const res = await browserHandleDialog(targetId, accept, promptText)
+  if (!res) {
+    throw new Error(
+      'dismissDialog: this Phi build has no ' +
+      'PhiAgentSpace.handleJavaScriptDialog — update Phi Browser')
+  }
+  if (res.handled && targetId === state.targetId) {
+    state.openDialog = null
+    if (state.dialogBlocked) {
+      state.dialogBlocked = false
+      await attachTab(targetId)
+    }
+  }
+  return res
 }
 
 // ---------------------------------------------------------------------------
