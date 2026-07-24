@@ -22,16 +22,6 @@ enum CredentialApprovalDuration: CaseIterable {
         }
     }
 
-    var approveTitle: String {
-        switch self {
-        case .once:
-            return NSLocalizedString("Approve Once", comment: "Credential approval - approve once")
-        case .tenMinutes:
-            return NSLocalizedString("Approve for 10 min", comment: "Credential approval - approve and remember")
-        case .always:
-            return NSLocalizedString("Always Allow", comment: "Credential approval - approve permanently")
-        }
-    }
 }
 
 /// Outcome of the approval alert, handed back to the coordinator.
@@ -90,7 +80,10 @@ struct CredentialApprovalAlert: View {
                 }
                 .keyboardShortcut(.cancelAction)
             } primaryAction: {
-                PhiAlertButton(duration.approveTitle, role: .primary) {
+                PhiAlertButton(
+                    NSLocalizedString("Approve", comment: "Credential approval - approve"),
+                    role: .primary
+                ) {
                     choose(.allow(duration: duration, allAgents: allAgents))
                 }
                 .keyboardShortcut(.defaultAction)
@@ -130,9 +123,11 @@ struct CredentialApprovalAlert: View {
 
     private var summaryCard: some View {
         VStack(alignment: .leading, spacing: 0) {
-            summaryRow(icon: "sparkles",
-                       label: NSLocalizedString("Agent", comment: "Credential approval - agent row"),
-                       value: agentName)
+            summaryRow(label: NSLocalizedString("Agent", comment: "Credential approval - agent row"),
+                       value: agentName) {
+                CredentialAgentIcon(agentName: agentName, size: 12, weight: .medium)
+                    .themedForeground(.textSecondary)
+            }
             Divider()
                 .padding(.leading, 12)
             summaryRow(icon: scopeIcon, label: scopeLabel, value: scope)
@@ -148,10 +143,17 @@ struct CredentialApprovalAlert: View {
     }
 
     private func summaryRow(icon: String, label: String, value: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
+        summaryRow(label: label, value: value) {
             Image(systemName: icon)
                 .font(.system(size: 12, weight: .medium))
                 .themedForeground(.textSecondary)
+        }
+    }
+
+    private func summaryRow(label: String, value: String,
+                            @ViewBuilder icon: () -> some View) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            icon()
                 .frame(width: 16)
             Text(label)
                 .font(.system(size: 12))
@@ -269,16 +271,7 @@ struct CredentialApprovalAlert: View {
     private var durationSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             CredentialDurationPicker(selection: $duration)
-            Toggle(isOn: $allAgents) {
-                Text(NSLocalizedString("Apply to all agents, not just this one",
-                                       comment: "Credential approval - all-agents checkbox"))
-                    .font(.system(size: 12))
-                    .themedForeground(.textSecondary)
-            }
-            .toggleStyle(.checkbox)
-            .controlSize(.small)
-            .disabled(duration == .once)
-            .opacity(duration == .once ? 0.4 : 1)
+            allAgentsRow
             if duration == .always {
                 Text(NSLocalizedString(
                     "Standing approvals can be reviewed and revoked anytime in Settings.",
@@ -288,6 +281,48 @@ struct CredentialApprovalAlert: View {
             }
         }
         .animation(.easeOut(duration: 0.15), value: duration)
+    }
+
+    /// Widens the grantee from the requesting agent to every agent: a card
+    /// row in the summary card's visual language — glyph, titled explanation,
+    /// switch — instead of a bare checkbox. Inert (dimmed, switch disabled)
+    /// while "Only once" is selected, since a one-shot approval names no
+    /// grantee at all.
+    private var allAgentsRow: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 13, weight: .medium))
+                .themedForeground(.textSecondary)
+                .frame(width: 20)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(NSLocalizedString("Apply to all agents",
+                                       comment: "Credential approval - all-agents row title"))
+                    .font(.system(size: 12, weight: .medium))
+                    .themedForeground(.textPrimary)
+                Text(String(
+                    format: NSLocalizedString(
+                        "Any agent may use this approval, not just “%@”.",
+                        comment: "Credential approval - all-agents row explanation"),
+                    agentName))
+                    .font(.system(size: 11))
+                    .themedForeground(.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 12)
+            Toggle("", isOn: $allAgents)
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+                .themedTint(.themeColor)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(appearance.isLight ? Color.black.opacity(0.045) : Color.white.opacity(0.06))
+        )
+        .disabled(duration == .once)
+        .opacity(duration == .once ? 0.4 : 1)
     }
 
     private var countdownFootnote: some View {
@@ -347,6 +382,45 @@ private struct CredentialDurationPicker: View {
                     .matchedGeometryEffect(id: "selectedSegment", in: segmentNamespace)
             }
         }
+    }
+}
+
+/// The requesting agent's icon in credential approval UI: the bundled brand
+/// glyph when the name maps to a known agent (same mapping as the Space
+/// control pill), else the generic sparkles agent symbol. `size` is the
+/// SF-symbol point size to optically match; the brand asset's canvas is
+/// widened by `assetInkRatio` so its ink — not its padded canvas — fills
+/// that size. Renders template-style, so it inherits the foreground color of
+/// the row it sits in.
+struct CredentialAgentIcon: View {
+    /// nil (or empty) means "all agents" / an unidentified agent — always the
+    /// generic glyph.
+    let agentName: String?
+    let size: CGFloat
+    var weight: Font.Weight = .regular
+
+    var body: some View {
+        if let asset = badgeAsset {
+            Image(asset)
+                .renderingMode(.template)
+                .resizable()
+                .scaledToFit()
+                .frame(width: size / AgentDriverBadge.assetInkRatio,
+                       height: size / AgentDriverBadge.assetInkRatio)
+                .alignmentGuide(.firstTextBaseline) { d in
+                    // Rest the glyph's ink — inset from the canvas edge by the
+                    // normalized padding — on the text baseline.
+                    d[.bottom] - d.height * (1 - AgentDriverBadge.assetInkRatio) / 2
+                }
+        } else {
+            Image(systemName: "sparkles")
+                .font(.system(size: size, weight: weight))
+        }
+    }
+
+    private var badgeAsset: String? {
+        guard let agentName, !agentName.isEmpty else { return nil }
+        return AgentDriverBadge.make(agentName: agentName, origin: .cdp).assetName
     }
 }
 

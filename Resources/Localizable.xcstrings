@@ -387,7 +387,7 @@
       "comment" : "Approvals sheet - permanent grant\nCredential approval - duration segment\nDeveloper settings - persisted CDP grant pill"
     },
     "Always Allow" : {
-      "comment" : "CDP consent - allow and remember\nCredential approval - approve permanently"
+      "comment" : "CDP consent - allow and remember"
     },
     "Always Show Bookmark Bar" : {
       "comment" : "View menu - Menu item to always show the bookmark bar"
@@ -410,6 +410,9 @@
     "Any agent may use any saved login without asking. The per-site grants below are unnecessary while this is on." : {
       "comment" : "Approvals sheet - all-access toggle explanation"
     },
+    "Any agent may use this approval, not just “%@”." : {
+      "comment" : "Credential approval - all-agents row explanation"
+    },
     "Any unsaved changes may be lost." : {
       "comment" : "Quit confirmation message"
     },
@@ -425,17 +428,14 @@
     "Apply theme to text selection on web pages" : {
       "comment" : "General settings - Toggle title for tinting ::selection on third-party pages with the window theme accent"
     },
-    "Apply to all agents, not just this one" : {
-      "comment" : "Credential approval - all-agents checkbox"
+    "Apply to all agents" : {
+      "comment" : "Credential approval - all-agents row title"
+    },
+    "Approve" : {
+      "comment" : "Credential approval - approve"
     },
     "Approve an agent request for 10 minutes or always and it will appear here." : {
       "comment" : "Approvals sheet - empty state hint"
-    },
-    "Approve for 10 min" : {
-      "comment" : "Credential approval - approve and remember"
-    },
-    "Approve Once" : {
-      "comment" : "Credential approval - approve once"
     },
     "Aqua" : {
       "comment" : "Aqua theme color name"

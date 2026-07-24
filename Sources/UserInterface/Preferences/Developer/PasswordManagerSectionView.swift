@@ -517,8 +517,7 @@ struct CredentialApprovalListSheet: View {
                     kindTag(grant.accessKind)
                 }
                 HStack(spacing: 4) {
-                    Image(systemName: "sparkles")
-                        .font(.system(size: 9))
+                    CredentialAgentIcon(agentName: grant.agent, size: 9)
                     Text(grant.agent
                         ?? NSLocalizedString("All agents", comment: "Approvals sheet - all-agents grantee"))
                         .lineLimit(1)
