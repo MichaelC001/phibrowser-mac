@@ -791,42 +791,6 @@
         }
       }
     },
-    "AI data" : {
-      "comment" : "Manage User Data - Export category checkbox for Sentinel AI data"
-    },
-    "AI data backup was cancelled. No backup was created." : {
-      "comment" : "Manage User Data - Warning when an AI-only export is cancelled"
-    },
-    "AI data backup was cancelled. Only browser data was backed up." : {
-      "comment" : "Manage User Data - Warning when AI export is cancelled"
-    },
-    "AI data could not be backed up because Sentinel could not be started. No backup was created." : {
-      "comment" : "Manage User Data - Warning when an AI-only export cannot start Sentinel"
-    },
-    "AI data could not be backed up because Sentinel could not export it. No backup was created." : {
-      "comment" : "Manage User Data - Warning when an AI-only export fails"
-    },
-    "AI data could not be backed up because Sentinel did not respond in time. No backup was created." : {
-      "comment" : "Manage User Data - Warning when an AI-only export times out"
-    },
-    "AI data could not be backed up because Sentinel returned an unexpected file. No backup was created." : {
-      "comment" : "Manage User Data - Warning when an AI-only export returns an unexpected path"
-    },
-    "AI Data Not Backed Up" : {
-      "comment" : "Manage User Data - Alert title when AI data is skipped but browser data succeeds"
-    },
-    "AI data was not included because Sentinel could not be started. Only browser data was backed up." : {
-      "comment" : "Manage User Data - Warning when AI export is skipped because Sentinel is unavailable"
-    },
-    "AI data was not included because Sentinel could not export it. Only browser data was backed up." : {
-      "comment" : "Manage User Data - Warning when AI export fails"
-    },
-    "AI data was not included because Sentinel did not respond in time. Only browser data was backed up." : {
-      "comment" : "Manage User Data - Warning when AI export times out"
-    },
-    "AI data was not included because Sentinel returned an unexpected file. Only browser data was backed up." : {
-      "comment" : "Manage User Data - Warning when AI export returns an unexpected path"
-    },
     "app.activeSpaceContextMenu.deleteSpaceAction" : {
       "comment" : "Active Space context menu - Delete the active Space",
       "extractionState" : "extracted_with_value",
@@ -2123,6 +2087,294 @@
         }
       }
     },
+    "app.userDataExport.aiData.archive.inspectionFailureMessage" : {
+      "comment" : "User data export - Error when the prepared AI data archive cannot be inspected",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Could not inspect the AI data archive."
+          }
+        }
+      }
+    },
+    "app.userDataExport.aiData.archive.invalidFileMessage" : {
+      "comment" : "User data export - Error when the prepared AI data archive is not a regular file",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "The AI data archive is not a regular file."
+          }
+        }
+      }
+    },
+    "app.userDataExport.aiData.archive.openFailureMessage" : {
+      "comment" : "User data export - Error when the prepared AI data archive cannot be opened safely",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Could not safely open the AI data archive."
+          }
+        }
+      }
+    },
+    "app.userDataExport.aiData.archive.stagingFailureMessage" : {
+      "comment" : "User data export - Error when the prepared AI data archive cannot be staged for backup",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Could not stage the AI data archive."
+          }
+        }
+      }
+    },
+    "app.userDataExport.aiData.failure.cancelledMessage" : {
+      "comment" : "User data export - Failure when AI data backup is cancelled and no browser data was selected",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "AI data backup was cancelled. No backup was created."
+          }
+        }
+      }
+    },
+    "app.userDataExport.aiData.failure.exportFailureMessage" : {
+      "comment" : "User data export - Failure when AI data preparation fails and no browser data was selected",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "AI data could not be backed up because Sentinel could not export it. No backup was created."
+          }
+        }
+      }
+    },
+    "app.userDataExport.aiData.failure.invalidArchiveMessage" : {
+      "comment" : "User data export - Failure when the prepared AI data archive is invalid and no browser data was selected",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "AI data could not be backed up because Sentinel returned an unexpected file. No backup was created."
+          }
+        }
+      }
+    },
+    "app.userDataExport.aiData.failure.serviceUnavailableMessage" : {
+      "comment" : "User data export - Failure when AI data cannot be prepared and no browser data was selected",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "AI data could not be backed up because Sentinel could not be started. No backup was created."
+          }
+        }
+      }
+    },
+    "app.userDataExport.aiData.failure.timeoutMessage" : {
+      "comment" : "User data export - Failure when AI data preparation times out and no browser data was selected",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "AI data could not be backed up because Sentinel did not respond in time. No backup was created."
+          }
+        }
+      }
+    },
+    "app.userDataExport.aiData.partialFailure.cancelledMessage" : {
+      "comment" : "User data export - Warning when AI data backup is cancelled but browser data was backed up",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "AI data backup was cancelled. Only browser data was backed up."
+          }
+        }
+      }
+    },
+    "app.userDataExport.aiData.partialFailure.exportFailureMessage" : {
+      "comment" : "User data export - Warning when AI data preparation fails but browser data was backed up",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "AI data was not included because Sentinel could not export it. Only browser data was backed up."
+          }
+        }
+      }
+    },
+    "app.userDataExport.aiData.partialFailure.invalidArchiveMessage" : {
+      "comment" : "User data export - Warning when the prepared AI data archive is invalid but browser data was backed up",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "AI data was not included because Sentinel returned an unexpected file. Only browser data was backed up."
+          }
+        }
+      }
+    },
+    "app.userDataExport.aiData.partialFailure.serviceUnavailableMessage" : {
+      "comment" : "User data export - Warning when AI data cannot be prepared but browser data was backed up",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "AI data was not included because Sentinel could not be started. Only browser data was backed up."
+          }
+        }
+      }
+    },
+    "app.userDataExport.aiData.partialFailure.timeoutMessage" : {
+      "comment" : "User data export - Warning when AI data preparation times out but browser data was backed up",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "AI data was not included because Sentinel did not respond in time. Only browser data was backed up."
+          }
+        }
+      }
+    },
+    "app.userDataExport.aiData.partialFailure.title" : {
+      "comment" : "User data export - Alert title when browser data succeeds but AI data is not backed up",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "AI Data Not Backed Up"
+          }
+        }
+      }
+    },
+    "app.userDataExport.aiData.result.dismissButton" : {
+      "comment" : "User data export - Button dismissing an AI data backup result alert",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "OK"
+          }
+        }
+      }
+    },
+    "app.userDataExport.aiDataProgress.cancelButton" : {
+      "comment" : "User data export - Button cancelling AI data backup preparation",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Cancel"
+          }
+        }
+      }
+    },
+    "app.userDataExport.aiDataProgress.title" : {
+      "comment" : "User data export - Progress alert title while AI data is being prepared",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Backing Up AI Data"
+          }
+        }
+      }
+    },
+    "app.userDataExport.archive.missingOutputMessage" : {
+      "comment" : "User data export - Error when the requested backup produces no archive",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "No backup archive was produced."
+          }
+        }
+      }
+    },
+    "app.userDataExport.browserDataUnavailable.message" : {
+      "comment" : "User data export - Error when browser data disappears before the backup starts",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "The Phi browser data folder is no longer available."
+          }
+        }
+      }
+    },
+    "app.userDataExport.category.aiDataLabel" : {
+      "comment" : "User data export - Checkbox label for including AI data in the backup",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "AI data"
+          }
+        }
+      }
+    },
+    "app.userDataExport.category.browserDataLabel" : {
+      "comment" : "User data export - Checkbox label for including browser data in the backup",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Browser data"
+          }
+        }
+      }
+    },
+    "app.userDataExport.categorySelection.dismissButton" : {
+      "comment" : "User data export - Button dismissing the message that requires a backup category",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "OK"
+          }
+        }
+      }
+    },
+    "app.userDataExport.categorySelection.requiredMessage" : {
+      "comment" : "User data export - Message when no backup category is selected",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Select at least one category to back up."
+          }
+        }
+      }
+    },
     "app.userDataExport.failure.dismissButton" : {
       "comment" : "User data export - Failure alert dismiss button",
       "extractionState" : "extracted_with_value",
@@ -2136,49 +2388,13 @@
       }
     },
     "app.userDataExport.failure.title" : {
-      "comment" : "User data export - Alert title when exporting Phi user data zip fails",
+      "comment" : "User data export - Alert title when the requested backup cannot be created",
       "extractionState" : "extracted_with_value",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "new",
             "value" : "Backup Failed"
-          }
-        }
-      }
-    },
-    "app.userDataExport.missingData.dismissButton" : {
-      "comment" : "User data export - Missing-data alert dismiss button",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "OK"
-          }
-        }
-      }
-    },
-    "app.userDataExport.missingData.message" : {
-      "comment" : "User data export - Alert body when Phi folder is missing; clearing will still proceed for other locations",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "The Phi user data folder was not found. Continuing will still remove other local application data and quit."
-          }
-        }
-      }
-    },
-    "app.userDataExport.missingData.title" : {
-      "comment" : "User data export - Alert title when the Phi data folder is missing before backup",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "No Phi User Data to Back Up"
           }
         }
       }
@@ -2411,12 +2627,6 @@
         }
       }
     },
-    "Backing Up AI Data" : {
-      "comment" : "Manage User Data - Progress title while Sentinel exports AI data"
-    },
-    "Backup Failed" : {
-      "comment" : "Debug clear data - Alert title when exporting Phi user data zip fails"
-    },
     "Bitwarden" : {
       "comment" : "Onboarding password manager - Bitwarden option"
     },
@@ -2431,9 +2641,6 @@
           }
         }
       }
-    },
-    "Browser data" : {
-      "comment" : "Manage User Data - Export category checkbox for Phi browser data"
     },
     "browser.addressBarMenu.clearCacheAction" : {
       "comment" : "Address bar menu - Settings submenu item to clear cache",
@@ -5705,9 +5912,6 @@
         }
       }
     },
-    "No backup archive was produced." : {
-      "comment" : "Manage User Data - Error when export produced no zip"
-    },
     "notifications.card.runButton" : {
       "comment" : "Notification card run button - Executes the suggested action",
       "extractionState" : "extracted_with_value",
@@ -6454,9 +6658,6 @@
           }
         }
       }
-    },
-    "Select at least one category to back up." : {
-      "comment" : "Manage User Data - Alert when the user unchecks both export categories"
     },
     "settings.account.defaultBrowser.defaultStatus" : {
       "comment" : "Account settings - Status text when Phi is the default browser",
@@ -12253,9 +12454,6 @@
           }
         }
       }
-    },
-    "The Phi browser data folder is no longer available." : {
-      "comment" : "Manage User Data - Error when browser data disappears before backup starts"
     },
     "themes.appearance.darkOption" : {
       "comment" : "Appearance choice: always dark mode",
