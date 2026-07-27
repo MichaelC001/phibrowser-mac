@@ -16,7 +16,7 @@ class ImportFromOtherBrowserViewController: OnboardingBaseViewController {
     
     enum DisplayMode {
         case login   // 640x800 for onboarding.
-        case normal  // 500x625 for the standalone window.
+        case normal  // 500x700 for the standalone window.
     }
     
     var onCompletion: (() -> Void)?
@@ -35,7 +35,11 @@ class ImportFromOtherBrowserViewController: OnboardingBaseViewController {
     private var targetWindowId: Int?
     
     private var viewWidth: CGFloat { displayMode == .login ? 640 : 500 }
-    private var viewHeight: CGFloat { displayMode == .login ? 800 : 625 }
+    /// Normal (standalone window) height is sized for the worst-case expanded
+    /// accordion row: title chain bottom 136 + 8 + card 440 (4-toggle row) +
+    /// 12 + Next button 40 + bottom margin 56 = 692, rounded up — so an expanded
+    /// card can never overlap (and hitTest-swallow) the Next button.
+    private var viewHeight: CGFloat { displayMode == .login ? 800 : 700 }
     private var titleFontSize: CGFloat { displayMode == .login ? 46 : 32 }
     private var titleTopOffset: CGFloat { displayMode == .login ? 96 : 56 }
     private var optionWidth: CGFloat { displayMode == .login ? 472 : 380 }
@@ -1335,12 +1339,20 @@ class OnboardingBaseViewController: NSViewController {
             make.height.equalTo(800)
         }
         
-        placeholderView.snp.makeConstraints { make in
-            make.edges.equalToSuperview()
-        }
-        
-        dotView.snp.makeConstraints { make in
-            make.edges.equalToSuperview()
+        // Constraint-built aspect-fill for the two 640×800 (4:5) bitmap layers.
+        // At exactly 4:5 (OOBE's 640×800) this is pixel-identical to edge-pinning;
+        // at any other ratio (the 500×700 standalone import window) the images
+        // cover the view at 4:5 and crop, instead of letterboxing and exposing
+        // bands of the bare video layer beneath.
+        for background in [placeholderView, dotView] {
+            background.imageScaling = .scaleProportionallyUpOrDown
+            background.snp.makeConstraints { make in
+                make.center.equalToSuperview()
+                make.width.equalTo(background.snp.height).multipliedBy(640.0 / 800.0)
+                make.width.greaterThanOrEqualToSuperview()
+                make.height.greaterThanOrEqualToSuperview()
+                make.height.equalToSuperview().priority(.high)
+            }
         }
         
         titleLabel.snp.makeConstraints { make in
