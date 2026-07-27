@@ -6,6 +6,7 @@
 import AppKit
 import Combine
 import Foundation
+import PostHog
 import SwiftUI
 
 /// Ownership of an agent Space's window at any moment: the agent is driving it,
@@ -144,6 +145,19 @@ struct AgentDriverBadge {
             assetName: nil,
             symbol: "terminal",
             label: friendly.isEmpty ? "Code agent" : friendly)
+    }
+
+    /// Telemetry-safe agent label: the canonical product name when the
+    /// identity matches a known agent brand, else "other" ("unknown" when
+    /// empty). Never the raw identity string — for unsigned scripts that is
+    /// derived from a local file path (see AgentPeerIdentity.deriveAgentName)
+    /// and must not reach analytics.
+    static func telemetryName(_ agentName: String) -> String {
+        guard !agentName.trimmingCharacters(in: .whitespaces).isEmpty else {
+            return "unknown"
+        }
+        let badge = make(agentName: agentName, origin: .cdp)
+        return badge.assetName != nil ? badge.label : "other"
     }
 
     /// Reduces a signing identifier / bundle id to a readable label —
@@ -556,6 +570,11 @@ final class AgentSpaceManager: ObservableObject {
         spaceIdByTaskId[taskId] = spaceId
         ensureKeepAliveSweep()
         beginTranscript(taskId: taskId, spaceName: Self.agentSpaceName(number))
+        PostHogSDK.shared.capture("agent_task_started", properties: [
+            "origin": origin == .cdp ? "cdp" : "phi_agent",
+            "persistent": persistent,
+            "agent_name": AgentDriverBadge.telemetryName(agentName),
+        ])
 
         guard let slot = SpaceManager.shared.keySlot ?? SpaceManager.shared.slots.first else {
             // No window open at all — the persisted-active Space hasn't been
@@ -631,6 +650,11 @@ final class AgentSpaceManager: ObservableObject {
             spaceIdByTaskId[taskId] = spaceId
             ensureKeepAliveSweep()
             beginTranscript(taskId: taskId, spaceName: taskId)
+            PostHogSDK.shared.capture("agent_task_started", properties: [
+                "origin": origin == .cdp ? "cdp" : "phi_agent",
+                "persistent": true,
+                "agent_name": AgentDriverBadge.telemetryName(agentName),
+            ])
         }
 
         for slot in SpaceManager.shared.slots {
@@ -1155,6 +1179,12 @@ final class AgentSpaceManager: ObservableObject {
         AppLogInfo("[AgentSpace] task \(taskId) completed success=\(success)"
             + " persistent=\(task.persistent)"
             + (message.map { " message=\($0)" } ?? ""))
+        PostHogSDK.shared.capture("agent_task_completed", properties: [
+            "origin": task.origin == .cdp ? "cdp" : "phi_agent",
+            "persistent": task.persistent,
+            "agent_name": AgentDriverBadge.telemetryName(task.agentName),
+            "success": success,
+        ])
         if let masked = task.maskedTabId {
             AgentAnimationManager.shared.setActive(false, for: masked)
         }

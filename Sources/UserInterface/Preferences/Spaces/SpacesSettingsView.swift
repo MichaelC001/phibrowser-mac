@@ -5,6 +5,7 @@
 
 import SwiftUI
 import AppKit
+import PostHog
 import UniformTypeIdentifiers
 
 /// Settings pane content for managing Spaces, laid out master-detail (mirroring
@@ -740,6 +741,7 @@ struct SpacesSettingsView: View {
         alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Cancel button"))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         spaceManager.deleteSpace(spaceId: space.spaceId)
+        PostHogSDK.shared.capture("space_deleted")
     }
 
     private var changeProfileConfirmationBody: String {

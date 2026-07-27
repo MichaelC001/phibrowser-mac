@@ -4,6 +4,7 @@
 // found in the LICENSE file.
 
 import AppKit
+import PostHog
 import SwiftUI
 
 /// Rich "Create a Space" panel. Replaces the bare name-only NSAlert that used
@@ -415,6 +416,12 @@ struct CreateSpacePanel: View {
             iconName: selectedIcon.storageValue,
             profileId: profileId
         )
+        if newSpaceId != nil {
+            PostHogSDK.shared.capture("space_created", properties: [
+                "total_spaces": manager.spaces.count,
+                "non_default_profile": profileId != LocalStore.defaultProfileId,
+            ])
+        }
         // Pin the chosen theme (and, when the user touched the slider, the
         // custom overlay opacity) to the new Space. Persisted now; applied
         // when its window spawns in activateInFocusedWindow.

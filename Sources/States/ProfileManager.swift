@@ -6,6 +6,7 @@
 import Cocoa
 import Combine
 import Foundation
+import PostHog
 
 /// One row from the Chromium-side profile attributes store, projected to
 /// Swift. `profileId` is the on-disk basename and the wire identifier used
@@ -145,6 +146,15 @@ final class ProfileManager: ObservableObject {
         bridge.createProfile(withDisplayName: trimmed) { [weak self] newId in
             DispatchQueue.main.async {
                 self?.refresh()
+                // The agent's auto-created fallback profile is not a user
+                // action — keep it out of the usage metric.
+                if let self, let newId,
+                   !PhiPreferences.AgentSpaces.isAgentFallbackProfile(
+                       profileId: newId, displayName: trimmed) {
+                    PostHogSDK.shared.capture("profile_created", properties: [
+                        "total_profiles": self.userAssignableProfiles.count,
+                    ])
+                }
                 completion(newId)
             }
         }

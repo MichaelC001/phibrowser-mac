@@ -4,6 +4,7 @@
 // found in the LICENSE file.
 
 import Foundation
+import PostHog
 
 /// The management slice of the `agentSpace.*` message surface: operating the
 /// browser's user-facing features (Spaces, profiles, URL rules, tab groups,
@@ -498,6 +499,12 @@ extension AgentSpaceRouter {
     ) -> String? {
         if let spaceId = obj["spaceId"] as? String {
             if let denied = userSpaceOperationsRefusal() { return denied }
+            // The spaceId path targets a USER Space's window (the taskId path
+            // below is the agent's own window) — count it as user-space usage.
+            PostHogSDK.shared.capture("agent_user_space_command", properties: [
+                "command": context.type,
+                "agent_name": AgentDriverBadge.telemetryName(context.agentName),
+            ])
             return MainActor.assumeIsolated {
                 guard let target = spaceWindow(spaceId: spaceId) else {
                     return failure("space_not_open")

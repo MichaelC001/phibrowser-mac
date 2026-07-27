@@ -6,6 +6,7 @@
 import Cocoa
 import Combine
 import Foundation
+import PostHog
 
 private enum NativeWindowTabBarSuppressor {
     private static let slotTabbingIdentifierPrefix = "phi.space.slot."
@@ -1558,6 +1559,9 @@ final class SpaceManager: ObservableObject {
             return
         }
         AppLogInfo("[SpaceManager] changeProfile: \(spaceId) \(space.profileId) → \(newProfileId)")
+        PostHogSDK.shared.capture("space_profile_changed", properties: [
+            "total_profiles": ProfileManager.shared.userAssignableProfiles.count,
+        ])
         // Capture before closing anything. Pinned tabs are excluded because
         // they are restored from their configured Space/Profile/App scope;
         // new-tab pages are excluded as well. keySlot first so the focused
@@ -3290,6 +3294,11 @@ final class SpaceWindowSlot: ObservableObject {
             // so the next cold launch surfaces this Space — not whatever
             // was registered last.
             manager.persistSlotsSnapshot()
+            if userInitiated {
+                PostHogSDK.shared.capture("space_switched", properties: [
+                    "total_spaces": manager.spaces.count,
+                ])
+            }
         }
         recordRegularSpace(spaceId)
 

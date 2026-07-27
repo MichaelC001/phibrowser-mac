@@ -4,6 +4,7 @@
 // found in the LICENSE file.
 
 import Foundation
+import PostHog
 
 struct ExtensionMessageContext {
     let type: String
@@ -49,6 +50,10 @@ final class ExtensionMessageRouter {
             if let denied = AgentSpaceRouter.userSpaceOperationsRefusal() {
                 return denied
             }
+            PostHogSDK.shared.capture("agent_user_space_command", properties: [
+                "command": context.type,
+                "agent_name": AgentDriverBadge.telemetryName(context.agentName),
+            ])
             return handler(context)
         }
     }

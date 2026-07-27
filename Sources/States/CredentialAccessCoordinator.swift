@@ -5,6 +5,7 @@
 
 import AppKit
 import Foundation
+import PostHog
 
 /// One remembered credential approval: which agent (nil = every agent) may
 /// fetch credentials for which site (nil = every site), until when (nil =
@@ -199,10 +200,45 @@ final class CredentialAccessCoordinator {
     /// grant, so it can never widen or narrow one.
     func requestApproval(agentName: String, scope: String, kind: CredentialAccessKind,
                          purpose: String? = nil) -> Bool {
+        // Usage metric only: which access kind, whether it was allowed, and
+        // whether a live grant skipped the prompt. Never the scope (a domain),
+        // the purpose, or anything from the vault.
         if CredentialGrantStore.shared.covers(agent: agentName, scope: scope, kind: kind) {
+            PostHogSDK.shared.capture("agent_credential_access_requested", properties: [
+                "kind": kind.rawValue,
+                "approved": true,
+                "prompted": false,
+                "agent_name": AgentDriverBadge.telemetryName(agentName),
+            ])
+            PostHogSDK.shared.capture("agent_credential_access_approved", properties: [
+                "kind": kind.rawValue,
+                "approval_type": "existing_grant",
+                "agent_name": AgentDriverBadge.telemetryName(agentName),
+            ])
             return true
         }
-        switch prompt(agentName: agentName, scope: scope, kind: kind, purpose: purpose) {
+        let decision = prompt(agentName: agentName, scope: scope, kind: kind, purpose: purpose)
+        let approvalType: String?
+        switch decision {
+        case .denied: approvalType = nil
+        case .once: approvalType = "once"
+        case .remember: approvalType = "ten_minutes"
+        case .always: approvalType = "always"
+        }
+        PostHogSDK.shared.capture("agent_credential_access_requested", properties: [
+            "kind": kind.rawValue,
+            "approved": approvalType != nil,
+            "prompted": true,
+            "agent_name": AgentDriverBadge.telemetryName(agentName),
+        ])
+        if let approvalType {
+            PostHogSDK.shared.capture("agent_credential_access_approved", properties: [
+                "kind": kind.rawValue,
+                "approval_type": approvalType,
+                "agent_name": AgentDriverBadge.telemetryName(agentName),
+            ])
+        }
+        switch decision {
         case .denied:
             return false
         case .once:

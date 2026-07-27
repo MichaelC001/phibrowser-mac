@@ -5,6 +5,7 @@
 
 import AppKit
 import Combine
+import PostHog
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -1305,6 +1306,7 @@ struct SpacesStripView: View {
         alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Cancel button"))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         manager.deleteSpace(spaceId: space.spaceId)
+        PostHogSDK.shared.capture("space_deleted")
     }
 }
 
