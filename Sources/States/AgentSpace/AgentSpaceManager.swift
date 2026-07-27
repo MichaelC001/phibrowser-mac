@@ -1063,9 +1063,8 @@ final class AgentSpaceManager: ObservableObject {
     /// keep-alive reap (a driver whose harness kills rounds, Pi's 10s bash
     /// timeout) must not lose the history the user is reading, so only a
     /// stale buffer is cleared. Recency is judged by APPEND time — mirrored
-    /// lines carry backdated authored timestamps. Auto-opens the console when
-    /// Agent Autoview is on — same preference, same intent: the user wants to
-    /// watch the agent work.
+    /// lines carry backdated authored timestamps. The console is never opened
+    /// here — the user opens it from the pip's context menu.
     private func beginTranscript(taskId: String, spaceName: String) {
         let continuing = AgentTranscriptStore.shared.lastAppend(taskId: taskId)
             .map { Date().timeIntervalSince($0) < Self.transcriptContinuityWindow }
@@ -1075,13 +1074,9 @@ final class AgentSpaceManager: ObservableObject {
         }
         appendTranscript(taskId: taskId, kind: .status,
                          text: "Task started — Space \(spaceName)")
-        if PhiPreferences.AgentSpaces.autoViewEnabled {
-            AgentTranscriptPanelController.shared.show(focusTaskId: taskId)
-        } else {
-            // Panel already open: keep its feed pointed at something real if
-            // its filter was left on a task that has since ended.
-            AgentTranscriptPanelController.shared.refocusIfStale(onto: taskId)
-        }
+        // Panel already open: keep its feed pointed at something real if
+        // its filter was left on a task that has since ended.
+        AgentTranscriptPanelController.shared.refocusIfStale(onto: taskId)
     }
 
     /// Buffer/queue teardown when a task record goes away. Retention: an OPEN
