@@ -15,10 +15,10 @@ enum DownloadState: Int {
     
     var displayName: String {
         switch self {
-        case .inProgress: return NSLocalizedString("Downloading", comment: "Download state")
-        case .complete: return NSLocalizedString("Completed", comment: "Download state")
-        case .cancelled: return NSLocalizedString("Cancelled", comment: "Download state")
-        case .interrupted: return NSLocalizedString("Failed", comment: "Download state")
+        case .inProgress: return NSLocalizedString("downloads.list.state.downloading", value: "Downloading", comment: "Download state")
+        case .complete: return NSLocalizedString("downloads.list.state.completed", value: "Completed", comment: "Download state")
+        case .cancelled: return NSLocalizedString("downloads.list.state.cancelled", value: "Cancelled", comment: "Download state")
+        case .interrupted: return NSLocalizedString("downloads.list.state.failed", value: "Failed", comment: "Download state")
         }
     }
 }
@@ -67,7 +67,7 @@ class DownloadItem: ObservableObject, Identifiable {
             isInsecure: isInsecure,
             insecureDownloadStatus: insecureDownloadStatus
         ) else { return nil }
-        return NSLocalizedString(key, tableName: "DownloadSafety", comment: "Download safety warning text")
+        return NSLocalizedString(key, comment: "Download safety warning text")
     }
 
     var shortSafetyWarningText: String? {
@@ -77,7 +77,7 @@ class DownloadItem: ObservableObject, Identifiable {
             isInsecure: isInsecure,
             insecureDownloadStatus: insecureDownloadStatus
         ) else { return nil }
-        return NSLocalizedString(key, tableName: "DownloadSafety", comment: "Download safety short status text")
+        return NSLocalizedString(key, comment: "Download safety short status text")
     }
 
     var sourceHost: String {
@@ -96,7 +96,7 @@ class DownloadItem: ObservableObject, Identifiable {
                 return lastComponent
             }
         }
-        return NSLocalizedString("Downloading...", comment: "Placeholder text when download filename is not yet available")
+        return NSLocalizedString("downloads.item.pendingFilenamePlaceholder", value: "Downloading...", comment: "Placeholder text when download filename is not yet available")
     }
     
     var formattedProgress: String {

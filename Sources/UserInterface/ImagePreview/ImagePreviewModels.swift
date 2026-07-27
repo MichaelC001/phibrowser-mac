@@ -109,15 +109,15 @@ enum ImagePreviewError: Error, Equatable {
     var message: String {
         switch self {
         case .invalidSource:
-            return NSLocalizedString("Invalid image source", comment: "Image preview error")
+            return NSLocalizedString("imagePreview.error.invalidImageSource", value: "Invalid image source", comment: "Image preview error")
         case .networkFailed:
-            return NSLocalizedString("Failed to load remote image", comment: "Image preview error")
+            return NSLocalizedString("imagePreview.error.failedToLoadRemoteImage", value: "Failed to load remote image", comment: "Image preview error")
         case .unsupportedFormat:
-            return NSLocalizedString("Unsupported image format", comment: "Image preview error")
+            return NSLocalizedString("imagePreview.error.unsupportedImageFormat", value: "Unsupported image format", comment: "Image preview error")
         case .decodeFailed:
-            return NSLocalizedString("Failed to decode image", comment: "Image preview error")
+            return NSLocalizedString("imagePreview.error.failedToDecodeImage", value: "Failed to decode image", comment: "Image preview error")
         case .fileNotFound:
-            return NSLocalizedString("Image file not found", comment: "Image preview error")
+            return NSLocalizedString("imagePreview.error.imageFileNotFound", value: "Image file not found", comment: "Image preview error")
         }
     }
 }

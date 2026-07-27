@@ -95,7 +95,7 @@ struct SettingsDefaultBadge: View {
     var onAccent: Bool = false
 
     var body: some View {
-        Text(NSLocalizedString("Default", comment: "Settings - badge marking the default Space or Profile"))
+        Text(NSLocalizedString("settings.defaultBadge", value: "Default", comment: "Settings - badge marking the default Space or Profile"))
             .font(.system(size: 10, weight: .medium))
             .themedForeground(onAccent ? ThemedColor(.white) : .textSecondary)
             // Never wrap or compress: under tight row width (e.g. the Spaces list

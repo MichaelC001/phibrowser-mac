@@ -145,11 +145,11 @@ struct CreateSpacePanel: View {
 
     private var header: some View {
         VStack(spacing: 12) {
-            Text(NSLocalizedString("Create a Space",
+            Text(NSLocalizedString("sidebar.createSpace.title", value: "Create a Space",
                 comment: "Title of the create-Space panel"))
                 .font(.system(size: 18, weight: .medium))
                 .foregroundStyle(Color.primary.opacity(0.85))
-            Text(NSLocalizedString("Each space has its own independent bookmarks",
+            Text(NSLocalizedString("sidebar.createSpace.subtitle", value: "Each space has its own independent bookmarks",
                 comment: "Subtitle of the create-Space panel"))
                 .font(.system(size: 14))
                 .foregroundStyle(Color.primary.opacity(0.5))
@@ -189,7 +189,7 @@ struct CreateSpacePanel: View {
 
     private var nameField: some View {
         TextField(
-            NSLocalizedString("Space name", comment: "Placeholder for the Space-name field"),
+            NSLocalizedString("sidebar.createSpace.nameField.placeholder", value: "Space name", comment: "Placeholder for the Space-name field"),
             text: $name
         )
             .textFieldStyle(.plain)
@@ -204,7 +204,7 @@ struct CreateSpacePanel: View {
 
     private var profileRow: some View {
         HStack(spacing: 8) {
-            Text(NSLocalizedString("Profile",
+            Text(NSLocalizedString("sidebar.createSpace.profilePicker.label", value: "Profile",
                 comment: "Label for the profile picker in the create-Space panel"))
                 .font(.system(size: 13))
                 .foregroundStyle(Color.primary.opacity(0.85))
@@ -227,7 +227,7 @@ struct CreateSpacePanel: View {
             Button {
                 promptCreateProfile()
             } label: {
-                Label(NSLocalizedString("New Profile\u{2026}",
+                Label(NSLocalizedString("sidebar.createSpace.profilePicker.newProfileAction", value: "New Profile\u{2026}",
                     comment: "Profile picker item to create a new profile"),
                     systemImage: "plus")
             }
@@ -324,7 +324,7 @@ struct CreateSpacePanel: View {
     private var actions: some View {
         VStack(spacing: 12) {
             Button(action: create) {
-                Text(NSLocalizedString("Create Space",
+                Text(NSLocalizedString("sidebar.createSpace.createButton", value: "Create Space",
                     comment: "Confirm button in the create-Space panel"))
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(Color.white.opacity(0.95))
@@ -338,7 +338,7 @@ struct CreateSpacePanel: View {
             .buttonStyle(.plain)
 
             Button(action: onClose) {
-                Text(NSLocalizedString("Cancel", comment: "Cancel button"))
+                Text(NSLocalizedString("sidebar.createSpace.cancelButton", value: "Cancel", comment: "Cancel button"))
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(Color.primary.opacity(0.85))
             }
@@ -405,7 +405,7 @@ struct CreateSpacePanel: View {
     private func create() {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let finalName = trimmed.isEmpty
-            ? String(format: NSLocalizedString("Space %d",
+            ? String(format: NSLocalizedString("sidebar.createSpace.defaultName", value: "Space %d",
                 comment: "Default name for a newly created Space"),
                 manager.spaces.count + 1)
             : trimmed

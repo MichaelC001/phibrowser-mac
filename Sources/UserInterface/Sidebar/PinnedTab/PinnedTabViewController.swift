@@ -228,7 +228,7 @@ class PinnedTabViewController: NSViewController {
         iconImageView.contentTintColor = .tertiaryLabelColor
 
         let sublabel = NSTextField()
-        sublabel.stringValue = NSLocalizedString("Drag tabs here or pin them from the tab list", comment: "Drag tabs here or pin them from the tab list")
+        sublabel.stringValue = NSLocalizedString("sidebar.pinnedTabs.emptyHint", value: "Drag tabs here or pin them from the tab list", comment: "Drag tabs here or pin them from the tab list")
         sublabel.font = NSFont.systemFont(ofSize: 11)
         sublabel.textColor = .secondaryLabelColor
         sublabel.alignment = .center

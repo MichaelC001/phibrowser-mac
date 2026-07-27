@@ -56,7 +56,7 @@ struct ProfilesSettingsView: View {
     private var profileListPanel: some View {
         VStack(spacing: 0) {
             HStack {
-                Text(NSLocalizedString("Your Profiles", comment: "Profiles settings - list header"))
+                Text(NSLocalizedString("settings.profiles.listTitle", value: "Your Profiles", comment: "Profiles settings - list header"))
                     .font(.system(size: 12))
                     .themedForeground(.textSecondary)
                 Spacer()
@@ -79,16 +79,16 @@ struct ProfilesSettingsView: View {
 
             HStack(spacing: 0) {
                 toolbarButton(systemName: "plus",
-                              help: NSLocalizedString("New profile", comment: "Profiles settings - new profile tooltip"),
+                              help: NSLocalizedString("settings.profiles.newButtonTooltip", value: "New profile", comment: "Profiles settings - new profile tooltip"),
                               action: newProfile)
                 toolbarDivider
                 toolbarButton(systemName: "minus",
-                              help: NSLocalizedString("Delete selected profile", comment: "Profiles settings - delete profile tooltip"),
+                              help: NSLocalizedString("settings.profiles.deleteButtonTooltip", value: "Delete selected profile", comment: "Profiles settings - delete profile tooltip"),
                               disabled: !canDeleteSelected,
                               action: deleteSelected)
                 toolbarDivider
                 toolbarButton(systemName: "pencil",
-                              help: NSLocalizedString("Rename selected profile", comment: "Profiles settings - rename profile tooltip"),
+                              help: NSLocalizedString("settings.profiles.renameButtonTooltip", value: "Rename selected profile", comment: "Profiles settings - rename profile tooltip"),
                               disabled: selectedProfile == nil,
                               action: renameSelected)
                 Spacer()
@@ -115,7 +115,7 @@ struct ProfilesSettingsView: View {
                 }
                 Spacer(minLength: 4)
                 Text(count == 0
-                     ? NSLocalizedString("Not used", comment: "Profiles settings - tag for a profile with no Spaces")
+                     ? NSLocalizedString("settings.profiles.unusedStatus", value: "Not used", comment: "Profiles settings - tag for a profile with no Spaces")
                      : spaceCountLabel(count))
                     .font(.system(size: 11))
                     .themedForeground(.textSecondary)
@@ -160,17 +160,17 @@ struct ProfilesSettingsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     SettingsDetailCard {
-                        SettingsDetailRow(NSLocalizedString("Search engine", comment: "Profiles settings - search engine row label"),
+                        SettingsDetailRow(NSLocalizedString("settings.profiles.details.searchEngineLabel", value: "Search engine", comment: "Profiles settings - search engine row label"),
                                           systemImage: "magnifyingglass") {
                             searchEngineControl(profileId: profileId)
                         }
                         SettingsRowDivider()
-                        SettingsDetailRow(NSLocalizedString("Download location", comment: "Profiles settings - download location row label"),
+                        SettingsDetailRow(NSLocalizedString("settings.profiles.details.downloadLocationLabel", value: "Download location", comment: "Profiles settings - download location row label"),
                                           systemImage: "arrow.down.to.line") {
                             downloadLocationControl(profileId: profileId)
                         }
                         SettingsRowDivider()
-                        SettingsDetailRow(NSLocalizedString("Password Manager", comment: "Profiles settings - password manager row label"),
+                        SettingsDetailRow(NSLocalizedString("settings.profiles.details.passwordManagerLabel", value: "Password Manager", comment: "Profiles settings - password manager row label"),
                                           systemImage: "key.fill") {
                             installPasswordManagerMenu(profileId: profileId)
                         }
@@ -183,7 +183,7 @@ struct ProfilesSettingsView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         } else {
-            Text(NSLocalizedString("Select a profile to view its settings.",
+            Text(NSLocalizedString("settings.profiles.details.emptyPlaceholder", value: "Select a profile to view its settings.",
                                    comment: "Profiles settings - empty detail placeholder"))
                 .font(.system(size: 13))
                 .themedForeground(.textSecondary)
@@ -212,7 +212,7 @@ struct ProfilesSettingsView: View {
         if isLoadingDetail {
             ProgressView().controlSize(.small)
         } else if searchEngines.isEmpty {
-            Text(NSLocalizedString("Unavailable", comment: "Profiles settings - search engine list unavailable"))
+            Text(NSLocalizedString("settings.profiles.searchEngine.unavailableStatus", value: "Unavailable", comment: "Profiles settings - search engine list unavailable"))
                 .font(.system(size: 12))
                 .themedForeground(.textSecondary)
         } else {
@@ -279,7 +279,7 @@ struct ProfilesSettingsView: View {
 
     private var downloadFolderName: String {
         guard !downloadPath.isEmpty else {
-            return NSLocalizedString("Choose…", comment: "Profiles settings - download location not set")
+            return NSLocalizedString("settings.profiles.downloadLocation.choosePlaceholder", value: "Choose…", comment: "Profiles settings - download location not set")
         }
         return (downloadPath as NSString).lastPathComponent
     }
@@ -296,19 +296,19 @@ struct ProfilesSettingsView: View {
     private var dataLinks: [DataLink] {
         [
             DataLink(page: "privacy",
-                     title: NSLocalizedString("Privacy and Security", comment: "Profiles settings - data link to privacy settings"),
+                     title: NSLocalizedString("settings.profiles.dataLinks.privacyAndSecurity", value: "Privacy and Security", comment: "Profiles settings - data link to privacy settings"),
                      systemImage: "lock.shield"),
             DataLink(page: "passwords",
-                     title: NSLocalizedString("Passwords", comment: "Profiles settings - data link to saved passwords"),
+                     title: NSLocalizedString("settings.profiles.dataLinks.passwords", value: "Passwords", comment: "Profiles settings - data link to saved passwords"),
                      systemImage: "key"),
             DataLink(page: "payments",
-                     title: NSLocalizedString("Credit Cards", comment: "Profiles settings - data link to payment methods"),
+                     title: NSLocalizedString("settings.profiles.dataLinks.paymentMethods", value: "Credit Cards", comment: "Profiles settings - data link to payment methods"),
                      systemImage: "creditcard"),
             DataLink(page: "notifications",
-                     title: NSLocalizedString("Notifications", comment: "Profiles settings - data link to notification settings"),
+                     title: NSLocalizedString("settings.profiles.dataLinks.notifications", value: "Notifications", comment: "Profiles settings - data link to notification settings"),
                      systemImage: "bell"),
             DataLink(page: "clearBrowserData",
-                     title: NSLocalizedString("Clear Browsing Data", comment: "Profiles settings - data link to clear browsing data"),
+                     title: NSLocalizedString("settings.profiles.dataLinks.clearBrowsingData", value: "Clear Browsing Data", comment: "Profiles settings - data link to clear browsing data"),
                      systemImage: "trash"),
         ]
     }
@@ -316,7 +316,7 @@ struct ProfilesSettingsView: View {
     @ViewBuilder
     private func dataAndSettingsSection(profileId: String) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(NSLocalizedString("Your Data and Settings", comment: "Profiles settings - data & settings section header"))
+            Text(NSLocalizedString("settings.profiles.dataLinks.sectionTitle", value: "Your Data and Settings", comment: "Profiles settings - data & settings section header"))
                 .font(.system(size: 12))
                 .themedForeground(.textSecondary)
                 .padding(.leading, 2)
@@ -407,7 +407,7 @@ struct ProfilesSettingsView: View {
             ForEach(installingPasswordManagers) { manager in
                 ProgressView()
                     .controlSize(.small)
-                    .help(String(format: NSLocalizedString("Installing %@", comment: "Profiles settings - tooltip on the spinner of a password manager mid-install"),
+                    .help(String(format: NSLocalizedString("settings.profiles.passwordManager.installingTooltip", value: "Installing %@", comment: "Profiles settings - tooltip on the spinner of a password manager mid-install"),
                                  manager.name))
             }
         }
@@ -443,7 +443,7 @@ struct ProfilesSettingsView: View {
             }
         } label: {
             trailingControlPill {
-                Text(NSLocalizedString("Install\u{2026}", comment: "Profiles settings - install password manager menu label"))
+                Text(NSLocalizedString("settings.profiles.passwordManager.installAction", value: "Install\u{2026}", comment: "Profiles settings - install password manager menu label"))
                     .font(.system(size: 13))
                     .themedForeground(.textPrimary)
                 Spacer(minLength: 4)
@@ -457,7 +457,7 @@ struct ProfilesSettingsView: View {
         .menuIndicator(.hidden)
         .fixedSize()
         .disabled(installablePasswordManagers.isEmpty)
-        .help(NSLocalizedString("Install a password manager", comment: "Profiles settings - tooltip on the install password manager menu"))
+        .help(NSLocalizedString("settings.profiles.passwordManager.installTooltip", value: "Install a password manager", comment: "Profiles settings - tooltip on the install password manager menu"))
     }
 
     /// Triggers a silent Chrome Web Store install into the profile and starts
@@ -577,8 +577,8 @@ struct ProfilesSettingsView: View {
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
-        panel.prompt = NSLocalizedString("Choose", comment: "Profiles settings - download folder picker confirm button")
-        panel.message = NSLocalizedString("Choose a download location for this profile.",
+        panel.prompt = NSLocalizedString("settings.profiles.downloadLocation.chooseButton", value: "Choose", comment: "Profiles settings - download folder picker confirm button")
+        panel.message = NSLocalizedString("settings.profiles.downloadLocation.pickerMessage", value: "Choose a download location for this profile.",
                                           comment: "Profiles settings - download folder picker message")
         if !downloadPath.isEmpty {
             panel.directoryURL = URL(fileURLWithPath: downloadPath, isDirectory: true)
@@ -595,7 +595,7 @@ struct ProfilesSettingsView: View {
     // MARK: - Helpers
 
     private func spaceCountLabel(_ count: Int) -> String {
-        String(format: NSLocalizedString("%d Spaces", comment: "Profiles settings - Count of Spaces bound to a profile"), count)
+        String(format: NSLocalizedString("settings.profiles.boundSpaceCount", value: "%d Spaces", comment: "Profiles settings - Count of Spaces bound to a profile"), count)
     }
 
     // MARK: - Actions
@@ -624,8 +624,8 @@ struct ProfilesSettingsView: View {
         profileManager.renameProfile(profile.profileId, to: trimmed) { success, error in
             if !success {
                 let errAlert = NSAlert()
-                errAlert.messageText = NSLocalizedString("Couldn't rename profile", comment: "Title of the profile-rename error")
-                errAlert.informativeText = error ?? NSLocalizedString("Unknown error", comment: "Fallback profile-rename error reason")
+                errAlert.messageText = NSLocalizedString("settings.profiles.renameFailure.title", value: "Couldn't rename profile", comment: "Title of the profile-rename error")
+                errAlert.informativeText = error ?? NSLocalizedString("settings.profiles.renameFailure.unknownError", value: "Unknown error", comment: "Fallback profile-rename error reason")
                 errAlert.runModal()
             }
         }
@@ -635,22 +635,21 @@ struct ProfilesSettingsView: View {
         guard profile.profileId != LocalStore.defaultProfileId else { return }
         let alert = NSAlert()
         alert.messageText = String(
-            format: NSLocalizedString("Delete profile \u{201C}%@\u{201D}?", comment: "Title of the delete-profile confirmation"),
+            format: NSLocalizedString("settings.profiles.deleteConfirmation.title", value: "Delete profile \u{201C}%@\u{201D}?", comment: "Title of the delete-profile confirmation"),
             profile.displayName
         )
-        alert.informativeText = NSLocalizedString(
-            "All cookies, history, extensions, and saved data on this profile will be permanently removed. This cannot be undone.",
+        alert.informativeText = NSLocalizedString("settings.profiles.deleteConfirmation.message", value: "All cookies, history, extensions, and saved data on this profile will be permanently removed. This cannot be undone.",
             comment: "Body of the delete-profile confirmation"
         )
         alert.alertStyle = .warning
-        alert.addButton(withTitle: NSLocalizedString("Delete", comment: "Destructive button"))
-        alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Cancel button"))
+        alert.addButton(withTitle: NSLocalizedString("settings.profiles.deleteConfirmation.deleteButton", value: "Delete", comment: "Destructive button"))
+        alert.addButton(withTitle: NSLocalizedString("settings.profiles.deleteConfirmation.cancelButton", value: "Cancel", comment: "Cancel button"))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         profileManager.deleteProfile(profile.profileId) { success, error in
             if !success {
                 let errAlert = NSAlert()
-                errAlert.messageText = NSLocalizedString("Couldn't delete profile", comment: "Title of the profile-delete error")
-                errAlert.informativeText = error ?? NSLocalizedString("Unknown error", comment: "Fallback profile-delete error reason")
+                errAlert.messageText = NSLocalizedString("settings.profiles.deleteFailure.title", value: "Couldn't delete profile", comment: "Title of the profile-delete error")
+                errAlert.informativeText = error ?? NSLocalizedString("settings.profiles.deleteFailure.unknownError", value: "Unknown error", comment: "Fallback profile-delete error reason")
                 errAlert.runModal()
             }
         }
@@ -723,21 +722,20 @@ final class ProfileNameFieldValidator: NSObject, NSTextFieldDelegate {
         let validator: ProfileNameFieldValidator
         switch mode {
         case .create:
-            alert.messageText = NSLocalizedString("New Profile", comment: "Title of the create-profile dialog")
-            alert.informativeText = NSLocalizedString(
-                "Enter a name for the new profile. Each profile has its own cookies, history, and extensions.",
+            alert.messageText = NSLocalizedString("settings.profiles.createDialog.title", value: "New Profile", comment: "Title of the create-profile dialog")
+            alert.informativeText = NSLocalizedString("settings.profiles.createDialog.message", value: "Enter a name for the new profile. Each profile has its own cookies, history, and extensions.",
                 comment: "Body of the create-profile dialog")
-            alert.addButton(withTitle: NSLocalizedString("Create", comment: "Create button"))
-            alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Cancel button"))
+            alert.addButton(withTitle: NSLocalizedString("settings.profiles.createDialog.createButton", value: "Create", comment: "Create button"))
+            alert.addButton(withTitle: NSLocalizedString("settings.profiles.createDialog.cancelButton", value: "Cancel", comment: "Cancel button"))
             validator = ProfileNameFieldValidator(
                 confirmButton: alert.buttons[0],
                 excludingProfileId: nil,
-                placeholder: NSLocalizedString("Profile name", comment: "Placeholder for the profile-name field"))
+                placeholder: NSLocalizedString("settings.profiles.nameField.placeholder", value: "Profile name", comment: "Placeholder for the profile-name field"))
         case let .rename(currentName, profileId):
-            alert.messageText = NSLocalizedString("Rename Profile", comment: "Title of the rename-profile dialog")
-            alert.informativeText = NSLocalizedString("Enter a new name for this profile.", comment: "Body of the rename-profile dialog")
-            alert.addButton(withTitle: NSLocalizedString("Rename", comment: "Rename button"))
-            alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Cancel button"))
+            alert.messageText = NSLocalizedString("settings.profiles.renameDialog.title", value: "Rename Profile", comment: "Title of the rename-profile dialog")
+            alert.informativeText = NSLocalizedString("settings.profiles.renameDialog.message", value: "Enter a new name for this profile.", comment: "Body of the rename-profile dialog")
+            alert.addButton(withTitle: NSLocalizedString("settings.profiles.renameDialog.renameButton", value: "Rename", comment: "Rename button"))
+            alert.addButton(withTitle: NSLocalizedString("settings.profiles.renameDialog.cancelButton", value: "Cancel", comment: "Cancel button"))
             validator = ProfileNameFieldValidator(
                 confirmButton: alert.buttons[0],
                 excludingProfileId: profileId,
@@ -761,7 +759,7 @@ final class ProfileNameFieldValidator: NSObject, NSTextFieldDelegate {
             errorLabel.stringValue = ""
             confirmButton?.isEnabled = false
         } else if ProfileManager.shared.displayNameExists(trimmed, excluding: excludingProfileId) {
-            errorLabel.stringValue = NSLocalizedString("A profile with this name already exists.",
+            errorLabel.stringValue = NSLocalizedString("settings.profiles.nameField.duplicateError", value: "A profile with this name already exists.",
                 comment: "Validation shown when a new or renamed profile name duplicates an existing profile")
             confirmButton?.isEnabled = false
         } else {

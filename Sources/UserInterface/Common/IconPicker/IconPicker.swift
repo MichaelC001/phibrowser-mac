@@ -123,13 +123,11 @@ struct IconPicker: View {
     private var searchPlaceholder: String {
         switch selectedTab {
         case .icon:
-            NSLocalizedString(
-                "Search icons",
+            NSLocalizedString("common.iconPicker.iconsSearchPlaceholder", value: "Search icons",
                 comment: "Icon picker - Search field placeholder for Phi icons"
             )
         case .emoji:
-            NSLocalizedString(
-                "Search emoji",
+            NSLocalizedString("common.iconPicker.emojiSearchPlaceholder", value: "Search emoji",
                 comment: "Icon picker - Search field placeholder for emoji"
             )
         }
@@ -239,8 +237,7 @@ struct IconPicker: View {
     }
 
     private var emptySearchResults: some View {
-        Text(NSLocalizedString(
-            "No results",
+        Text(NSLocalizedString("common.iconPicker.searchEmptyMessage", value: "No results",
             comment: "Icon picker - Empty state when search has no matching icons"
         ))
         .font(.system(size: 11))
@@ -494,8 +491,7 @@ private struct IconPickerSearchField: View {
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel(Text(NSLocalizedString(
-                    "Clear search",
+                .accessibilityLabel(Text(NSLocalizedString("common.iconPicker.clearSearchButtonAccessibilityLabel", value: "Clear search",
                     comment: "Icon picker - Accessibility label for clearing search"
                 )))
             }

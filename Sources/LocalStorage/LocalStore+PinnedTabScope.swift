@@ -28,8 +28,7 @@ enum LocalStoreWriteError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .storeUnavailable:
-            return NSLocalizedString(
-                "Local browser data is unavailable.",
+            return NSLocalizedString("localData.pinnedTabScope.unavailableError", value: "Local browser data is unavailable.",
                 comment: "Pinned-tab scope migration error when the local store cannot be opened"
             )
         }

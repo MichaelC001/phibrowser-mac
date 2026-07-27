@@ -361,7 +361,7 @@ struct SpacesStripView: View {
     private var compactChip: some View {
         // The label is kept for VoiceOver only — it doesn't render a badge.
         activeLabel
-            .accessibilityLabel(NSLocalizedString("Spaces", comment: "Accessibility label for the Spaces picker affordance"))
+            .accessibilityLabel(NSLocalizedString("sidebar.spacesPicker.accessibilityLabel", value: "Spaces", comment: "Accessibility label for the Spaces picker affordance"))
             .onHover { hovering in
                 guard let activeId = slot.activeSpaceId else { return }
                 if hovering {
@@ -898,8 +898,7 @@ struct SpacesStripView: View {
         // context menu is the pip's one interactive extra.
         .contextMenu {
             if let task = agentSpaceManager.tasksBySpaceId[space.spaceId] {
-                Button(NSLocalizedString(
-                    "Show Transcript",
+                Button(NSLocalizedString("sidebar.agentContextMenu.showTranscriptAction", value: "Show Transcript",
                     comment: "Agent pip context menu - open the agent console for this task")) {
                     AgentTranscriptPanelController.shared.show(focusTaskId: task.taskId)
                 }
@@ -1163,7 +1162,7 @@ struct SpacesStripView: View {
         .animation(.easeInOut(duration: 0.15), value: slot.isStripRowHovered)
 //        .offset(x: -2)
         .onHover { isAddButtonHovered = $0 }
-        .help(NSLocalizedString("New Space", comment: "Tooltip for the add-Space button in the sidebar Spaces strip"))
+        .help(NSLocalizedString("sidebar.spacesStrip.addSpaceButtonTooltip", value: "New Space", comment: "Tooltip for the add-Space button in the sidebar Spaces strip"))
     }
 
     /// Overflow affordance shown in the add button's trailing slot when the row
@@ -1187,7 +1186,7 @@ struct SpacesStripView: View {
         }
         .buttonStyle(.plain)
         .onHover { isMoreButtonHovered = $0 }
-        .help(NSLocalizedString("More Spaces", comment: "Tooltip for the overflow button that opens the full Spaces list"))
+        .help(NSLocalizedString("sidebar.spacesOverflowButtonTooltip", value: "More Spaces", comment: "Tooltip for the overflow button that opens the full Spaces list"))
         .background(SpaceSwitcherMenuAnchor(isPresented: $isPickerOpen) { menu in
             AppController.shared?.populateSpaceSwitcherMenu(menu)
         })
@@ -1265,10 +1264,10 @@ struct SpacesStripView: View {
 
     private func promptRename(for space: SpaceModel) {
         let alert = NSAlert()
-        alert.messageText = NSLocalizedString("Rename Space", comment: "Title of the rename-Space dialog")
-        alert.informativeText = NSLocalizedString("Enter a new name for this Space.", comment: "Body of the rename-Space dialog")
-        alert.addButton(withTitle: NSLocalizedString("Rename", comment: "Rename button"))
-        alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Cancel button"))
+        alert.messageText = NSLocalizedString("sidebar.renameSpaceDialog.title", value: "Rename Space", comment: "Title of the rename-Space dialog")
+        alert.informativeText = NSLocalizedString("sidebar.renameSpaceDialog.message", value: "Enter a new name for this Space.", comment: "Body of the rename-Space dialog")
+        alert.addButton(withTitle: NSLocalizedString("sidebar.renameSpaceDialog.renameButton", value: "Rename", comment: "Rename button"))
+        alert.addButton(withTitle: NSLocalizedString("sidebar.renameSpaceDialog.cancelButton", value: "Cancel", comment: "Cancel button"))
         let textField = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
         textField.stringValue = space.name
         textField.placeholderString = space.name
@@ -1287,23 +1286,21 @@ struct SpacesStripView: View {
     private func confirmDelete(_ space: SpaceModel) {
         let alert = NSAlert()
         alert.messageText = String(
-            format: NSLocalizedString("Delete \u{201C}%@\u{201D}?", comment: "Title of the delete-Space confirmation"),
+            format: NSLocalizedString("sidebar.deleteSpaceConfirmation.title", value: "Delete \u{201C}%@\u{201D}?", comment: "Title of the delete-Space confirmation"),
             space.name
         )
         if AccountController.shared.account?.localStorage.pinnedTabScope() == .space {
-            alert.informativeText = NSLocalizedString(
-                "Bookmarks and pinned tabs belonging to this Space will also be removed. This action cannot be undone.",
+            alert.informativeText = NSLocalizedString("sidebar.deleteSpaceConfirmation.spaceScopedMessage", value: "Bookmarks and pinned tabs belonging to this Space will also be removed. This action cannot be undone.",
                 comment: "Body of the delete-Space confirmation with Space-scoped pinned tabs"
             )
         } else {
-            alert.informativeText = NSLocalizedString(
-                "Bookmarks belonging to this Space will also be removed. This action cannot be undone.",
+            alert.informativeText = NSLocalizedString("sidebar.deleteSpaceConfirmation.message", value: "Bookmarks belonging to this Space will also be removed. This action cannot be undone.",
                 comment: "Body of the delete-Space confirmation"
             )
         }
         alert.alertStyle = .warning
-        alert.addButton(withTitle: NSLocalizedString("Delete", comment: "Destructive button"))
-        alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Cancel button"))
+        alert.addButton(withTitle: NSLocalizedString("sidebar.deleteSpaceConfirmation.deleteButton", value: "Delete", comment: "Destructive button"))
+        alert.addButton(withTitle: NSLocalizedString("sidebar.deleteSpaceConfirmation.cancelButton", value: "Cancel", comment: "Cancel button"))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         manager.deleteSpace(spaceId: space.spaceId)
         PostHogSDK.shared.capture("space_deleted")
@@ -1388,7 +1385,7 @@ private struct SpacePickerPopup: View {
                         Image(systemName: "plus")
                             .font(.system(size: 13, weight: .semibold))
                             .frame(width: 16)
-                        Text(NSLocalizedString("New Space", comment: "Spaces picker - create a new Space"))
+                        Text(NSLocalizedString("sidebar.spacesPicker.newSpaceAction", value: "New Space", comment: "Spaces picker - create a new Space"))
                             .font(.system(size: 13))
                         Spacer(minLength: 8)
                     }
@@ -1673,13 +1670,13 @@ private struct SpacePickerRow: View {
         }
         .contextMenu {
             if isRenamable {
-                Button(NSLocalizedString("Rename\u{2026}", comment: "")) { onRename() }
+                Button(NSLocalizedString("sidebar.spacesContextMenu.renameAction", value: "Rename\u{2026}", comment: "Spaces context menu - Rename Space action")) { onRename() }
             }
-            Button(NSLocalizedString("Change Icon\u{2026}", comment: "Opens the icon/emoji picker for a Space")) {
+            Button(NSLocalizedString("sidebar.spacesContextMenu.changeIconAction", value: "Change Icon\u{2026}", comment: "Opens the icon/emoji picker for a Space")) {
                 showsIconPicker = true
             }
-            Menu(NSLocalizedString("Change Theme", comment: "")) {
-                Picker(NSLocalizedString("Change Theme", comment: ""), selection: themeSelection) {
+            Menu(NSLocalizedString("sidebar.spacesContextMenu.themeSubmenuTitle", value: "Change Theme", comment: "Spaces context menu - Change Theme submenu title")) {
+                Picker(NSLocalizedString("sidebar.spacesContextMenu.themePickerLabel", value: "Change Theme", comment: "Spaces context menu - Theme picker accessibility label"), selection: themeSelection) {
                     ForEach(ThemeManager.shared.orderedThemes, id: \.id) { theme in
                         Label {
                             Text(theme.name)
@@ -1698,7 +1695,7 @@ private struct SpacePickerRow: View {
                 Button(role: .destructive) {
                     onDelete()
                 } label: {
-                    Text(NSLocalizedString("Delete", comment: "Destructive menu item"))
+                    Text(NSLocalizedString("sidebar.spacesContextMenu.deleteAction", value: "Delete", comment: "Destructive menu item"))
                 }
             }
         }

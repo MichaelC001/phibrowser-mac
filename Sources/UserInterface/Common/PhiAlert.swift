@@ -906,20 +906,18 @@ extension PhiAlert where Icon == EmptyView, AlertContent == EmptyView, Actions =
     /// user confirmed termination.
     static func runQuitAlert(relativeTo sourceWindow: NSWindow? = nil) -> Bool {
         let configuration = PhiAlertAppKitConfiguration(
-            title:  NSLocalizedString(
-                "Are you sure you want to quit Phi?",
+            title:  NSLocalizedString("common.quitConfirmation.title", value: "Are you sure you want to quit Phi?",
                 comment: "Quit confirmation title"
             ),
-            message: NSLocalizedString(
-                "Any unsaved changes may be lost.",
+            message: NSLocalizedString("common.quitConfirmation.message", value: "Any unsaved changes may be lost.",
                 comment: "Quit confirmation message"
             ),
             secondaryAction: PhiAlertAppKitAction(
-                NSLocalizedString("Cancel", comment: "Cancel"),
+                NSLocalizedString("common.quitConfirmation.cancelButton", value: "Cancel", comment: "Cancel"),
                 response: .alertSecondButtonReturn
             ),
             primaryAction: PhiAlertAppKitAction(
-                NSLocalizedString("Quit", comment: "Quit"),
+                NSLocalizedString("common.quitConfirmation.quitButton", value: "Quit", comment: "Quit"),
                 role: .primary,
                 response: .alertFirstButtonReturn
             )

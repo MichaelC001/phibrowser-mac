@@ -214,12 +214,12 @@ final class PhiBrowserTests: XCTestCase {
 
         XCTAssertEqual(
             menu.items.first?.title,
-            NSLocalizedString("Bookmark This Tab...", comment: "Bookmarks menu - Menu item to add or edit a bookmark for the currently focused tab")
+            NSLocalizedString("app.bookmarksMenu.addOrEditCurrentTab", value: "Bookmark This Tab...", comment: "Bookmarks menu - Menu item to add or edit a bookmark for the currently focused tab")
         )
         XCTAssertEqual(menu.items.first?.tag, CommandWrapper.IDC_BOOKMARK_THIS_TAB.rawValue)
         XCTAssertEqual(
             menu.items.dropFirst().first?.title,
-            NSLocalizedString("Bookmark All Tabs...", comment: "Bookmarks menu - Menu item to add bookmarks for all currently open tabs in the active window")
+            NSLocalizedString("app.bookmarksMenu.addAllOpenTabs", value: "Bookmark All Tabs...", comment: "Bookmarks menu - Menu item to add bookmarks for all currently open tabs in the active window")
         )
         XCTAssertEqual(menu.items.dropFirst().first?.tag, CommandWrapper.IDC_BOOKMARK_ALL_TABS.rawValue)
         XCTAssertTrue(
@@ -229,7 +229,7 @@ final class PhiBrowserTests: XCTestCase {
         XCTAssertTrue(menu.items.dropFirst(2).first?.isSeparatorItem == true)
         XCTAssertEqual(
             menu.items.dropFirst(3).first?.title,
-            NSLocalizedString("Export Bookmarks...", comment: "Bookmarks menu - Menu item to export the current Space's bookmarks to an HTML file")
+            NSLocalizedString("app.bookmarksMenu.exportCurrentSpace", value: "Export Bookmarks...", comment: "Bookmarks menu - Menu item to export the current Space's bookmarks to an HTML file")
         )
         XCTAssertTrue(menu.items.dropFirst(4).first?.isSeparatorItem == true)
         XCTAssertEqual(menu.items.dropFirst(5).map(\.title), ["Phi", "Favorites"])
@@ -288,7 +288,7 @@ final class PhiBrowserTests: XCTestCase {
         XCTAssertEqual(folderItem.title, "Empty Folder")
         XCTAssertEqual(
             emptyItem?.title,
-            NSLocalizedString("Empty", comment: "Bookmarks menu - Disabled placeholder item shown when a bookmark folder has no child bookmarks")
+            NSLocalizedString("app.bookmarksMenu.emptyFolderPlaceholder", value: "Empty", comment: "Bookmarks menu - Disabled placeholder item shown when a bookmark folder has no child bookmarks")
         )
         XCTAssertFalse(
             emptyItem?.isEnabled == true,

@@ -423,8 +423,7 @@ class Tab: WebContentRepresentable {
     }
 
     /// Placeholder title for native-NTP (off-the-record) new-tab pages.
-    static let incognitoNewTabTitle = NSLocalizedString(
-        "New Incognito Tab",
+    static let incognitoNewTabTitle = NSLocalizedString("common.newTabPage.incognitoTitle", value: "New Incognito Tab",
         comment: "Tab title shown for an incognito new-tab page rendered by the native NTP")
 
     /// Replace an untitled newtab title with the incognito NTP placeholder.

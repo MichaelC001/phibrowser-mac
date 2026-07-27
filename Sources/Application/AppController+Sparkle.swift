@@ -146,19 +146,19 @@ extension AppController {
         switch updateState {
         case .idle:
             item.isEnabled = true
-            item.title = NSLocalizedString("Check for Update...", comment: "Phi menu - Menu item to check for app updates")
+            item.title = NSLocalizedString("updates.menu.checkForUpdatesStatus", value: "Check for Update...", comment: "Phi menu - Menu item text when no update operation is active")
         case .checking:
             item.isEnabled = false
-            item.title = NSLocalizedString("Checking for updates...", comment: "Phi menu - Menu item text while checking for updates")
+            item.title = NSLocalizedString("updates.menu.checkingStatus", value: "Checking for updates...", comment: "Phi menu - Menu item text while checking for updates")
         case .updateAvailable(let version):
             item.isEnabled = true
-            setupBadgeView(title: NSLocalizedString("New version available", comment: "Phi menu - Menu item text when new version is available"), badge: version)
+            setupBadgeView(title: NSLocalizedString("updates.menu.availableStatus", value: "New version available", comment: "Phi menu - Menu item text when new version is available"), badge: version)
         case .downloading(let version):
             item.isEnabled = false
-            setupBadgeView(title: NSLocalizedString("Downloading update...", comment: "Phi menu - Menu item text while downloading update"), badge: version)
+            setupBadgeView(title: NSLocalizedString("updates.menu.downloadingStatus", value: "Downloading update...", comment: "Phi menu - Menu item text while downloading update"), badge: version)
         case .downloaded(let version):
             item.isEnabled = true
-            setupBadgeView(title: NSLocalizedString("Click to install update", comment: "Phi menu - Menu item text when update is ready to install"), badge: version)
+            setupBadgeView(title: NSLocalizedString("updates.menu.readyToInstallStatus", value: "Click to install update", comment: "Phi menu - Menu item text when update is ready to install"), badge: version)
         }
     }
 }

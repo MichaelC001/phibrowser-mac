@@ -5,58 +5,57 @@
 
 //  This file contains usage examples for the Phi Theme System.
 //  Use #Preview to see the examples in Xcode Canvas.
-//  ⚠️ NOTE: All localized strings in this file are prefixed with "/**/" in comments
-//  to indicate they are EXAMPLE/TEST strings only, not production UI strings.
-//  These should be excluded from production localization workflows.
+//  ⚠️ NOTE: All example strings in this file are prefixed with "/**/".
+//  They are demo/test strings only, not production UI strings.
 
 import SwiftUI
 import AppKit
 
-// MARK: - Example Localization Helper
+// MARK: - Example Strings
 
-/// Example strings namespace - all strings here are for demo/test purposes only
+/// Example strings namespace - all strings here are for demo/test purposes only.
 private enum ExampleStrings {
     // Section titles
-    static let appearanceChoice = NSLocalizedString("/**/Appearance Choice", comment: "[EXAMPLE] Theme example: appearance picker section title")
-    static let appearance = NSLocalizedString("/**/Appearance", comment: "[EXAMPLE] Theme example: appearance picker label")
-    static let currentAppearance = NSLocalizedString("/**/Current Appearance: %@", comment: "[EXAMPLE] Theme example: current appearance label with format")
-    static let textColorExample = NSLocalizedString("/**/Text Color Examples", comment: "[EXAMPLE] Theme example: text color section title")
-    static let sidebarExample = NSLocalizedString("/**/Sidebar Style Examples", comment: "[EXAMPLE] Theme example: sidebar section title")
-    static let borderExample = NSLocalizedString("/**/Border & Separator Examples", comment: "[EXAMPLE] Theme example: border section title")
+    static let appearanceChoice = "/**/Appearance Choice"
+    static let appearance = "/**/Appearance"
+    static let currentAppearance = "/**/Current Appearance: %@"
+    static let textColorExample = "/**/Text Color Examples"
+    static let sidebarExample = "/**/Sidebar Style Examples"
+    static let borderExample = "/**/Border & Separator Examples"
     
     // Text samples
-    static let primaryText = NSLocalizedString("/**/Primary Text - Main content text", comment: "[EXAMPLE] Theme example: primary text sample")
-    static let secondaryText = NSLocalizedString("/**/Secondary Text - Supporting text", comment: "[EXAMPLE] Theme example: secondary text sample")
-    static let tertiaryText = NSLocalizedString("/**/Tertiary Text - Tertiary level text", comment: "[EXAMPLE] Theme example: tertiary text sample")
+    static let primaryText = "/**/Primary Text - Main content text"
+    static let secondaryText = "/**/Secondary Text - Supporting text"
+    static let tertiaryText = "/**/Tertiary Text - Tertiary level text"
     
     // Sidebar labels
-    static let selectedTab = NSLocalizedString("/**/Selected Tab", comment: "[EXAMPLE] Theme example: selected tab label")
-    static let hoveredTab = NSLocalizedString("/**/Hovered Tab", comment: "[EXAMPLE] Theme example: hovered tab label")
-    static let normalTab = NSLocalizedString("/**/Normal Tab", comment: "[EXAMPLE] Theme example: normal tab label")
+    static let selectedTab = "/**/Selected Tab"
+    static let hoveredTab = "/**/Hovered Tab"
+    static let normalTab = "/**/Normal Tab"
     
     // Border labels
-    static let borderStyle = NSLocalizedString("/**/Border", comment: "[EXAMPLE] Theme example: border style label")
-    static let separatorStyle = NSLocalizedString("/**/Separator", comment: "[EXAMPLE] Theme example: separator style label")
+    static let borderStyle = "/**/Border"
+    static let separatorStyle = "/**/Separator"
     
     // Window labels
-    static let windowBackground = NSLocalizedString("/**/Window Background", comment: "[EXAMPLE] Theme example: window background label")
-    static let overlayBackground = NSLocalizedString("/**/Overlay Background", comment: "[EXAMPLE] Theme example: overlay background label")
+    static let windowBackground = "/**/Window Background"
+    static let overlayBackground = "/**/Overlay Background"
     
     // AppKit section
-    static let appKitControlsExample = NSLocalizedString("/**/AppKit Controls Examples", comment: "[EXAMPLE] Theme example: AppKit controls section title")
-    static let nsTextFieldWithPhi = NSLocalizedString("/**/NSTextField with phi.textColor:", comment: "[EXAMPLE] Theme example: NSTextField description")
-    static let nsTextFieldSample = NSLocalizedString("/**/This is an NSTextField, color changes with appearance", comment: "[EXAMPLE] Theme example: NSTextField sample text")
-    static let nsButtonWithPhi = NSLocalizedString("/**/NSButton with phi.title:", comment: "[EXAMPLE] Theme example: NSButton description")
-    static let nsViewWithPhiLayer = NSLocalizedString("/**/NSView with phiLayer.backgroundColor:", comment: "[EXAMPLE] Theme example: NSView layer description")
-    static let lightModeButton = NSLocalizedString("/**/Light Mode Button", comment: "[EXAMPLE] Theme example: light mode button title")
-    static let darkModeButton = NSLocalizedString("/**/Dark Mode Button", comment: "[EXAMPLE] Theme example: dark mode button title")
+    static let appKitControlsExample = "/**/AppKit Controls Examples"
+    static let nsTextFieldWithPhi = "/**/NSTextField with phi.textColor:"
+    static let nsTextFieldSample = "/**/This is an NSTextField, color changes with appearance"
+    static let nsButtonWithPhi = "/**/NSButton with phi.title:"
+    static let nsViewWithPhiLayer = "/**/NSView with phiLayer.backgroundColor:"
+    static let lightModeButton = "/**/Light Mode Button"
+    static let darkModeButton = "/**/Dark Mode Button"
     
     // Code examples
-    static let codeExamples = NSLocalizedString("/**/Code Examples", comment: "[EXAMPLE] Theme example: code examples section title")
-    static let basicUsage = NSLocalizedString("/**/Basic Usage - <> Operator", comment: "[EXAMPLE] Theme example: basic usage code title")
-    static let userAppearanceChoice = NSLocalizedString("/**/User Appearance Choice", comment: "[EXAMPLE] Theme example: user appearance code title")
-    static let swiftUIModifiers = NSLocalizedString("/**/SwiftUI Modifiers", comment: "[EXAMPLE] Theme example: SwiftUI modifiers code title")
-    static let customTheme = NSLocalizedString("/**/Custom Theme", comment: "[EXAMPLE] Theme example: custom theme code title")
+    static let codeExamples = "/**/Code Examples"
+    static let basicUsage = "/**/Basic Usage - <> Operator"
+    static let userAppearanceChoice = "/**/User Appearance Choice"
+    static let swiftUIModifiers = "/**/SwiftUI Modifiers"
+    static let customTheme = "/**/Custom Theme"
 }
 
 // MARK: - SwiftUI Examples
@@ -202,14 +201,14 @@ struct ThemeSwiftUIExampleView: View {
                 
                 // Separator example
                 VStack(spacing: 8) {
-                    Text("Item 1")
+                    Text(verbatim: "Item 1")
                         .themedForeground(.textPrimary)
                     
                     Rectangle()
                         .themedFill(.separator)
                         .frame(height: 1)
                     
-                    Text("Item 2")
+                    Text(verbatim: "Item 2")
                         .themedForeground(.textPrimary)
                 }
                 .font(.body)
@@ -482,15 +481,15 @@ struct ThemeCombinedExampleView: View {
     var body: some View {
         TabView(selection: $selectedTab) {
             ThemeSwiftUIExampleView()
-                .tabItem { Text("SwiftUI") }
+                .tabItem { Text(verbatim: "SwiftUI") }
                 .tag(0)
             
             ThemeAppKitExampleView()
-                .tabItem { Text("AppKit") }
+                .tabItem { Text(verbatim: "AppKit") }
                 .tag(1)
             
             ThemeCodeExamplesView()
-                .tabItem { Text("Code Examples") }
+                .tabItem { Text(verbatim: "Code Examples") }
                 .tag(2)
         }
         .frame(width: 500, height: 550)

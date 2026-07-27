@@ -166,22 +166,19 @@ final class ImagePreviewViewController: NSViewController {
     init(state: BrowserImagePreviewState) {
         self.previousButton = CircularHoverButton(
             symbolName: "chevron.left",
-            accessibilityDescription: NSLocalizedString(
-                "Previous image",
+            accessibilityDescription: NSLocalizedString("imagePreview.previousButtonAccessibilityLabel", value: "Previous image",
                 comment: "Image preview: accessibility label for previous image control"
             )
         )
         self.nextButton = CircularHoverButton(
             symbolName: "chevron.right",
-            accessibilityDescription: NSLocalizedString(
-                "Next image",
+            accessibilityDescription: NSLocalizedString("imagePreview.nextButtonAccessibilityLabel", value: "Next image",
                 comment: "Image preview: accessibility label for next image control"
             )
         )
         self.zoomOutButton = CircularHoverButton(
             symbolName: "minus.magnifyingglass",
-            accessibilityDescription: NSLocalizedString(
-                "Zoom out",
+            accessibilityDescription: NSLocalizedString("imagePreview.zoomOutButtonAccessibilityLabel", value: "Zoom out",
                 comment: "Image preview: accessibility label for zoom out control"
             ),
             diameter: 24
@@ -189,8 +186,7 @@ final class ImagePreviewViewController: NSViewController {
         
         self.zoomInButton = CircularHoverButton(
             symbolName: "plus.magnifyingglass",
-            accessibilityDescription: NSLocalizedString(
-                "Zoom in",
+            accessibilityDescription: NSLocalizedString("imagePreview.zoomButtonAccessibilityLabel", value: "Zoom in",
                 comment: "Image preview: accessibility label for zoom in control"
             ),
             diameter: 24
@@ -422,7 +418,7 @@ final class ImagePreviewViewController: NSViewController {
             retryButton.isHidden = true
         case .loading:
             scrollView.clear()
-            statusLabel.stringValue = NSLocalizedString("Loading image…", comment: "Image preview loading")
+            statusLabel.stringValue = NSLocalizedString("imagePreview.loadingStatus", value: "Loading image…", comment: "Image preview loading")
             statusLabel.isHidden = false
             retryButton.isHidden = true
         case .loaded(let asset):

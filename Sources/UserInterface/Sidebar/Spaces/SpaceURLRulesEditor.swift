@@ -48,11 +48,10 @@ struct URLRulesEditor: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(NSLocalizedString("URL Rules",
+            Text(NSLocalizedString("sidebar.urlRulesEditor.title", value: "URL Rules",
                 comment: "Title of the universal URL rules editor"))
                 .font(.headline)
-            Text(NSLocalizedString(
-                "URLs matching any rule will open in the assigned Space, no matter where you click or type them.",
+            Text(NSLocalizedString("sidebar.urlRulesEditor.subtitle", value: "URLs matching any rule will open in the assigned Space, no matter where you click or type them.",
                 comment: "Subtitle of the universal URL rules editor"
             ))
             .font(.callout)
@@ -88,16 +87,16 @@ struct URLRulesEditor: View {
             Button {
                 addBlankRow()
             } label: {
-                Label(NSLocalizedString("Add Rule", comment: "Footer button in URL rules editor"),
+                Label(NSLocalizedString("sidebar.urlRulesEditor.addRuleButton", value: "Add Rule", comment: "Footer button in URL rules editor"),
                       systemImage: "plus")
             }
             .disabled(ruleTargetSpaces.isEmpty)
             Spacer()
-            Button(NSLocalizedString("Cancel", comment: "Cancel button")) {
+            Button(NSLocalizedString("sidebar.urlRulesEditor.cancelButton", value: "Cancel", comment: "Cancel button")) {
                 onClose()
             }
             .keyboardShortcut(.cancelAction)
-            Button(NSLocalizedString("Save", comment: "Save button")) {
+            Button(NSLocalizedString("sidebar.urlRulesEditor.saveButton", value: "Save", comment: "Save button")) {
                 save()
                 onClose()
             }
@@ -171,16 +170,16 @@ struct URLRulesEditor: View {
         var label: String {
             switch self {
             case .domainSuffix:
-                return NSLocalizedString("Domain suffix",
+                return NSLocalizedString("sidebar.urlRulesEditor.matchType.domainSuffix", value: "Domain suffix",
                     comment: "URL rule match type: host plus all subdomains")
             case .domain:
-                return NSLocalizedString("Domain",
+                return NSLocalizedString("sidebar.urlRulesEditor.matchType.domain", value: "Domain",
                     comment: "URL rule match type: exact host only")
             case .domainContains:
-                return NSLocalizedString("Domain contains",
+                return NSLocalizedString("sidebar.urlRulesEditor.matchType.domainContains", value: "Domain contains",
                     comment: "URL rule match type: host contains a substring")
             case .url:
-                return NSLocalizedString("URL",
+                return NSLocalizedString("sidebar.urlRulesEditor.matchType.url", value: "URL",
                     comment: "URL rule match type: exact host plus a path prefix")
             }
         }
@@ -188,16 +187,16 @@ struct URLRulesEditor: View {
         var placeholder: String {
             switch self {
             case .domainSuffix:
-                return NSLocalizedString("example.com",
+                return NSLocalizedString("sidebar.urlRulesEditor.matchValue.domainSuffixPlaceholder", value: "example.com",
                     comment: "URL rule value placeholder for Domain suffix match")
             case .domain:
-                return NSLocalizedString("www.example.com",
+                return NSLocalizedString("sidebar.urlRulesEditor.matchValue.domainPlaceholder", value: "www.example.com",
                     comment: "URL rule value placeholder for Domain match")
             case .domainContains:
-                return NSLocalizedString("example",
+                return NSLocalizedString("sidebar.urlRulesEditor.matchValue.domainContainsPlaceholder", value: "example",
                     comment: "URL rule value placeholder for Domain contains match")
             case .url:
-                return NSLocalizedString("https://example.com/path",
+                return NSLocalizedString("sidebar.urlRulesEditor.matchValue.urlPlaceholder", value: "https://example.com/path",
                     comment: "URL rule value placeholder for URL (host + path) match")
             }
         }
@@ -396,12 +395,11 @@ private struct RuleTableView: NSViewRepresentable {
     /// would fight the delete/insert row animations).
     private static func makeEmptyOverlay() -> NSView {
         let title = NSTextField(labelWithString:
-            NSLocalizedString("No rules yet.", comment: "Empty state label in the URL rules editor"))
+            NSLocalizedString("sidebar.urlRulesEditor.emptyTitle", value: "No rules yet.", comment: "Empty state label in the URL rules editor"))
         title.font = .preferredFont(forTextStyle: .body)
         title.textColor = .secondaryLabelColor
         title.alignment = .center
-        let hint = NSTextField(labelWithString: NSLocalizedString(
-            "Pick a target Space and enter a host like \u{201C}github.com\u{201D}.",
+        let hint = NSTextField(labelWithString: NSLocalizedString("sidebar.urlRulesEditor.emptyHint", value: "Pick a target Space and enter a host like \u{201C}github.com\u{201D}.",
             comment: "Empty state hint in the universal URL rules editor"))
         hint.font = .preferredFont(forTextStyle: .caption1)
         hint.textColor = .secondaryLabelColor
@@ -589,7 +587,7 @@ private final class RuleCellView: NSTableCellView, NSTextFieldDelegate {
     private let valueField = NSTextField()
     private let deleteButton = NSButton()
     private let openInLabel = NSTextField(labelWithString:
-        NSLocalizedString("Open in", comment: "Leading label for a URL rule's target Space"))
+        NSLocalizedString("sidebar.urlRulesEditor.targetSpaceLabel", value: "Open in", comment: "Leading label for a URL rule's target Space"))
     private let targetPopup = NSPopUpButton(frame: .zero, pullsDown: false)
 
     override init(frame frameRect: NSRect) {
@@ -611,12 +609,12 @@ private final class RuleCellView: NSTableCellView, NSTextFieldDelegate {
         valueField.delegate = self
 
         deleteButton.image = NSImage(systemSymbolName: "trash", accessibilityDescription:
-            NSLocalizedString("Remove rule", comment: "Tooltip for remove-rule button"))
+            NSLocalizedString("sidebar.urlRulesEditor.removeRuleButton.accessibilityLabel", value: "Remove rule", comment: "Tooltip for remove-rule button"))
         deleteButton.isBordered = false
         deleteButton.contentTintColor = .secondaryLabelColor
         deleteButton.target = self
         deleteButton.action = #selector(deleteClicked)
-        deleteButton.toolTip = NSLocalizedString("Remove rule", comment: "Tooltip for remove-rule button")
+        deleteButton.toolTip = NSLocalizedString("sidebar.urlRulesEditor.removeRuleButton.tooltip", value: "Remove rule", comment: "Tooltip for remove-rule button")
 
         openInLabel.textColor = .secondaryLabelColor
         openInLabel.font = .preferredFont(forTextStyle: .callout)
@@ -680,7 +678,7 @@ private final class RuleCellView: NSTableCellView, NSTextFieldDelegate {
         }
         menu.addItem(.separator())
         let askItem = NSMenuItem(
-            title: NSLocalizedString("Ask every time",
+            title: NSLocalizedString("sidebar.urlRulesEditor.target.askEveryTimeOption", value: "Ask every time",
                 comment: "Special target in the URL rule Space picker: prompt for a Space on each match"),
             action: nil, keyEquivalent: "")
         askItem.representedObject = askSpaceTag
@@ -697,7 +695,7 @@ private final class RuleCellView: NSTableCellView, NSTextFieldDelegate {
             // disabled "unavailable" item (NOT a false "Ask every time") so the
             // user must re-target it; if left as-is, save() drops it as before.
             let missing = NSMenuItem(
-                title: NSLocalizedString("Target Space unavailable",
+                title: NSLocalizedString("sidebar.urlRulesEditor.target.unavailablePlaceholder", value: "Target Space unavailable",
                     comment: "URL rule target whose Space no longer exists"),
                 action: nil, keyEquivalent: "")
             missing.isEnabled = false

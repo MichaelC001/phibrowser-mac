@@ -37,10 +37,10 @@ class SideAddressBar: NSView {
         let button = HoverableButtonNSView(config: config) { [weak self] in
             self?.copyCurrentURL()
         }
-        button.toolTip = NSLocalizedString("Copy Link", comment: "Sidebar address bar - Copy current page URL button tooltip")
+        button.toolTip = NSLocalizedString("sidebar.addressBar.copyLinkButtonTooltip", value: "Copy Link", comment: "Sidebar address bar - Copy current page URL button tooltip")
         button.setCustomTooltip {
             CommandShortcutTooltipContent(
-                title: NSLocalizedString("Copy URL", comment: "Copy URL shortcut tooltip title"),
+                title: NSLocalizedString("sidebar.addressBar.copyURLShortcutTooltip", value: "Copy URL", comment: "Copy URL shortcut tooltip title"),
                 command: .PHI_COPY_URL
             )
         }
@@ -416,7 +416,7 @@ class SideAddressBar: NSView {
         textField.backgroundColor = NSColor.clear
         textField.font = NSFont.systemFont(ofSize: 13)
         
-        let placeholder = NSMutableAttributedString(string: NSLocalizedString("Search or Enter URL", comment: "Sidebar address bar - Placeholder text prompting user to enter URL or search query"))
+        let placeholder = NSMutableAttributedString(string: NSLocalizedString("sidebar.addressBar.placeholder", value: "Search or Enter URL", comment: "Sidebar address bar - Placeholder text prompting user to enter URL or search query"))
         placeholder.addAttributes([
             .foregroundColor: NSColor.placeholderTextColor,
             .font: NSFont.systemFont(ofSize: 13)

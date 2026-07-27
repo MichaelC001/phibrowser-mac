@@ -71,8 +71,7 @@ extension TabGroupSidebarItem: ContextMenuRepresentable {
         menu.removeAllItems()
 
         let newTabItem = NSMenuItem(
-            title: NSLocalizedString(
-                "New Tab in Group",
+            title: NSLocalizedString("sidebar.tabGroupContextMenu.newTabAction", value: "New Tab in Group",
                 comment: "Tab group context menu - Open a new tab inside this group"),
             action: #selector(newTabInGroup),
             keyEquivalent: "c")
@@ -83,8 +82,7 @@ extension TabGroupSidebarItem: ContextMenuRepresentable {
         menu.addItem(.separator())
 
         let renameItem = NSMenuItem(
-            title: NSLocalizedString(
-                "Rename Group",
+            title: NSLocalizedString("sidebar.tabGroupContextMenu.renameAction", value: "Rename Group",
                 comment: "Tab group context menu - Rename the group"),
             action: #selector(renameGroup),
             keyEquivalent: "")
@@ -92,8 +90,7 @@ extension TabGroupSidebarItem: ContextMenuRepresentable {
         menu.addItem(renameItem)
 
         let colorParent = NSMenuItem(
-            title: NSLocalizedString(
-                "Change Color",
+            title: NSLocalizedString("sidebar.tabGroupContextMenu.changeColorSubmenu", value: "Change Color",
                 comment: "Tab group context menu - Submenu to change the group color"),
             action: nil,
             keyEquivalent: "")
@@ -116,11 +113,9 @@ extension TabGroupSidebarItem: ContextMenuRepresentable {
 
         let collapseItem = NSMenuItem(
             title: group.isCollapsed
-                ? NSLocalizedString(
-                    "Expand Group",
+                ? NSLocalizedString("sidebar.tabGroupContextMenu.expandAction", value: "Expand Group",
                     comment: "Tab group context menu - Expand a collapsed group")
-                : NSLocalizedString(
-                    "Collapse Group",
+                : NSLocalizedString("sidebar.tabGroupContextMenu.collapseAction", value: "Collapse Group",
                     comment: "Tab group context menu - Collapse an expanded group"),
             action: #selector(toggleCollapsed),
             keyEquivalent: "")
@@ -130,8 +125,7 @@ extension TabGroupSidebarItem: ContextMenuRepresentable {
         menu.addItem(.separator())
 
         let ungroupItem = NSMenuItem(
-            title: NSLocalizedString(
-                "Ungroup",
+            title: NSLocalizedString("sidebar.tabGroupContextMenu.ungroupAction", value: "Ungroup",
                 comment: "Tab group context menu - Dissolve the group, keeping the tabs"),
             action: #selector(ungroupTabs),
             keyEquivalent: "")
@@ -139,8 +133,7 @@ extension TabGroupSidebarItem: ContextMenuRepresentable {
         menu.addItem(ungroupItem)
 
         let closeItem = NSMenuItem(
-            title: NSLocalizedString(
-                "Close Group",
+            title: NSLocalizedString("sidebar.tabGroupContextMenu.closeGroupAction", value: "Close Group",
                 comment: "Tab group context menu - Close the group and all its tabs"),
             action: #selector(closeGroup),
             keyEquivalent: "w")
@@ -163,17 +156,13 @@ extension TabGroupSidebarItem: ContextMenuRepresentable {
     @MainActor
     @objc private func renameGroup() {
         let alert = NSAlert()
-        alert.messageText = NSLocalizedString(
-            "Rename Group",
+        alert.messageText = NSLocalizedString("sidebar.tabGroupRenameDialog.title", value: "Rename Group",
             comment: "Tab group rename alert - Title")
-        alert.informativeText = NSLocalizedString(
-            "Leave empty to use the auto-generated name.",
+        alert.informativeText = NSLocalizedString("sidebar.tabGroupRenameDialog.autoNameHint", value: "Leave empty to use the auto-generated name.",
             comment: "Tab group rename alert - Hint that empty title clears to auto-name")
-        alert.addButton(withTitle: NSLocalizedString(
-            "Save",
+        alert.addButton(withTitle: NSLocalizedString("sidebar.tabGroupRenameDialog.saveButton", value: "Save",
             comment: "Tab group rename alert - Confirm button"))
-        alert.addButton(withTitle: NSLocalizedString(
-            "Cancel",
+        alert.addButton(withTitle: NSLocalizedString("sidebar.tabGroupRenameDialog.cancelButton", value: "Cancel",
             comment: "Tab group rename alert - Cancel button"))
 
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))

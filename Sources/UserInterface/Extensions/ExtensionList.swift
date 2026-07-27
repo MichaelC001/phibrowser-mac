@@ -85,14 +85,14 @@ struct ExtensionList<Manager: ExtensionManagerProtocol>: View {
 
         VStack(alignment: .leading, spacing: 8) {
             // Title
-            Text(NSLocalizedString("Extensions", comment: "Extension list - Section title for browser extensions"))
+            Text(NSLocalizedString("extensions.popover.browserExtensionsSectionTitle", value: "Extensions", comment: "Extension list - Section title for browser extensions"))
                 .font(.system(size: 15, weight: .medium))
                 .foregroundColor(.primary)
                 .padding(.horizontal, 12)
                 .padding(.top, 12)
             
             if extensionManager.extensions.isEmpty {
-                Text(NSLocalizedString("No extensions found", comment: "Extension list - Empty state when no extensions are installed"))
+                Text(NSLocalizedString("extensions.popover.emptyMessage", value: "No extensions found", comment: "Extension list - Empty state when no extensions are installed"))
                     .foregroundColor(.secondary)
                     .frame(maxWidth: .infinity)
                     .frame(height: 100)
@@ -111,7 +111,7 @@ struct ExtensionList<Manager: ExtensionManagerProtocol>: View {
             }
             
             VStack(alignment: .leading, spacing: 4) {
-                Text(NSLocalizedString("Setting", comment: "Extension list - Section title for extension settings"))
+                Text(NSLocalizedString("extensions.popover.settingsSectionTitle", value: "Setting", comment: "Extension list - Section title for extension settings"))
                     .font(.system(size: 15, weight: .medium))
                     .foregroundColor(.primary)
                     .padding(.horizontal, 12)
@@ -127,7 +127,7 @@ struct ExtensionList<Manager: ExtensionManagerProtocol>: View {
     
             if shouldShowWebsiteSection {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(NSLocalizedString("Website", comment: "Extension list - Section title for current website security info"))
+                    Text(NSLocalizedString("extensions.popover.siteSecuritySectionTitle", value: "Website", comment: "Extension list - Section title for current website security info"))
                         .font(.system(size: 15, weight: .medium))
                         .foregroundColor(.primary)
                         .padding(.horizontal, 12)
@@ -167,14 +167,14 @@ struct ExtensionList<Manager: ExtensionManagerProtocol>: View {
 
     private func securityStatusText(from info: TabSecurityInfo?) -> String {
         guard let info else {
-            return NSLocalizedString("Unknown", comment: "Website security unknown")
+            return NSLocalizedString("extensions.popover.security.unknownStatus", value: "Unknown", comment: "Website security unknown")
         }
         guard let isSecure = info.isSecure else {
-            return NSLocalizedString("Connection is not fully secure", comment: "Website security not fully secure")
+            return NSLocalizedString("extensions.popover.security.partiallySecureStatus", value: "Connection is not fully secure", comment: "Website security not fully secure")
         }
         return isSecure
-            ? NSLocalizedString("Connection is secure", comment: "Website security secure")
-            : NSLocalizedString("Connection is not secure", comment: "Website security not secure")
+            ? NSLocalizedString("extensions.popover.security.secureStatus", value: "Connection is secure", comment: "Website security secure")
+            : NSLocalizedString("extensions.popover.security.notSecureStatus", value: "Connection is not secure", comment: "Website security not secure")
     }
 
     private func certificateStatusText(from info: TabSecurityInfo?) -> String {
@@ -392,7 +392,7 @@ struct ExtensionGridItem: View {
                 .offset(x: 4, y: 4)
                 .opacity(ext.isPinned ? 1.0 : (isHovered ? 0.6 : 0.0))
                 .animation(.easeInOut(duration: 0.2), value: isHovered)
-                .help(ext.isPinned ? NSLocalizedString("Unpin extension", comment: "Extension list - Tooltip for unpinning an extension") : NSLocalizedString("Pin extension", comment: "Extension list - Tooltip for pinning an extension"))
+                .help(ext.isPinned ? NSLocalizedString("extensions.popover.unpinButtonTooltip", value: "Unpin extension", comment: "Extension list - Tooltip for unpinning an extension") : NSLocalizedString("extensions.popover.pinButtonTooltip", value: "Pin extension", comment: "Extension list - Tooltip for pinning an extension"))
                 .allowsHitTesting(true)
             }
         }
@@ -425,7 +425,7 @@ struct ManageExtensionsButton: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 4) {
-                Text(NSLocalizedString("Manage Extensions", comment: "Extension list - Button to open extensions management page"))
+                Text(NSLocalizedString("extensions.list.manageExtensionsButton", value: "Manage Extensions", comment: "Extension list - Button to open extensions management page"))
                     .font(.system(size: 13))
                     .foregroundColor(.secondary)
                 
@@ -489,8 +489,8 @@ struct WebsiteCertificateButton: View {
         }
 //        .disabled(certificates.isEmpty)
         .help(certificates.isEmpty
-              ? NSLocalizedString("No certificate available", comment: "No certificate tooltip")
-              : NSLocalizedString("Show certificate", comment: "Show certificate tooltip"))
+              ? NSLocalizedString("extensions.popover.certificateUnavailableTooltip", value: "No certificate available", comment: "No certificate tooltip")
+              : NSLocalizedString("extensions.popover.showCertificateTooltip", value: "Show certificate", comment: "Show certificate tooltip"))
     }
 
     private func showCertificatePanel() {
@@ -564,7 +564,7 @@ struct WebsiteSettingsButton: View {
                     .foregroundColor(.secondary)
                     .frame(width: 14, alignment: .center)
 
-                Text(NSLocalizedString("Settings", comment: "Extension list - Website settings entry"))
+                Text(NSLocalizedString("extensions.popover.siteSettingsTitle", value: "Settings", comment: "Extension list - Website settings entry"))
                     .font(.system(size: 13))
                     .foregroundColor(.secondary)
                     .lineLimit(1)
@@ -623,13 +623,13 @@ struct WebsiteSettingsButton: View {
             menu.addItem(item)
         }
 
-        addMenuItem(title: NSLocalizedString("Clear Cookie", comment: "Extension list - Website settings item to clear cookies")) {
+        addMenuItem(title: NSLocalizedString("extensions.popover.siteSettings.clearCookiesAction", value: "Clear Cookie", comment: "Extension list - Website settings item to clear cookies")) {
             ChromiumLauncher.sharedInstance()
                 .bridge?
                 .clearWebsiteCookies(rawURLString, windowId: windowId)
         }
 
-        addMenuItem(title: NSLocalizedString("Clear Cache", comment: "Extension list - Website settings item to clear cache")) {
+        addMenuItem(title: NSLocalizedString("extensions.popover.siteSettings.clearCacheAction", value: "Clear Cache", comment: "Extension list - Website settings item to clear cache")) {
             ChromiumLauncher.sharedInstance()
                 .bridge?
                 .clearWebsiteCache(rawURLString, windowId: windowId)
@@ -637,7 +637,7 @@ struct WebsiteSettingsButton: View {
 
         menu.addItem(.separator())
 
-        addMenuItem(title: NSLocalizedString("More Settings", comment: "Extension list - Website settings item to open more settings")) {
+        addMenuItem(title: NSLocalizedString("extensions.popover.siteSettings.openAction", value: "More Settings", comment: "Extension list - Website settings item to open more settings")) {
             let url = URLProcessor.processUserInput("chrome://settings/content/siteDetails?site=\(rawURLString)")
             browserState?.createTab(url)
         }

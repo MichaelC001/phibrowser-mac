@@ -303,7 +303,7 @@ struct WebContentAddressBarView: View {
 
     private var displayText: String {
         if viewModel.isInPlaceholderMode {
-            return NSLocalizedString("Search or Enter URL", comment: "Web content address bar - Placeholder text shown when window has no tab")
+            return NSLocalizedString("browser.webContentAddressBar.emptyWindowPlaceholder", value: "Search or Enter URL", comment: "Web content address bar - Placeholder text shown when window has no tab")
         }
         if viewModel.displayText.isEmpty {
             return ""
@@ -364,7 +364,7 @@ struct WebContentAddressBarView: View {
         )
         .customTooltip {
             CommandShortcutTooltipContent(
-                title: NSLocalizedString("Copy URL", comment: "Copy URL shortcut tooltip title"),
+                title: NSLocalizedString("browser.webContentAddressBar.copyURLTooltip", value: "Copy URL", comment: "Copy URL shortcut tooltip title"),
                 command: .PHI_COPY_URL
             )
         }

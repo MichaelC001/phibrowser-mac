@@ -18,11 +18,11 @@ enum BitwardenSessionTimeout: String, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
-        case .oneHour: return NSLocalizedString("1 hour", comment: "Bitwarden session timeout - 1 hour")
-        case .fourHours: return NSLocalizedString("4 hours", comment: "Bitwarden session timeout - 4 hours")
-        case .onSystemLock: return NSLocalizedString("On system lock", comment: "Bitwarden session timeout - on system lock")
-        case .onBrowserRestart: return NSLocalizedString("On browser restart", comment: "Bitwarden session timeout - on browser restart")
-        case .never: return NSLocalizedString("Never", comment: "Bitwarden session timeout - never")
+        case .oneHour: return NSLocalizedString("settings.developer.passwordManager.session.duration.oneHour", value: "1 hour", comment: "Bitwarden session timeout - 1 hour")
+        case .fourHours: return NSLocalizedString("settings.developer.passwordManager.session.duration.fourHours", value: "4 hours", comment: "Bitwarden session timeout - 4 hours")
+        case .onSystemLock: return NSLocalizedString("settings.developer.passwordManager.session.duration.untilSystemLock", value: "On system lock", comment: "Bitwarden session timeout - on system lock")
+        case .onBrowserRestart: return NSLocalizedString("settings.developer.passwordManager.session.duration.untilBrowserRestart", value: "On browser restart", comment: "Bitwarden session timeout - on browser restart")
+        case .never: return NSLocalizedString("settings.developer.passwordManager.session.duration.never", value: "Never", comment: "Bitwarden session timeout - never")
         }
     }
 
@@ -43,8 +43,8 @@ enum BitwardenTimeoutAction: String, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
-        case .lock: return NSLocalizedString("Lock", comment: "Bitwarden timeout action - lock")
-        case .logOut: return NSLocalizedString("Log out", comment: "Bitwarden timeout action - log out")
+        case .lock: return NSLocalizedString("settings.developer.passwordManager.session.timeoutAction.lock", value: "Lock", comment: "Bitwarden timeout action - lock")
+        case .logOut: return NSLocalizedString("settings.developer.passwordManager.session.timeoutAction.logout", value: "Log out", comment: "Bitwarden timeout action - log out")
         }
     }
 

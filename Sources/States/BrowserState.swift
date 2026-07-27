@@ -5340,8 +5340,7 @@ class BrowserState {
             return
         }
         let folderTitle = groups[token]?.displayTitle(memberCount: members.count)
-            ?? NSLocalizedString(
-                "Tab Group",
+            ?? NSLocalizedString("app.tabGroups.fallbackTitle", value: "Tab Group",
                 comment: "Tab Groups - Fallback bookmark folder title when converting a tab group")
         let memberGuids = members.map { $0.guid }
         let startIndex = index ?? 0

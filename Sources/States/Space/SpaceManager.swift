@@ -253,11 +253,11 @@ final class SpaceManager: ObservableObject {
         let name: String
         if incognitoSpaces.count > 1 {
             name = String(
-                format: NSLocalizedString("Incognito %d", comment: "Incognito Space name when several are open; %d is its number"),
+                format: NSLocalizedString("spaces.builtIn.incognito.numberedName", value: "Incognito %d", comment: "Incognito Space name when several are open; %d is its number"),
                 descriptor.ordinal
             )
         } else {
-            name = NSLocalizedString("Incognito", comment: "Built-in Incognito Space name")
+            name = NSLocalizedString("spaces.builtIn.incognito.singleSpaceName", value: "Incognito", comment: "Built-in Incognito Space name when only one is open")
         }
         return SpaceModel(
             spaceId: descriptor.spaceId,
@@ -292,7 +292,7 @@ final class SpaceManager: ObservableObject {
         SpaceModel(
             spaceId: Self.incognitoRuleTargetId,
             profileId: Self.incognitoProfileId,
-            name: NSLocalizedString("Incognito", comment: "Built-in Incognito Space name"),
+            name: NSLocalizedString("spaces.builtIn.incognito.routingTargetName", value: "Incognito", comment: "Built-in Incognito target name used by URL routing"),
             colorHex: "#5F6368",
             iconName: Self.incognitoSpaceDefaultIcon,
             sortOrder: spaces.count
@@ -1363,15 +1363,13 @@ final class SpaceManager: ObservableObject {
         guard !ImportTargetLock.shared.isImporting(into: spaceId) else {
             AppLogWarn("[SpaceManager] refusing to delete space \(spaceId): import in progress")
             let alert = NSAlert()
-            alert.messageText = NSLocalizedString(
-                "Can’t delete this Space yet",
+            alert.messageText = NSLocalizedString("spaces.importProgress.deleteSpaceBlocked.title", value: "Can’t delete this Space yet",
                 comment: "Title shown when deleting a Space is blocked by an in-progress import"
             )
-            alert.informativeText = NSLocalizedString(
-                "An import is still adding bookmarks to this Space. Wait for it to finish, then try again.",
+            alert.informativeText = NSLocalizedString("spaces.importProgress.deleteSpaceBlocked.message", value: "An import is still adding bookmarks to this Space. Wait for it to finish, then try again.",
                 comment: "Body shown when deleting a Space is blocked by an in-progress import"
             )
-            alert.addButton(withTitle: NSLocalizedString("OK", comment: "Dismiss button"))
+            alert.addButton(withTitle: NSLocalizedString("spaces.importProgress.deleteSpaceBlocked.dismissButton", value: "OK", comment: "Dismiss button"))
             alert.runModal()
             return
         }
@@ -1534,15 +1532,13 @@ final class SpaceManager: ObservableObject {
         guard !ImportTargetLock.shared.isImporting(into: spaceId) else {
             AppLogWarn("[SpaceManager] refusing to change profile of space \(spaceId): import in progress")
             let alert = NSAlert()
-            alert.messageText = NSLocalizedString(
-                "Can’t change this Space’s profile yet",
+            alert.messageText = NSLocalizedString("spaces.importProgress.changeProfileBlocked.title", value: "Can’t change this Space’s profile yet",
                 comment: "Title shown when changing a Space's profile is blocked by an in-progress import"
             )
-            alert.informativeText = NSLocalizedString(
-                "An import is still adding bookmarks to this Space. Wait for it to finish, then try again.",
+            alert.informativeText = NSLocalizedString("spaces.importProgress.changeProfileBlocked.message", value: "An import is still adding bookmarks to this Space. Wait for it to finish, then try again.",
                 comment: "Body shown when a Space action is blocked by an in-progress import"
             )
-            alert.addButton(withTitle: NSLocalizedString("OK", comment: "Dismiss button"))
+            alert.addButton(withTitle: NSLocalizedString("spaces.importProgress.changeProfileBlocked.dismissButton", value: "OK", comment: "Dismiss button"))
             alert.runModal()
             return
         }
@@ -2450,16 +2446,14 @@ final class SpaceManager: ObservableObject {
         guard incognitoSpaces.contains(where: { $0.spaceId == spaceId }) else { return false }
         if !PhiPreferences.GeneralSettings.suppressCloseIncognitoSpaceWarning.loadValue() {
             let alert = NSAlert()
-            alert.messageText = NSLocalizedString(
-                "This will also close this Incognito Space, are you sure?",
+            alert.messageText = NSLocalizedString("spaces.closeIncognitoConfirmation.title", value: "This will also close this Incognito Space, are you sure?",
                 comment: "Title of the confirmation shown when a close would tear down an Incognito Space")
             alert.alertStyle = .warning
             alert.showsSuppressionButton = true
-            alert.suppressionButton?.title = NSLocalizedString(
-                "Do not ask again",
+            alert.suppressionButton?.title = NSLocalizedString("spaces.closeIncognitoConfirmation.doNotAskAgainCheckbox", value: "Do not ask again",
                 comment: "Suppression checkbox of the close-Incognito-Space confirmation")
-            alert.addButton(withTitle: NSLocalizedString("Close", comment: "Confirm closing an Incognito Space"))
-            alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Cancel button"))
+            alert.addButton(withTitle: NSLocalizedString("spaces.closeIncognitoConfirmation.closeButton", value: "Close", comment: "Confirm closing an Incognito Space"))
+            alert.addButton(withTitle: NSLocalizedString("spaces.closeIncognitoConfirmation.cancelButton", value: "Cancel", comment: "Cancel button"))
             guard alert.runModal() == .alertFirstButtonReturn else { return false }
             if alert.suppressionButton?.state == .on {
                 UserDefaults.standard.set(

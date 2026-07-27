@@ -34,7 +34,7 @@ struct FeedbackView: View {
     }
     
     private var legalText: AttributedString {
-        var string = AttributedString(NSLocalizedString("Some account and system information may be sent to Phinomenon. We will use the information you give us to help address technical issues and to improve our services, subject to our Privacy Policy and Terms of Service.", comment: "Feedback form - Legal disclaimer text explaining data usage, contains links to Privacy Policy and Terms of Service"))
+        var string = AttributedString(NSLocalizedString("feedback.form.privacyNotice", value: "Some account and system information may be sent to Phinomenon. We will use the information you give us to help address technical issues and to improve our services, subject to our Privacy Policy and Terms of Service.", comment: "Feedback form - Legal disclaimer text explaining data usage, contains links to Privacy Policy and Terms of Service"))
         
         if let range = string.range(of: "Privacy Policy") {
             string[range].link = URL(string: "privacy")
@@ -104,7 +104,7 @@ struct FeedbackView: View {
             }
         }
         .alert(
-            NSLocalizedString("Could Not Save Feedback", comment: "Feedback form - Alert title when local outbox save fails"),
+            NSLocalizedString("feedback.form.localSaveFailure.title", value: "Could Not Save Feedback", comment: "Feedback form - Alert title when local outbox save fails"),
             isPresented: Binding(
                 get: { viewModel.localSaveError != nil },
                 set: { isPresented in
@@ -114,12 +114,12 @@ struct FeedbackView: View {
                 }
             )
         ) {
-            Button(NSLocalizedString("OK", comment: "Generic - OK button to dismiss an alert"), role: .cancel) { }
+            Button(NSLocalizedString("feedback.form.localSaveFailure.dismissButton", value: "OK", comment: "Feedback form - Local-save failure alert dismiss button"), role: .cancel) { }
         } message: {
             Text(viewModel.localSaveError ?? "")
         }
         .alert(
-            NSLocalizedString("Could Not Add Attachment", comment: "Feedback form - Alert title when selected attachments cannot be added"),
+            NSLocalizedString("feedback.form.attachmentFailure.title", value: "Could Not Add Attachment", comment: "Feedback form - Alert title when selected attachments cannot be added"),
             isPresented: Binding(
                 get: { viewModel.attachmentError != nil },
                 set: { isPresented in
@@ -129,7 +129,7 @@ struct FeedbackView: View {
                 }
             )
         ) {
-            Button(NSLocalizedString("OK", comment: "Generic - OK button to dismiss an alert"), role: .cancel) { }
+            Button(NSLocalizedString("feedback.form.attachmentFailure.dismissButton", value: "OK", comment: "Feedback form - Attachment failure alert dismiss button"), role: .cancel) { }
         } message: {
             Text(viewModel.attachmentError ?? "")
         }
@@ -137,7 +137,7 @@ struct FeedbackView: View {
 
     private var descriptionSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(NSLocalizedString("Describe the issue in detail", comment: "Feedback form - Section header prompting user to describe the issue"))
+            Text(NSLocalizedString("feedback.form.descriptionSection.title", value: "Describe the issue in detail", comment: "Feedback form - Section header prompting user to describe the issue"))
                 .font(.headline)
 
             TextEditor(text: $viewModel.descriptionText)
@@ -168,12 +168,12 @@ struct FeedbackView: View {
 
     private var additionalInfoSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(NSLocalizedString("Additional info (optional)", comment: "Feedback form - Section header for optional additional information"))
+            Text(NSLocalizedString("feedback.form.additionalInfoSection.title", value: "Additional info (optional)", comment: "Feedback form - Section header for optional additional information"))
                 .font(.headline)
 
             VStack(spacing: 11) {
                 HStack {
-                    Text(NSLocalizedString("URL", comment: "Feedback form - Label for URL input field"))
+                    Text(NSLocalizedString("feedback.form.urlField.label", value: "URL", comment: "Feedback form - Label for URL input field"))
                         .foregroundStyle(.primary)
                     Spacer()
                     TextField("URL", text: $urlString)
@@ -225,7 +225,7 @@ struct FeedbackView: View {
         VStack(spacing: 0) {
             HStack {
                 Spacer()
-                Button(NSLocalizedString("Send", comment: "Feedback form - Send button to submit feedback")) {
+                Button(NSLocalizedString("feedback.form.sendButton", value: "Send", comment: "Feedback form - Send button to submit feedback")) {
                     guard viewModel.canSend else { return }
                     onSend?()
                 }
@@ -245,10 +245,10 @@ struct FeedbackView: View {
     private var attachmentPickerRow: some View {
         HStack {
             VStack(alignment: .leading, spacing: 3) {
-                Text(NSLocalizedString("Attach files", comment: "Feedback form - Label for file attachment section"))
+                Text(NSLocalizedString("feedback.form.attachmentsSection.title", value: "Attach files", comment: "Feedback form - Label for file attachment section"))
                     .foregroundStyle(.primary)
 
-                Text(NSLocalizedString("Or paste an image", comment: "Feedback form - Hint explaining pasted images can be added as attachments"))
+                Text(NSLocalizedString("feedback.form.attachmentsSection.pasteImageHint", value: "Or paste an image", comment: "Feedback form - Hint explaining pasted images can be added as attachments"))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -260,7 +260,7 @@ struct FeedbackView: View {
             }) {
                 HStack(spacing: 4) {
                     Image(systemName: "plus")
-                    Text(NSLocalizedString("Choose Files", comment: "Feedback form - Button to open file picker for attachments"))
+                    Text(NSLocalizedString("feedback.form.attachmentsSection.chooseFilesButton", value: "Choose Files", comment: "Feedback form - Button to open file picker for attachments"))
                 }
             }
         }
@@ -325,8 +325,8 @@ private struct FeedbackAttachmentRow: View {
             }
             .buttonStyle(.plain)
             .help(attachment.kind == .image
-                  ? NSLocalizedString("Preview attachment", comment: "Feedback form - Tooltip for previewing an attachment")
-                  : NSLocalizedString("Show in Finder", comment: "Download item row - Tooltip for show in finder button"))
+                  ? NSLocalizedString("feedback.form.attachment.previewTooltip", value: "Preview attachment", comment: "Feedback form - Tooltip for previewing an attachment")
+                  : NSLocalizedString("feedback.form.attachment.showInFinderTooltip", value: "Show in Finder", comment: "Download item row - Tooltip for show in finder button"))
 
             Button(action: onRemove) {
                 Image(systemName: "xmark.circle.fill")
@@ -334,7 +334,7 @@ private struct FeedbackAttachmentRow: View {
                     .frame(width: 16, height: 16)
             }
             .buttonStyle(.plain)
-            .help(NSLocalizedString("Remove attachment", comment: "Feedback form - Tooltip for removing an attachment"))
+            .help(NSLocalizedString("feedback.form.attachment.removeTooltip", value: "Remove attachment", comment: "Feedback form - Tooltip for removing an attachment"))
         }
         .font(.system(size: 12))
         .frame(maxWidth: .infinity)

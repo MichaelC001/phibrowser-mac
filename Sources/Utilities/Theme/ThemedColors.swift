@@ -180,7 +180,7 @@ private func makeDesignTheme(
 public extension Theme {
     static let pure = makeDesignTheme(
         id: "pure",
-        name: NSLocalizedString("Pure", comment: "Pure theme name"),
+        name: NSLocalizedString("themes.theme.pure.name", value: "Pure", comment: "Pure theme name"),
         lightOverlay: 0xEAEAEA,
         lightBackground: 0xFFFFFF,
         lightThemeColor: 0x3AA4D5,
@@ -193,7 +193,7 @@ public extension Theme {
 
     static let mist = makeDesignTheme(
         id: "mist",
-        name: NSLocalizedString("Mist", comment: "Mist theme color name"),
+        name: NSLocalizedString("themes.theme.mist.name", value: "Mist", comment: "Mist theme color name"),
         lightOverlay: 0x66CCFF,
         lightBackground: 0xFFFFFF,
         lightThemeColor: 0x57AED9,
@@ -206,7 +206,7 @@ public extension Theme {
     
     static let mint = makeDesignTheme(
         id: "mint",
-        name: NSLocalizedString("Mint", comment: "Mint theme color name"),
+        name: NSLocalizedString("themes.theme.mint.name", value: "Mint", comment: "Mint theme color name"),
         lightOverlay: 0x8AE25A,
         lightBackground: 0xFFFFFF,
         lightThemeColor: 0x73BD4B,
@@ -219,7 +219,7 @@ public extension Theme {
 
     static let aqua = makeDesignTheme(
         id: "aqua",
-        name: NSLocalizedString("Aqua", comment: "Aqua theme color name"),
+        name: NSLocalizedString("themes.theme.aqua.name", value: "Aqua", comment: "Aqua theme color name"),
         lightOverlay: 0x5BDEE3,
         lightBackground: 0xFFFFFF,
         lightThemeColor: 0x4BB9BD,
@@ -232,7 +232,7 @@ public extension Theme {
 
     static let iris = makeDesignTheme(
         id: "iris",
-        name: NSLocalizedString("Iris", comment: "Iris theme color name"),
+        name: NSLocalizedString("themes.theme.iris.name", value: "Iris", comment: "Iris theme color name"),
         lightOverlay: 0x7566FF,
         lightBackground: 0xFFFFFF,
         lightThemeColor: 0x6357D9,
@@ -245,7 +245,7 @@ public extension Theme {
 
     static let petal = makeDesignTheme(
         id: "petal",
-        name: NSLocalizedString("Petal", comment: "Petal theme color name"),
+        name: NSLocalizedString("themes.theme.petal.name", value: "Petal", comment: "Petal theme color name"),
         lightOverlay: 0xD966FF,
         lightBackground: 0xFFFFFF,
         lightThemeColor: 0xB857D9,
@@ -258,7 +258,7 @@ public extension Theme {
 
     static let coral = makeDesignTheme(
         id: "coral",
-        name: NSLocalizedString("Coral", comment: "Coral theme color name"),
+        name: NSLocalizedString("themes.theme.coral.name", value: "Coral", comment: "Coral theme color name"),
         lightOverlay: 0xFF6666,
         lightBackground: 0xFFFFFF,
         lightThemeColor: 0xD95757,
@@ -271,7 +271,7 @@ public extension Theme {
 
     static let amber = makeDesignTheme(
         id: "amber",
-        name: NSLocalizedString("Amber", comment: "Amber theme color name"),
+        name: NSLocalizedString("themes.theme.amber.name", value: "Amber", comment: "Amber theme color name"),
         lightOverlay: 0xFFD966,
         lightBackground: 0xFFFFFF,
         lightThemeColor: 0xD9B857,

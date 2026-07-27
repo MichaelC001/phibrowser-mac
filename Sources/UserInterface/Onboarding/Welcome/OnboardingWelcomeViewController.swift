@@ -21,7 +21,7 @@ class OnboardingWelcomeViewController: ConchFrameAnimationBaseViewController {
     }()
     
     private let titleLabel: NSTextField = {
-        let label = NSTextField(labelWithString: NSLocalizedString("Welcome", comment: "Onboarding welcome page - Main title greeting the user"))
+        let label = NSTextField(labelWithString: NSLocalizedString("oobe.welcome.title", value: "Welcome", comment: "Onboarding welcome page - Main title greeting the user"))
         label.font = NSFont(name: "IvyPrestoDisplay-SemiBoldItalic", size: 46)
         label.textColor = NSColor(red: 0.18, green: 0.42, blue: 0.49, alpha: 1.0) // #2D6F7D
         label.alignment = .center
@@ -58,7 +58,7 @@ class OnboardingWelcomeViewController: ConchFrameAnimationBaseViewController {
     
     private lazy var nextButton: GradientBorderButton = {
         let button = GradientBorderButton()
-        button.title = NSLocalizedString("Next", comment: "Onboarding welcome page - Next button to proceed to next step")
+        button.title = NSLocalizedString("oobe.welcome.nextButton", value: "Next", comment: "Onboarding welcome page - Next button to proceed to next step")
         button.clickAction = { [weak self] in
             self?.nextButtonTapped()
         }
@@ -88,7 +88,7 @@ class OnboardingWelcomeViewController: ConchFrameAnimationBaseViewController {
     
     var userName: String? {
         didSet {
-            titleLabel.stringValue = String(format: NSLocalizedString("Welcome %@", comment: "Onboarding welcome page - Personalized welcome title with user name"), userName ?? "")
+            titleLabel.stringValue = String(format: NSLocalizedString("oobe.welcome.personalizedTitle", value: "Welcome %@", comment: "Onboarding welcome page - Personalized welcome title with user name"), userName ?? "")
         }
     }
     

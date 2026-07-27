@@ -252,7 +252,7 @@ struct HeaderExtensionMenuButton: View {
     var body: some View {
         CircularIconButton(
             imageResource: .extensionIcon,
-            accessibilityLabel: NSLocalizedString("Extensions", comment: "Web content header - Extensions menu button")
+            accessibilityLabel: NSLocalizedString("browser.webContentHeader.extensionsButton.accessibilityLabel", value: "Extensions", comment: "Web content header - Extensions menu button")
         ) {
             isPopoverShown.toggle()
         }

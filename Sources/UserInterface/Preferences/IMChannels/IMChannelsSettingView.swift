@@ -14,10 +14,9 @@ struct IMChannelsSettingView: View {
         ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 24) {
                 IMSectionHeader(
-                    title: NSLocalizedString("Telegram", comment: "Phi Link - Section title"),
+                    title: NSLocalizedString("settings.phiLink.sectionTitle", value: "Telegram", comment: "Phi Link - Section title"),
                     subtitle: String(
-                        format: NSLocalizedString(
-                            "Using Telegram to send and receive messages with %@",
+                        format: NSLocalizedString("settings.phiLink.sectionDescription", value: "Using Telegram to send and receive messages with %@",
                             comment: "Phi Link - Section subtitle with agent name"
                         ),
                         vm.agentName
@@ -102,10 +101,10 @@ private struct OfficialBotSection: View {
                 .frame(width: 36, height: 36)
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             VStack(alignment: .leading, spacing: 4) {
-                Text(NSLocalizedString("Official Phi Link Telegram bot", comment: "Phi Link - Official Bot title"))
+                Text(NSLocalizedString("settings.phiLink.officialBot.title", value: "Official Phi Link Telegram bot", comment: "Phi Link - Official Bot title"))
                     .font(.system(size: 14))
                     .themedForeground(.textPrimary)
-                Text(NSLocalizedString("We provide a Telegram bot to relay your messages @philink_bot", comment: "Phi Link - Official Bot subtitle"))
+                Text(NSLocalizedString("settings.phiLink.officialBot.description", value: "We provide a Telegram bot to relay your messages @philink_bot", comment: "Phi Link - Official Bot subtitle"))
                     .font(.system(size: 12))
                     .themedForeground(.textTertiary)
             }
@@ -133,7 +132,7 @@ private struct OfficialBotSection: View {
             qrCodeView(session: session)
         } else if vm.officialBotErrorMessage != nil {
             serviceIssueView(
-                actionTitle: NSLocalizedString("Retry", comment: "Phi Link - Retry loading official bot")
+                actionTitle: NSLocalizedString("settings.phiLink.officialBot.retryButton", value: "Retry", comment: "Phi Link - Retry loading official bot")
             ) {
                 Task { await vm.refreshAll() }
             }
@@ -144,12 +143,12 @@ private struct OfficialBotSection: View {
 
     private var officialStatusText: String {
         if vm.officialBotHasServiceIssue {
-            return NSLocalizedString("Service issue", comment: "Phi Link - Official bot service issue status")
+            return NSLocalizedString("settings.phiLink.officialBot.serviceIssueStatus", value: "Service issue", comment: "Phi Link - Official bot service issue status")
         }
         if vm.pairing != nil && !vm.officialBotNeedsReconnect {
-            return NSLocalizedString("Linked", comment: "Phi Link - Official bot linked status")
+            return NSLocalizedString("settings.phiLink.officialBot.linkedStatus", value: "Linked", comment: "Phi Link - Official bot linked status")
         }
-        return NSLocalizedString("Not linked", comment: "Phi Link - Official bot not linked status")
+        return NSLocalizedString("settings.phiLink.officialBot.notLinkedStatus", value: "Not linked", comment: "Phi Link - Official bot not linked status")
     }
 
     private var officialStatusKind: IMStatusKind {
@@ -175,7 +174,7 @@ private struct OfficialBotSection: View {
     private func connectedView(pairing: ChannelPairing) -> some View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
-                Text(NSLocalizedString("Telegram ID", comment: "Phi Link - Official bot connected label"))
+                Text(NSLocalizedString("settings.phiLink.officialBot.telegramIDLabel", value: "Telegram ID", comment: "Phi Link - Official bot connected label"))
                     .font(.system(size: 13))
                     .themedForeground(.textPrimary)
                 Text(vm.officialBotDisplayName)
@@ -192,7 +191,7 @@ private struct OfficialBotSection: View {
                             .controlSize(.mini)
                     }
                     Label(
-                        NSLocalizedString("Unlink", comment: "Phi Link - Official bot unlink button"),
+                        NSLocalizedString("settings.phiLink.officialBot.unlinkButton", value: "Unlink", comment: "Phi Link - Official bot unlink button"),
                         systemImage: "link.badge.minus"
                     )
                     .font(.system(size: 13))
@@ -250,8 +249,8 @@ private struct OfficialBotSection: View {
             }
 
             Text(session.status == "expired"
-                 ? NSLocalizedString("QR code expired. Generate a fresh one to continue.", comment: "Phi Link - Official bot QR expired hint")
-                 : NSLocalizedString("Scan the QR code with your phone camera or click on the button below to add Phi Link bot to your Telegram", comment: "Phi Link - Official bot QR hint"))
+                 ? NSLocalizedString("settings.phiLink.officialBot.qrCode.expiredHint", value: "QR code expired. Generate a fresh one to continue.", comment: "Phi Link - Official bot QR expired hint")
+                 : NSLocalizedString("settings.phiLink.officialBot.qrCode.scanHint", value: "Scan the QR code with your phone camera or click on the button below to add Phi Link bot to your Telegram", comment: "Phi Link - Official bot QR hint"))
                 .font(.system(size: 12))
                 .themedForeground(.textTertiary)
                 .multilineTextAlignment(.center)
@@ -264,7 +263,7 @@ private struct OfficialBotSection: View {
                     Button {
                         NSWorkspace.shared.open(deepLinkURL)
                     } label: {
-                        Label(NSLocalizedString("Open in Telegram", comment: "Phi Link - Open official bot link in Telegram"), systemImage: "arrow.up.forward.square")
+                        Label(NSLocalizedString("settings.phiLink.officialBot.openInTelegramButton", value: "Open in Telegram", comment: "Phi Link - Open official bot link in Telegram"), systemImage: "arrow.up.forward.square")
                             .font(.system(size: 13))
                     }
                     .imPrimaryButtonStyle()
@@ -275,8 +274,8 @@ private struct OfficialBotSection: View {
                 } label: {
                     Label(
                         session.status == "expired"
-                            ? NSLocalizedString("Relink", comment: "Phi Link - Official bot relink action")
-                            : NSLocalizedString("Refresh", comment: "Phi Link - Official bot refresh QR action"),
+                            ? NSLocalizedString("settings.phiLink.officialBot.relinkAction", value: "Relink", comment: "Phi Link - Official bot relink action")
+                            : NSLocalizedString("settings.phiLink.officialBot.refreshQRCodeAction", value: "Refresh", comment: "Phi Link - Official bot refresh QR action"),
                         systemImage: "arrow.clockwise"
                     )
                     .font(.system(size: 13))
@@ -293,7 +292,7 @@ private struct OfficialBotSection: View {
     private var notConnectedView: some View {
         HStack(spacing: 12) {
             Text(String(
-                format: NSLocalizedString("Link Telegram to chat with %@.", comment: "Phi Link - Official bot link prompt with agent name"),
+                format: NSLocalizedString("settings.phiLink.officialBot.linkPrompt", value: "Link Telegram to chat with %@.", comment: "Phi Link - Official bot link prompt with agent name"),
                 vm.agentName
             ))
                 .font(.system(size: 13))
@@ -309,7 +308,7 @@ private struct OfficialBotSection: View {
                             .controlSize(.mini)
                     }
                     Label(
-                        NSLocalizedString("Link", comment: "Phi Link - Official bot link button"),
+                        NSLocalizedString("settings.phiLink.officialBot.linkButton", value: "Link", comment: "Phi Link - Official bot link button"),
                         systemImage: "link.badge.plus"
                     )
                     .font(.system(size: 13))
@@ -325,8 +324,7 @@ private struct OfficialBotSection: View {
     private func serviceIssueView(actionTitle: String, action: @escaping () -> Void) -> some View {
         HStack(spacing: 12) {
             Text(
-                NSLocalizedString(
-                    "Retry after Phi Sentinel is running normally.",
+                NSLocalizedString("settings.phiLink.officialBot.serviceUnavailableHint", value: "Retry after Phi Sentinel is running normally.",
                     comment: "IM Channels - Official bot retry hint when service is unavailable"
                 )
             )
@@ -365,10 +363,10 @@ private struct CustomBotSection: View {
         HStack(spacing: 12) {
             TelegramServiceIcon(symbol: "gearshape.fill", tint: Color(red: 0.08, green: 0.52, blue: 0.72))
             VStack(alignment: .leading, spacing: 4) {
-                Text(NSLocalizedString("Custom Telegram bot", comment: "Phi Link - Custom bot title"))
+                Text(NSLocalizedString("settings.phiLink.customBot.title", value: "Custom Telegram bot", comment: "Phi Link - Custom bot title"))
                     .font(.system(size: 14))
                     .themedForeground(.textPrimary)
-                Text(NSLocalizedString("Setting up your own Telegram bot using Telegram's @BotFather", comment: "Phi Link - Custom bot subtitle"))
+                Text(NSLocalizedString("settings.phiLink.customBot.description", value: "Setting up your own Telegram bot using Telegram's @BotFather", comment: "Phi Link - Custom bot subtitle"))
                     .font(.system(size: 12))
                     .themedForeground(.textTertiary)
             }
@@ -409,15 +407,15 @@ private struct CustomBotSection: View {
 
     private var customStatusText: String {
         if vm.customBotHasServiceIssue {
-            return NSLocalizedString("Service issue", comment: "Phi Link - Custom bot service issue status")
+            return NSLocalizedString("settings.phiLink.customBot.serviceIssueStatus", value: "Service issue", comment: "Phi Link - Custom bot service issue status")
         }
         if vm.customBot?.isRunning == true {
-            return NSLocalizedString("Linked", comment: "Phi Link - Custom bot linked status")
+            return NSLocalizedString("settings.phiLink.customBot.linkedStatus", value: "Linked", comment: "Phi Link - Custom bot linked status")
         }
         if vm.customBot != nil {
-            return NSLocalizedString("Configured", comment: "Phi Link - Custom bot configured status")
+            return NSLocalizedString("settings.phiLink.customBot.configuredStatus", value: "Configured", comment: "Phi Link - Custom bot configured status")
         }
-        return NSLocalizedString("Not configured", comment: "Phi Link - Custom bot not configured status")
+        return NSLocalizedString("settings.phiLink.customBot.notConfiguredStatus", value: "Not configured", comment: "Phi Link - Custom bot not configured status")
     }
 
     private var customStatusKind: IMStatusKind {
@@ -452,7 +450,7 @@ private struct CustomBotSection: View {
                             ProgressView().controlSize(.mini)
                         }
                         Label(
-                            NSLocalizedString("Verify", comment: "IM Channels - Custom bot verify button"),
+                            NSLocalizedString("settings.phiLink.customBot.verifyButton", value: "Verify", comment: "IM Channels - Custom bot verify button"),
                             systemImage: "checkmark.shield"
                         )
                             .font(.system(size: 13))
@@ -469,7 +467,7 @@ private struct CustomBotSection: View {
                             ProgressView().controlSize(.mini)
                         }
                         Label(
-                            NSLocalizedString("Save", comment: "IM Channels - Custom bot save button"),
+                            NSLocalizedString("settings.phiLink.customBot.saveButton", value: "Save", comment: "IM Channels - Custom bot save button"),
                             systemImage: "checkmark"
                         )
                             .font(.system(size: 13))
@@ -503,10 +501,10 @@ private struct CustomBotSection: View {
                                   : bot.status == "error" ? imErrorColor : imWarningDotColor)
                             .frame(width: 6, height: 6)
                         Text(bot.isRunning
-                             ? NSLocalizedString("Linked", comment: "Phi Link - Custom bot linked text")
+                             ? NSLocalizedString("settings.phiLink.customBot.linkStatus.linked", value: "Linked", comment: "Phi Link - Custom bot linked text")
                              : bot.status == "error"
-                                ? (bot.statusMessage ?? NSLocalizedString("Error", comment: "Phi Link - Custom bot generic error text"))
-                                : NSLocalizedString("Linking...", comment: "Phi Link - Custom bot linking text"))
+                                ? (bot.statusMessage ?? NSLocalizedString("settings.phiLink.customBot.genericError", value: "Error", comment: "Phi Link - Custom bot generic error text"))
+                                : NSLocalizedString("settings.phiLink.customBot.linkStatus.linking", value: "Linking...", comment: "Phi Link - Custom bot linking text"))
                             .font(.system(size: 11))
                             .themedForeground(.textTertiary)
                     }
@@ -532,7 +530,7 @@ private struct CustomBotSection: View {
                             ProgressView().controlSize(.mini)
                         }
                         Label(
-                            NSLocalizedString("Verify", comment: "IM Channels - Custom bot verify action"),
+                            NSLocalizedString("settings.phiLink.customBot.verifyAction", value: "Verify", comment: "IM Channels - Custom bot verify action"),
                             systemImage: "checkmark.shield"
                         )
                             .font(.system(size: 13))
@@ -549,7 +547,7 @@ private struct CustomBotSection: View {
                             ProgressView().controlSize(.mini)
                         }
                         Label(
-                            NSLocalizedString("Remove", comment: "IM Channels - Custom bot remove action"),
+                            NSLocalizedString("settings.phiLink.customBot.removeAction", value: "Remove", comment: "IM Channels - Custom bot remove action"),
                             systemImage: "trash"
                         )
                             .font(.system(size: 13))
@@ -579,9 +577,9 @@ private struct CustomBotSection: View {
     }
 
     private var guideAttributedString: AttributedString {
-        let prefix = NSLocalizedString("Click ", comment: "Phi Link - Custom bot guide prefix")
-        let linkText = NSLocalizedString("here to begin the @BotFather", comment: "Phi Link - Custom bot guide link text")
-        let suffix = NSLocalizedString(" Telegram bot creation and customization process, follow the on-screen instructions and paste the Bot Token below", comment: "Phi Link - Custom bot guide suffix")
+        let prefix = NSLocalizedString("settings.phiLink.customBot.guide.prefixText", value: "Click ", comment: "Phi Link - Custom bot guide prefix")
+        let linkText = NSLocalizedString("settings.phiLink.customBot.botFatherLink", value: "here to begin the @BotFather", comment: "Phi Link - Custom bot guide link text")
+        let suffix = NSLocalizedString("settings.phiLink.customBot.guide.suffixText", value: " Telegram bot creation and customization process, follow the on-screen instructions and paste the Bot Token below", comment: "Phi Link - Custom bot guide suffix")
 
         var result = AttributedString(prefix)
         var link = AttributedString(linkText)
@@ -594,7 +592,7 @@ private struct CustomBotSection: View {
 
     private var tokenInputRow: some View {
         HStack(spacing: 12) {
-            Text(NSLocalizedString("Bot Token", comment: "Phi Link - Custom bot token label"))
+            Text(NSLocalizedString("settings.phiLink.customBot.tokenField.label", value: "Bot Token", comment: "Phi Link - Custom bot token label"))
                 .font(.system(size: 13))
                 .themedForeground(.textPrimary)
             Spacer(minLength: 12)
@@ -619,8 +617,8 @@ private struct CustomBotSection: View {
                 } label: {
                     Label(
                         vm.showTokenPlaintext
-                            ? NSLocalizedString("Hide", comment: "Phi Link - Hide token plaintext button")
-                            : NSLocalizedString("Show", comment: "Phi Link - Show token plaintext button"),
+                            ? NSLocalizedString("settings.phiLink.customBot.tokenField.hideButton", value: "Hide", comment: "Phi Link - Hide token plaintext button")
+                            : NSLocalizedString("settings.phiLink.customBot.tokenField.showButton", value: "Show", comment: "Phi Link - Show token plaintext button"),
                         systemImage: vm.showTokenPlaintext ? "eye.slash" : "eye"
                     )
                     .labelStyle(.iconOnly)
@@ -640,8 +638,8 @@ private struct CustomBotSection: View {
                 .foregroundStyle(result.success ? imSuccessColor : imErrorColor)
                 .font(.system(size: 13))
             Text(result.success
-                 ? NSLocalizedString("Token verified successfully", comment: "IM Channels - Custom bot verify success")
-                 : NSLocalizedString("Verification failed. Please check the token and try again.", comment: "IM Channels - Custom bot verify failure"))
+                 ? NSLocalizedString("settings.phiLink.customBot.verificationSuccess", value: "Token verified successfully", comment: "IM Channels - Custom bot verify success")
+                 : NSLocalizedString("settings.phiLink.customBot.verificationFailure", value: "Verification failed. Please check the token and try again.", comment: "IM Channels - Custom bot verify failure"))
                 .font(.system(size: 11))
                 .foregroundStyle(result.success ? Color.primary : imErrorColor)
         }

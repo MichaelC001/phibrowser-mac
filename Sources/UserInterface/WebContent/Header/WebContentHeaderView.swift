@@ -148,7 +148,7 @@ struct WebContentHeaderView: View {
             if state.showSidebarButton {
                 NavigationButton(
                     systemName: "sidebar.left",
-                    accessibilityLabel: NSLocalizedString("Toggle Sidebar", comment: "Web content header - Accessibility description for sidebar toggle button"),
+                    accessibilityLabel: NSLocalizedString("browser.webContentHeader.sidebarButton.accessibilityLabel", value: "Toggle Sidebar", comment: "Web content header - Accessibility description for sidebar toggle button"),
                     onAnchorResolved: onSidebarAnchorResolved,
                     action: onSidebarTap
                 )
@@ -158,22 +158,22 @@ struct WebContentHeaderView: View {
                 NavigationButton(
                     systemName: "chevron.left",
                     isEnabled: state.canGoBack,
-                    accessibilityLabel: NSLocalizedString("Back", comment: "Web content header - Accessibility description for back navigation button"),
+                    accessibilityLabel: NSLocalizedString("browser.webContentHeader.backButton.accessibilityLabel", value: "Back", comment: "Web content header - Accessibility description for back navigation button"),
                     action: onBackTap
                 )
 
                 NavigationButton(
                     systemName: "chevron.right",
                     isEnabled: state.canGoForward,
-                    accessibilityLabel: NSLocalizedString("Forward", comment: "Web content header - Accessibility description for forward navigation button"),
+                    accessibilityLabel: NSLocalizedString("browser.webContentHeader.forwardButton.accessibilityLabel", value: "Forward", comment: "Web content header - Accessibility description for forward navigation button"),
                     action: onForwardTap
                 )
 
                 NavigationButton(
                     systemName: state.isProgressVisible ? "xmark" : "arrow.clockwise",
                     accessibilityLabel: state.isProgressVisible
-                        ? NSLocalizedString("Stop", comment: "Web content header - Accessibility description for stop loading button")
-                        : NSLocalizedString("Refresh", comment: "Web content header - Accessibility description for refresh page button"),
+                        ? NSLocalizedString("browser.webContentHeader.stopButton.accessibilityLabel", value: "Stop", comment: "Web content header - Accessibility description for stop loading button")
+                        : NSLocalizedString("browser.webContentHeader.refreshButton.accessibilityLabel", value: "Refresh", comment: "Web content header - Accessibility description for refresh page button"),
                     hoverBackgroundOffsetY: state.isProgressVisible ? 0 : 1,
                     action: state.isProgressVisible ? onStopLoadingTap : onRefreshTap
                 )

@@ -31,7 +31,7 @@ struct PasswordManagerSectionView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text(NSLocalizedString("Agent Password Manager", comment: "Phi & AI settings - Agent Password Manager section title"))
+            Text(NSLocalizedString("settings.developer.passwordManager.sectionTitle", value: "Agent Password Manager", comment: "Phi & AI settings - Agent Password Manager section title"))
                 .font(.system(size: 12))
                 .themedForeground(.textSecondary)
 
@@ -75,15 +75,15 @@ struct PasswordManagerSectionView: View {
             }
         }
         .alert(
-            NSLocalizedString("Install Bitwarden Extension?", comment: "Phi & AI settings - Alert title suggesting the Bitwarden browser extension install"),
+            NSLocalizedString("settings.developer.passwordManager.extensionInstallPrompt.title", value: "Install Bitwarden Extension?", comment: "Phi & AI settings - Alert title suggesting the Bitwarden browser extension install"),
             isPresented: $showInstallExtensionPrompt
         ) {
-            Button(NSLocalizedString("Install", comment: "Phi & AI settings - Button that installs the Bitwarden browser extension")) {
+            Button(NSLocalizedString("settings.developer.passwordManager.extensionInstallPrompt.installButton", value: "Install", comment: "Phi & AI settings - Button that installs the Bitwarden browser extension")) {
                 installBitwardenExtension()
             }
-            Button(NSLocalizedString("Not Now", comment: "Phi & AI settings - Button that dismisses the Bitwarden extension install suggestion"), role: .cancel) {}
+            Button(NSLocalizedString("settings.developer.passwordManager.extensionInstallPrompt.notNowButton", value: "Not Now", comment: "Phi & AI settings - Button that dismisses the Bitwarden extension install suggestion"), role: .cancel) {}
         } message: {
-            Text(NSLocalizedString("The Bitwarden browser extension autofills your vault logins on web pages. Phi can install it from the Chrome Web Store now.", comment: "Phi & AI settings - Alert message explaining the suggested Bitwarden extension install"))
+            Text(NSLocalizedString("settings.developer.passwordManager.extensionInstallPrompt.message", value: "The Bitwarden browser extension autofills your vault logins on web pages. Phi can install it from the Chrome Web Store now.", comment: "Phi & AI settings - Alert message explaining the suggested Bitwarden extension install"))
         }
     }
 
@@ -95,10 +95,10 @@ struct PasswordManagerSectionView: View {
                 .resizable()
                 .frame(width: 24, height: 24)
             VStack(alignment: .leading, spacing: 3) {
-                Text(NSLocalizedString("Bitwarden password manager", comment: "Phi & AI settings - Bitwarden toggle title"))
+                Text(NSLocalizedString("settings.developer.passwordManager.bitwarden.toggleTitle", value: "Bitwarden password manager", comment: "Phi & AI settings - Bitwarden toggle title"))
                     .font(.system(size: 13))
                     .themedForeground(.textPrimary)
-                Text(NSLocalizedString("Logins for Phi and agent requests, held by a separate helper — passwords never touch the browser process.", comment: "Phi & AI settings - Bitwarden toggle explanation"))
+                Text(NSLocalizedString("settings.developer.passwordManager.bitwarden.toggleDescription", value: "Logins for Phi and agent requests, held by a separate helper — passwords never touch the browser process.", comment: "Phi & AI settings - Bitwarden toggle explanation"))
                     .font(.system(size: 11))
                     .themedForeground(.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -147,7 +147,7 @@ struct PasswordManagerSectionView: View {
             HStack(spacing: 12) {
                 SettingsIconChip(systemName: "key.fill", color: .indigo)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(NSLocalizedString("Agent Credential Approvals\u{2026}", comment: "Phi & AI settings - approvals row title"))
+                    Text(NSLocalizedString("settings.developer.passwordManager.approvals.title", value: "Agent Credential Approvals\u{2026}", comment: "Phi & AI settings - approvals row title"))
                         .font(.system(size: 13))
                         .themedForeground(.textPrimary)
                     approvalsSubtitle
@@ -162,14 +162,14 @@ struct PasswordManagerSectionView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(NSLocalizedString("Review and revoke which agents may use your saved logins without asking",
+        .help(NSLocalizedString("settings.developer.passwordManager.approvals.tooltip", value: "Review and revoke which agents may use your saved logins without asking",
                                 comment: "Phi & AI settings - tooltip for the approvals row"))
     }
 
     @ViewBuilder
     private var approvalsSubtitle: some View {
         if grantStore.hasUniversalGrant {
-            Text(NSLocalizedString("Access to all passwords is on", comment: "Phi & AI settings - approvals subtitle when the master grant is on"))
+            Text(NSLocalizedString("settings.developer.passwordManager.approvals.allPasswordsEnabledStatus", value: "Access to all passwords is on", comment: "Phi & AI settings - approvals subtitle when the master grant is on"))
                 .font(.system(size: 11))
                 .foregroundStyle(Color(nsColor: .systemRed))
         } else {
@@ -177,8 +177,8 @@ struct PasswordManagerSectionView: View {
                 !$0.isUniversal && ($0.expires.map { $0 > Date() } ?? true)
             }.count
             Text(count == 0
-                ? NSLocalizedString("No standing approvals", comment: "Phi & AI settings - approvals subtitle with no grants")
-                : String(format: NSLocalizedString("%d standing approvals", comment: "Phi & AI settings - approvals subtitle grant count"), count))
+                ? NSLocalizedString("settings.developer.passwordManager.approvals.noStandingApprovalsStatus", value: "No standing approvals", comment: "Phi & AI settings - approvals subtitle with no grants")
+                : String(format: NSLocalizedString("settings.developer.passwordManager.approvals.standingApprovalCount", value: "%d standing approvals", comment: "Phi & AI settings - approvals subtitle grant count"), count))
                 .font(.system(size: 11))
                 .themedForeground(.textTertiary)
         }
@@ -208,15 +208,15 @@ struct PasswordManagerSectionView: View {
         switch bitwarden.currentStatus {
         case .ready(let account):
             if let account, !account.isEmpty {
-                return String(format: NSLocalizedString("Signed in as %@", comment: "Phi & AI settings - Bitwarden ready status with account"), account)
+                return String(format: NSLocalizedString("settings.developer.passwordManager.bitwarden.signedInAccountStatus", value: "Signed in as %@", comment: "Phi & AI settings - Bitwarden ready status with account"), account)
             }
-            return NSLocalizedString("Signed in", comment: "Phi & AI settings - Bitwarden ready status")
+            return NSLocalizedString("settings.developer.passwordManager.bitwarden.signedInStatus", value: "Signed in", comment: "Phi & AI settings - Bitwarden ready status")
         case .locked:
-            return NSLocalizedString("Locked", comment: "Phi & AI settings - Bitwarden locked status")
+            return NSLocalizedString("settings.developer.passwordManager.bitwarden.lockedStatus", value: "Locked", comment: "Phi & AI settings - Bitwarden locked status")
         case .loggedOut:
-            return NSLocalizedString("Not signed in", comment: "Phi & AI settings - Bitwarden signed-out status")
+            return NSLocalizedString("settings.developer.passwordManager.bitwarden.notSignedInStatus", value: "Not signed in", comment: "Phi & AI settings - Bitwarden signed-out status")
         case .notInstalled:
-            return NSLocalizedString("Bitwarden helper not available", comment: "Phi & AI settings - Bitwarden helper missing status")
+            return NSLocalizedString("settings.developer.passwordManager.bitwarden.helperUnavailableStatus", value: "Bitwarden helper not available", comment: "Phi & AI settings - Bitwarden helper missing status")
         case .unavailable(let reason):
             return reason
         }
@@ -242,21 +242,21 @@ struct PasswordManagerSectionView: View {
     }
 
     private var logInButton: some View {
-        Button(NSLocalizedString("Log In\u{2026}", comment: "Phi & AI settings - Bitwarden log in action")) {
+        Button(NSLocalizedString("settings.developer.passwordManager.bitwarden.loginAction", value: "Log In\u{2026}", comment: "Phi & AI settings - Bitwarden log in action")) {
             loginSheetMode = .login
         }
         .controlSize(.small)
     }
 
     private var unlockButton: some View {
-        Button(NSLocalizedString("Unlock\u{2026}", comment: "Phi & AI settings - Bitwarden unlock action")) {
+        Button(NSLocalizedString("settings.developer.passwordManager.bitwarden.unlockAction", value: "Unlock\u{2026}", comment: "Phi & AI settings - Bitwarden unlock action")) {
             loginSheetMode = .unlock
         }
         .controlSize(.small)
     }
 
     private var logOutButton: some View {
-        Button(NSLocalizedString("Log Out", comment: "Phi & AI settings - Bitwarden log out action")) {
+        Button(NSLocalizedString("settings.developer.passwordManager.bitwarden.logoutAction", value: "Log Out", comment: "Phi & AI settings - Bitwarden log out action")) {
             Task {
                 try? await BitwardenService.shared.logout()
                 await bitwarden.refreshStatus()
@@ -368,7 +368,7 @@ struct CredentialApprovalListSheet: View {
                 }
                 HStack {
                     Spacer()
-                    Button(NSLocalizedString("Done", comment: "Approvals sheet - done button")) {
+                    Button(NSLocalizedString("settings.developer.passwordManager.approvals.doneButton", value: "Done", comment: "Approvals sheet - done button")) {
                         dismiss()
                     }
                     .controlSize(.small)
@@ -379,15 +379,15 @@ struct CredentialApprovalListSheet: View {
         }
         .frame(width: 460)
         .alert(
-            NSLocalizedString("Allow agents to access all passwords?", comment: "Approvals sheet - all-access confirm title"),
+            NSLocalizedString("settings.developer.passwordManager.approvals.enableAllConfirmation.title", value: "Allow agents to access all passwords?", comment: "Approvals sheet - all-access confirm title"),
             isPresented: $showAllAccessConfirm
         ) {
-            Button(NSLocalizedString("Allow All", comment: "Approvals sheet - all-access confirm button"), role: .destructive) {
+            Button(NSLocalizedString("settings.developer.passwordManager.approvals.enableAllConfirmation.confirmButton", value: "Allow All", comment: "Approvals sheet - all-access confirm button"), role: .destructive) {
                 store.setUniversalGrant(true)
             }
-            Button(NSLocalizedString("Cancel", comment: "Approvals sheet - all-access cancel button"), role: .cancel) {}
+            Button(NSLocalizedString("settings.developer.passwordManager.approvals.enableAllConfirmation.cancelButton", value: "Cancel", comment: "Approvals sheet - all-access cancel button"), role: .cancel) {}
         } message: {
-            Text(NSLocalizedString("Every agent will be able to use any login in your vault without asking you first. A misled agent could fill or reveal a password anywhere. You can turn this off here at any time.", comment: "Approvals sheet - all-access confirm message"))
+            Text(NSLocalizedString("settings.developer.passwordManager.approvals.enableAllConfirmation.message", value: "Every agent will be able to use any login in your vault without asking you first. A misled agent could fill or reveal a password anywhere. You can turn this off here at any time.", comment: "Approvals sheet - all-access confirm message"))
         }
     }
 
@@ -400,10 +400,10 @@ struct CredentialApprovalListSheet: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(NSLocalizedString("Agent Credential Approvals", comment: "Approvals sheet - title"))
+            Text(NSLocalizedString("settings.developer.passwordManager.approvals.sheetTitle", value: "Agent Credential Approvals", comment: "Approvals sheet - title"))
                 .font(.system(size: 15, weight: .semibold))
                 .themedForeground(.textPrimary)
-            Text(NSLocalizedString("These grants let agents use your saved logins without asking each time. “Always” grants persist until you revoke them here.", comment: "Approvals sheet - explanation"))
+            Text(NSLocalizedString("settings.developer.passwordManager.approvals.explanation", value: "These grants let agents use your saved logins without asking each time. “Always” grants persist until you revoke them here.", comment: "Approvals sheet - explanation"))
                 .font(.system(size: 11))
                 .themedForeground(.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -419,10 +419,10 @@ struct CredentialApprovalListSheet: View {
                 systemName: store.hasUniversalGrant ? "exclamationmark.triangle.fill" : "key.fill",
                 color: .red)
             VStack(alignment: .leading, spacing: 4) {
-                Text(NSLocalizedString("Allow access to all passwords", comment: "Approvals sheet - all-access toggle title"))
+                Text(NSLocalizedString("settings.developer.passwordManager.approvals.enableAllToggle", value: "Allow access to all passwords", comment: "Approvals sheet - all-access toggle title"))
                     .font(.system(size: 13))
                     .themedForeground(.textPrimary)
-                Text(NSLocalizedString("Any agent may use any saved login without asking. The per-site grants below are unnecessary while this is on.", comment: "Approvals sheet - all-access toggle explanation"))
+                Text(NSLocalizedString("settings.developer.passwordManager.approvals.enableAllDescription", value: "Any agent may use any saved login without asking. The per-site grants below are unnecessary while this is on.", comment: "Approvals sheet - all-access toggle explanation"))
                     .font(.system(size: 11))
                     .themedForeground(.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -456,12 +456,12 @@ struct CredentialApprovalListSheet: View {
     private func listHeader(_ grants: [CredentialGrant]) -> some View {
         HStack {
             Text(grants.isEmpty
-                ? NSLocalizedString("Standing approvals", comment: "Approvals sheet - list section title")
-                : String(format: NSLocalizedString("Standing approvals · %d", comment: "Approvals sheet - list section title with count"), grants.count))
+                ? NSLocalizedString("settings.developer.passwordManager.approvals.listSectionTitle", value: "Standing approvals", comment: "Approvals sheet - list section title")
+                : String(format: NSLocalizedString("settings.developer.passwordManager.approvals.listSectionWithCount", value: "Standing approvals · %d", comment: "Approvals sheet - list section title with count"), grants.count))
                 .font(.system(size: 12))
                 .themedForeground(.textSecondary)
             Spacer()
-            Button(NSLocalizedString("Revoke All", comment: "Approvals sheet - revoke all button")) {
+            Button(NSLocalizedString("settings.developer.passwordManager.approvals.revokeAllButton", value: "Revoke All", comment: "Approvals sheet - revoke all button")) {
                 store.revokeAll()
             }
             .controlSize(.small)
@@ -475,10 +475,10 @@ struct CredentialApprovalListSheet: View {
                 .font(.system(size: 22, weight: .medium))
                 .themedForeground(.textTertiary)
                 .padding(.bottom, 4)
-            Text(NSLocalizedString("No remembered approvals", comment: "Approvals sheet - empty state title"))
+            Text(NSLocalizedString("settings.developer.passwordManager.approvals.emptyTitle", value: "No remembered approvals", comment: "Approvals sheet - empty state title"))
                 .font(.system(size: 12, weight: .medium))
                 .themedForeground(.textSecondary)
-            Text(NSLocalizedString("Approve an agent request for 10 minutes or always and it will appear here.", comment: "Approvals sheet - empty state hint"))
+            Text(NSLocalizedString("settings.developer.passwordManager.approvals.emptyHint", value: "Approve an agent request for 10 minutes or always and it will appear here.", comment: "Approvals sheet - empty state hint"))
                 .font(.system(size: 11))
                 .themedForeground(.textTertiary)
                 .multilineTextAlignment(.center)
@@ -509,7 +509,7 @@ struct CredentialApprovalListSheet: View {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(grant.scope
-                        ?? NSLocalizedString("All sites", comment: "Approvals sheet - all-sites scope"))
+                        ?? NSLocalizedString("settings.developer.passwordManager.approvals.allSitesScope", value: "All sites", comment: "Approvals sheet - all-sites scope"))
                         .font(.system(size: 13, weight: .medium))
                         .themedForeground(.textPrimary)
                         .lineLimit(1)
@@ -519,7 +519,7 @@ struct CredentialApprovalListSheet: View {
                 HStack(spacing: 4) {
                     CredentialAgentIcon(agentName: grant.agent, size: 9)
                     Text(grant.agent
-                        ?? NSLocalizedString("All agents", comment: "Approvals sheet - all-agents grantee"))
+                        ?? NSLocalizedString("settings.developer.passwordManager.approvals.allAgentsGrantee", value: "All agents", comment: "Approvals sheet - all-agents grantee"))
                         .lineLimit(1)
                         .truncationMode(.tail)
                     Text(verbatim: "·")
@@ -532,7 +532,7 @@ struct CredentialApprovalListSheet: View {
                 .themedForeground(.textTertiary)
             }
             Spacer(minLength: 12)
-            Button(NSLocalizedString("Revoke", comment: "Approvals sheet - revoke one button")) {
+            Button(NSLocalizedString("settings.developer.passwordManager.approvals.revokeButton", value: "Revoke", comment: "Approvals sheet - revoke one button")) {
                 store.revoke(grant.id)
             }
             .controlSize(.small)
@@ -540,7 +540,7 @@ struct CredentialApprovalListSheet: View {
         .padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .help(String(
-            format: NSLocalizedString("Granted %@", comment: "Approvals sheet - grant date tooltip"),
+            format: NSLocalizedString("settings.developer.passwordManager.approvals.grantedDateTooltip", value: "Granted %@", comment: "Approvals sheet - grant date tooltip"),
             grant.grantedAt.formatted(date: .abbreviated, time: .shortened)))
     }
 
@@ -568,11 +568,11 @@ struct CredentialApprovalListSheet: View {
         let label: String
         switch kind {
         case .fill:
-            label = NSLocalizedString("Autofill only", comment: "Approvals sheet - fill-kind tag")
+            label = NSLocalizedString("settings.developer.passwordManager.approvals.autofillOnlyTag", value: "Autofill only", comment: "Approvals sheet - fill-kind tag")
         case .run:
-            label = NSLocalizedString("Command use", comment: "Approvals sheet - run-kind tag")
+            label = NSLocalizedString("settings.developer.passwordManager.approvals.commandUseTag", value: "Command use", comment: "Approvals sheet - run-kind tag")
         case .reveal:
-            label = NSLocalizedString("Full access", comment: "Approvals sheet - reveal-kind tag")
+            label = NSLocalizedString("settings.developer.passwordManager.approvals.fullAccessTag", value: "Full access", comment: "Approvals sheet - reveal-kind tag")
         }
         let color = kindColor(kind)
         return Text(label)
@@ -587,14 +587,14 @@ struct CredentialApprovalListSheet: View {
 
     private func expiryText(_ grant: CredentialGrant, now: Date) -> String {
         guard let expires = grant.expires else {
-            return NSLocalizedString("Always", comment: "Approvals sheet - permanent grant")
+            return NSLocalizedString("settings.developer.passwordManager.approvals.permanentGrantStatus", value: "Always", comment: "Approvals sheet - permanent grant")
         }
         let minutes = Int((expires.timeIntervalSince(now) / 60).rounded(.up))
         guard minutes > 1 else {
-            return NSLocalizedString("expires in under a minute", comment: "Approvals sheet - grant about to lapse")
+            return NSLocalizedString("settings.developer.passwordManager.approvals.expiringSoonStatus", value: "expires in under a minute", comment: "Approvals sheet - grant about to lapse")
         }
         return String(
-            format: NSLocalizedString("expires in %d min", comment: "Approvals sheet - timed grant remaining"),
+            format: NSLocalizedString("settings.developer.passwordManager.approvals.remainingMinutesStatus", value: "expires in %d min", comment: "Approvals sheet - timed grant remaining"),
             minutes)
     }
 }

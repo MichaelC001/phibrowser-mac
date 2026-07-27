@@ -57,7 +57,7 @@ class OmniBoxViewController: NSViewController {
     private lazy var iconImageView: NSImageView = {
         let imageView = NSImageView()
         imageView.translatesAutoresizingMaskIntoConstraints = false
-        imageView.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: NSLocalizedString("Search", comment: "Omnibox - Accessibility description for search icon"))
+        imageView.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: NSLocalizedString("addressBar.searchIcon.initialAccessibilityLabel", value: "Search", comment: "Address bar - Initial accessibility description for the search icon"))
         imageView.imageScaling = .scaleProportionallyDown
         imageView.contentTintColor = NSColor.secondaryLabelColor
         return imageView
@@ -312,7 +312,7 @@ class OmniBoxViewController: NSViewController {
             
             OmniSuggestionIconProvier.updateImage(for: iconImageView,
                                                   with: suggestion,
-                                                  defaultImage:  NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: NSLocalizedString("Search", comment: "Omnibox - Accessibility description for search icon")))
+                                                  defaultImage:  NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: NSLocalizedString("addressBar.searchIcon.suggestionFallbackAccessibilityLabel", value: "Search", comment: "Address bar - Accessibility description for the fallback search icon shown with suggestions")))
         } else {
             iconImageView.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: "Search")
         }

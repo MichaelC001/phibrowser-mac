@@ -62,12 +62,10 @@ class PasswordManagerViewController: OnboardingBaseViewController {
     private lazy var icloudOptionView: PasswordManagerOptionView = {
         let view = PasswordManagerOptionView(
             icon: NSImage(resource: .icloudPasswordsIcon),
-            title: NSLocalizedString(
-                "iCloud Passwords",
+            title: NSLocalizedString("oobe.passwordManager.icloudPasswordsOption", value: "iCloud Passwords",
                 comment: "Onboarding password manager - iCloud Passwords option"
             ),
-            subtitle: NSLocalizedString(
-                "Recommended",
+            subtitle: NSLocalizedString("oobe.passwordManager.recommendedBadge", value: "Recommended",
                 comment: "Onboarding password manager - Recommended label for iCloud Passwords"
             ),
             isSelected: selectedManager == .icloudPasswords
@@ -101,8 +99,7 @@ class PasswordManagerViewController: OnboardingBaseViewController {
 
         let view = PasswordManagerOptionView(
             trailingIconView: iconsStack,
-            title: NSLocalizedString(
-                "I'll setup my own",
+            title: NSLocalizedString("oobe.passwordManager.manualSetupOption", value: "I'll setup my own",
                 comment: "Onboarding password manager - Manual setup option"
             ),
             subtitle: nil,
@@ -118,12 +115,11 @@ class PasswordManagerViewController: OnboardingBaseViewController {
 
     override func loadView() {
         super.loadView()
-        titleLabel.stringValue = NSLocalizedString(
-            "Passwords Manager",
+        titleLabel.stringValue = NSLocalizedString("oobe.passwordManager.title", value: "Passwords Manager",
             comment: "Onboarding password manager - Page title"
         )
         skipButton.isHidden = true
-        nextButton.title = NSLocalizedString("Finish", comment: "Onboarding password manager - Finish button")
+        nextButton.title = NSLocalizedString("oobe.passwordManager.finishButton", value: "Finish", comment: "Onboarding password manager - Finish button")
         setupOptions()
     }
 

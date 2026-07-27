@@ -23,7 +23,7 @@ struct LayoutModeSettingView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text(NSLocalizedString("Layout Mode", comment: "General settings - Section title for layout configuration"))
+            Text(NSLocalizedString("settings.general.layoutMode.sectionTitle", value: "Layout Mode", comment: "General settings - Section title for layout configuration"))
                 .font(.system(size: 12))
                 .foregroundStyle(Color.secondary)
                 .padding(.bottom, 12)

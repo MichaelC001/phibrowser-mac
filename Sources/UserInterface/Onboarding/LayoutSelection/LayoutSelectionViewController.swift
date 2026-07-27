@@ -36,7 +36,7 @@ class LayoutSelectionViewController: OnboardingBaseViewController {
 
     private lazy var performanceOptionView: LayoutOptionView = {
         let view = LayoutOptionView(
-            title: NSLocalizedString("Performance", comment: "Onboarding layout selection - Performance option"),
+            title: NSLocalizedString("oobe.layoutSelection.performanceOption", value: "Performance", comment: "Onboarding layout selection - Performance option"),
             previewImage: NSImage(resource: .tabLayoutPerformanceOobe),
             isSelected: selectedMode == .performance
         )
@@ -48,7 +48,7 @@ class LayoutSelectionViewController: OnboardingBaseViewController {
 
     private lazy var balancedOptionView: LayoutOptionView = {
         let view = LayoutOptionView(
-            title: NSLocalizedString("Balanced", comment: "Onboarding layout selection - Balanced option"),
+            title: NSLocalizedString("oobe.layoutSelection.balancedOption", value: "Balanced", comment: "Onboarding layout selection - Balanced option"),
             previewImage: NSImage(resource: .tabLayoutBalancedOobe),
             isSelected: selectedMode == .balanced
         )
@@ -60,7 +60,7 @@ class LayoutSelectionViewController: OnboardingBaseViewController {
 
     private lazy var comfortableOptionView: LayoutOptionView = {
         let view = LayoutOptionView(
-            title: NSLocalizedString("Comfortable", comment: "Onboarding layout selection - Comfortable option"),
+            title: NSLocalizedString("oobe.layoutSelection.comfortableOption", value: "Comfortable", comment: "Onboarding layout selection - Comfortable option"),
             previewImage: NSImage(resource: .tabLayoutComfortableOobe),
             isSelected: selectedMode == .comfortable
         )
@@ -74,8 +74,7 @@ class LayoutSelectionViewController: OnboardingBaseViewController {
 
     override func loadView() {
         super.loadView()
-        titleLabel.stringValue = NSLocalizedString(
-            "Layout selection",
+        titleLabel.stringValue = NSLocalizedString("oobe.layoutSelection.title", value: "Layout selection",
             comment: "Onboarding layout selection - Page title"
         )
         skipButton.isHidden = true

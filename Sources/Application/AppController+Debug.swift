@@ -237,7 +237,7 @@ extension AppController {
         debugMenu.addItem(NSMenuItem.separator())
         
         let openUserDirItem = NSMenuItem(
-            title: NSLocalizedString("Open User Data Directory", comment: "Debug menu item to reveal the current user's data storage directory in Finder"),
+            title: "Open User Data Directory",
             action: #selector(openUserDataDirectory(_:)),
             keyEquivalent: ""
         )

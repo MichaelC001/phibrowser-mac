@@ -88,14 +88,14 @@ class ReminderView: NSView {
     }
     
     private func setupIcon() {
-        iconImageView.image = NSImage(systemSymbolName: "arrow.down.circle.fill", accessibilityDescription: NSLocalizedString("Update available", comment: "Sidebar update reminder - Accessibility description for update icon"))
+        iconImageView.image = NSImage(systemSymbolName: "arrow.down.circle.fill", accessibilityDescription: NSLocalizedString("sidebar.updateReminder.iconAccessibilityLabel", value: "Update available", comment: "Sidebar update reminder - Accessibility description for update icon"))
         iconImageView.contentTintColor = .systemBlue
         iconImageView.imageScaling = .scaleProportionallyUpOrDown
         containerView.addSubview(iconImageView)
     }
     
     private func setupMessageLabel() {
-        messageLabel.stringValue = String(format: NSLocalizedString("New Version %@ Available", comment: "Sidebar update reminder - Message showing new version is available"), version)
+        messageLabel.stringValue = String(format: NSLocalizedString("sidebar.updateReminder.versionAvailableMessage", value: "New Version %@ Available", comment: "Sidebar update reminder - Message showing new version is available"), version)
         messageLabel.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
         messageLabel.textColor = .labelColor
         messageLabel.maximumNumberOfLines = 1
@@ -105,7 +105,7 @@ class ReminderView: NSView {
     
     private func setupCloseButton() {
         // Close Button
-        closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: NSLocalizedString("Close", comment: "Sidebar update reminder - Accessibility description for close button"))
+        closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: NSLocalizedString("sidebar.updateReminder.closeButtonAccessibilityLabel", value: "Close", comment: "Sidebar update reminder - Accessibility description for close button"))
         closeButton.bezelStyle = .circular
         closeButton.isBordered = false
         closeButton.target = self

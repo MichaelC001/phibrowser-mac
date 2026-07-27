@@ -25,11 +25,11 @@ public enum UserAppearanceChoice: Int, CaseIterable, Codable {
     public var localizedName: String {
         switch self {
         case .system:
-            return NSLocalizedString("System", comment: "Appearance choice: follow system setting")
+            return NSLocalizedString("themes.appearance.systemOption", value: "System", comment: "Appearance choice: follow system setting")
         case .light:
-            return NSLocalizedString("Light", comment: "Appearance choice: always light mode")
+            return NSLocalizedString("themes.appearance.lightOption", value: "Light", comment: "Appearance choice: always light mode")
         case .dark:
-            return NSLocalizedString("Dark", comment: "Appearance choice: always dark mode")
+            return NSLocalizedString("themes.appearance.darkOption", value: "Dark", comment: "Appearance choice: always dark mode")
         }
     }
 }

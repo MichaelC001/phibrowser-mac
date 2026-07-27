@@ -12,7 +12,7 @@ struct TimeMachineMenuEntry: Equatable {
 }
 
 struct TimeMachineMenuPresenter {
-    static let emptyTitle = NSLocalizedString("No Backups Available", comment: "Help menu - Time Machine submenu placeholder when no completed backups exist")
+    static let emptyTitle = NSLocalizedString("timeMachine.helpMenu.emptyPlaceholder", value: "No Backups Available", comment: "Help menu - Time Machine submenu placeholder when no completed backups exist")
 
     private let catalogStore: TimeMachineCatalogStore
     private let timeZone: TimeZone

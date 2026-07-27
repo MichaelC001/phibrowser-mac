@@ -215,7 +215,7 @@ struct FeedbackButtonSwiftUI: View {
                     .themedTint(.textPrimary)
                 
                 if !isIconOnly {
-                    Text(NSLocalizedString("Feedback", comment: "Feedback - Sidebar feedback button title"))
+                    Text(NSLocalizedString("sidebar.feedbackButton.title", value: "Feedback", comment: "Feedback - Sidebar feedback button title"))
                         .font(.system(size: 11))
                         .foregroundColor(Color.primaryLabel)
                 }
@@ -235,7 +235,7 @@ struct FeedbackButtonSwiftUI: View {
         .buttonStyle(.plain)
         .background(alignment: .top) {
             if isIconOnly && showTooltip {
-                FastTooltip(text: NSLocalizedString("Feedback", comment: "Feedback - Tooltip text for icon-only feedback button"))
+                FastTooltip(text: NSLocalizedString("sidebar.feedbackButton.tooltip", value: "Feedback", comment: "Feedback - Tooltip text for icon-only feedback button"))
                     .offset(y: -16)
                     .transition(.opacity.combined(with: .scale(scale: 0.95)))
                     .allowsHitTesting(false)

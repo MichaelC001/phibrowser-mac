@@ -355,19 +355,15 @@ final class AgentCDPListener {
         DispatchQueue.main.sync {
             let alert = NSAlert()
             alert.messageText = String(
-                format: NSLocalizedString("“%@” wants to control Phi Browser",
+                format: NSLocalizedString("agentControl.connectionApproval.title", value: "“%@” wants to control Phi Browser",
                                           comment: "CDP consent - title"),
                 identity.displayName)
-            alert.informativeText = NSLocalizedString(
-                "An agent is asking to drive Phi Browser over the DevTools Protocol — opening pages, reading content, and acting on your behalf. Only allow agents you trust.",
+            alert.informativeText = NSLocalizedString("agentControl.connectionApproval.message", value: "An agent is asking to drive Phi Browser over the DevTools Protocol — opening pages, reading content, and acting on your behalf. Only allow agents you trust.",
                 comment: "CDP consent - body")
                 + "\n\n" + identity.detail
-            alert.addButton(withTitle: NSLocalizedString(
-                "Allow Once", comment: "CDP consent - allow for this session"))
-            alert.addButton(withTitle: NSLocalizedString(
-                "Always Allow", comment: "CDP consent - allow and remember"))
-            alert.addButton(withTitle: NSLocalizedString(
-                "Deny", comment: "CDP consent - deny"))
+            alert.addButton(withTitle: NSLocalizedString("agentControl.connectionApproval.allowOnceButton", value: "Allow Once", comment: "CDP consent - allow for this session"))
+            alert.addButton(withTitle: NSLocalizedString("agentControl.connectionApproval.alwaysAllowButton", value: "Always Allow", comment: "CDP consent - allow and remember"))
+            alert.addButton(withTitle: NSLocalizedString("agentControl.connectionApproval.denyButton", value: "Deny", comment: "CDP consent - deny"))
             switch alert.runModal() {
             case .alertFirstButtonReturn: decision = .allowOnce
             case .alertSecondButtonReturn: decision = .allowRemember

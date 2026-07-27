@@ -669,13 +669,11 @@ private enum BookmarkFaviconHoverAction {
     var hintText: String {
         switch self {
         case .backToSavedURL:
-            return NSLocalizedString(
-                "Back to Saved URL",
+            return NSLocalizedString("sidebar.bookmarkCell.favicon.returnToSavedURLHint", value: "Back to Saved URL",
                 comment: "Bookmark favicon hover hint - Navigate the open bookmark tab back to its saved URL"
             )
         case .separateFromBookmark:
-            return NSLocalizedString(
-                "Separate From Bookmark",
+            return NSLocalizedString("sidebar.bookmarkCell.favicon.detachCurrentPageHint", value: "Separate From Bookmark",
                 comment: "Bookmark favicon command-hover hint - Preserve the current page as a normal tab and reset the bookmark"
             )
         }
@@ -888,8 +886,7 @@ private struct BookmarkFaviconView: View {
             Text(
                 isCommandKeyPressed
                     ? BookmarkFaviconHoverAction.separateFromBookmark.hintText
-                    : NSLocalizedString(
-                        "Return to Bookmark URL",
+                    : NSLocalizedString("sidebar.bookmarkCell.favicon.returnToSavedURLAccessibilityLabel", value: "Return to Bookmark URL",
                         comment: "Bookmark favicon button - Navigate the open bookmark tab back to its saved URL"
                     )
             )

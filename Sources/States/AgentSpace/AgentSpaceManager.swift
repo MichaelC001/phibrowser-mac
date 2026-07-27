@@ -800,17 +800,13 @@ final class AgentSpaceManager: ObservableObject {
 
         let body = (message?.isEmpty == false)
             ? message!
-            : NSLocalizedString(
-                "The agent handed control back to you to finish a step — for example, signing in.",
+            : NSLocalizedString("agent.handoffPrompt.message", value: "The agent handed control back to you to finish a step — for example, signing in.",
                 comment: "Agent handoff prompt - default body")
         let view = HandoffPromptView(
-            title: NSLocalizedString(
-                "The agent needs you", comment: "Agent handoff prompt - title"),
+            title: NSLocalizedString("agent.handoffPrompt.title", value: "The agent needs you", comment: "Agent handoff prompt - title"),
             message: body,
-            switchTitle: NSLocalizedString(
-                "Switch to Agent Space", comment: "Agent handoff prompt - open the agent Space"),
-            laterTitle: NSLocalizedString(
-                "Later", comment: "Agent handoff prompt - dismiss"),
+            switchTitle: NSLocalizedString("agent.handoffPrompt.switchToAgentSpaceButton", value: "Switch to Agent Space", comment: "Agent handoff prompt - open the agent Space"),
+            laterTitle: NSLocalizedString("agent.handoffPrompt.laterButton", value: "Later", comment: "Agent handoff prompt - dismiss"),
             onSwitch: { [weak self] in
                 AppLogInfo("[AgentSpace] handoff prompt: switch to agent Space")
                 self?.dismissHandoffPrompt()

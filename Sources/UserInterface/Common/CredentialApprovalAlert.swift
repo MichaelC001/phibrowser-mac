@@ -14,11 +14,11 @@ enum CredentialApprovalDuration: CaseIterable {
     var segmentTitle: String {
         switch self {
         case .once:
-            return NSLocalizedString("Only once", comment: "Credential approval - duration segment")
+            return NSLocalizedString("common.credentialApproval.durationSegment.onlyOnce", value: "Only once", comment: "Credential approval - duration segment")
         case .tenMinutes:
-            return NSLocalizedString("For 10 min", comment: "Credential approval - duration segment")
+            return NSLocalizedString("common.credentialApproval.durationSegment.for10Min", value: "For 10 min", comment: "Credential approval - duration segment")
         case .always:
-            return NSLocalizedString("Always", comment: "Credential approval - duration segment")
+            return NSLocalizedString("common.credentialApproval.durationSegment.always", value: "Always", comment: "Credential approval - duration segment")
         }
     }
 
@@ -74,14 +74,14 @@ struct CredentialApprovalAlert: View {
         } actions: {
             PhiAlertActions {
                 PhiAlertButton(
-                    NSLocalizedString("Deny", comment: "Credential approval - deny")
+                    NSLocalizedString("common.credentialApproval.deny", value: "Deny", comment: "Credential approval - deny")
                 ) {
                     choose(.deny)
                 }
                 .keyboardShortcut(.cancelAction)
             } primaryAction: {
                 PhiAlertButton(
-                    NSLocalizedString("Approve", comment: "Credential approval - approve"),
+                    NSLocalizedString("common.credentialApproval.approve", value: "Approve", comment: "Credential approval - approve"),
                     role: .primary
                 ) {
                     choose(.allow(duration: duration, allAgents: allAgents))
@@ -108,12 +108,12 @@ struct CredentialApprovalAlert: View {
         switch kind {
         case .fill:
             return String(
-                format: NSLocalizedString("Autofill request from “%@”",
+                format: NSLocalizedString("common.credentialApproval.autofillRequest.title", value: "Autofill request from “%@”",
                                           comment: "Credential approval - fill title"),
                 agentName)
         case .run, .reveal:
             return String(
-                format: NSLocalizedString("Credential request from “%@”",
+                format: NSLocalizedString("common.credentialApproval.valueRequest.title", value: "Credential request from “%@”",
                                           comment: "Credential approval - title"),
                 agentName)
         }
@@ -123,7 +123,7 @@ struct CredentialApprovalAlert: View {
 
     private var summaryCard: some View {
         VStack(alignment: .leading, spacing: 0) {
-            summaryRow(label: NSLocalizedString("Agent", comment: "Credential approval - agent row"),
+            summaryRow(label: NSLocalizedString("common.credentialApproval.agentLabel", value: "Agent", comment: "Credential approval - agent row"),
                        value: agentName) {
                 CredentialAgentIcon(agentName: agentName, size: 12, weight: .medium)
                     .themedForeground(.textSecondary)
@@ -173,8 +173,8 @@ struct CredentialApprovalAlert: View {
 
     private var scopeLabel: String {
         kind == .fill
-            ? NSLocalizedString("Site", comment: "Credential approval - site row")
-            : NSLocalizedString("Credential", comment: "Credential approval - credential row")
+            ? NSLocalizedString("common.credentialApproval.siteLabel", value: "Site", comment: "Credential approval - site row")
+            : NSLocalizedString("common.credentialApproval.credentialLabel", value: "Credential", comment: "Credential approval - credential row")
     }
 
     private var scopeIcon: String {
@@ -214,30 +214,27 @@ struct CredentialApprovalAlert: View {
             return (
                 "checkmark.shield.fill",
                 Color(nsColor: .systemGreen),
-                NSLocalizedString("Autofill only — the secret stays in Phi",
+                NSLocalizedString("common.credentialApproval.autofillRequest.headline", value: "Autofill only — the secret stays in Phi",
                                   comment: "Credential approval - fill headline"),
-                NSLocalizedString(
-                    "Phi fills the saved login into the page itself. The agent triggers the fill but never receives the username or password.",
+                NSLocalizedString("common.credentialApproval.autofillRequest.explanation", value: "Phi fills the saved login into the page itself. The agent triggers the fill but never receives the username or password.",
                     comment: "Credential approval - fill body")
             )
         case .run:
             return (
                 "terminal.fill",
                 Color(nsColor: .systemOrange),
-                NSLocalizedString("Released into a command",
+                NSLocalizedString("common.credentialApproval.commandUseRequest.headline", value: "Released into a command",
                                   comment: "Credential approval - run headline"),
-                NSLocalizedString(
-                    "Phi releases the saved value to the agent so the command it runs can use it. Phi can’t stop the agent from keeping the value — only approve for agents and sites you trust.",
+                NSLocalizedString("common.credentialApproval.valueRequest.loginExplanation", value: "Phi releases the saved value to the agent so the command it runs can use it. Phi can’t stop the agent from keeping the value — only approve for agents and sites you trust.",
                     comment: "Credential approval - run body")
             )
         case .reveal:
             return (
                 "eye.fill",
                 Color(nsColor: .systemRed),
-                NSLocalizedString("Revealed to the agent",
+                NSLocalizedString("common.credentialApproval.fullAccessRequest.headline", value: "Revealed to the agent",
                                   comment: "Credential approval - reveal headline"),
-                NSLocalizedString(
-                    "The saved item — a password, note, card, identity, or key — is shared with the agent, which may record it in its context. Only approve for agents and items you trust.",
+                NSLocalizedString("common.credentialApproval.valueRequest.sensitiveItemExplanation", value: "The saved item — a password, note, card, identity, or key — is shared with the agent, which may record it in its context. Only approve for agents and items you trust.",
                     comment: "Credential approval - reveal body")
             )
         }
@@ -249,7 +246,7 @@ struct CredentialApprovalAlert: View {
     /// purpose reads as a claim, not as app UI.
     private func purposeView(_ purpose: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(NSLocalizedString("The agent says it needs this to:",
+            Text(NSLocalizedString("common.credentialApproval.reasonLabel", value: "The agent says it needs this to:",
                                    comment: "Credential approval - purpose label"))
                 .font(.system(size: 12))
                 .themedForeground(.textSecondary)
@@ -273,8 +270,7 @@ struct CredentialApprovalAlert: View {
             CredentialDurationPicker(selection: $duration)
             allAgentsRow
             if duration == .always {
-                Text(NSLocalizedString(
-                    "Standing approvals can be reviewed and revoked anytime in Settings.",
+                Text(NSLocalizedString("common.credentialApproval.securityHint", value: "Standing approvals can be reviewed and revoked anytime in Settings.",
                     comment: "Credential approval - always hint"))
                     .font(.system(size: 11))
                     .themedForeground(.textTertiary)
@@ -295,13 +291,12 @@ struct CredentialApprovalAlert: View {
                 .themedForeground(.textSecondary)
                 .frame(width: 20)
             VStack(alignment: .leading, spacing: 2) {
-                Text(NSLocalizedString("Apply to all agents",
+                Text(NSLocalizedString("common.credentialApproval.scope.allAgentsTitle", value: "Apply to all agents",
                                        comment: "Credential approval - all-agents row title"))
                     .font(.system(size: 12, weight: .medium))
                     .themedForeground(.textPrimary)
                 Text(String(
-                    format: NSLocalizedString(
-                        "Any agent may use this approval, not just “%@”.",
+                    format: NSLocalizedString("common.credentialApproval.allAgentsDescription", value: "Any agent may use this approval, not just “%@”.",
                         comment: "Credential approval - all-agents row explanation"),
                     agentName))
                     .font(.system(size: 11))
@@ -327,7 +322,7 @@ struct CredentialApprovalAlert: View {
 
     private var countdownFootnote: some View {
         Text(String(
-            format: NSLocalizedString("Auto-denies in %d s",
+            format: NSLocalizedString("common.credentialApproval.autoDenyCountdown", value: "Auto-denies in %d s",
                                       comment: "Credential approval - auto-deny countdown"),
             max(secondsRemaining, 0)))
             .font(.system(size: 11))
@@ -444,7 +439,7 @@ struct CredentialUnlockAlert: View {
     private let countdown = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
-        PhiAlert(title: NSLocalizedString("Unlock Bitwarden to continue",
+        PhiAlert(title: NSLocalizedString("common.credentialUnlock.title", value: "Unlock Bitwarden to continue",
                                           comment: "Credential unlock - title")) {
             Image(systemName: "lock.fill")
                 .font(.system(size: 22, weight: .medium))
@@ -452,12 +447,11 @@ struct CredentialUnlockAlert: View {
         } content: {
             VStack(alignment: .leading, spacing: 12) {
                 Text(String(
-                    format: NSLocalizedString(
-                        "“%@” needs a credential for %@, but your vault is locked. Enter your master password to unlock.",
+                    format: NSLocalizedString("common.credentialUnlock.message", value: "“%@” needs a credential for %@, but your vault is locked. Enter your master password to unlock.",
                         comment: "Credential unlock - body"),
                     agentName, scope))
                     .fixedSize(horizontal: false, vertical: true)
-                SecureField(NSLocalizedString("Master password",
+                SecureField(NSLocalizedString("common.credentialUnlock.masterPasswordPlaceholder", value: "Master password",
                                               comment: "Credential unlock - field placeholder"),
                             text: $password)
                     .textFieldStyle(.roundedBorder)
@@ -465,7 +459,7 @@ struct CredentialUnlockAlert: View {
                     .focused($passwordFocused)
                     .onSubmit(submit)
                 Text(String(
-                    format: NSLocalizedString("Auto-cancels in %d s",
+                    format: NSLocalizedString("common.credentialUnlock.autoCancelCountdown", value: "Auto-cancels in %d s",
                                               comment: "Credential unlock - auto-cancel countdown"),
                     max(secondsRemaining, 0)))
                     .font(.system(size: 11))
@@ -475,14 +469,14 @@ struct CredentialUnlockAlert: View {
         } actions: {
             PhiAlertActions {
                 PhiAlertButton(
-                    NSLocalizedString("Cancel", comment: "Credential unlock - cancel button")
+                    NSLocalizedString("common.credentialUnlock.cancelButton", value: "Cancel", comment: "Credential unlock - cancel button")
                 ) {
                     finish(nil)
                 }
                 .keyboardShortcut(.cancelAction)
             } primaryAction: {
                 PhiAlertButton(
-                    NSLocalizedString("Unlock", comment: "Credential unlock - unlock button"),
+                    NSLocalizedString("common.credentialUnlock.unlockButton", value: "Unlock", comment: "Credential unlock - unlock button"),
                     role: .primary,
                     action: submit
                 )

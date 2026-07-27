@@ -51,7 +51,7 @@ final class NewTabViewController: NSViewController {
     
     private lazy var incognitoLabel: NSTextField = {
         let tf = NSTextField()
-        tf.stringValue = NSLocalizedString("Incognito", comment: "Incognito label in the native new tab page")
+        tf.stringValue = NSLocalizedString("browser.newTabPage.incognitoLabel", value: "Incognito", comment: "Incognito label in the native new tab page")
         tf.font = NSFont(name: "IvyPrestoHeadline-Light", size: 21)
         tf.isEditable = false
         tf.isBordered = false

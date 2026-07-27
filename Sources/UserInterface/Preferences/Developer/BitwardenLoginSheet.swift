@@ -45,7 +45,7 @@ struct BitwardenLoginSheet: View {
             switch self {
             case .us: return "bitwarden.com"
             case .eu: return "bitwarden.eu"
-            case .selfHosted: return NSLocalizedString("self-hosted", comment: "Bitwarden login sheet - self-hosted server option")
+            case .selfHosted: return NSLocalizedString("settings.bitwardenLoginSheet.selfHostedServerOption", value: "self-hosted", comment: "Bitwarden login sheet - self-hosted server option")
             }
         }
     }
@@ -130,11 +130,11 @@ struct BitwardenLoginSheet: View {
 
     private var emailStep: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text(NSLocalizedString("Log in", comment: "Bitwarden login sheet - title"))
+            Text(NSLocalizedString("settings.bitwardenLoginSheet.emailStep.title", value: "Log in", comment: "Bitwarden login sheet - Email step title"))
                 .font(.system(size: 22, weight: .bold))
 
             VStack(alignment: .leading, spacing: 6) {
-                requiredLabel(NSLocalizedString("Email address", comment: "Bitwarden login sheet - email field label"))
+                requiredLabel(NSLocalizedString("settings.bitwardenLoginSheet.emailField.label", value: "Email address", comment: "Bitwarden login sheet - email field label"))
                 styledField {
                     TextField("", text: $email)
                         .textContentType(.username)
@@ -142,7 +142,7 @@ struct BitwardenLoginSheet: View {
                         .onSubmit { continueToPassword() }
                 }
                 Toggle(isOn: $rememberEmail) {
-                    Text(NSLocalizedString("Remember email", comment: "Bitwarden login sheet - remember email toggle"))
+                    Text(NSLocalizedString("settings.bitwardenLoginSheet.rememberEmailToggle", value: "Remember email", comment: "Bitwarden login sheet - remember email toggle"))
                         .font(.system(size: 12))
                 }
                 .toggleStyle(.checkbox)
@@ -151,7 +151,7 @@ struct BitwardenLoginSheet: View {
 
             if region == .selfHosted {
                 VStack(alignment: .leading, spacing: 6) {
-                    requiredLabel(NSLocalizedString("Self-hosted server URL", comment: "Bitwarden login sheet - self-hosted server URL field label"))
+                    requiredLabel(NSLocalizedString("settings.bitwardenLoginSheet.selfHostedServer.fieldLabel", value: "Self-hosted server URL", comment: "Bitwarden login sheet - self-hosted server URL field label"))
                     styledField {
                         TextField("https://vault.example.com", text: $selfHostURL)
                             .textContentType(.URL)
@@ -161,7 +161,7 @@ struct BitwardenLoginSheet: View {
                 }
             }
 
-            primaryButton(NSLocalizedString("Continue", comment: "Bitwarden login sheet - continue button")) {
+            primaryButton(NSLocalizedString("settings.bitwardenLoginSheet.continueButton", value: "Continue", comment: "Bitwarden login sheet - continue button")) {
                 continueToPassword()
             }
             .disabled(email.trimmingCharacters(in: .whitespaces).isEmpty)
@@ -170,7 +170,7 @@ struct BitwardenLoginSheet: View {
 
     private var passwordStep: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text(NSLocalizedString("Log in", comment: "Bitwarden login sheet - title"))
+            Text(NSLocalizedString("settings.bitwardenLoginSheet.passwordStep.title", value: "Log in", comment: "Bitwarden login sheet - Password step title"))
                 .font(.system(size: 22, weight: .bold))
 
             HStack(spacing: 6) {
@@ -179,7 +179,7 @@ struct BitwardenLoginSheet: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                Button(NSLocalizedString("Change", comment: "Bitwarden login sheet - change email link")) {
+                Button(NSLocalizedString("settings.bitwardenLoginSheet.changeEmailLink", value: "Change", comment: "Bitwarden login sheet - change email link")) {
                     step = .email
                     password = ""
                     twoFactor = ""
@@ -192,7 +192,7 @@ struct BitwardenLoginSheet: View {
             }
 
             VStack(alignment: .leading, spacing: 6) {
-                requiredLabel(NSLocalizedString("Master password", comment: "Bitwarden login sheet - master password field label"))
+                requiredLabel(NSLocalizedString("settings.bitwardenLoginSheet.masterPasswordField.label", value: "Master password", comment: "Bitwarden login sheet - master password field label"))
                 styledField {
                     SecureField("", text: $password)
                         .textContentType(.password)
@@ -201,7 +201,7 @@ struct BitwardenLoginSheet: View {
             }
 
             VStack(alignment: .leading, spacing: 6) {
-                Text(NSLocalizedString("Two-step login code (if enabled)", comment: "Bitwarden login sheet - 2FA field label"))
+                Text(NSLocalizedString("settings.bitwardenLoginSheet.twoStepCodeField.label", value: "Two-step login code (if enabled)", comment: "Bitwarden login sheet - 2FA field label"))
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                 styledField {
@@ -211,7 +211,7 @@ struct BitwardenLoginSheet: View {
                 }
             }
 
-            primaryButton(NSLocalizedString("Log in", comment: "Bitwarden login sheet - submit button")) {
+            primaryButton(NSLocalizedString("settings.bitwardenLoginSheet.loginButton", value: "Log in", comment: "Bitwarden login sheet - submit button")) {
                 submitLogin()
             }
             .disabled(!canSubmitPassword)
@@ -220,11 +220,11 @@ struct BitwardenLoginSheet: View {
 
     private var unlockStep: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text(NSLocalizedString("Unlock", comment: "Bitwarden unlock sheet - title"))
+            Text(NSLocalizedString("settings.bitwardenUnlockSheet.title", value: "Unlock", comment: "Bitwarden unlock sheet - title"))
                 .font(.system(size: 22, weight: .bold))
 
             VStack(alignment: .leading, spacing: 6) {
-                requiredLabel(NSLocalizedString("Master password", comment: "Bitwarden login sheet - master password field label"))
+                requiredLabel(NSLocalizedString("settings.bitwardenUnlockSheet.masterPasswordField.label", value: "Master password", comment: "Bitwarden login sheet - master password field label"))
                 styledField {
                     SecureField("", text: $password)
                         .textContentType(.password)
@@ -237,7 +237,7 @@ struct BitwardenLoginSheet: View {
             // helper answers "Two-step code required." and this field is the
             // way through.
             VStack(alignment: .leading, spacing: 6) {
-                Text(NSLocalizedString("Two-step login code (if enabled)", comment: "Bitwarden login sheet - 2FA field label"))
+                Text(NSLocalizedString("settings.bitwardenUnlockSheet.twoStepCodeField.label", value: "Two-step login code (if enabled)", comment: "Bitwarden login sheet - 2FA field label"))
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                 styledField {
@@ -247,7 +247,7 @@ struct BitwardenLoginSheet: View {
                 }
             }
 
-            primaryButton(NSLocalizedString("Unlock", comment: "Bitwarden unlock sheet - submit button")) {
+            primaryButton(NSLocalizedString("settings.bitwardenUnlockSheet.unlockButton", value: "Unlock", comment: "Bitwarden unlock sheet - submit button")) {
                 submitUnlock()
             }
             .disabled(!canSubmitPassword)
@@ -258,7 +258,7 @@ struct BitwardenLoginSheet: View {
 
     private var footer: some View {
         HStack(spacing: 4) {
-            Text(NSLocalizedString("Accessing:", comment: "Bitwarden login sheet - server region prefix"))
+            Text(NSLocalizedString("settings.bitwardenLoginSheet.serverRegionPrefix", value: "Accessing:", comment: "Bitwarden login sheet - server region prefix"))
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
             Menu {
@@ -337,11 +337,11 @@ struct BitwardenLoginSheet: View {
     private func continueToPassword() {
         let trimmed = email.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else {
-            errorMessage = NSLocalizedString("Enter your email address.", comment: "Bitwarden login sheet - missing email error")
+            errorMessage = NSLocalizedString("settings.bitwardenLoginSheet.emailField.requiredError", value: "Enter your email address.", comment: "Bitwarden login sheet - missing email error")
             return
         }
         if region == .selfHosted, normalizedBaseURL(selfHostURL) == nil {
-            errorMessage = NSLocalizedString("Enter a valid self-hosted server URL.", comment: "Bitwarden login sheet - invalid self-hosted URL error")
+            errorMessage = NSLocalizedString("settings.bitwardenLoginSheet.emailStep.invalidSelfHostedURLError", value: "Enter a valid self-hosted server URL.", comment: "Bitwarden login sheet - Invalid self-hosted URL error before continuing from the email step")
             return
         }
         email = trimmed
@@ -387,7 +387,7 @@ struct BitwardenLoginSheet: View {
         guard canSubmitPassword else { return }
         if region == .selfHosted, normalizedBaseURL(selfHostURL) == nil {
             step = .email
-            errorMessage = NSLocalizedString("Enter a valid self-hosted server URL.", comment: "Bitwarden login sheet - invalid self-hosted URL error")
+            errorMessage = NSLocalizedString("settings.bitwardenLoginSheet.submission.invalidSelfHostedURLError", value: "Enter a valid self-hosted server URL.", comment: "Bitwarden login sheet - Invalid self-hosted URL error during login submission")
             return
         }
         isBusy = true

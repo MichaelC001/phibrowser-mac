@@ -136,7 +136,7 @@ class PhiSparkleUpdateViewController: NSViewController, WKNavigationDelegate {
         buttonStack.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(buttonStack)
 
-        skipButton.title = NSLocalizedString("Skip This Version", comment: "Sparkle update window - Skip update button")
+        skipButton.title = NSLocalizedString("updates.updateWindow.skipVersionButton", value: "Skip This Version", comment: "Update window - Skip update button")
         skipButton.themeProvider = themeProvider
         skipButton.target = self
         skipButton.action = #selector(skipButtonClicked)
@@ -222,9 +222,8 @@ class PhiSparkleUpdateViewController: NSViewController, WKNavigationDelegate {
     private func configureAutomaticDownloadsCheckbox() {
         automaticDownloadsCheckbox.translatesAutoresizingMaskIntoConstraints = false
         automaticDownloadsCheckbox.setButtonType(.switch)
-        automaticDownloadsCheckbox.title = NSLocalizedString(
-            "Automatically download and install updates in the future",
-            comment: "Sparkle update window - Automatic update download checkbox"
+        automaticDownloadsCheckbox.title = NSLocalizedString("updates.updateWindow.automaticDownloadToggle", value: "Automatically download and install updates in the future",
+            comment: "Update window - Automatic update download checkbox"
         )
         automaticDownloadsCheckbox.font = .systemFont(ofSize: 13)
         automaticDownloadsCheckbox.state = automaticDownloadsInitiallyEnabled ? .on : .off
@@ -266,14 +265,12 @@ class PhiSparkleUpdateViewController: NSViewController, WKNavigationDelegate {
     private func loadInitialReleaseNotes() {
         guard let itemDescription = appcastItem.itemDescription, !itemDescription.isEmpty else {
             if appcastItem.releaseNotesURL != nil {
-                showReleaseNotesPlaceholder(NSLocalizedString(
-                    "Loading release notes...",
-                    comment: "Sparkle update window - Release notes loading placeholder"
+                showReleaseNotesPlaceholder(NSLocalizedString("updates.updateWindow.releaseNotes.loadingPlaceholder", value: "Loading release notes...",
+                    comment: "Update window - Release notes loading placeholder"
                 ))
             } else {
-                showReleaseNotesPlaceholder(NSLocalizedString(
-                    "No release notes available.",
-                    comment: "Sparkle update window - Missing release notes placeholder"
+                showReleaseNotesPlaceholder(NSLocalizedString("updates.updateWindow.releaseNotes.unavailablePlaceholder", value: "No release notes available.",
+                    comment: "Update window - Missing release notes placeholder"
                 ))
             }
             return
@@ -876,14 +873,12 @@ enum PhiSparkleUpdateWindowMode {
     var title: String {
         switch self {
         case .available:
-            return NSLocalizedString(
-                "A new version of Phi is available",
-                comment: "Sparkle update window - Title"
+            return NSLocalizedString("updates.updateWindow.availableTitle", value: "A new version of Phi is available",
+                comment: "Update window - Title"
             )
         case .readyToInstall:
-            return NSLocalizedString(
-                "A new version of Phi is ready to install",
-                comment: "Sparkle update window - Ready to install title"
+            return NSLocalizedString("updates.updateWindow.readyToInstallTitle", value: "A new version of Phi is ready to install",
+                comment: "Update window - Ready to install title"
             )
         }
     }
@@ -891,18 +886,18 @@ enum PhiSparkleUpdateWindowMode {
     var dismissButtonTitle: String {
         switch self {
         case .available:
-            return NSLocalizedString("Remind Me Later", comment: "Sparkle update window - Remind later button")
+            return NSLocalizedString("updates.updateWindow.remindLaterButton", value: "Remind Me Later", comment: "Update window - Remind later button")
         case .readyToInstall:
-            return NSLocalizedString("Install on Quit", comment: "Sparkle update window - Install downloaded update on quit button")
+            return NSLocalizedString("updates.updateWindow.installOnQuitButton", value: "Install on Quit", comment: "Update window - Install downloaded update on quit button")
         }
     }
 
     var installButtonTitle: String {
         switch self {
         case .available:
-            return NSLocalizedString("Install Update", comment: "Sparkle update window - Install update button")
+            return NSLocalizedString("updates.updateWindow.installUpdateButton", value: "Install Update", comment: "Update window - Install update button")
         case .readyToInstall:
-            return NSLocalizedString("Install and Relaunch", comment: "Sparkle update window - Install downloaded update and relaunch button")
+            return NSLocalizedString("updates.updateWindow.installAndRelaunchButton", value: "Install and Relaunch", comment: "Update window - Install downloaded update and relaunch button")
         }
     }
 }

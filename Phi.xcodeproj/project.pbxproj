@@ -251,7 +251,6 @@
 		8EB01BEB3010BCED0043E59D /* UserDataRemoval.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EB01BEA3010BCED0043E59D /* UserDataRemoval.swift */; };
 		8EB01BED3010BCED0043E59D /* AccountDeletionLocalDataRemoval.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EB01BEC3010BCED0043E59D /* AccountDeletionLocalDataRemoval.swift */; };
 		8EC502132F67AE2300CE7338 /* DownloadSafetyTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EC502122F67AE2300CE7338 /* DownloadSafetyTypes.swift */; };
-		8EC502152F67AF7F00CE7338 /* DownloadSafety.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 8EC502142F67AF7F00CE7338 /* DownloadSafety.xcstrings */; };
 		8EC70DB52F0A5E04009FE2CD /* BookmarkBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EC70DB42F0A5DFD009FE2CD /* BookmarkBar.swift */; };
 		8EC70E162F0BBF3D009FE2CD /* BookmarkItemView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EC70E152F0BBF3D009FE2CD /* BookmarkItemView.swift */; };
 		8EC70E182F0BC77E009FE2CD /* NSImageView+Favicon.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EC70E172F0BC77E009FE2CD /* NSImageView+Favicon.swift */; };
@@ -828,7 +827,6 @@
 		8EB01BEA3010BCED0043E59D /* UserDataRemoval.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserDataRemoval.swift; sourceTree = "<group>"; };
 		8EB01BEC3010BCED0043E59D /* AccountDeletionLocalDataRemoval.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountDeletionLocalDataRemoval.swift; sourceTree = "<group>"; };
 		8EC502122F67AE2300CE7338 /* DownloadSafetyTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadSafetyTypes.swift; sourceTree = "<group>"; };
-		8EC502142F67AF7F00CE7338 /* DownloadSafety.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = DownloadSafety.xcstrings; sourceTree = "<group>"; };
 		8EC70DB42F0A5DFD009FE2CD /* BookmarkBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookmarkBar.swift; sourceTree = "<group>"; };
 		8EC70E152F0BBF3D009FE2CD /* BookmarkItemView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookmarkItemView.swift; sourceTree = "<group>"; };
 		8EC70E172F0BC77E009FE2CD /* NSImageView+Favicon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "NSImageView+Favicon.swift"; sourceTree = "<group>"; };
@@ -1764,7 +1762,6 @@
 			children = (
 				F01D3A000000000000000011 /* bookmark-folder-open.svg */,
 				F01D3A000000000000000012 /* bookmark-folder-closed.svg */,
-				8EC502142F67AF7F00CE7338 /* DownloadSafety.xcstrings */,
 				375C66372EFB923C00885D78 /* Fonts */,
 				3765817A2EE9637F00D3E031 /* Localizable.xcstrings */,
 				37C1B2FF2EE672D500DD4496 /* LottieFiles */,
@@ -2511,7 +2508,6 @@
 				CC5C51F62FB5C5560044D255 /* credits.html in Resources */,
 				3787811F2FE942E40028969F /* TimeMachineRollbackPolicy.json in Resources */,
 				CD11000B0000000000000001 /* Emoji/emoji-catalog.json in Resources */,
-				8EC502152F67AF7F00CE7338 /* DownloadSafety.xcstrings in Resources */,
 				CC4BFB932E97991A00CC6162 /* Auth0.plist in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

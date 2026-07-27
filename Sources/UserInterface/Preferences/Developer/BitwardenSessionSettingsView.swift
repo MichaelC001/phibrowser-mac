@@ -18,7 +18,7 @@ struct BitwardenSessionTimeoutRows: View {
 
     var body: some View {
         row("clock.fill", .blue,
-            NSLocalizedString("Session timeout", comment: "Phi & AI settings - Row title for how long the unlocked Bitwarden vault lasts")) {
+            NSLocalizedString("settings.developer.passwordManager.session.timeoutTitle", value: "Session timeout", comment: "Phi & AI settings - Row title for how long the unlocked Bitwarden vault lasts")) {
             BitwardenDropdown(
                 selection: $timeout,
                 options: BitwardenSessionTimeout.allCases,
@@ -27,7 +27,7 @@ struct BitwardenSessionTimeoutRows: View {
         }
         Divider()
         row("lock.fill", .purple,
-            NSLocalizedString("Timeout action", comment: "Phi & AI settings - Row title for what happens when the Bitwarden session times out")) {
+            NSLocalizedString("settings.developer.passwordManager.session.timeoutActionTitle", value: "Timeout action", comment: "Phi & AI settings - Row title for what happens when the Bitwarden session times out")) {
             BitwardenDropdown(
                 selection: $action,
                 options: BitwardenTimeoutAction.allCases,

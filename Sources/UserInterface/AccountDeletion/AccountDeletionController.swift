@@ -145,14 +145,12 @@ final class AccountDeletionController {
     }
 
     private func warningConfiguration(email: String) -> PhiAlertAppKitConfiguration {
-        let messageFormat = NSLocalizedString(
-            "This deletes the Phi account %@ and everything Phi has stored on this Mac — browsing history, cookies, passwords, bookmarks, and Spaces. None of it can be recovered.\n\nOnce the deletion request is submitted, Phi signs you out and quits.",
+        let messageFormat = NSLocalizedString("accountDeletion.confirmation.message", value: "This deletes the Phi account %@ and everything Phi has stored on this Mac — browsing history, cookies, passwords, bookmarks, and Spaces. None of it can be recovered.\n\nOnce the deletion request is submitted, Phi signs you out and quits.",
             comment: "Account deletion - Warning explaining what deleting the Phi account destroys. %@ is the account's email address"
         )
 
         return PhiAlertAppKitConfiguration(
-            title: NSLocalizedString(
-                "Delete your Phi account?",
+            title: NSLocalizedString("accountDeletion.confirmation.title", value: "Delete your Phi account?",
                 comment: "Account deletion - Title of the warning shown before deleting the Phi account"
             ),
             message: String(format: messageFormat, email),
@@ -161,15 +159,13 @@ final class AccountDeletionController {
             // a reflexive Return must not confirm it. Escape still cancels.
             defaultButton: .noButton,
             secondaryAction: PhiAlertAppKitAction(
-                NSLocalizedString(
-                    "Cancel",
+                NSLocalizedString("accountDeletion.confirmation.cancelButton", value: "Cancel",
                     comment: "Account deletion - Button dismissing the deletion warning without deleting anything"
                 ),
                 response: .alertSecondButtonReturn
             ),
             primaryAction: PhiAlertAppKitAction(
-                NSLocalizedString(
-                    "Delete Account",
+                NSLocalizedString("accountDeletion.confirmation.deleteAccountButton", value: "Delete Account",
                     comment: "Account deletion - Destructive button confirming the deletion warning"
                 ),
                 response: .alertFirstButtonReturn

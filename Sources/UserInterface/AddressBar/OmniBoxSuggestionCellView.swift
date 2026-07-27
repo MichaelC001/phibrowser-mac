@@ -296,7 +296,7 @@ class SwitchToTabView: NSView {
         l.textColor = .tertiaryLabelColor
         l.lineBreakMode = .byTruncatingTail
         l.usesSingleLineMode = true
-        l.stringValue = NSLocalizedString("Hold ⌘ to switch →", comment: "Omnibox suggestion - Hint shown for suggestions that can switch to an open tab")
+        l.stringValue = NSLocalizedString("addressBar.suggestions.switchToOpenTabHint", value: "Hold ⌘ to switch →", comment: "Omnibox suggestion - Hint shown for suggestions that can switch to an open tab")
         l.alignment = .center
         return l
     }()

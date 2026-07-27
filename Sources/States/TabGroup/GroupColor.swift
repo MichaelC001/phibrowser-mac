@@ -26,40 +26,31 @@ enum GroupColor: String, Codable, CaseIterable {
     var localizedName: String {
         switch self {
         case .grey:
-            return NSLocalizedString(
-                "Grey",
+            return NSLocalizedString("tabs.tabGroup.colorName.grey", value: "Grey",
                 comment: "Tab Groups - color name shown in auto-named group title and color picker")
         case .blue:
-            return NSLocalizedString(
-                "Blue",
+            return NSLocalizedString("tabs.tabGroup.colorName.blue", value: "Blue",
                 comment: "Tab Groups - color name shown in auto-named group title and color picker")
         case .red:
-            return NSLocalizedString(
-                "Red",
+            return NSLocalizedString("tabs.tabGroup.colorName.red", value: "Red",
                 comment: "Tab Groups - color name shown in auto-named group title and color picker")
         case .yellow:
-            return NSLocalizedString(
-                "Yellow",
+            return NSLocalizedString("tabs.tabGroup.colorName.yellow", value: "Yellow",
                 comment: "Tab Groups - color name shown in auto-named group title and color picker")
         case .green:
-            return NSLocalizedString(
-                "Green",
+            return NSLocalizedString("tabs.tabGroup.colorName.green", value: "Green",
                 comment: "Tab Groups - color name shown in auto-named group title and color picker")
         case .pink:
-            return NSLocalizedString(
-                "Pink",
+            return NSLocalizedString("tabs.tabGroup.colorName.pink", value: "Pink",
                 comment: "Tab Groups - color name shown in auto-named group title and color picker")
         case .purple:
-            return NSLocalizedString(
-                "Purple",
+            return NSLocalizedString("tabs.tabGroup.colorName.purple", value: "Purple",
                 comment: "Tab Groups - color name shown in auto-named group title and color picker")
         case .cyan:
-            return NSLocalizedString(
-                "Cyan",
+            return NSLocalizedString("tabs.tabGroup.colorName.cyan", value: "Cyan",
                 comment: "Tab Groups - color name shown in auto-named group title and color picker")
         case .orange:
-            return NSLocalizedString(
-                "Orange",
+            return NSLocalizedString("tabs.tabGroup.colorName.orange", value: "Orange",
                 comment: "Tab Groups - color name shown in auto-named group title and color picker")
         }
     }

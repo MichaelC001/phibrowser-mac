@@ -157,7 +157,7 @@ final class ArcDataParserTool {
         for space in spaceModels.values {
             let trimmed = space.title?.trimmingCharacters(in: .whitespacesAndNewlines)
             let title = (trimmed?.isEmpty == false ? trimmed : nil)
-                ?? NSLocalizedString("Untitled Space",
+                ?? NSLocalizedString("oobe.importBrowserData.arc.untitledSpaceName", value: "Untitled Space",
                                      comment: "Arc import - fallback name for an Arc Space with no title")
 
             let spaceRoot = Bookmark(guid: space.id, title: title, url: nil, isFolder: true)

@@ -106,8 +106,7 @@ private struct TabStripFarringdonButton: View {
     )
 
     private var label: String {
-        NSLocalizedString(
-            "Organize tabs with AI",
+        NSLocalizedString("toolbar.organizeTabs.accessibilityLabel", value: "Organize tabs with AI",
             comment: "Organize Tabs - Button tooltip and accessibility label")
     }
 
@@ -171,7 +170,7 @@ private struct TabStripSearchTabsButton: View {
     private let iconSize: CGFloat = 16
     private let cornerRadius: CGFloat = 6
     private var searchTabsLabel: String {
-        NSLocalizedString("Search Tabs", comment: "Search Tabs - Button tooltip and accessibility label")
+        NSLocalizedString("toolbar.searchTabs.accessibilityLabel", value: "Search Tabs", comment: "Search Tabs - Button tooltip and accessibility label")
     }
 
     var body: some View {

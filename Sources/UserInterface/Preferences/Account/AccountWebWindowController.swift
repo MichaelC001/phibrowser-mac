@@ -40,7 +40,7 @@ class AccountWebWindowController: NSWindowController {
             backing: .buffered,
             defer: false
         )
-        window.title = NSLocalizedString("Invitation Code Details", comment: "Account settings - Window title for invitation code details")
+        window.title = NSLocalizedString("settings.account.invitationCode.detailsWindowTitle", value: "Invitation Code Details", comment: "Account settings - Window title for invitation code details")
         window.center()
         window.minSize = NSSize(width: 600, height: 800)
         window.maxSize = NSSize(width: 768, height: 1024)

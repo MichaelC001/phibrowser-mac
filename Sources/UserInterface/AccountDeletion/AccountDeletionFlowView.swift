@@ -75,38 +75,31 @@ enum AccountDeletionErrorCopy {
         }
     }
 
-    private static let wrongCodeText = NSLocalizedString(
-        "That code isn't correct. Check the code from the email and try again.",
+    private static let wrongCodeText = NSLocalizedString("accountDeletion.verification.invalidCodeError", value: "That code isn't correct. Check the code from the email and try again.",
         comment: "Account deletion - Inline error when the submitted verification code is rejected"
     )
 
-    private static let codeExpiredText = NSLocalizedString(
-        "That code has expired. Click Resend Code to get a new one.",
+    private static let codeExpiredText = NSLocalizedString("accountDeletion.verification.expiredCodeError", value: "That code has expired. Click Resend Code to get a new one.",
         comment: "Account deletion - Inline error when the verification code expired; points at the resend button"
     )
 
-    private static let rateLimitedText = NSLocalizedString(
-        "Too many attempts for now. Please wait a few minutes and try again.",
+    private static let rateLimitedText = NSLocalizedString("accountDeletion.verification.rateLimitError", value: "Too many attempts for now. Please wait a few minutes and try again.",
         comment: "Account deletion - Error when the deletion service rate limit is hit"
     )
 
-    private static let signedOutText = NSLocalizedString(
-        "Your session has expired. Please sign in again, then restart the deletion.",
+    private static let signedOutText = NSLocalizedString("accountDeletion.sessionExpiredError", value: "Your session has expired. Please sign in again, then restart the deletion.",
         comment: "Account deletion - Error when the access token stays rejected even after renewing it"
     )
 
-    private static let serverErrorText = NSLocalizedString(
-        "The deletion service is temporarily unavailable. Please try again later.",
+    private static let serverErrorText = NSLocalizedString("accountDeletion.serviceUnavailableError", value: "The deletion service is temporarily unavailable. Please try again later.",
         comment: "Account deletion - Error when the deletion service reports a server error"
     )
 
-    private static let genericText = NSLocalizedString(
-        "Something went wrong. Please try again later.",
+    private static let genericText = NSLocalizedString("accountDeletion.genericError", value: "Something went wrong. Please try again later.",
         comment: "Account deletion - Generic error; deliberately vague so it cannot reveal whether an account exists"
     )
 
-    private static let networkText = NSLocalizedString(
-        "Couldn't reach the deletion service. Check your internet connection and try again.",
+    private static let networkText = NSLocalizedString("accountDeletion.networkError", value: "Couldn't reach the deletion service. Check your internet connection and try again.",
         comment: "Account deletion - Error when the network request could not complete"
     )
 }
@@ -166,8 +159,7 @@ struct AccountDeletionFlowView: View {
 
     var body: some View {
         PhiAlert(
-            title: NSLocalizedString(
-                "Delete Phi Account",
+            title: NSLocalizedString("accountDeletion.window.title", value: "Delete Phi Account",
                 comment: "Account deletion - Title of the deletion flow dialog"
             )
         ) {
@@ -285,8 +277,7 @@ struct AccountDeletionFlowView: View {
                     // the destructive confirmation must be a deliberate
                     // click, not a reflexive Return.
                     PhiAlertButton(
-                        NSLocalizedString(
-                            "Verify",
+                        NSLocalizedString("accountDeletion.verification.verifyButton", value: "Verify",
                             comment: "Account deletion - Button submitting the emailed verification code"
                         ),
                         role: .destructive
@@ -327,8 +318,7 @@ struct AccountDeletionFlowView: View {
                         // Like Verify, no Return-key shortcut: retrying the
                         // deletion request must be a deliberate click.
                         PhiAlertButton(
-                            NSLocalizedString(
-                                "Try Again",
+                            NSLocalizedString("accountDeletion.failure.retryButton", value: "Try Again",
                                 comment: "Account deletion - Button retrying the failed deletion request"
                             ),
                             role: .destructive
@@ -343,8 +333,7 @@ struct AccountDeletionFlowView: View {
 
     private var closeButton: some View {
         PhiAlertButton(
-            NSLocalizedString(
-                "Close",
+            NSLocalizedString("accountDeletion.closeButton", value: "Close",
                 comment: "Account deletion - Button closing the deletion flow dialog"
             )
         ) {
@@ -389,8 +378,7 @@ struct AccountDeletionFlowView: View {
     /// clears run so the state switch does not reflow the dialog.
     private func signOutAndQuitButton(disabled: Bool) -> some View {
         PhiAlertButton(
-            NSLocalizedString(
-                "Sign Out and Quit",
+            NSLocalizedString("accountDeletion.completion.signOutAndQuitButton", value: "Sign Out and Quit",
                 comment: "Account deletion - Button confirming the finalize: Phi clears its local data, signs out and quits"
             ),
             role: .destructive
@@ -403,8 +391,7 @@ struct AccountDeletionFlowView: View {
 
     private func cancelButton(disabled: Bool) -> some View {
         PhiAlertButton(
-            NSLocalizedString(
-                "Cancel",
+            NSLocalizedString("accountDeletion.cancelButton", value: "Cancel",
                 comment: "Account deletion - Button abandoning the deletion flow without deleting anything"
             )
         ) {
@@ -415,43 +402,35 @@ struct AccountDeletionFlowView: View {
         .opacity(disabled ? 0.5 : 1)
     }
 
-    private static let requestingFormat = NSLocalizedString(
-        "Sending a verification code to %@…",
+    private static let requestingFormat = NSLocalizedString("accountDeletion.verification.sendingCodeProgress", value: "Sending a verification code to %@…",
         comment: "Account deletion - Progress text while the deletion request is in flight. %@ is the masked account email"
     )
 
-    private static let enterCodeFormat = NSLocalizedString(
-        "Enter the 6-digit code sent to %@.",
+    private static let enterCodeFormat = NSLocalizedString("accountDeletion.verification.codePrompt", value: "Enter the 6-digit code sent to %@.",
         comment: "Account deletion - Prompt above the verification code boxes. %@ is the masked account email"
     )
 
-    private static let verifyingText = NSLocalizedString(
-        "Verifying the code…",
+    private static let verifyingText = NSLocalizedString("accountDeletion.verification.verifyingProgress", value: "Verifying the code…",
         comment: "Account deletion - Progress text while the verification code is being checked"
     )
 
-    private static let resendText = NSLocalizedString(
-        "Resend Code",
+    private static let resendText = NSLocalizedString("accountDeletion.verification.resendButton", value: "Resend Code",
         comment: "Account deletion - Button requesting a fresh verification code"
     )
 
-    private static let resendCooldownFormat = NSLocalizedString(
-        "Resend Code (%ds)",
+    private static let resendCooldownFormat = NSLocalizedString("accountDeletion.verification.resendCooldownButton", value: "Resend Code (%ds)",
         comment: "Account deletion - Resend button label while the one-minute cooldown runs. %d is the seconds remaining"
     )
 
-    private static let submittedText = NSLocalizedString(
-        "Your deletion request has been submitted. You will receive an email receipt once the deletion is complete.\n\nPhi will now sign you out, remove its data from this Mac, and quit.",
+    private static let submittedText = NSLocalizedString("accountDeletion.submission.successMessage", value: "Your deletion request has been submitted. You will receive an email receipt once the deletion is complete.\n\nPhi will now sign you out, remove its data from this Mac, and quit.",
         comment: "Account deletion - Text shown once the deletion request is queued server-side; the deletion itself has not finished yet, and the finalize confirmation comes next"
     )
 
-    private static let finalizingText = NSLocalizedString(
-        "Signing you out and removing Phi's data from this Mac…",
+    private static let finalizingText = NSLocalizedString("accountDeletion.finalizingProgress", value: "Signing you out and removing Phi's data from this Mac…",
         comment: "Account deletion - Progress text while the finalize clears local data, right before the app quits"
     )
 
-    private static let alreadyRunningText = NSLocalizedString(
-        "A deletion request for this account is already being processed. You will receive an email receipt once the deletion is complete.\n\nPhi will now sign you out, remove its data from this Mac, and quit.",
+    private static let alreadyRunningText = NSLocalizedString("accountDeletion.submission.alreadyInProgressMessage", value: "A deletion request for this account is already being processed. You will receive an email receipt once the deletion is complete.\n\nPhi will now sign you out, remove its data from this Mac, and quit.",
         comment: "Account deletion - Text shown when a previous deletion request is already running server-side; the finalize confirmation comes next, as after a submission"
     )
 }
@@ -496,8 +475,7 @@ private struct AccountDeletionCodeEntry: View {
                 .autocorrectionDisabled()
                 .focused($isFocused)
                 .opacity(0.02)
-                .accessibilityLabel(Text(NSLocalizedString(
-                    "Verification code",
+                .accessibilityLabel(Text(NSLocalizedString("accountDeletion.verification.codeField.accessibilityLabel", value: "Verification code",
                     comment: "Account deletion - Accessibility label of the verification code input"
                 )))
         }

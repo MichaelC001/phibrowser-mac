@@ -521,7 +521,7 @@ extension MainBrowserWindowController: NSMenuItemValidation {
         window.identifier = identifier
         window.center()
         window.isReleasedWhenClosed = false
-        window.title = NSLocalizedString("Send Feedback to Phi", comment: "Feedback window - Window title for feedback submission")
+        window.title = NSLocalizedString("app.feedback.windowTitle", value: "Send Feedback to Phi", comment: "Feedback window - Window title for feedback submission")
         window.contentViewController = vc
         window.makeKeyAndOrderFront(nil)
     }
@@ -535,16 +535,14 @@ extension MainBrowserWindowController: NSMenuItemValidation {
     /// neither a standalone incognito window nor the Incognito Space has.
     func presentImportUnavailableInIncognitoAlert() {
         let alert = NSAlert()
-        alert.messageText = NSLocalizedString(
-            "Can't Import Browser Data",
+        alert.messageText = NSLocalizedString("app.importBrowserData.unavailableInIncognito.title", value: "Can't Import Browser Data",
             comment: "Import browser data - Alert title when import is invoked from an incognito window or the Incognito Space"
         )
-        alert.informativeText = NSLocalizedString(
-            "Browser data can't be imported into Incognito. Switch to a regular Space or window, then try again.",
+        alert.informativeText = NSLocalizedString("app.importBrowserData.unavailableInIncognito.message", value: "Browser data can't be imported into Incognito. Switch to a regular Space or window, then try again.",
             comment: "Import browser data - Alert body explaining import is unavailable off-the-record"
         )
         alert.alertStyle = .informational
-        alert.addButton(withTitle: NSLocalizedString("OK", comment: "Generic - OK button to dismiss an alert"))
+        alert.addButton(withTitle: NSLocalizedString("app.importBrowserData.unavailableInIncognito.dismissButton", value: "OK", comment: "Import browser data - Unavailable-in-Incognito alert dismiss button"))
         if let window {
             alert.beginSheetModal(for: window)
         } else {

@@ -638,7 +638,7 @@ final class LocalStoreProfileTests: XCTestCase {
     func testParseUntitledEmptySpaceIsSurfaced() throws {
         let spaces = try ArcDataParserTool.parse(data: makeArcSidebarEmptySpace())
         XCTAssertEqual(spaces.count, 1)
-        XCTAssertEqual(spaces.first?.title, NSLocalizedString("Untitled Space", comment: ""))
+        XCTAssertEqual(spaces.first?.title, NSLocalizedString("oobe.importBrowserData.arc.untitledSpaceName", value: "Untitled Space", comment: "Arc import - Fallback name for an Arc Space with no title"))
         XCTAssertEqual(spaces.first?.root.children.count, 0)
     }
 

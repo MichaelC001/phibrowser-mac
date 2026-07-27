@@ -67,11 +67,11 @@ extension AppController {
     @MainActor
     @objc func importUserDataFromBackup(_ sender: Any?) {
         let confirm = NSAlert()
-        confirm.messageText = NSLocalizedString("Import Phi User Data?", comment: "Debug import user data - Confirmation alert title before replacing Phi user data from zip")
-        confirm.informativeText = NSLocalizedString("This replaces the Phi user data folder with the archive and restarts Phi. Save your work first.", comment: "Debug import user data - Confirmation alert body warning data replacement and relaunch")
+        confirm.messageText = NSLocalizedString("app.userDataImport.confirmation.title", value: "Import Phi User Data?", comment: "User data import - Confirmation alert title before replacing Phi user data from zip")
+        confirm.informativeText = NSLocalizedString("app.userDataImport.confirmation.message", value: "This replaces the Phi user data folder with the archive and restarts Phi. Save your work first.", comment: "User data import - Confirmation alert body warning data replacement and relaunch")
         confirm.alertStyle = .warning
-        confirm.addButton(withTitle: NSLocalizedString("Import...", comment: "Debug import user data - Alert button to open file picker for zip backup"))
-        confirm.addButton(withTitle: NSLocalizedString("Cancel", comment: "Debug import user data - Alert button to cancel importing user data"))
+        confirm.addButton(withTitle: NSLocalizedString("app.userDataImport.confirmation.importButton", value: "Import...", comment: "User data import - Alert button to open file picker for zip backup"))
+        confirm.addButton(withTitle: NSLocalizedString("app.userDataImport.confirmation.cancelButton", value: "Cancel", comment: "User data import - Alert button to cancel importing user data"))
         guard confirm.runModal() == .alertFirstButtonReturn else {
             return
         }
@@ -81,7 +81,7 @@ extension AppController {
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
         panel.allowedContentTypes = [.zip]
-        panel.title = NSLocalizedString("Select Phi User Data Backup", comment: "Debug import user data - NSOpenPanel title for choosing a Phi user data zip")
+        panel.title = NSLocalizedString("app.userDataImport.filePicker.title", value: "Select Phi User Data Backup", comment: "User data import - NSOpenPanel title for choosing a Phi user data zip")
 
         guard panel.runModal() == .OK, let zipURL = panel.url else {
             return
@@ -161,12 +161,12 @@ extension AppController {
     @MainActor
     private func promptBackupBeforeClearingPhiUserData() -> PhiUserDataBackupPromptResult {
         let alert = NSAlert()
-        alert.messageText = NSLocalizedString("Back Up User Data First?", comment: "Debug clear data - Alert title asking whether to export Phi user data before clearing")
-        alert.informativeText = NSLocalizedString("You can save a zip of your browser and AI data before local files are removed and the app quits.", comment: "Debug clear data - Alert body explaining optional zip backup before clearing user data")
+        alert.messageText = "Back Up User Data First?"
+        alert.informativeText = "You can save a zip of your Phi user data folder before local files are removed and the app quits."
         alert.alertStyle = .informational
-        alert.addButton(withTitle: NSLocalizedString("Backup...", comment: "Debug clear data - Alert button to open the save panel for a Phi user data zip"))
-        alert.addButton(withTitle: NSLocalizedString("Skip Backup", comment: "Debug clear data - Alert button to clear data without creating a backup zip"))
-        alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Debug clear data - Alert button to cancel clearing user data"))
+        alert.addButton(withTitle: "Backup...")
+        alert.addButton(withTitle: "Skip Backup")
+        alert.addButton(withTitle: "Cancel")
         switch alert.runModal() {
         case .alertFirstButtonReturn:
             return .performBackup
@@ -236,13 +236,24 @@ extension AppController {
                 isDirectory: true
             )
         )
+        let phiPath = FileSystemUtils.phiBrowserDataDirectory()
+
+        if !fm.fileExists(atPath: phiPath) {
+            let alert = NSAlert()
+            alert.messageText = NSLocalizedString("app.userDataExport.missingData.title", value: "No Phi User Data to Back Up", comment: "User data export - Alert title when the Phi data folder is missing before backup")
+            alert.informativeText = NSLocalizedString("app.userDataExport.missingData.message", value: "The Phi user data folder was not found. Continuing will still remove other local application data and quit.", comment: "User data export - Alert body when Phi folder is missing; clearing will still proceed for other locations")
+            alert.alertStyle = .informational
+            alert.addButton(withTitle: NSLocalizedString("app.userDataExport.missingData.dismissButton", value: "OK", comment: "User data export - Missing-data alert dismiss button"))
+            alert.runModal()
+            return true
+        }
 
         let panel = NSSavePanel()
         panel.canCreateDirectories = true
         panel.allowedContentTypes = [.zip]
         panel.nameFieldStringValue = defaultPhiUserDataBackupFileName()
-        panel.title = NSLocalizedString("Back Up Phi User Data", comment: "Debug clear data - NSSavePanel title for saving Phi user data directory as zip")
-        panel.prompt = NSLocalizedString("Save", comment: "Debug clear data - NSSavePanel confirm button title when saving Phi user data backup zip")
+        panel.title = NSLocalizedString("app.userDataExport.savePanel.title", value: "Back Up Phi User Data", comment: "User data export - NSSavePanel title for saving Phi user data directory as zip")
+        panel.prompt = NSLocalizedString("app.userDataExport.savePanel.saveButton", value: "Save", comment: "User data export - NSSavePanel confirm button title when saving Phi user data backup zip")
 
         let selectionBox = PhiUserDataExportSelectionBox(
             browserDataAvailable: browserDataAvailable
@@ -345,10 +356,10 @@ extension AppController {
         } catch {
             AppLogWarn("[Debug] Phi user data backup failed: \(error.localizedDescription)")
             let errorAlert = NSAlert()
-            errorAlert.messageText = NSLocalizedString("Backup Failed", comment: "Debug clear data - Alert title when exporting Phi user data zip fails")
+            errorAlert.messageText = NSLocalizedString("app.userDataExport.failure.title", value: "Backup Failed", comment: "User data export - Alert title when exporting Phi user data zip fails")
             errorAlert.informativeText = error.localizedDescription
             errorAlert.alertStyle = .warning
-            errorAlert.addButton(withTitle: NSLocalizedString("OK", comment: "Generic - OK button to dismiss an alert"))
+            errorAlert.addButton(withTitle: NSLocalizedString("app.userDataExport.failure.dismissButton", value: "OK", comment: "User data export - Failure alert dismiss button"))
             errorAlert.runModal()
             return false
         }
@@ -712,10 +723,10 @@ extension AppController {
     private func presentPhiUserDataImportFailure(_ error: Error) {
         AppLogWarn("[Debug] Phi user data import failed: \(error.localizedDescription)")
         let errorAlert = NSAlert()
-        errorAlert.messageText = NSLocalizedString("Import Failed", comment: "Debug import user data - Alert title when extracting or applying backup fails")
+        errorAlert.messageText = NSLocalizedString("app.userDataImport.failure.title", value: "Import Failed", comment: "User data import - Alert title when extracting or applying backup fails")
         errorAlert.informativeText = error.localizedDescription
         errorAlert.alertStyle = .warning
-        errorAlert.addButton(withTitle: NSLocalizedString("OK", comment: "Generic - OK button to dismiss an alert"))
+        errorAlert.addButton(withTitle: NSLocalizedString("app.userDataImport.failure.dismissButton", value: "OK", comment: "User data import - Failure alert dismiss button"))
         errorAlert.runModal()
     }
 
@@ -738,7 +749,7 @@ extension AppController {
             throw NSError(
                 domain: "PhiUserDataImport",
                 code: 1,
-                userInfo: [NSLocalizedDescriptionKey: NSLocalizedString("The archive does not contain a top-level Phi folder.", comment: "Debug import user data - Error message when zip does not include the expected Phi directory at archive root")]
+                userInfo: [NSLocalizedDescriptionKey: NSLocalizedString("app.userDataImport.invalidArchive.missingTopLevelFolder", value: "The archive does not contain a top-level Phi folder.", comment: "User data import - Error message when zip does not include the expected Phi directory at archive root")]
             )
         }
 
@@ -765,7 +776,7 @@ extension AppController {
             throw NSError(
                 domain: "PhiUserDataImport",
                 code: 4,
-                userInfo: [NSLocalizedDescriptionKey: NSLocalizedString("The restored Phi user data is not a directory.", comment: "Debug import user data - Error message when extracted Phi item is not a directory")]
+                userInfo: [NSLocalizedDescriptionKey: NSLocalizedString("app.userDataImport.invalidArchive.restoredItemNotDirectory", value: "The restored Phi user data is not a directory.", comment: "User data import - Error message when extracted Phi item is not a directory")]
             )
         }
 

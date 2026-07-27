@@ -23,7 +23,7 @@ class AccountSettingViewController: NSViewController, SettingsPane {
                   cachedUserName.isEmpty == false {
             fullName = cachedUserName
         } else {
-            return NSLocalizedString("You", comment: "Account settings - Default display name when user name is not available")
+            return NSLocalizedString("settings.account.displayName.fallback", value: "You", comment: "Account settings - Default display name when user name is not available")
         }
 
         // Truncate if exceeds max length
@@ -307,7 +307,7 @@ class AccountSettingViewController: NSViewController, SettingsPane {
 
 class DefaultBrowserViewModel: ObservableObject {
     @Published var isDefaultBrowser: Bool = false
-    @Published var statusText: String = NSLocalizedString("Phi is not your default browser", comment: "Account settings - Status text when Phi is not the default browser")
+    @Published var statusText: String = NSLocalizedString("settings.account.defaultBrowser.initialNotDefaultStatus", value: "Phi is not your default browser", comment: "Account settings - Initial status text before the current default-browser state is refreshed")
     @Published var isLoading: Bool = true
 
     init() {
@@ -362,7 +362,7 @@ class DefaultBrowserViewModel: ObservableObject {
     }
 
     private func updateStatusText() {
-        statusText = isDefaultBrowser ? NSLocalizedString("Phi is your default browser", comment: "Account settings - Status text when Phi is the default browser") : NSLocalizedString("Phi is not your default browser", comment: "Account settings - Status text when Phi is not the default browser")
+        statusText = isDefaultBrowser ? NSLocalizedString("settings.account.defaultBrowser.defaultStatus", value: "Phi is your default browser", comment: "Account settings - Status text when Phi is the default browser") : NSLocalizedString("settings.account.defaultBrowser.notDefaultStatus", value: "Phi is not your default browser", comment: "Account settings - Status text when Phi is not the default browser")
     }
 }
 
@@ -468,10 +468,10 @@ class AccountViewModel: ObservableObject {
     @MainActor
     private func showLogoutConfirmation() -> Bool {
         let alert = NSAlert()
-        alert.messageText = NSLocalizedString("Confirm Logout", comment: "Account settings - Logout confirmation dialog title")
-        alert.informativeText = NSLocalizedString("You will be logged out and returned to the login screen. Are you sure?", comment: "Account settings - Logout confirmation dialog message")
-        alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Account settings - Cancel button in logout confirmation dialog"))
-        alert.addButton(withTitle: NSLocalizedString("Logout", comment: "Account settings - Logout button in logout confirmation dialog"))
+        alert.messageText = NSLocalizedString("settings.account.logoutConfirmation.title", value: "Confirm Logout", comment: "Account settings - Logout confirmation dialog title")
+        alert.informativeText = NSLocalizedString("settings.account.logoutConfirmation.message", value: "You will be logged out and returned to the login screen. Are you sure?", comment: "Account settings - Logout confirmation dialog message")
+        alert.addButton(withTitle: NSLocalizedString("settings.account.logoutConfirmation.cancelButton", value: "Cancel", comment: "Account settings - Cancel button in logout confirmation dialog"))
+        alert.addButton(withTitle: NSLocalizedString("settings.account.logoutConfirmation.logoutButton", value: "Logout", comment: "Account settings - Logout button in logout confirmation dialog"))
         alert.alertStyle = .warning
         return alert.runModal() == .alertSecondButtonReturn
     }
@@ -479,10 +479,10 @@ class AccountViewModel: ObservableObject {
     @MainActor
     private func showLogoutFailedAlert() {
         let alert = NSAlert()
-        alert.messageText = NSLocalizedString("Logout Failed", comment: "Account settings - Alert title when logout fails")
-        alert.informativeText = NSLocalizedString("Something went wrong when logging out", comment: "Account settings - Alert message when logout fails")
+        alert.messageText = NSLocalizedString("settings.account.logoutFailure.title", value: "Logout Failed", comment: "Account settings - Alert title when logout fails")
+        alert.informativeText = NSLocalizedString("settings.account.logoutFailure.message", value: "Something went wrong when logging out", comment: "Account settings - Alert message when logout fails")
         alert.alertStyle = .warning
-        alert.addButton(withTitle: NSLocalizedString("OK", comment: "Account settings - OK button to dismiss logout failed alert"))
+        alert.addButton(withTitle: NSLocalizedString("settings.account.logoutFailure.dismissButton", value: "OK", comment: "Account settings - OK button to dismiss logout failed alert"))
         alert.runModal()
     }
 
@@ -741,7 +741,7 @@ class ProfileCardView: NSView {
             make.edges.equalToSuperview()
         }
 
-        downloadButton.title = NSLocalizedString("Download image", comment: "Account settings - Button to download profile card as image")
+        downloadButton.title = NSLocalizedString("settings.account.sharing.downloadImageButton", value: "Download image", comment: "Account settings - Button to download profile card as image")
         downloadButton.bezelStyle = .rounded
         downloadButton.image = NSImage(systemSymbolName: "arrow.down.circle", accessibilityDescription: nil)
         downloadButton.imagePosition = .imageLeading
@@ -816,7 +816,7 @@ class DefaultBrowserSectionView: SettingItemBackgroundView {
             make.width.height.equalTo(16)
         }
 
-        setDefaultButton.title = NSLocalizedString("Set as default", comment: "Account settings - Button to set Phi as default browser")
+        setDefaultButton.title = NSLocalizedString("settings.account.defaultBrowser.setDefaultButton", value: "Set as default", comment: "Account settings - Button to set Phi as default browser")
         setDefaultButton.bezelStyle = .rounded
         setDefaultButton.image = NSImage(systemSymbolName: "heart.fill", accessibilityDescription: nil)
         setDefaultButton.imagePosition = .imageLeading
@@ -942,8 +942,7 @@ class AccountCardView: SettingItemBackgroundView {
     }()
 
     private let reauthenticationWarningLabel: NSTextField = {
-        let tf = NSTextField(labelWithString: NSLocalizedString(
-            "Reauthentication needed.",
+        let tf = NSTextField(labelWithString: NSLocalizedString("settings.account.reauthentication.warning", value: "Reauthentication needed.",
             comment: "Account settings - Warning shown when account tokens require reauthentication"
         ))
         tf.font = .systemFont(ofSize: 11, weight: .medium)
@@ -954,16 +953,14 @@ class AccountCardView: SettingItemBackgroundView {
         tf.isBordered = false
         tf.drawsBackground = false
         tf.isHidden = true
-        tf.toolTip = NSLocalizedString(
-            "Please reauthenticate to restore account features.",
+        tf.toolTip = NSLocalizedString("settings.account.reauthentication.tooltip", value: "Please reauthenticate to restore account features.",
             comment: "Account settings - Tooltip explaining why reauthentication is needed"
         )
         return tf
     }()
 
     private let logoutStatusLabel: NSTextField = {
-        let tf = NSTextField(labelWithString: NSLocalizedString(
-            "Confirm logout in the opened browser.",
+        let tf = NSTextField(labelWithString: NSLocalizedString("settings.account.logoutProgress.browserConfirmationStatus", value: "Confirm logout in the opened browser.",
             comment: "Account settings - Status shown while waiting for logout to finish"
         ))
         tf.font = .systemFont(ofSize: 11, weight: .medium)
@@ -979,7 +976,7 @@ class AccountCardView: SettingItemBackgroundView {
 
     private let logoutButton: NSButton = {
         let btn = NSButton()
-        btn.title = NSLocalizedString("Logout", comment: "Account settings - Logout button")
+        btn.title = NSLocalizedString("settings.account.logoutButton", value: "Logout", comment: "Account settings - Logout button")
         btn.bezelStyle = .rounded
         btn.image = NSImage(systemSymbolName: "rectangle.portrait.and.arrow.right", accessibilityDescription: nil)
         btn.imagePosition = .imageLeading
@@ -1366,9 +1363,9 @@ class AccountCardView: SettingItemBackgroundView {
 
     private func showRenameDialog() {
         let alert = NSAlert()
-        alert.messageText = NSLocalizedString("Change Name", comment: "Account settings - Dialog title for changing user name")
-        alert.addButton(withTitle: NSLocalizedString("Save", comment: "Account settings - Save button in rename dialog"))
-        alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Account settings - Cancel button in rename dialog"))
+        alert.messageText = NSLocalizedString("settings.account.renameDialog.title", value: "Change Name", comment: "Account settings - Dialog title for changing user name")
+        alert.addButton(withTitle: NSLocalizedString("settings.account.renameDialog.saveButton", value: "Save", comment: "Account settings - Save button in rename dialog"))
+        alert.addButton(withTitle: NSLocalizedString("settings.account.renameDialog.cancelButton", value: "Cancel", comment: "Account settings - Cancel button in rename dialog"))
 
         let textField = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
         textField.stringValue = viewModel.userName
@@ -1381,20 +1378,20 @@ class AccountCardView: SettingItemBackgroundView {
 
         if newValue.isEmpty {
             let errorAlert = NSAlert()
-            errorAlert.messageText = NSLocalizedString("Invalid Input", comment: "Account settings - Alert title for invalid input")
-            errorAlert.informativeText = NSLocalizedString("Name cannot be empty", comment: "Account settings - Error message when user name is empty")
+            errorAlert.messageText = NSLocalizedString("settings.account.renameDialog.emptyNameError.title", value: "Invalid Input", comment: "Account settings - Alert title for invalid input")
+            errorAlert.informativeText = NSLocalizedString("settings.account.renameDialog.emptyNameError.message", value: "Name cannot be empty", comment: "Account settings - Error message when user name is empty")
             errorAlert.alertStyle = .warning
-            errorAlert.addButton(withTitle: NSLocalizedString("OK", comment: "Account settings - OK button"))
+            errorAlert.addButton(withTitle: NSLocalizedString("settings.account.renameDialog.emptyNameError.dismissButton", value: "OK", comment: "Account settings - OK button"))
             errorAlert.runModal()
             return
         }
 
         if newValue.count > Self.maxUserNameLength {
             let errorAlert = NSAlert()
-            errorAlert.messageText = NSLocalizedString("Invalid Input", comment: "Account settings - Alert title for invalid input")
-            errorAlert.informativeText = String(format: NSLocalizedString("Name cannot exceed %d characters", comment: "Account settings - Error message when user name is too long"), Self.maxUserNameLength)
+            errorAlert.messageText = NSLocalizedString("settings.account.renameDialog.nameTooLongError.title", value: "Invalid Input", comment: "Account settings - Alert title for invalid input")
+            errorAlert.informativeText = String(format: NSLocalizedString("settings.account.renameDialog.nameTooLongError.message", value: "Name cannot exceed %d characters", comment: "Account settings - Error message when user name is too long"), Self.maxUserNameLength)
             errorAlert.alertStyle = .warning
-            errorAlert.addButton(withTitle: NSLocalizedString("OK", comment: "Account settings - OK button"))
+            errorAlert.addButton(withTitle: NSLocalizedString("settings.account.renameDialog.nameTooLongError.dismissButton", value: "OK", comment: "Account settings - OK button"))
             errorAlert.runModal()
             return
         }
@@ -1418,7 +1415,7 @@ class AccountCardView: SettingItemBackgroundView {
 // MARK: - Share Section View
 
 class ShareSectionView: NSView {
-    private let titleLabel = NSTextField(labelWithString: NSLocalizedString("Share", comment: "Account settings - Section title for sharing"))
+    private let titleLabel = NSTextField(labelWithString: NSLocalizedString("settings.account.sharing.sectionTitle", value: "Share", comment: "Account settings - Section title for sharing"))
     private let containerView = SettingItemBackgroundView()
 
     private let invitationCodeRowView = InvitationCodeRowView()
@@ -1474,7 +1471,7 @@ class ShareSectionView: NSView {
 // MARK: - Invitation Code Row View
 
 class InvitationCodeRowView: NSView {
-    private let titleLabel = NSTextField(labelWithString: NSLocalizedString("Invitation Code", comment: "Account settings - Label for invitation code field"))
+    private let titleLabel = NSTextField(labelWithString: NSLocalizedString("settings.account.invitationCode.fieldLabel", value: "Invitation Code", comment: "Account settings - Label for invitation code field"))
     private let viewDetailsButton = NSButton()
 
     var onViewDetails: (() -> Void)?
@@ -1501,7 +1498,7 @@ class InvitationCodeRowView: NSView {
         }
 
         // View Details button
-        viewDetailsButton.title = NSLocalizedString("View Details", comment: "Account settings - Button to view invitation code details")
+        viewDetailsButton.title = NSLocalizedString("settings.account.invitationCode.viewDetailsButton", value: "View Details", comment: "Account settings - Button to view invitation code details")
         viewDetailsButton.bezelStyle = .rounded
         viewDetailsButton.image = NSImage(systemSymbolName: "list.bullet.rectangle", accessibilityDescription: nil)
         viewDetailsButton.imagePosition = .imageLeading

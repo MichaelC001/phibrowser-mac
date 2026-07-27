@@ -80,7 +80,7 @@ final class ConnectorItemState: @MainActor Identifiable {
         guard let oauthConnection,
               oauthConnection.connected,
               let connectedAt = oauthConnection.connectedAt else {
-            lastSyncTime = NSLocalizedString("Not connected", comment: "AI settings - Default text when connector is not connected")
+            lastSyncTime = NSLocalizedString("settings.ai.connectors.lastSync.notConnectedStatus", value: "Not connected", comment: "AI settings - Last-sync text when connector is not connected")
             return
         }
         lastSyncTime = Self.formatSyncTime(connectedAt: connectedAt)
@@ -102,15 +102,15 @@ final class ConnectorItemState: @MainActor Identifiable {
     private static func formatSyncTime(connectedAt: String) -> String {
         guard let date = iso8601Formatter.date(from: connectedAt)
                 ?? ISO8601DateFormatter().date(from: connectedAt) else {
-            return NSLocalizedString("Not connected", comment: "AI settings - Default text when connector is not connected")
+            return NSLocalizedString("settings.ai.connectors.lastSync.invalidDateFallback", value: "Not connected", comment: "AI settings - Fallback last-sync text when the connection date is invalid")
         }
         return displayDateFormatter.string(from: date)
     }
 
     var actionTitle: String {
         status.isConnected
-        ? NSLocalizedString("Disconnect", comment: "AI settings - Button to disconnect an external data connector")
-        : NSLocalizedString("Connect", comment: "AI settings - Button to connect an external data connector")
+        ? NSLocalizedString("settings.ai.connectors.disconnectButton", value: "Disconnect", comment: "AI settings - Button to disconnect an external data connector")
+        : NSLocalizedString("settings.ai.connectors.connectButton", value: "Connect", comment: "AI settings - Button to connect an external data connector")
     }
 }
 
@@ -176,7 +176,7 @@ final class AISettingsConnectorViewModel {
 
         if result.lowercased() != "success",
            let connector = connectors.first(where: { $0.template.provider == provider }) {
-            connector.errorMessage = error ?? NSLocalizedString("Connector authorization failed.", comment: "AI settings - OAuth authorization failure")
+            connector.errorMessage = error ?? NSLocalizedString("settings.ai.connectors.authorization.failureMessage", value: "Connector authorization failed.", comment: "AI settings - OAuth authorization failure")
         }
 
         setConnectorLoading(provider: provider, isLoading: false)
@@ -317,7 +317,7 @@ final class AISettingsConnectorViewModel {
               let scheme = authURL.scheme?.lowercased(),
               scheme == "https" || scheme == "http" else {
             connectors.first { $0.template.provider == provider }?.errorMessage =
-                NSLocalizedString("The connector authorization URL is invalid.", comment: "AI settings - OAuth authorization URL error")
+                NSLocalizedString("settings.ai.connectors.authorization.invalidURLError", value: "The connector authorization URL is invalid.", comment: "AI settings - OAuth authorization URL error")
             setConnectorLoading(provider: provider, isLoading: false)
             return false
         }
@@ -325,7 +325,7 @@ final class AISettingsConnectorViewModel {
         guard let browserState = BrowserState.currentState()
                 ?? MainBrowserWindowControllersManager.shared.activeWindowController?.browserState else {
             connectors.first { $0.template.provider == provider }?.errorMessage =
-                NSLocalizedString("Unable to open connector authorization.", comment: "AI settings - OAuth authorization open error")
+                NSLocalizedString("settings.ai.connectors.authorization.openFailure", value: "Unable to open connector authorization.", comment: "AI settings - OAuth authorization open error")
             setConnectorLoading(provider: provider, isLoading: false)
             return false
         }

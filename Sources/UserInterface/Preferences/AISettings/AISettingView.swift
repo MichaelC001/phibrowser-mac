@@ -58,20 +58,20 @@ struct AISettingView: View {
             ])
         }
         .alert(
-            NSLocalizedString("Turn Off AI Features?",
+            NSLocalizedString("settings.ai.disableFeatures.title", value: "Turn Off AI Features?",
                               comment: "AI settings - Confirmation alert title when disabling all AI features"),
             isPresented: $showDisableAIAlert
         ) {
-            Button(NSLocalizedString("Turn Off",
+            Button(NSLocalizedString("settings.ai.disableFeatures.confirmButton", value: "Turn Off",
                                      comment: "AI settings - Destructive button to confirm turning off AI features"),
                    role: .destructive) {
                 phiAIEnabled = false
             }
-            Button(NSLocalizedString("Cancel",
+            Button(NSLocalizedString("settings.ai.disableFeatures.cancelButton", value: "Cancel",
                                      comment: "AI settings - Cancel button in disable-AI confirmation alert"),
                    role: .cancel) {}
         } message: {
-            Text(NSLocalizedString("AI conversations will be closed and all connected Connectors will be disconnected.",
+            Text(NSLocalizedString("settings.ai.disableFeatures.message", value: "AI conversations will be closed and all connected Connectors will be disconnected.",
                                    comment: "AI settings - Alert message explaining consequences of disabling AI features"))
         }
     }
@@ -84,7 +84,7 @@ private struct AIEnableToggleRow: View {
 
     var body: some View {
         HStack {
-            Text(NSLocalizedString("Enable AI features in Phi Browser", comment: "AI settings - Master toggle to enable or disable all AI features in Phi Browser"))
+            Text(NSLocalizedString("settings.ai.features.enableToggle", value: "Enable AI features in Phi Browser", comment: "AI settings - Master toggle to enable or disable all AI features in Phi Browser"))
                 .font(.system(size: 13))
                 .themedForeground(.textPrimary)
             Spacer(minLength: 12)
@@ -106,11 +106,11 @@ private struct BrowserMemorySectionView: View {
 
     var body: some View {
         AISectionView(
-            title: NSLocalizedString("Browser memory", comment: "AI settings - Section title for browser memory management")
+            title: NSLocalizedString("settings.ai.browserMemory.sectionTitle", value: "Browser memory", comment: "AI settings - Section title for browser memory management")
         ) {
             AIContainerView {
                 AINavigationRow(
-                    title: NSLocalizedString("View and manage your browser memory", comment: "AI settings - Row title to open browser memory management"),
+                    title: NSLocalizedString("settings.ai.browserMemory.manageButtonTitle", value: "View and manage your browser memory", comment: "AI settings - Row title to open browser memory management"),
                     enabled: enabled,
                     action: openBrowserMemoryPage
                 )
@@ -133,12 +133,12 @@ private struct PhiSentinelSectionView: View {
 
     var body: some View {
         AISectionView(
-            title: NSLocalizedString("Phi Sentinel", comment: "AI settings - Section title for Phi Sentinel background helper"),
-            subtitle: NSLocalizedString("Phi Sentinel is a lightweight background helper that allows Phi to complete scheduled AI tasks", comment: "AI settings - Description explaining what Phi Sentinel does")
+            title: NSLocalizedString("settings.ai.phiSentinel.sectionTitle", value: "Phi Sentinel", comment: "AI settings - Section title for Phi Sentinel background helper"),
+            subtitle: NSLocalizedString("settings.ai.phiSentinel.description", value: "Phi Sentinel is a lightweight background helper that allows Phi to complete scheduled AI tasks", comment: "AI settings - Description explaining what Phi Sentinel does")
         ) {
             AIContainerView {
                 AIToggleRow(
-                    title: NSLocalizedString("Launch Phi Sentinel automatically at login", comment: "AI settings - Toggle to auto-launch Phi Sentinel at system login"),
+                    title: NSLocalizedString("settings.ai.phiSentinel.autoLaunchToggle", value: "Launch Phi Sentinel automatically at login", comment: "AI settings - Toggle to auto-launch Phi Sentinel at system login"),
                     isOn: $launchSentinelOnLogin,
                     enabled: enabled
                 )
@@ -146,7 +146,7 @@ private struct PhiSentinelSectionView: View {
                 Divider()
 
                 AINavigationRow(
-                    title: NSLocalizedString("Private AI", comment: "AI settings - Row that opens Phi Sentinel's Private AI page"),
+                    title: NSLocalizedString("settings.ai.privateAI.title", value: "Private AI", comment: "AI settings - Row that opens Phi Sentinel's Private AI page"),
                     enabled: enabled,
                     action: openPrivateAI
                 )
@@ -172,11 +172,11 @@ private struct NewTabPageSectionView: View {
 
     var body: some View {
         AISectionView(
-            title: NSLocalizedString("New Tab Page", comment: "AI settings - Section title for new tab page options")
+            title: NSLocalizedString("settings.ai.newTabPage.sectionTitle", value: "New Tab Page", comment: "AI settings - Section title for new tab page options")
         ) {
             AIContainerView {
                 AIToggleRow(
-                    title: NSLocalizedString("Show proactive suggestions on the new tab page", comment: "AI settings - Toggle to show proactive suggestions on the new tab page"),
+                    title: NSLocalizedString("settings.ai.newTabPage.proactiveSuggestionsToggle", value: "Show proactive suggestions on the new tab page", comment: "AI settings - Toggle to show proactive suggestions on the new tab page"),
                     isOn: $enableProactiveSuggestionsOnNTP,
                     enabled: enabled
                 )
@@ -198,11 +198,11 @@ private struct AISidebarSectionView: View {
 
     var body: some View {
         AISectionView(
-            title: NSLocalizedString("AI Sidebar", comment: "AI settings - Section title for AI sidebar options")
+            title: NSLocalizedString("settings.ai.sidebar.sectionTitle", value: "AI Sidebar", comment: "AI settings - Section title for AI sidebar options")
         ) {
             AIContainerView {
                 AIToggleRow(
-                    title: NSLocalizedString("Automatically add current tab as context to new conversation", comment: "AI settings - Toggle to auto-add current tab as context when starting new AI conversation"),
+                    title: NSLocalizedString("settings.ai.sidebar.includeCurrentTabToggle", value: "Automatically add current tab as context to new conversation", comment: "AI settings - Toggle to auto-add current tab as context when starting new AI conversation"),
                     isOn: $enableChatWithTabs,
                     enabled: enabled
                 )
@@ -245,12 +245,12 @@ private struct ExternalConnectorsSectionView: View {
 
     var body: some View {
         AISectionView(
-            title: NSLocalizedString("External Data Connectors", comment: "AI settings - Section title for external data connectors"),
-            subtitle: NSLocalizedString("External Data Connectors help to provide additional context for better AI experience", comment: "AI settings - Description explaining external data connectors purpose")
+            title: NSLocalizedString("settings.ai.connectors.sectionTitle", value: "External Data Connectors", comment: "AI settings - Section title for external data connectors"),
+            subtitle: NSLocalizedString("settings.ai.connectors.description", value: "External Data Connectors help to provide additional context for better AI experience", comment: "AI settings - Description explaining external data connectors purpose")
         ) {
             AIContainerView {
                 AIToggleRow(
-                    title: NSLocalizedString("Enable External Data Connectors", comment: "AI settings - Toggle to enable external data connectors"),
+                    title: NSLocalizedString("settings.ai.connectors.enableToggle", value: "Enable External Data Connectors", comment: "AI settings - Toggle to enable external data connectors"),
                     isOn: connectorsEnabledBinding,
                     enabled: enabled
                 )
@@ -258,7 +258,7 @@ private struct ExternalConnectorsSectionView: View {
                 Divider()
 
                 AIToggleRow(
-                    title: NSLocalizedString("Automatically add External Data Connectors as context to new conversation", comment: "AI settings - Toggle to auto-add connector data as context to new AI conversation"),
+                    title: NSLocalizedString("settings.ai.connectors.includeInNewConversationToggle", value: "Automatically add External Data Connectors as context to new conversation", comment: "AI settings - Toggle to auto-add connector data as context to new AI conversation"),
                     isOn: $enableConnectorContext,
                     enabled: subItemsEnabled
                 )
@@ -278,20 +278,20 @@ private struct ExternalConnectorsSectionView: View {
             notifyNativeSettingsChanged()
         }
         .alert(
-            NSLocalizedString("Turn Off Connectors?",
+            NSLocalizedString("settings.ai.disableConnectors.title", value: "Turn Off Connectors?",
                               comment: "AI settings - Confirmation alert title when disabling external data connectors"),
             isPresented: $showDisableConnectorsAlert
         ) {
-            Button(NSLocalizedString("Turn Off",
+            Button(NSLocalizedString("settings.ai.disableConnectors.confirmButton", value: "Turn Off",
                                      comment: "AI settings - Destructive button to confirm turning off connectors"),
                    role: .destructive) {
                 enableConnectors = false
             }
-            Button(NSLocalizedString("Cancel",
+            Button(NSLocalizedString("settings.ai.disableConnectors.cancelButton", value: "Cancel",
                                      comment: "AI settings - Cancel button in disable-connectors confirmation alert"),
                    role: .cancel) {}
         } message: {
-            Text(NSLocalizedString("All connected Connectors will be disconnected.",
+            Text(NSLocalizedString("settings.ai.disableConnectors.message", value: "All connected Connectors will be disconnected.",
                                    comment: "AI settings - Alert message explaining consequences of disabling connectors"))
         }
     }
@@ -305,7 +305,7 @@ private struct ConnectorsListView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(NSLocalizedString("External Data Connectors", comment: "AI settings - Sub-section title for connectors list within the container"))
+            Text(NSLocalizedString("settings.ai.connectors.listSectionTitle", value: "External Data Connectors", comment: "AI settings - Sub-section title for connectors list within the container"))
                 .font(.system(size: 13))
                 .themedForeground(.textPrimary)
 
@@ -392,7 +392,7 @@ private struct ConnectorRowView: View {
                         .font(.system(size: 11))
                         .themedForeground(.textTertiary)
                 } else {
-                    Text(NSLocalizedString("Not connected", comment: "AI settings - Connector row status text when not connected"))
+                    Text(NSLocalizedString("settings.ai.connectors.notConnectedRowStatus", value: "Not connected", comment: "AI settings - Connector row status text when not connected"))
                         .font(.system(size: 11))
                         .themedForeground(.textTertiary)
                 }
@@ -443,7 +443,7 @@ private struct ConnectorRowView: View {
         }
         .buttonStyle(.bordered)
         .controlSize(.small)
-        .help(NSLocalizedString("Refresh connector status", comment: "AI settings - Tooltip for refreshing connector status"))
+        .help(NSLocalizedString("settings.ai.connectors.refreshButtonTooltip", value: "Refresh connector status", comment: "AI settings - Tooltip for refreshing connector status"))
         .disabled(!enabled || (connector.isLoading && !connector.isAuthorizationPending))
     }
 }
@@ -452,7 +452,7 @@ private struct ConnectorRowView: View {
 
 private struct ConnectorStatusBadge: View {
     var body: some View {
-        Text(NSLocalizedString("Connected", comment: "AI settings - Badge text when connector is successfully connected"))
+        Text(NSLocalizedString("settings.ai.connectors.connectedStatus", value: "Connected", comment: "AI settings - Badge text when connector is successfully connected"))
             .font(.system(size: 11, weight: .medium))
             .foregroundStyle(Color(red: 0.004, green: 0.4, blue: 0.19))
             .padding(.horizontal, 4)

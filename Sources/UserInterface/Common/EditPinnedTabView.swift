@@ -65,8 +65,7 @@ private struct FaviconView: View {
 
     var body: some View {
         let placeholderLabel = Text(
-            NSLocalizedString(
-                "Website",
+            NSLocalizedString("common.pinnedTabEditor.faviconPlaceholderAccessibilityLabel", value: "Website",
                 comment: "Pinned tab URL editor - Accessibility description for placeholder favicon"
             )
         )
@@ -431,35 +430,29 @@ struct EditPinnedTabView: View {
     private var headerTitle: String {
         switch mode {
         case .folder:
-            return NSLocalizedString(
-                "Edit Folder",
+            return NSLocalizedString("common.folderEditor.editTitle", value: "Edit Folder",
                 comment: "Folder editor - Title of the sheet to edit a folder"
             )
         case .newFolder:
-            return NSLocalizedString(
-                "New Folder",
+            return NSLocalizedString("common.folderEditor.createTitle", value: "New Folder",
                 comment: "Folder creator - Title of the sheet to create a new folder"
             )
         case .bookmark, .editOrMoveBookmark:
             if isSplitBookmark {
-                return NSLocalizedString(
-                    "Edit Split Bookmark",
+                return NSLocalizedString("common.bookmarkEditor.editSplitTitle", value: "Edit Split Bookmark",
                     comment: "Bookmark editor - Title of the sheet when editing a split-view bookmark"
                 )
             }
-            return NSLocalizedString(
-                "Edit Bookmark",
+            return NSLocalizedString("common.bookmarkEditor.editTitle", value: "Edit Bookmark",
                 comment: "Bookmark editor - Title of the sheet to edit a bookmark"
             )
         case .pin:
             if isSplitBookmark {
-                return NSLocalizedString(
-                    "Edit Pinned Split",
+                return NSLocalizedString("common.pinnedTabEditor.editSplitTitle", value: "Edit Pinned Split",
                     comment: "Favorite editor - Title of the sheet to edit a pinned split-view tab"
                 )
             }
-            return NSLocalizedString(
-                "Edit Pinned Tab",
+            return NSLocalizedString("common.pinnedTabEditor.editTitle", value: "Edit Pinned Tab",
                 comment: "Favorite editor - Title of the sheet to edit a pin"
             )
         }
@@ -468,35 +461,29 @@ struct EditPinnedTabView: View {
     private var headerSubtitle: String {
         switch mode {
         case .folder:
-            return NSLocalizedString(
-                "Give this folder a name to organize your bookmarks.",
+            return NSLocalizedString("common.folderEditor.editSubtitle", value: "Give this folder a name to organize your bookmarks.",
                 comment: "Folder editor - Subtitle explaining folder naming"
             )
         case .newFolder:
-            return NSLocalizedString(
-                "Create a new folder to organize your bookmarks.",
+            return NSLocalizedString("common.folderEditor.createSubtitle", value: "Create a new folder to organize your bookmarks.",
                 comment: "Folder creator - Subtitle explaining new folder creation"
             )
         case .bookmark, .editOrMoveBookmark:
             if isSplitBookmark {
-                return NSLocalizedString(
-                    "Edit the name and both addresses for this split-view bookmark.",
+                return NSLocalizedString("common.bookmarkEditor.editSplitSubtitle", value: "Edit the name and both addresses for this split-view bookmark.",
                     comment: "Bookmark editor - Subtitle explaining split-view bookmark editing"
                 )
             }
-            return NSLocalizedString(
-                "Edit the name and address for this bookmark.",
+            return NSLocalizedString("common.bookmarkEditor.editSubtitle", value: "Edit the name and address for this bookmark.",
                 comment: "Bookmark editor - Subtitle explaining bookmark editing"
             )
         case .pin:
             if isSplitBookmark {
-                return NSLocalizedString(
-                    "Edit the names and addresses for both panes of this pinned split.",
+                return NSLocalizedString("common.pinnedTabEditor.editSplitSubtitle", value: "Edit the names and addresses for both panes of this pinned split.",
                     comment: "Pinned tab editor - Subtitle explaining pinned split editing"
                 )
             }
-            return NSLocalizedString(
-                "Edit the name and address for this pinned tab.",
+            return NSLocalizedString("common.pinnedTabEditor.editSubtitle", value: "Edit the name and address for this pinned tab.",
                 comment: "Pinned tab editor - Subtitle explaining pinned tab editing"
             )
         }
@@ -533,8 +520,7 @@ struct EditPinnedTabView: View {
                         "",
                         text: $urlString,
                         prompt: Text(
-                            NSLocalizedString(
-                                "https://example.com",
+                            NSLocalizedString("common.editor.urlField.placeholder", value: "https://example.com",
                                 comment: "Editor - Placeholder example URL in text field"
                             )
                         )
@@ -547,8 +533,7 @@ struct EditPinnedTabView: View {
             if isSplitBookmark, mode == .bookmark || mode == .editOrMoveBookmark || mode == .pin {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(
-                        NSLocalizedString(
-                            "Right Name",
+                        NSLocalizedString("common.bookmarkEditor.secondaryNameField.label", value: "Right Name",
                             comment: "Bookmark editor - Label for the right (secondary) title input field on a split-view bookmark"
                         )
                     )
@@ -559,8 +544,7 @@ struct EditPinnedTabView: View {
                         "",
                         text: $secondaryTitleString,
                         prompt: Text(
-                            NSLocalizedString(
-                                "Bookmark Name",
+                            NSLocalizedString("common.bookmarkEditor.secondaryNameField.placeholder", value: "Bookmark Name",
                                 comment: "Bookmark editor - Placeholder for bookmark name input"
                             )
                         )
@@ -571,8 +555,7 @@ struct EditPinnedTabView: View {
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text(
-                        NSLocalizedString(
-                            "Right URL",
+                        NSLocalizedString("common.bookmarkEditor.secondaryURLField.label", value: "Right URL",
                             comment: "Bookmark editor - Label for the right (secondary) URL input field on a split-view bookmark"
                         )
                     )
@@ -583,8 +566,7 @@ struct EditPinnedTabView: View {
                         "",
                         text: $secondaryUrlString,
                         prompt: Text(
-                            NSLocalizedString(
-                                "https://example.com",
+                            NSLocalizedString("common.bookmarkEditor.secondaryURLField.placeholder", value: "https://example.com",
                                 comment: "Editor - Placeholder example URL in text field"
                             )
                         )
@@ -597,8 +579,7 @@ struct EditPinnedTabView: View {
             if mode == .bookmark || mode == .editOrMoveBookmark {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(
-                        NSLocalizedString(
-                            "Folder",
+                        NSLocalizedString("common.bookmarkEditor.folderPicker.label", value: "Folder",
                             comment: "Bookmark editor - Label for the folder picker"
                         )
                     )
@@ -621,26 +602,22 @@ struct EditPinnedTabView: View {
 
     private var primaryUrlFieldLabel: String {
         if isSplitBookmark {
-            return NSLocalizedString(
-                "Left URL",
+            return NSLocalizedString("common.bookmarkEditor.primaryURLField.label", value: "Left URL",
                 comment: "Bookmark editor - Label for the left (primary) URL input field on a split-view bookmark"
             )
         }
-        return NSLocalizedString(
-            "URL",
+        return NSLocalizedString("common.editor.urlField.label", value: "URL",
             comment: "Editor - Label for the URL input field"
         )
     }
 
     private var primaryNameFieldLabel: String {
         if isSplitBookmark {
-            return NSLocalizedString(
-                "Left Name",
+            return NSLocalizedString("common.bookmarkEditor.primaryNameField.label", value: "Left Name",
                 comment: "Bookmark editor - Label for the left (primary) title input field on a split-view bookmark"
             )
         }
-        return NSLocalizedString(
-            "Name",
+        return NSLocalizedString("common.editor.nameField.label", value: "Name",
             comment: "Editor - Label for the title/name input field"
         )
     }
@@ -648,18 +625,15 @@ struct EditPinnedTabView: View {
     private var titlePlaceholder: String {
         switch mode {
         case .folder, .newFolder:
-            return NSLocalizedString(
-                "Folder Name",
+            return NSLocalizedString("common.folderEditor.nameField.placeholder", value: "Folder Name",
                 comment: "Folder editor - Placeholder for folder name input"
             )
         case .bookmark, .editOrMoveBookmark:
-            return NSLocalizedString(
-                "Bookmark Name",
+            return NSLocalizedString("common.bookmarkEditor.nameField.placeholder", value: "Bookmark Name",
                 comment: "Bookmark editor - Placeholder for bookmark name input"
             )
         case .pin:
-            return NSLocalizedString(
-                "Tab Name",
+            return NSLocalizedString("common.pinnedTabEditor.nameField.placeholder", value: "Tab Name",
                 comment: "Pinned tab editor - Placeholder for pinned tab name input"
             )
         }
@@ -683,14 +657,14 @@ struct EditPinnedTabView: View {
                 .opacity(0)
 
                 Button(
-                    NSLocalizedString("Remove", comment: "Bookmark editor - Remove bookmark button title (CMD+D toggle)")
+                    NSLocalizedString("common.bookmarkEditor.removeButton", value: "Remove", comment: "Bookmark editor - Remove bookmark button title (CMD+D toggle)")
                 ) {
                     onRemove?()
                     if dismissesOnAction { dismiss() }
                 }
             } else {
                 Button(
-                    NSLocalizedString("Cancel", comment: "Editor - Cancel button title")
+                    NSLocalizedString("common.editor.cancelButton", value: "Cancel", comment: "Editor - Cancel button title")
                 ) {
                     onCancel?()
                     if dismissesOnAction { dismiss() }
@@ -699,8 +673,7 @@ struct EditPinnedTabView: View {
             }
 
             Button(
-                NSLocalizedString(
-                    "Save",
+                NSLocalizedString("common.editor.saveButton", value: "Save",
                     comment: "Editor - Save button title"
                 )
             ) {
@@ -771,14 +744,12 @@ struct EditPinnedTabView: View {
                 .frame(width: 56, height: 56)
 
             VStack(alignment: .leading, spacing: 8) {
-                Text(NSLocalizedString(
-                    "New Folder",
+                Text(NSLocalizedString("common.bookmarkEditor.newFolder.title", value: "New Folder",
                     comment: "Bookmark editor - Inline new folder creation title"
                 ))
                 .font(.system(size: 22, weight: .semibold))
 
-                Text(NSLocalizedString(
-                    "Enter a name for the new folder.",
+                Text(NSLocalizedString("common.bookmarkEditor.newFolder.subtitle", value: "Enter a name for the new folder.",
                     comment: "Bookmark editor - Inline new folder creation subtitle"
                 ))
                 .foregroundStyle(.secondary)
@@ -792,8 +763,7 @@ struct EditPinnedTabView: View {
     @ViewBuilder
     private var newFolderInputSection: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(NSLocalizedString(
-                "Name",
+            Text(NSLocalizedString("common.bookmarkEditor.newFolder.nameField.label", value: "Name",
                 comment: "Editor - Label for the title/name input field"
             ))
             .font(.subheadline)
@@ -802,8 +772,7 @@ struct EditPinnedTabView: View {
             TextField(
                 "",
                 text: $newFolderName,
-                prompt: Text(NSLocalizedString(
-                    "Folder Name",
+                prompt: Text(NSLocalizedString("common.bookmarkEditor.newFolder.nameField.placeholder", value: "Folder Name",
                     comment: "Folder editor - Placeholder for folder name input"
                 ))
             )
@@ -817,13 +786,13 @@ struct EditPinnedTabView: View {
         HStack {
             Spacer()
 
-            Button(NSLocalizedString("Cancel", comment: "Editor - Cancel button title")) {
+            Button(NSLocalizedString("common.bookmarkEditor.newFolder.cancelButton", value: "Cancel", comment: "Editor - Cancel button title")) {
                 isCreatingFolder = false
                 newFolderName = ""
             }
             .keyboardShortcut(.cancelAction)
 
-            Button(NSLocalizedString("Save", comment: "Editor - Save button title")) {
+            Button(NSLocalizedString("common.bookmarkEditor.newFolder.saveButton", value: "Save", comment: "Editor - Save button title")) {
                 let name = newFolderName.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !name.isEmpty else { return }
                 let folderGuid = onCreateFolder?(name)
@@ -930,8 +899,7 @@ private struct FolderPopUpButton: NSViewRepresentable {
         let previousSelection = selectedGuid ?? rootGuid
         button.removeAllItems()
 
-        let bookmarksBarTitle = NSLocalizedString(
-            "Bookmarks Bar",
+        let bookmarksBarTitle = NSLocalizedString("common.bookmarkEditor.folderPicker.rootFolderName", value: "Bookmarks Bar",
             comment: "Bookmark editor - Root bookmark folder display name in folder picker"
         )
         let menu = button.menu ?? NSMenu()
@@ -950,7 +918,7 @@ private struct FolderPopUpButton: NSViewRepresentable {
 
         menu.addItem(.separator())
         let newFolderItem = NSMenuItem(
-            title: NSLocalizedString("New Folder…", comment: "Bookmark editor - Create new folder option in folder picker"),
+            title: NSLocalizedString("common.bookmarkEditor.folderPicker.newFolderAction", value: "New Folder…", comment: "Bookmark editor - Create new folder option in folder picker"),
             action: nil,
             keyEquivalent: ""
         )

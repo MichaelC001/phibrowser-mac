@@ -24,11 +24,11 @@ enum LayoutMode: String, CaseIterable, Identifiable {
     var displayName: String {
         switch self {
         case .performance:
-            return NSLocalizedString("Performance", comment: "Layout option - Vertical tabs with address bar at side bar")
+            return NSLocalizedString("settings.general.layoutMode.performanceOption", value: "Performance", comment: "Layout option - Vertical tabs with address bar at side bar")
         case .balanced:
-            return NSLocalizedString("Balanced", comment: "Layout option - Vertical tabs with address bar at the top of webcontent")
+            return NSLocalizedString("settings.general.layoutMode.balancedOption", value: "Balanced", comment: "Layout option - Vertical tabs with address bar at the top of webcontent")
         case .comfortable:
-            return NSLocalizedString("Comfortable", comment: "Layout option - Horizontal tabs")
+            return NSLocalizedString("settings.general.layoutMode.comfortableOption", value: "Comfortable", comment: "Layout option - Horizontal tabs")
         }
     }
 
@@ -50,11 +50,11 @@ enum AutoPictureInPictureMode: String, CaseIterable, Identifiable {
     var displayName: String {
         switch self {
         case .off:
-            return NSLocalizedString("Off", comment: "Auto picture-in-picture option - never pop out automatically; manual picture-in-picture is unaffected")
+            return NSLocalizedString("settings.general.pictureInPicture.offOption", value: "Off", comment: "Auto picture-in-picture option - never pop out automatically; manual picture-in-picture is unaffected")
         case .normal:
-            return NSLocalizedString("Normal", comment: "Auto picture-in-picture option - pop out and stay in place")
+            return NSLocalizedString("settings.general.pictureInPicture.normalOption", value: "Normal", comment: "Auto picture-in-picture option - pop out and stay in place")
         case .parked:
-            return NSLocalizedString("Park at edge", comment: "Auto picture-in-picture option - pop out, then park at the screen edge until clicked")
+            return NSLocalizedString("settings.general.pictureInPicture.parkAtEdgeOption", value: "Park at edge", comment: "Auto picture-in-picture option - pop out, then park at the screen edge until clicked")
         }
     }
 }

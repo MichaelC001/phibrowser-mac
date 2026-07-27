@@ -68,13 +68,13 @@ final class WebContentAddressBarMenuPresenter {
         }
 
         func buildShareSubmenu(urlString: String?) -> NSMenu {
-            let submenu = NSMenu(title: NSLocalizedString("Share", comment: "Address bar menu - Share submenu title"))
+            let submenu = NSMenu(title: NSLocalizedString("browser.addressBarMenu.shareSubmenu.title", value: "Share", comment: "Address bar menu - Share submenu title"))
             guard
                 let urlString,
                 let url = URL(string: urlString)
             else {
                 let unavailableItem = NSMenuItem(
-                    title: NSLocalizedString("No share actions available", comment: "Address bar menu - Empty share submenu item"),
+                    title: NSLocalizedString("browser.addressBarMenu.shareSubmenu.invalidURLPlaceholder", value: "No share actions available", comment: "Address bar menu - Placeholder when the current URL cannot be shared"),
                     action: nil,
                     keyEquivalent: ""
                 )
@@ -87,7 +87,7 @@ final class WebContentAddressBarMenuPresenter {
                 .filter { !isReadingListSharingService($0) }
             if services.isEmpty {
                 let unavailableItem = NSMenuItem(
-                    title: NSLocalizedString("No share actions available", comment: "Address bar menu - Empty share submenu item"),
+                    title: NSLocalizedString("browser.addressBarMenu.shareSubmenu.noServicesPlaceholder", value: "No share actions available", comment: "Address bar menu - Placeholder when no sharing services are available"),
                     action: nil,
                     keyEquivalent: ""
                 )
@@ -113,12 +113,12 @@ final class WebContentAddressBarMenuPresenter {
         
         @MainActor
         func buildExtensionsSubmenu() -> NSMenu {
-            let submenu = NSMenu(title: NSLocalizedString("Extensions", comment: "Address bar menu - Extensions submenu title"))
+            let submenu = NSMenu(title: NSLocalizedString("browser.addressBarMenu.extensionsSubmenu.title", value: "Extensions", comment: "Address bar menu - Extensions submenu title"))
             let extensions = extensionManager?.extensions ?? []
 
             if extensions.isEmpty {
                 let emptyItem = NSMenuItem(
-                    title: NSLocalizedString("No extensions found", comment: "Address bar menu - Empty extension submenu item"),
+                    title: NSLocalizedString("browser.addressBarMenu.extensionsSubmenu.emptyPlaceholder", value: "No extensions found", comment: "Address bar menu - Empty extension submenu item"),
                     action: nil,
                     keyEquivalent: ""
                 )
@@ -145,7 +145,7 @@ final class WebContentAddressBarMenuPresenter {
 
             submenu.addItem(.separator())
             let manageItem = NSMenuItem(
-                title: NSLocalizedString("Manage Extensions", comment: "Address bar menu - Extensions submenu item to open extension management"),
+                title: NSLocalizedString("browser.addressBarMenu.manageExtensionsAction", value: "Manage Extensions", comment: "Address bar menu - Extensions submenu item to open extension management"),
                 action: nil,
                 keyEquivalent: ""
             )
@@ -162,11 +162,11 @@ final class WebContentAddressBarMenuPresenter {
         }
 
         func buildSettingsSubmenu(_ url: String?) -> NSMenu {
-            let submenu = NSMenu(title: NSLocalizedString("Site Settings", comment: "Address bar menu - Settings submenu title"))
+            let submenu = NSMenu(title: NSLocalizedString("browser.addressBarMenu.siteSettingsSubmenu.title", value: "Site Settings", comment: "Address bar menu - Settings submenu title"))
 
             let windowId = browserState?.windowId ?? 0
             let clearCacheItem = NSMenuItem(
-                title: NSLocalizedString("Clear Cache", comment: "Address bar menu - Settings submenu item to clear cache"),
+                title: NSLocalizedString("browser.addressBarMenu.clearCacheAction", value: "Clear Cache", comment: "Address bar menu - Settings submenu item to clear cache"),
                 action: nil,
                 keyEquivalent: ""
             )
@@ -182,7 +182,7 @@ final class WebContentAddressBarMenuPresenter {
             submenu.addItem(clearCacheItem)
 
             let clearCookieItem = NSMenuItem(
-                title: NSLocalizedString("Clear Cookie", comment: "Address bar menu - Settings submenu item to clear cookie"),
+                title: NSLocalizedString("browser.addressBarMenu.clearCookiesAction", value: "Clear Cookie", comment: "Address bar menu - Settings submenu item to clear cookie"),
                 action: nil,
                 keyEquivalent: ""
             )
@@ -200,7 +200,7 @@ final class WebContentAddressBarMenuPresenter {
             submenu.addItem(.separator())
             
             let moreSettingsItem = NSMenuItem(
-                title: NSLocalizedString("More Settings", comment: "Address bar menu - Settings submenu item to open settings page"),
+                title: NSLocalizedString("browser.addressBarMenu.openBrowserSettingsAction", value: "More Settings", comment: "Address bar menu - Settings submenu item to open settings page"),
                 action: nil,
                 keyEquivalent: ""
             )
@@ -219,7 +219,7 @@ final class WebContentAddressBarMenuPresenter {
         menu.addItem(.separator())
 
         let settingsItem = addMenuItem(
-            title: NSLocalizedString("Site Settings", comment: "Address bar menu - Settings menu item"),
+            title: NSLocalizedString("browser.addressBarMenu.siteSettingsAction", value: "Site Settings", comment: "Address bar menu - Settings menu item"),
             image: menuSymbol(named: "gearshape")
         )
         settingsItem.submenu = buildSettingsSubmenu(rawURLString)
@@ -228,7 +228,7 @@ final class WebContentAddressBarMenuPresenter {
 
         let alwaysShowURLPath = PhiPreferences.GeneralSettings.alwaysShowURLPath.loadValue()
         addMenuItem(
-            title: NSLocalizedString("Always Show URL Path", comment: "Address bar menu - Toggle URL path visibility"),
+            title: NSLocalizedString("browser.addressBarMenu.showFullURLToggle", value: "Always Show URL Path", comment: "Address bar menu - Toggle URL path visibility"),
             state: alwaysShowURLPath ? .on : .off
         ) {
             UserDefaults.standard.set(
@@ -269,20 +269,20 @@ final class WebContentAddressBarMenuPresenter {
 
     private static func securityStatusText(from info: TabSecurityInfo?) -> String {
         guard let info else {
-            return NSLocalizedString("Unknown", comment: "Address bar menu - Website security unknown")
+            return NSLocalizedString("browser.addressBarMenu.security.unknownStatus", value: "Unknown", comment: "Address bar menu - Website security unknown")
         }
         guard let isSecure = info.isSecure else {
-            return NSLocalizedString("Connection is not fully secure", comment: "Address bar menu - Website security not fully secure")
+            return NSLocalizedString("browser.addressBarMenu.security.partiallySecureStatus", value: "Connection is not fully secure", comment: "Address bar menu - Website security not fully secure")
         }
         return isSecure
-            ? NSLocalizedString("Connection is secure", comment: "Address bar menu - Website security secure")
-            : NSLocalizedString("Connection is not secure", comment: "Address bar menu - Website security not secure")
+            ? NSLocalizedString("browser.addressBarMenu.security.secureStatus", value: "Connection is secure", comment: "Address bar menu - Website security secure")
+            : NSLocalizedString("browser.addressBarMenu.security.notSecureStatus", value: "Connection is not secure", comment: "Address bar menu - Website security not secure")
     }
 
     private static func certificateStatusText(from info: TabSecurityInfo?) -> String {
         return certificateIsValid(from: info)
-            ? NSLocalizedString("Certificate is valid", comment: "Address bar menu - Certificate validity status")
-            : NSLocalizedString("Certificate is invalid", comment: "Address bar menu - Certificate validity status")
+            ? NSLocalizedString("browser.addressBarMenu.security.validCertificateStatus", value: "Certificate is valid", comment: "Address bar menu - Certificate validity status")
+            : NSLocalizedString("browser.addressBarMenu.security.invalidCertificateStatus", value: "Certificate is invalid", comment: "Address bar menu - Certificate validity status")
     }
 
     private static func certificateIsValid(from info: TabSecurityInfo?) -> Bool {

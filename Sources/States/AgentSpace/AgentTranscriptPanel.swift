@@ -34,14 +34,11 @@ enum AgentTranscriptPlacement: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .right:
-            return NSLocalizedString(
-                "Dock to Right", comment: "Agent console placement - right sidebar")
+            return NSLocalizedString("agent.transcript.placement.rightSidebar", value: "Dock to Right", comment: "Agent console placement - right sidebar")
         case .bottom:
-            return NSLocalizedString(
-                "Dock to Bottom", comment: "Agent console placement - bottom dock")
+            return NSLocalizedString("agent.transcript.placement.bottomDock", value: "Dock to Bottom", comment: "Agent console placement - bottom dock")
         case .window:
-            return NSLocalizedString(
-                "Separate Window", comment: "Agent console placement - standalone window")
+            return NSLocalizedString("agent.transcript.placement.separateWindow", value: "Separate Window", comment: "Agent console placement - standalone window")
         }
     }
 
@@ -196,8 +193,7 @@ final class AgentTranscriptPanelController: NSObject {
             contentRect: NSRect(x: 0, y: 0, width: 460, height: 560),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered, defer: false)
-        window.title = NSLocalizedString(
-            "Agent Transcript", comment: "Agent console panel - window title")
+        window.title = NSLocalizedString("agent.transcript.windowTitle", value: "Agent Transcript", comment: "Agent console panel - window title")
         window.isReleasedWhenClosed = false
         window.contentMinSize = NSSize(width: 320, height: 300)
         window.contentView = sharedHostingView()
@@ -827,8 +823,7 @@ struct AgentTranscriptPanelView: View {
                 Button {
                     model.taskFilter = nil
                 } label: {
-                    Label(NSLocalizedString(
-                        "All tasks", comment: "Agent console - feed filter: every task"),
+                    Label(NSLocalizedString("agent.transcript.feedFilter.allTasksMenuOption", value: "All tasks", comment: "Agent transcript - Menu option that shows every task"),
                           systemImage: "list.bullet")
                 }
                 ForEach(filterChoices, id: \.taskId) { choice in
@@ -872,8 +867,7 @@ struct AgentTranscriptPanelView: View {
             }
             .buttonStyle(.plain)
             .disabled(entries.isEmpty)
-            .help(NSLocalizedString(
-                "Copy transcript", comment: "Agent console - copy the visible feed as text"))
+            .help(NSLocalizedString("agent.transcript.copyButtonTooltip", value: "Copy transcript", comment: "Agent console - copy the visible feed as text"))
 
             Button {
                 if let filter = model.taskFilter {
@@ -885,7 +879,7 @@ struct AgentTranscriptPanelView: View {
                 headerIcon("trash")
             }
             .buttonStyle(.plain)
-            .help(NSLocalizedString("Clear", comment: "Agent console - clear the feed"))
+            .help(NSLocalizedString("agent.transcript.clearButtonTooltip", value: "Clear", comment: "Agent console - clear the feed"))
 
             // DevTools-style placement switcher: dock right/bottom, float,
             // or break out into a separate window.
@@ -955,12 +949,10 @@ struct AgentTranscriptPanelView: View {
 
     private var statusPillLabel: String {
         guard runningCount > 0 else {
-            return NSLocalizedString(
-                "idle", comment: "Agent console - status pill when no task is actively running")
+            return NSLocalizedString("agent.transcript.status.idle", value: "idle", comment: "Agent console - status pill when no task is actively running")
         }
         return String(
-            format: NSLocalizedString(
-                "%d running",
+            format: NSLocalizedString("agent.transcript.status.runningTaskCount", value: "%d running",
                 comment: "Agent console - status pill with the actively running task count"),
             runningCount)
     }
@@ -986,8 +978,7 @@ struct AgentTranscriptPanelView: View {
 
     private var filterLabel: String {
         guard let filter = model.taskFilter else {
-            return NSLocalizedString(
-                "All tasks", comment: "Agent console - feed filter: every task")
+            return NSLocalizedString("agent.transcript.feedFilter.allTasksLabel", value: "All tasks", comment: "Agent transcript - Current filter label when every task is shown")
         }
         return taskLabel(filter)
     }
@@ -996,8 +987,7 @@ struct AgentTranscriptPanelView: View {
         if let task = liveTasks[taskId] {
             return "\(AgentSpaceManager.agentSpaceName(task.number)) · \(taskId)"
         }
-        return taskId + NSLocalizedString(
-            " · ended", comment: "Agent console - filter label suffix for a finished task")
+        return taskId + NSLocalizedString("agent.transcript.taskFilter.finishedSuffix", value: " · ended", comment: "Agent console - filter label suffix for a finished task")
     }
 
     /// The driving-agent badge for a task. Ended tasks (no live record) keep
@@ -1032,12 +1022,10 @@ struct AgentTranscriptPanelView: View {
 
     private var runningSummary: String {
         guard !liveTasks.isEmpty else {
-            return NSLocalizedString(
-                "no active tasks", comment: "Agent console - footer with no live agent task")
+            return NSLocalizedString("agent.transcript.footer.noActiveTasks", value: "no active tasks", comment: "Agent console - footer with no live agent task")
         }
         return String(
-            format: NSLocalizedString(
-                "%d live · %d running",
+            format: NSLocalizedString("agent.transcript.footer.liveAndRunningCount", value: "%d live · %d running",
                 comment: "Agent console - live vs actively running agent task counts"),
             liveTasks.count, runningCount)
     }
@@ -1367,8 +1355,7 @@ struct AgentTranscriptPanelView: View {
                         Image(systemName: "sparkles")
                             .font(.system(size: 18))
                             .foregroundStyle(Palette.faint)
-                        Text(NSLocalizedString(
-                            "Nothing yet — agent activity appears here live.",
+                        Text(NSLocalizedString("agent.transcript.feed.emptyPlaceholder", value: "Nothing yet — agent activity appears here live.",
                             comment: "Agent console - empty feed placeholder"))
                             .font(Palette.fontUISmall)
                             .foregroundStyle(Palette.faint)
@@ -1673,8 +1660,7 @@ struct AgentTranscriptPanelView: View {
                                   lineWidth: 1)
             )
             if let target = promptTarget, target.status != .running {
-                Text(NSLocalizedString(
-                    "agent idle — command starts or queues its next round",
+                Text(NSLocalizedString("agent.transcript.commandInput.idleAgentHint", value: "agent idle — command starts or queues its next round",
                     comment: "Agent console - hint for sending a command to an idle agent"))
                     .font(Palette.fontUISmall)
                     .foregroundStyle(Palette.faint)
@@ -1688,12 +1674,10 @@ struct AgentTranscriptPanelView: View {
 
     private var promptPlaceholder: String {
         guard let target = promptTarget else {
-            return NSLocalizedString(
-                "No active agent task", comment: "Agent console - prompt disabled placeholder")
+            return NSLocalizedString("agent.transcript.commandInput.noActiveTaskPlaceholder", value: "No active agent task", comment: "Agent console - prompt disabled placeholder")
         }
         return String(
-            format: NSLocalizedString(
-                "Message the agent (→ %@)",
+            format: NSLocalizedString("agent.transcript.commandInput.targetSpacePlaceholder", value: "Message the agent (→ %@)",
                 comment: "Agent console - prompt placeholder naming the target task's Space"),
             AgentSpaceManager.agentSpaceName(target.number))
     }

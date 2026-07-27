@@ -1187,8 +1187,7 @@ final class BroomButton: NSButton {
         animationView.snp.makeConstraints { make in
             make.edges.equalToSuperview()
         }
-        toolTip = NSLocalizedString(
-            "Organize tabs with AI",
+        toolTip = NSLocalizedString("sidebar.newTabRow.aiOrganizeTooltip", value: "Organize tabs with AI",
             comment: "side bar new tab row - organize tabs button tooltip")
         updateAppearance()
         NotificationCenter.default.addObserver(
@@ -1338,7 +1337,7 @@ class NewTabButtonCellView: SidebarCellView {
     }()
     
     private var titleLabel: NSTextField = {
-        let titleLabel = NSTextField(labelWithString: NSLocalizedString("New Tab", comment: "side bar new tab button text"))
+        let titleLabel = NSTextField(labelWithString: NSLocalizedString("sidebar.newTabRow.title", value: "New Tab", comment: "side bar new tab button text"))
         titleLabel.font = NSFont.systemFont(ofSize: 13)
         titleLabel.phi.setTextColor(.textTertiary)
         return titleLabel

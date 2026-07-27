@@ -142,17 +142,17 @@ struct HeaderTrailingArea: View {
     private func resolveLayout(for width: CGFloat) -> LayoutConfig {
         let feedbackMenuItem = MoreMenuItem(
             id: "feedback",
-            title: NSLocalizedString("Feedback", comment: "Header more menu - Feedback action"),
+            title: NSLocalizedString("browser.headerMoreMenu.feedbackAction", value: "Feedback", comment: "Header more menu - Feedback action"),
             image: Image(.sidebarFeedback)
         )
         let downloadMenuItem = MoreMenuItem(
             id: "download",
-            title: NSLocalizedString("Downloads", comment: "Header more menu - Downloads action"),
+            title: NSLocalizedString("browser.headerMoreMenu.downloadsAction", value: "Downloads", comment: "Header more menu - Downloads action"),
             systemImage: "arrow.down.circle"
         )
         let memoryMenuItem = MoreMenuItem(
             id: "memory",
-            title: NSLocalizedString("Browser Memory", comment: "Header more menu - AI memory"),
+            title: NSLocalizedString("browser.headerMoreMenu.memoryAction", value: "Browser Memory", comment: "Header more menu - AI memory"),
             image: Image(.memoryIcon).renderingMode(.original)
         )
 

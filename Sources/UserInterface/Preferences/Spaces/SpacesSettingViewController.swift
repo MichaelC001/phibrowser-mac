@@ -13,7 +13,7 @@ import SnapKit
 /// SwiftUI `SpacesSettingsView` hosted by `SpacesSettingHostingViewController`.
 class SpacesSettingViewController: NSViewController, SettingsPane {
     var paneIdentifier: Settings.PaneIdentifier = .spaces
-    var paneTitle: String = NSLocalizedString("Spaces", comment: "Settings - Tab title for profiles and spaces management")
+    var paneTitle: String = NSLocalizedString("settings.navigation.spacesTitle", value: "Spaces", comment: "Settings - Tab title for profiles and spaces management")
     var toolbarItemIcon: NSImage = NSImage(resource: .settingSpaceIcon)
     let hostingController = SpacesSettingHostingViewController()
 

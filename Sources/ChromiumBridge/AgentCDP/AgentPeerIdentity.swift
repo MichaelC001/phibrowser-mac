@@ -41,11 +41,11 @@ struct AgentIdentity: Equatable {
     /// Secondary line for the prompt, e.g. "Team 87DQ3HMK5G · verified".
     var detail: String {
         let trust = verified
-            ? NSLocalizedString("verified", comment: "CDP consent - signature verified")
-            : NSLocalizedString("unsigned", comment: "CDP consent - no valid signature")
+            ? NSLocalizedString("agentControl.connectionApproval.identity.verifiedStatus", value: "verified", comment: "CDP consent - signature verified")
+            : NSLocalizedString("agentControl.connectionApproval.identity.unsignedStatus", value: "unsigned", comment: "CDP consent - no valid signature")
         if let teamId, !teamId.isEmpty {
             return String(
-                format: NSLocalizedString("Team %@ · %@",
+                format: NSLocalizedString("agentControl.connectionApproval.identity.teamSummary", value: "Team %@ · %@",
                                           comment: "CDP consent - team and trust"),
                 teamId, trust)
         }
