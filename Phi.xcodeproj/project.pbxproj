@@ -14,8 +14,6 @@
 		3703C9822F69558C00E7CF6D /* BrowserState+ToggleAI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3703C9812F69558C00E7CF6D /* BrowserState+ToggleAI.swift */; };
 		3703C9842F6956E600E7CF6D /* SentinelHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3703C9832F6956E600E7CF6D /* SentinelHelper.swift */; };
 		3703C9862F6956E600E7CF6D /* SentinelVersionGuard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3703C9852F6956E600E7CF6D /* SentinelVersionGuard.swift */; };
-		3AC6117E11925E637EB4711A /* SentinelBackupCoordination.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11E8BEE1510290AB35D5C5AD /* SentinelBackupCoordination.swift */; };
-		F9E478A224C44EA7BC0D85CC /* AccountDeletedEventAuthentication.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19B477B37CF44BC48335A032 /* AccountDeletedEventAuthentication.swift */; };
 		370D03AC2F0E463B0087A1C9 /* Mapper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 370D03A32F0E463B0087A1C9 /* Mapper.swift */; };
 		370D03AD2F0E463B0087A1C9 /* ThemedColor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 370D03A82F0E463B0087A1C9 /* ThemedColor.swift */; };
 		370D03AE2F0E463B0087A1C9 /* Key.swift in Sources */ = {isa = PBXBuildFile; fileRef = 370D03A22F0E463B0087A1C9 /* Key.swift */; };
@@ -148,6 +146,7 @@
 		37FA01042FDA000100000004 /* LocalStoreCompatibilityController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37FA01142FDA000100000004 /* LocalStoreCompatibilityController.swift */; };
 		37FC8C922F335942004675B8 /* WebContentProgressBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37FC8C912F335942004675B8 /* WebContentProgressBarView.swift */; };
 		37FC8DAA2F39B2DE004675B8 /* LayoutModeSettingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37FC8DA92F39B2DE004675B8 /* LayoutModeSettingView.swift */; };
+		3AC6117E11925E637EB4711A /* SentinelBackupCoordination.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11E8BEE1510290AB35D5C5AD /* SentinelBackupCoordination.swift */; };
 		3BCDDE6FBABE4BD8A51F0127 /* TabGroupCellView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE7E61A49E8A472DB330779E /* TabGroupCellView.swift */; };
 		4508A9362EEFF2EB007C94E2 /* AccountWebWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4508A9352EEFF2EB007C94E2 /* AccountWebWindowController.swift */; };
 		4D454D4F5259000000000001 /* MemoryUsageModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D454D4F5259000000000002 /* MemoryUsageModels.swift */; };
@@ -299,6 +298,19 @@
 		B0F370CB2E43261A000B51F9 /* EventBus.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0F370CA2E43261A000B51F9 /* EventBus.swift */; };
 		B0F370D02E432CB8000B51F9 /* MainBrowserWindowController+Actions.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0F370CF2E432CB8000B51F9 /* MainBrowserWindowController+Actions.swift */; };
 		B0F370DA2E433F0E000B51F9 /* OverlayWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0F370D92E433F0E000B51F9 /* OverlayWindowController.swift */; };
+		B17DE0000000000000000005 /* CredentialProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17DE0000000000000000021 /* CredentialProvider.swift */; };
+		B17DE0000000000000000006 /* BitwardenService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17DE0000000000000000022 /* BitwardenService.swift */; };
+		B17DE0000000000000000008 /* PasswordManagerSectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17DE0000000000000000023 /* PasswordManagerSectionView.swift */; };
+		B17DE0000000000000000009 /* BitwardenLoginSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17DE0000000000000000024 /* BitwardenLoginSheet.swift */; };
+		B17DE000000000000000000B /* AgentSpaceRouter+Credentials.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17DE0000000000000000025 /* AgentSpaceRouter+Credentials.swift */; };
+		B17DE000000000000000000C /* CredentialAccessCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17DE0000000000000000026 /* CredentialAccessCoordinator.swift */; };
+		B17DE000000000000000000D /* CredentialAuditLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17DE0000000000000000027 /* CredentialAuditLog.swift */; };
+		B17DE0000000000000000031 /* BitwardenSessionSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17DE0000000000000000030 /* BitwardenSessionSettings.swift */; };
+		B17DE0000000000000000035 /* BitwardenSessionSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17DE0000000000000000034 /* BitwardenSessionSettingsView.swift */; };
+		B17DE00000000000000000E1 /* Vendor/PhiBitwardenHelper in Copy Bitwarden Helper */ = {isa = PBXBuildFile; fileRef = B17DE00000000000000000E0 /* Vendor/PhiBitwardenHelper */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+		B17DE00000000000000000E3 /* Vendor/PhiBitwardenHelper-LICENSE.txt in Copy Bitwarden GPL Notices */ = {isa = PBXBuildFile; fileRef = B17DE00000000000000000E5 /* Vendor/PhiBitwardenHelper-LICENSE.txt */; };
+		B17DE00000000000000000E4 /* Vendor/PhiBitwardenHelper-SOURCE-OFFER.txt in Copy Bitwarden GPL Notices */ = {isa = PBXBuildFile; fileRef = B17DE00000000000000000E6 /* Vendor/PhiBitwardenHelper-SOURCE-OFFER.txt */; };
+		B17DE0000000000000000B01 /* BitwardenSessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17DE0000000000000000B02 /* BitwardenSessionStore.swift */; };
 		C0D1D0022FEA000000000002 /* SidebarTabListViewController+MultiSelectionDragPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D1D0012FEA000000000001 /* SidebarTabListViewController+MultiSelectionDragPreview.swift */; };
 		C70000000000000000000011 /* CustomTooltipController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C70000000000000000000001 /* CustomTooltipController.swift */; };
 		C70000000000000000000012 /* CustomTooltip+Hosting.swift in Sources */ = {isa = PBXBuildFile; fileRef = C70000000000000000000002 /* CustomTooltip+Hosting.swift */; };
@@ -449,21 +461,9 @@
 		DEBE00000000000000000007 /* DeveloperSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEBE00000000000000000004 /* DeveloperSettingsView.swift */; };
 		F01D3A000000000000000001 /* bookmark-folder-open.svg in Resources */ = {isa = PBXBuildFile; fileRef = F01D3A000000000000000011 /* bookmark-folder-open.svg */; };
 		F01D3A000000000000000002 /* bookmark-folder-closed.svg in Resources */ = {isa = PBXBuildFile; fileRef = F01D3A000000000000000012 /* bookmark-folder-closed.svg */; };
+		F9E478A224C44EA7BC0D85CC /* AccountDeletedEventAuthentication.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19B477B37CF44BC48335A032 /* AccountDeletedEventAuthentication.swift */; };
 		FBD200012FD0000000000001 /* FeedbackOutbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBD200012FD0000000000002 /* FeedbackOutbox.swift */; };
 		FBD200012FD0000000000003 /* FeedbackV2.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBD200012FD0000000000004 /* FeedbackV2.swift */; };
-		B17DE0000000000000000005 /* CredentialProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17DE0000000000000000021 /* CredentialProvider.swift */; };
-		B17DE0000000000000000006 /* BitwardenService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17DE0000000000000000022 /* BitwardenService.swift */; };
-		B17DE0000000000000000031 /* BitwardenSessionSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17DE0000000000000000030 /* BitwardenSessionSettings.swift */; };
-		B17DE0000000000000000035 /* BitwardenSessionSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17DE0000000000000000034 /* BitwardenSessionSettingsView.swift */; };
-		B17DE0000000000000000008 /* PasswordManagerSectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17DE0000000000000000023 /* PasswordManagerSectionView.swift */; };
-		B17DE0000000000000000009 /* BitwardenLoginSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17DE0000000000000000024 /* BitwardenLoginSheet.swift */; };
-		B17DE000000000000000000B /* AgentSpaceRouter+Credentials.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17DE0000000000000000025 /* AgentSpaceRouter+Credentials.swift */; };
-		B17DE000000000000000000C /* CredentialAccessCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17DE0000000000000000026 /* CredentialAccessCoordinator.swift */; };
-		B17DE000000000000000000D /* CredentialAuditLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17DE0000000000000000027 /* CredentialAuditLog.swift */; };
-		B17DE0000000000000000B01 /* BitwardenSessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17DE0000000000000000B02 /* BitwardenSessionStore.swift */; };
-		B17DE00000000000000000E1 /* PhiBitwardenHelper in Copy Bitwarden Helper */ = {isa = PBXBuildFile; fileRef = B17DE00000000000000000E0 /* PhiBitwardenHelper */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
-		B17DE00000000000000000E3 /* PhiBitwardenHelper-LICENSE.txt in Copy Bitwarden GPL Notices */ = {isa = PBXBuildFile; fileRef = B17DE00000000000000000E5 /* PhiBitwardenHelper-LICENSE.txt */; };
-		B17DE00000000000000000E4 /* PhiBitwardenHelper-SOURCE-OFFER.txt in Copy Bitwarden GPL Notices */ = {isa = PBXBuildFile; fileRef = B17DE00000000000000000E6 /* PhiBitwardenHelper-SOURCE-OFFER.txt */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -534,7 +534,7 @@
 			dstPath = Contents/Helpers;
 			dstSubfolderSpec = 1;
 			files = (
-				B17DE00000000000000000E1 /* PhiBitwardenHelper in Copy Bitwarden Helper */,
+				B17DE00000000000000000E1 /* Vendor/PhiBitwardenHelper in Copy Bitwarden Helper */,
 			);
 			name = "Copy Bitwarden Helper";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -545,8 +545,8 @@
 			dstPath = "";
 			dstSubfolderSpec = 7;
 			files = (
-				B17DE00000000000000000E3 /* PhiBitwardenHelper-LICENSE.txt in Copy Bitwarden GPL Notices */,
-				B17DE00000000000000000E4 /* PhiBitwardenHelper-SOURCE-OFFER.txt in Copy Bitwarden GPL Notices */,
+				B17DE00000000000000000E3 /* Vendor/PhiBitwardenHelper-LICENSE.txt in Copy Bitwarden GPL Notices */,
+				B17DE00000000000000000E4 /* Vendor/PhiBitwardenHelper-SOURCE-OFFER.txt in Copy Bitwarden GPL Notices */,
 			);
 			name = "Copy Bitwarden GPL Notices";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -570,12 +570,12 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		11E8BEE1510290AB35D5C5AD /* SentinelBackupCoordination.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SentinelBackupCoordination.swift; sourceTree = "<group>"; };
+		19B477B37CF44BC48335A032 /* AccountDeletedEventAuthentication.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountDeletedEventAuthentication.swift; sourceTree = "<group>"; };
 		3703C88B2F68F78500E7CF6D /* AISettingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AISettingView.swift; sourceTree = "<group>"; };
 		3703C9812F69558C00E7CF6D /* BrowserState+ToggleAI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "BrowserState+ToggleAI.swift"; sourceTree = "<group>"; };
 		3703C9832F6956E600E7CF6D /* SentinelHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SentinelHelper.swift; sourceTree = "<group>"; };
 		3703C9852F6956E600E7CF6D /* SentinelVersionGuard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SentinelVersionGuard.swift; sourceTree = "<group>"; };
-		11E8BEE1510290AB35D5C5AD /* SentinelBackupCoordination.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SentinelBackupCoordination.swift; sourceTree = "<group>"; };
-		19B477B37CF44BC48335A032 /* AccountDeletedEventAuthentication.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountDeletedEventAuthentication.swift; sourceTree = "<group>"; };
 		370D039F2F0E463B0087A1C9 /* Appearance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Appearance.swift; sourceTree = "<group>"; };
 		370D03A02F0E463B0087A1C9 /* Bags.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Bags.swift; sourceTree = "<group>"; };
 		370D03A12F0E463B0087A1C9 /* ColorRole.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColorRole.swift; sourceTree = "<group>"; };
@@ -684,9 +684,6 @@
 		37C1B4F32EE6CE8A00DD4496 /* GeneralSettingHostingViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeneralSettingHostingViewController.swift; sourceTree = "<group>"; };
 		37C1B4F42EE6CE8A00DD4496 /* GeneralSettingViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeneralSettingViewController.swift; sourceTree = "<group>"; };
 		37C1B4F52EE6CE8A00DD4496 /* GeneralSettingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeneralSettingView.swift; sourceTree = "<group>"; };
-		B17DE0000000000000000023 /* PasswordManagerSectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PasswordManagerSectionView.swift; sourceTree = "<group>"; };
-		B17DE0000000000000000034 /* BitwardenSessionSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BitwardenSessionSettingsView.swift; sourceTree = "<group>"; };
-		B17DE0000000000000000024 /* BitwardenLoginSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BitwardenLoginSheet.swift; sourceTree = "<group>"; };
 		37C2A68A2F8E1585006E856E /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
 		37C2A68B2F8E1585006E856E /* tab-order-spec.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "tab-order-spec.md"; sourceTree = "<group>"; };
 		37C6AAD82F1F761D00C0A46E /* DraggingSession.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = DraggingSession.md; sourceTree = "<group>"; };
@@ -739,16 +736,6 @@
 		54A1001D2FE000000000001D /* TimeMachineMenuPresenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimeMachineMenuPresenter.swift; sourceTree = "<group>"; };
 		54A200112FE1000000000011 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 		54A200122FE1000000000012 /* PhiTimeMachineInstaller */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = PhiTimeMachineInstaller; sourceTree = BUILT_PRODUCTS_DIR; };
-		B17DE00000000000000000E0 /* PhiBitwardenHelper */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.executable"; path = Vendor/PhiBitwardenHelper; sourceTree = SOURCE_ROOT; };
-		B17DE00000000000000000E5 /* PhiBitwardenHelper-LICENSE.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Vendor/PhiBitwardenHelper-LICENSE.txt"; sourceTree = SOURCE_ROOT; };
-		B17DE00000000000000000E6 /* PhiBitwardenHelper-SOURCE-OFFER.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Vendor/PhiBitwardenHelper-SOURCE-OFFER.txt"; sourceTree = SOURCE_ROOT; };
-		B17DE0000000000000000021 /* CredentialProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CredentialProvider.swift; sourceTree = "<group>"; };
-		B17DE0000000000000000022 /* BitwardenService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BitwardenService.swift; sourceTree = "<group>"; };
-		B17DE0000000000000000030 /* BitwardenSessionSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BitwardenSessionSettings.swift; sourceTree = "<group>"; };
-		B17DE0000000000000000025 /* AgentSpaceRouter+Credentials.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AgentSpaceRouter+Credentials.swift"; sourceTree = "<group>"; };
-		B17DE0000000000000000026 /* CredentialAccessCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CredentialAccessCoordinator.swift; sourceTree = "<group>"; };
-		B17DE0000000000000000027 /* CredentialAuditLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CredentialAuditLog.swift; sourceTree = "<group>"; };
-		B17DE0000000000000000B02 /* BitwardenSessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BitwardenSessionStore.swift; sourceTree = "<group>"; };
 		5ACE00000000000000000002 /* SpacesSettingViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpacesSettingViewController.swift; sourceTree = "<group>"; };
 		5ACE00000000000000000003 /* SpacesSettingHostingViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpacesSettingHostingViewController.swift; sourceTree = "<group>"; };
 		5ACE00000000000000000004 /* SpacesSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpacesSettingsView.swift; sourceTree = "<group>"; };
@@ -883,6 +870,19 @@
 		B0F370CA2E43261A000B51F9 /* EventBus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventBus.swift; sourceTree = "<group>"; };
 		B0F370CF2E432CB8000B51F9 /* MainBrowserWindowController+Actions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "MainBrowserWindowController+Actions.swift"; sourceTree = "<group>"; };
 		B0F370D92E433F0E000B51F9 /* OverlayWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayWindowController.swift; sourceTree = "<group>"; };
+		B17DE0000000000000000021 /* CredentialProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CredentialProvider.swift; sourceTree = "<group>"; };
+		B17DE0000000000000000022 /* BitwardenService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BitwardenService.swift; sourceTree = "<group>"; };
+		B17DE0000000000000000023 /* PasswordManagerSectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PasswordManagerSectionView.swift; sourceTree = "<group>"; };
+		B17DE0000000000000000024 /* BitwardenLoginSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BitwardenLoginSheet.swift; sourceTree = "<group>"; };
+		B17DE0000000000000000025 /* AgentSpaceRouter+Credentials.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AgentSpaceRouter+Credentials.swift"; sourceTree = "<group>"; };
+		B17DE0000000000000000026 /* CredentialAccessCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CredentialAccessCoordinator.swift; sourceTree = "<group>"; };
+		B17DE0000000000000000027 /* CredentialAuditLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CredentialAuditLog.swift; sourceTree = "<group>"; };
+		B17DE0000000000000000030 /* BitwardenSessionSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BitwardenSessionSettings.swift; sourceTree = "<group>"; };
+		B17DE0000000000000000034 /* BitwardenSessionSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BitwardenSessionSettingsView.swift; sourceTree = "<group>"; };
+		B17DE00000000000000000E0 /* Vendor/PhiBitwardenHelper */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.executable"; path = Vendor/PhiBitwardenHelper; sourceTree = SOURCE_ROOT; };
+		B17DE00000000000000000E5 /* Vendor/PhiBitwardenHelper-LICENSE.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Vendor/PhiBitwardenHelper-LICENSE.txt"; sourceTree = SOURCE_ROOT; };
+		B17DE00000000000000000E6 /* Vendor/PhiBitwardenHelper-SOURCE-OFFER.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Vendor/PhiBitwardenHelper-SOURCE-OFFER.txt"; sourceTree = SOURCE_ROOT; };
+		B17DE0000000000000000B02 /* BitwardenSessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BitwardenSessionStore.swift; sourceTree = "<group>"; };
 		C0D1D0012FEA000000000001 /* SidebarTabListViewController+MultiSelectionDragPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SidebarTabListViewController+MultiSelectionDragPreview.swift"; sourceTree = "<group>"; };
 		C70000000000000000000001 /* CustomTooltipController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CustomTooltipController.swift; sourceTree = "<group>"; };
 		C70000000000000000000002 /* CustomTooltip+Hosting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "CustomTooltip+Hosting.swift"; sourceTree = "<group>"; };
@@ -1049,11 +1049,6 @@
 		37686B012F1103F300DC3990 /* Configs */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = Configs;
-			sourceTree = "<group>";
-		};
-		376CE0A02F2330160093D937 /* build-scripts */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			path = "build-scripts";
 			sourceTree = "<group>";
 		};
 		B0C4695A2E3B10E2007F0C7A /* PhiBrowserTests */ = {
@@ -1698,9 +1693,9 @@
 				376CE3FF2F2891670093D937 /* Notifications */,
 				CCBF8FA32E69913C00B9A99E /* States */,
 				37C9E6852F3F31E600353A03 /* ThirdParty */,
-				B17DE00000000000000000E0 /* PhiBitwardenHelper */,
-				B17DE00000000000000000E5 /* PhiBitwardenHelper-LICENSE.txt */,
-				B17DE00000000000000000E6 /* PhiBitwardenHelper-SOURCE-OFFER.txt */,
+				B17DE00000000000000000E0 /* Vendor/PhiBitwardenHelper */,
+				B17DE00000000000000000E5 /* Vendor/PhiBitwardenHelper-LICENSE.txt */,
+				B17DE00000000000000000E6 /* Vendor/PhiBitwardenHelper-SOURCE-OFFER.txt */,
 				54A200202FE1000000000020 /* TimeMachineInstaller */,
 				B0F370CC2E432646000B51F9 /* UserInterface */,
 				B0F370CD2E4326DC000B51F9 /* Utilities */,
@@ -1739,7 +1734,6 @@
 				B02586F42E42FD97001B08FC /* Sources */,
 				B0C469752E3B158D007F0C7A /* Resources */,
 				CDA11ED500000000000000A1 /* phi-browser-skill */,
-				376CE0A02F2330160093D937 /* build-scripts */,
 				B0691CB22E3B639000934AEE /* Frameworks */,
 				B0C4698F2E3B1915007F0C7A /* Tests */,
 				B0C469492E3B10E1007F0C7A /* Products */,
