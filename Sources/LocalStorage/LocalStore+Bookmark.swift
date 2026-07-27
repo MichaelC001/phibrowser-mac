@@ -845,6 +845,37 @@ extension LocalStore {
             return []
         }
     }
+
+    @MainActor
+    /// Returns only bookmark rows for the requested Spaces, ordered by most
+    /// recently opened first. The scripting API consumes a flat list, so this
+    /// intentionally avoids reconstructing the bookmark folder tree.
+    func fetchBookmarkTabs(in spaces: [SpaceModel]) -> [TabDataModel] {
+        guard !spaces.isEmpty, let context = mainContext else { return [] }
+
+        let profileIdBySpaceId = Dictionary(
+            uniqueKeysWithValues: spaces.map { ($0.spaceId, $0.profileId) }
+        )
+        let bookmarkRaw = TabDataType.bookmark.rawValue
+        let descriptor = FetchDescriptor<TabDataModel>(
+            predicate: #Predicate<TabDataModel> { $0.type == bookmarkRaw },
+            sortBy: [SortDescriptor(\.lastSeen, order: .reverse)]
+        )
+
+        do {
+            return try context.fetch(descriptor).filter { bookmark in
+                guard let spaceId = bookmark.spaceId,
+                      let expectedProfileId = profileIdBySpaceId[spaceId] else {
+                    return false
+                }
+                return bookmark.profileId == expectedProfileId
+                    || bookmark.profile?.profileId == expectedProfileId
+            }
+        } catch {
+            AppLogError("Failed to fetch bookmark tabs: \(error)")
+            return []
+        }
+    }
     
     @MainActor
     /// Returns a single bookmark node for editing or navigation.

@@ -1778,20 +1778,34 @@ struct SpaceIconView: View {
         if let symbolImage = NSImage(systemSymbolName: stored, accessibilityDescription: nil) {
             return symbolImage
         }
+        return rasterizedImage(
+            for: stored,
+            canvasSize: size + 4,
+            scale: NSScreen.main?.backingScaleFactor ?? 2
+        )
+    }
+
+    @MainActor
+    static func rasterizedImage(
+        for storedValue: String,
+        canvasSize: CGFloat,
+        scale: CGFloat
+    ) -> NSImage? {
+        let stored = storedValue.isEmpty ? "rectangle.stack" : storedValue
         // Match the menu's appearance so phi-icons pick their light/dark asset
         // variant — ImageRenderer defaults to light, which leaves dark-mode menus
         // showing the dark-ink variant on a dark background. Unlike the import
         // label (always dark) this follows the current system appearance.
         let icon = SpaceIconView(
             storedValue: stored,
-            size: size,
+            size: max(canvasSize - 4, 1),
             symbolWeight: .semibold,
             tint: Color(nsColor: .labelColor)
         )
         .environment(\.colorScheme, appAppearance.isDark ? .dark : .light)
-        .frame(width: size + 4, height: size + 4)
+        .frame(width: canvasSize, height: canvasSize)
         let renderer = ImageRenderer(content: icon)
-        renderer.scale = NSScreen.main?.backingScaleFactor ?? 2
+        renderer.scale = scale
         return renderer.nsImage
     }
 }

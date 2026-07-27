@@ -128,6 +128,93 @@ final class LocalStoreProfileTests: XCTestCase {
         XCTAssertEqual(refreshedDefaultRoot.count, 1)
     }
 
+    func testFetchBookmarkTabsReturnsFlatSpaceScopedRowsOrderedByLastSeen() throws {
+        let store = try makeStore()
+        let context = try XCTUnwrap(store.getMainContext())
+
+        let defaultProfile = ProfileModel(profileId: "Default")
+        let workProfile = ProfileModel(profileId: "Work")
+        context.insert(defaultProfile)
+        context.insert(workProfile)
+
+        let selectedSpace = SpaceModel(
+            spaceId: "space-a",
+            profileId: "Default",
+            name: "Selected",
+            colorHex: "#112233",
+            iconName: "rectangle.stack",
+            sortOrder: 0
+        )
+        let otherSpace = SpaceModel(
+            spaceId: "space-b",
+            profileId: "Work",
+            name: "Other",
+            colorHex: "#445566",
+            iconName: "rectangle.stack",
+            sortOrder: 1
+        )
+        context.insert(selectedSpace)
+        context.insert(otherSpace)
+
+        let folder = makeFolder(guid: "folder", title: "Folder")
+        folder.profile = defaultProfile
+        folder.profileId = defaultProfile.profileId
+        folder.spaceId = selectedSpace.spaceId
+        folder.lastSeen = Date(timeIntervalSince1970: 400)
+        context.insert(folder)
+
+        let recent = makeTab(guid: "recent", title: "Recent", url: "https://recent.example")
+        recent.dataType = .bookmark
+        recent.profile = defaultProfile
+        recent.profileId = defaultProfile.profileId
+        recent.spaceId = selectedSpace.spaceId
+        recent.parent = folder
+        recent.lastSeen = Date(timeIntervalSince1970: 300)
+        context.insert(recent)
+
+        let older = makeTab(guid: "older", title: "Older", url: "https://older.example")
+        older.dataType = .bookmark
+        older.profile = defaultProfile
+        older.profileId = defaultProfile.profileId
+        older.spaceId = selectedSpace.spaceId
+        older.lastSeen = Date(timeIntervalSince1970: 100)
+        context.insert(older)
+
+        let neverOpened = makeTab(guid: "never", title: "Never", url: "https://never.example")
+        neverOpened.dataType = .bookmark
+        neverOpened.profile = defaultProfile
+        neverOpened.profileId = defaultProfile.profileId
+        neverOpened.spaceId = selectedSpace.spaceId
+        context.insert(neverOpened)
+
+        let otherSpaceBookmark = makeTab(
+            guid: "other-space",
+            title: "Other Space",
+            url: "https://other.example"
+        )
+        otherSpaceBookmark.dataType = .bookmark
+        otherSpaceBookmark.profile = workProfile
+        otherSpaceBookmark.profileId = workProfile.profileId
+        otherSpaceBookmark.spaceId = otherSpace.spaceId
+        otherSpaceBookmark.lastSeen = Date(timeIntervalSince1970: 500)
+        context.insert(otherSpaceBookmark)
+
+        let normalTab = makeTab(guid: "normal", title: "Normal", url: "https://normal.example")
+        normalTab.dataType = .tab
+        normalTab.profile = defaultProfile
+        normalTab.profileId = defaultProfile.profileId
+        normalTab.spaceId = selectedSpace.spaceId
+        normalTab.lastSeen = Date(timeIntervalSince1970: 600)
+        context.insert(normalTab)
+
+        try context.save()
+
+        XCTAssertEqual(
+            store.fetchBookmarkTabs(in: [selectedSpace]).map(\.guid),
+            ["recent", "older", "never"]
+        )
+    }
+
     func testBrowserStateStoresProfileId() throws {
         let store = try makeStore()
 

@@ -261,6 +261,9 @@
 		8EF36C032F4E9E7000FCC91E /* TabViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EF36C012F4E9E7000FCC91E /* TabViewModel.swift */; };
 		8EF36C062F4E9EC100FCC91E /* TabContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EF36C052F4E9EC100FCC91E /* TabContentView.swift */; };
 		8EF36C082F4EA95B00FCC91E /* SideTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EF36C072F4EA95B00FCC91E /* SideTabView.swift */; };
+		A11E00000000000000000001 /* PhiScriptingService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11E00000000000000000011 /* PhiScriptingService.swift */; };
+		A11E00000000000000000002 /* PhiScriptCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11E00000000000000000012 /* PhiScriptCommands.swift */; };
+		A11E00000000000000000003 /* Phi.sdef in Resources */ = {isa = PBXBuildFile; fileRef = A11E00000000000000000013 /* Phi.sdef */; };
 		A1B2C3D4E5F60718293A4B56 /* SharedAuthTokenStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60718293A4B55 /* SharedAuthTokenStore.swift */; };
 		A71E00000000000000000002 /* PhiAlert.swift in Sources */ = {isa = PBXBuildFile; fileRef = A71E00000000000000000001 /* PhiAlert.swift */; };
 		A71E00000000000000000004 /* CredentialApprovalAlert.swift in Sources */ = {isa = PBXBuildFile; fileRef = A71E00000000000000000003 /* CredentialApprovalAlert.swift */; };
@@ -825,6 +828,9 @@
 		8EF36C012F4E9E7000FCC91E /* TabViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabViewModel.swift; sourceTree = "<group>"; };
 		8EF36C052F4E9EC100FCC91E /* TabContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabContentView.swift; sourceTree = "<group>"; };
 		8EF36C072F4EA95B00FCC91E /* SideTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SideTabView.swift; sourceTree = "<group>"; };
+		A11E00000000000000000011 /* PhiScriptingService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhiScriptingService.swift; sourceTree = "<group>"; };
+		A11E00000000000000000012 /* PhiScriptCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhiScriptCommands.swift; sourceTree = "<group>"; };
+		A11E00000000000000000013 /* Phi.sdef */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = Phi.sdef; sourceTree = "<group>"; };
 		A1B2C3D4E5F60718293A4B55 /* SharedAuthTokenStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedAuthTokenStore.swift; sourceTree = "<group>"; };
 		A71E00000000000000000001 /* PhiAlert.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhiAlert.swift; sourceTree = "<group>"; };
 		A71E00000000000000000003 /* CredentialApprovalAlert.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CredentialApprovalAlert.swift; sourceTree = "<group>"; };
@@ -1235,6 +1241,15 @@
 				376B66AF3000ABBA004BEA29 /* PhiSparkleUpdateViewController.swift */,
 			);
 			path = Update;
+			sourceTree = "<group>";
+		};
+		37A4A06F30174C5800F7DC2E /* Apple Scripts */ = {
+			isa = PBXGroup;
+			children = (
+				A11E00000000000000000011 /* PhiScriptingService.swift */,
+				A11E00000000000000000012 /* PhiScriptCommands.swift */,
+			);
+			path = "Apple Scripts";
 			sourceTree = "<group>";
 		};
 		37C1B0D62ED6D49D00DD4496 /* CommandDispatcher */ = {
@@ -1754,6 +1769,7 @@
 		B0C469752E3B158D007F0C7A /* Resources */ = {
 			isa = PBXGroup;
 			children = (
+				A11E00000000000000000013 /* Phi.sdef */,
 				F01D3A000000000000000011 /* bookmark-folder-open.svg */,
 				F01D3A000000000000000012 /* bookmark-folder-closed.svg */,
 				375C66372EFB923C00885D78 /* Fonts */,
@@ -1844,6 +1860,7 @@
 		B0F370CE2E4326EB000B51F9 /* Application */ = {
 			isa = PBXGroup;
 			children = (
+				37A4A06F30174C5800F7DC2E /* Apple Scripts */,
 				B02586F22E42FD97001B08FC /* PhiApplication.h */,
 				B02586F32E42FD97001B08FC /* PhiApplication.m */,
 				B02586F02E42FD97001B08FC /* AppController.swift */,
@@ -2491,6 +2508,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A11E00000000000000000003 /* Phi.sdef in Resources */,
 				F01D3A000000000000000001 /* bookmark-folder-open.svg in Resources */,
 				F01D3A000000000000000002 /* bookmark-folder-closed.svg in Resources */,
 				CDA11ED500000000000000B1 /* phi-browser-skill in Resources */,
@@ -2541,6 +2559,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A11E00000000000000000001 /* PhiScriptingService.swift in Sources */,
+				A11E00000000000000000002 /* PhiScriptCommands.swift in Sources */,
 				A71E00000000000000000002 /* PhiAlert.swift in Sources */,
 				A71E00000000000000000004 /* CredentialApprovalAlert.swift in Sources */,
 				B17DE0000000000000000005 /* CredentialProvider.swift in Sources */,

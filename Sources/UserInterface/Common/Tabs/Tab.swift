@@ -576,6 +576,10 @@ class Tab: WebContentRepresentable {
     func reload() {
         webContentWrapper?.reload()
     }
+
+    func reloadBypassingCache() {
+        webContentWrapper?.reloadBypassingCache()
+    }
     
     func stopLoading() {
         webContentWrapper?.stopLoading()
