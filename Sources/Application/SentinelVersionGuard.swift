@@ -29,6 +29,15 @@ enum SentinelVersionGuardDecision: Equatable {
     case requestRestart(SentinelVersionGuardSnapshot)
 }
 
+enum SentinelVersionGuardWarning: Equatable {
+    case notRunning(
+        browserBundleID: String,
+        browserVersion: String,
+        sentinelBundleID: String
+    )
+    case versionMismatch(SentinelVersionGuardSnapshot)
+}
+
 final class SentinelVersionGuard {
     static let shared = SentinelVersionGuard()
 
@@ -42,13 +51,19 @@ final class SentinelVersionGuard {
     private let userDefaults: UserDefaults
     private let cooldown: TimeInterval
     private let now: () -> Date
+    private let shouldRunSentinelProvider: () -> Bool
     private let browserBundleIDProvider: () -> String
     private let browserVersionProvider: () -> String
     private let sentinelInfoProvider: (String) -> RunningSentinelInfo?
     private let restartRequestPoster: (SentinelVersionGuardSnapshot, String) -> Void
     private let sentinelLauncher: () -> Void
+    private let warningReporter: (SentinelVersionGuardWarning) -> Void
     private let logger: (String) -> Void
     private let sleep: (TimeInterval) async -> Void
+    /// Cold-launch confirmation uses a short budget because no old Runner
+    /// process needs to finish its termination grace period.
+    private let launchConfirmationInterval: TimeInterval
+    private let maxLaunchConfirmationChecks: Int
     /// Seconds to wait between confirming whether Sentinel adopted the expected version.
     private let confirmInterval: TimeInterval
     /// Maximum number of confirm-and-re-post cycles before giving up on convergence.
@@ -69,6 +84,9 @@ final class SentinelVersionGuard {
         userDefaults: UserDefaults = .standard,
         cooldown: TimeInterval = 10 * 60,
         now: @escaping () -> Date = Date.init,
+        shouldRunSentinelProvider: @escaping () -> Bool = {
+            PhiPreferences.AISettings.phiAIEnabled.loadValue()
+        },
         browserBundleIDProvider: @escaping () -> String = {
             Bundle.main.bundleIdentifier ?? ""
         },
@@ -78,23 +96,30 @@ final class SentinelVersionGuard {
         sentinelInfoProvider: @escaping (String) -> RunningSentinelInfo? = SentinelVersionGuard.defaultRunningSentinelInfo,
         restartRequestPoster: @escaping (SentinelVersionGuardSnapshot, String) -> Void = SentinelVersionGuard.postRestartRequest,
         sentinelLauncher: @escaping () -> Void = SentinelHelper.launch,
+        warningReporter: @escaping (SentinelVersionGuardWarning) -> Void = SentryService.captureSentinelVersionGuardWarning,
         logger: @escaping (String) -> Void = { AppLogInfo("[SentinelVersionGuard] \($0)") },
         sleep: @escaping (TimeInterval) async -> Void = { seconds in
             try? await Task.sleep(nanoseconds: UInt64(max(seconds, 0) * 1_000_000_000))
         },
+        launchConfirmationInterval: TimeInterval = 2,
+        maxLaunchConfirmationChecks: Int = 5,
         confirmInterval: TimeInterval = 5,
         maxConfirmationRetries: Int = 10
     ) {
         self.userDefaults = userDefaults
         self.cooldown = cooldown
         self.now = now
+        self.shouldRunSentinelProvider = shouldRunSentinelProvider
         self.browserBundleIDProvider = browserBundleIDProvider
         self.browserVersionProvider = browserVersionProvider
         self.sentinelInfoProvider = sentinelInfoProvider
         self.restartRequestPoster = restartRequestPoster
         self.sentinelLauncher = sentinelLauncher
+        self.warningReporter = warningReporter
         self.logger = logger
         self.sleep = sleep
+        self.launchConfirmationInterval = launchConfirmationInterval
+        self.maxLaunchConfirmationChecks = maxLaunchConfirmationChecks
         self.confirmInterval = confirmInterval
         self.maxConfirmationRetries = maxConfirmationRetries
     }
@@ -107,13 +132,54 @@ final class SentinelVersionGuard {
         let decision = evaluateCurrentState()
         apply(decision)
 
-        // A single restart request is not enough. It can be missed entirely (Sentinel
-        // registers its restart observer late, during its own cold launch) or Sentinel
-        // may simply not have relaunched yet. Confirm the running Sentinel actually
-        // adopts the expected version, re-posting a bounded number of times until it
-        // converges — otherwise the browser and Sentinel can stay on mismatched versions.
-        guard case .requestRestart(let snapshot) = decision else { return }
-        await confirmConvergence(snapshot)
+        switch decision {
+        case .launchSentinel:
+            await confirmLaunch()
+        case .requestRestart(let snapshot):
+            // A single restart request is not enough. It can be missed entirely (Sentinel
+            // registers its restart observer late, during its own cold launch) or Sentinel
+            // may simply not have relaunched yet. Confirm the running Sentinel actually
+            // adopts the expected version, re-posting a bounded number of times until it
+            // converges — otherwise the browser and Sentinel can stay on mismatched versions.
+            await confirmConvergence(snapshot)
+        case .skip:
+            break
+        }
+
+        reportFinalStateIfNeeded()
+    }
+
+    private func confirmLaunch() async {
+        let browserBundleID = browserBundleIDProvider()
+        guard let sentinelBundleID = expectedSentinelBundleID(forBrowserBundleID: browserBundleID) else {
+            return
+        }
+
+        var lastInfo: RunningSentinelInfo?
+        for attempt in 1...maxLaunchConfirmationChecks {
+            await sleep(launchConfirmationInterval)
+            lastInfo = sentinelInfoProvider(sentinelBundleID)
+
+            guard let info = lastInfo else {
+                logger("launch check: Sentinel is not running (\(attempt)/\(maxLaunchConfirmationChecks))")
+                continue
+            }
+
+            guard let sentinelVersion = info.version, !sentinelVersion.isEmpty else {
+                logger("launch check: Sentinel is running but not reporting a version yet (\(attempt)/\(maxLaunchConfirmationChecks))")
+                continue
+            }
+
+            logger("launch check: Sentinel is running with version \(sentinelVersion)")
+            return
+        }
+
+        guard lastInfo == nil else {
+            logger("launch check: Sentinel is running but its version remains unavailable")
+            return
+        }
+
+        logger("launch check: WARNING Sentinel failed to start after \(maxLaunchConfirmationChecks) checks")
     }
 
     /// After a restart request, waits for the running Sentinel to report the expected
@@ -136,6 +202,7 @@ final class SentinelVersionGuard {
                 // the loser abort, and ensureRunning no-ops if it is already back up.
                 logger("convergence check: Sentinel is not running; launching it")
                 sentinelLauncher()
+                await confirmLaunch()
                 return
             }
 
@@ -149,14 +216,20 @@ final class SentinelVersionGuard {
                 return
             }
 
-            logger("convergence check: Sentinel still \(running), expected \(snapshot.browserVersion); re-posting restart (\(attempt)/\(maxConfirmationRetries))")
-            restartRequestPoster(snapshot, UUID().uuidString)
+            if attempt < maxConfirmationRetries {
+                logger("convergence check: Sentinel still \(running), expected \(snapshot.browserVersion); re-posting restart (\(attempt)/\(maxConfirmationRetries))")
+                restartRequestPoster(snapshot, UUID().uuidString)
+            }
         }
 
         logger("convergence check: WARNING Sentinel did not converge to \(snapshot.browserVersion) after \(maxConfirmationRetries) retries")
     }
 
     func evaluateCurrentState() -> SentinelVersionGuardDecision {
+        guard shouldRunSentinelProvider() else {
+            return .skip("Phi AI is disabled; Sentinel is not required")
+        }
+
         let browserBundleID = browserBundleIDProvider()
         let browserVersion = browserVersionProvider()
 
@@ -217,6 +290,49 @@ final class SentinelVersionGuard {
             )
             restartRequestPoster(snapshot, requestID)
         }
+    }
+
+    private func reportFinalStateIfNeeded() {
+        let browserBundleID = browserBundleIDProvider()
+        let browserVersion = browserVersionProvider()
+        guard browserBundleID == Self.stableBrowserBundleID,
+              !browserVersion.isEmpty,
+              let sentinelBundleID = expectedSentinelBundleID(forBrowserBundleID: browserBundleID) else {
+            return
+        }
+
+        guard let sentinelInfo = sentinelInfoProvider(sentinelBundleID) else {
+            guard shouldRunSentinelProvider() else {
+                logger("final state: Sentinel is not required because Phi AI is disabled")
+                return
+            }
+
+            warningReporter(
+                .notRunning(
+                    browserBundleID: browserBundleID,
+                    browserVersion: browserVersion,
+                    sentinelBundleID: sentinelBundleID
+                )
+            )
+            return
+        }
+
+        guard let sentinelVersion = sentinelInfo.version,
+              !sentinelVersion.isEmpty,
+              sentinelVersion != browserVersion else {
+            return
+        }
+
+        warningReporter(
+            .versionMismatch(
+                SentinelVersionGuardSnapshot(
+                    browserBundleID: browserBundleID,
+                    browserVersion: browserVersion,
+                    sentinelBundleID: sentinelBundleID,
+                    sentinelVersion: sentinelVersion
+                )
+            )
+        )
     }
 
     private func shouldAttemptRestart(for mismatchKey: String) -> Bool {
