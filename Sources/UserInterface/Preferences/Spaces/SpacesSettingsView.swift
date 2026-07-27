@@ -21,12 +21,12 @@ struct SpacesSettingsView: View {
     @State private var selectedSpaceId: String?
     @State private var pinnedTabScope: PinnedTabScope = .profile
     @State private var isChangingPinnedTabScope = false
-    /// Resolved theme id and opacity slider position for the selected Space,
-    /// loaded on selection and updated optimistically (setTheme /
-    /// setOverlayOpacity write to stores that don't republish `spaces`, so
-    /// unlike icon/profile these need local state).
+    /// Resolved theme id and color-component slider position for the selected
+    /// Space, loaded on selection and updated optimistically (the persistence
+    /// stores do not republish `spaces`, so unlike icon/profile these need
+    /// local state).
     @State private var spaceThemeId: String = Theme.default.id
-    @State private var spaceOpacitySliderValue: Double = 0
+    @State private var spaceThemeSliderValue: Double = 0
 
     @Environment(\.phiAppearance) private var appearance
 
@@ -76,7 +76,7 @@ struct SpacesSettingsView: View {
         // Resync theme controls when the selected Space is edited from
         // another surface (General pane, sidebar picker, Spaces menu), the
         // global theme registry changes, or the appearance flips (the
-        // opacity slider edits the current appearance's value).
+        // color-component slider edits the current theme's value).
         .onReceive(NotificationCenter.default.publisher(for: .spaceThemeDidChange)) { _ in
             syncThemeControls()
         }
@@ -326,8 +326,8 @@ struct SpacesSettingsView: View {
     private var detailPanel: some View {
         if let space = selectedSpace {
             // No outer ScrollView: the Icon card absorbs all spare height (the
-            // grid scrolls internally), so the Opacity card's bottom edge lines
-            // up with the Space list's bottom edge.
+            // grid scrolls internally), so the theme card's bottom edge lines up
+            // with the Space list's bottom edge.
             VStack(alignment: .leading, spacing: 16) {
                 SettingsDetailCard {
                     // Report the card's real content width so the picker
@@ -352,14 +352,15 @@ struct SpacesSettingsView: View {
                 SettingsDetailCard {
                     colorRow(space.spaceId)
                     SettingsRowDivider()
-                    SettingsDetailRow(NSLocalizedString("settings.spaces.theme.opacityLabel", value: "Opacity", comment: "Spaces settings - theme opacity row label for the per-Space window overlay transparency")) {
+                        SettingsDetailRow(NSLocalizedString("settings.spaces.theme.saturationLabel", value: "Saturation", comment: "Spaces settings - theme saturation row label for the per-Space window colors")) {
                         ThemeOpacitySliderView(
-                            value: opacityBinding(space.spaceId),
-                            trackColor: opacitySliderTrackColor(space.spaceId),
+                            value: themeSliderBinding(space.spaceId),
+                            trackColor: themeSliderTrackColor(space.spaceId),
                             borderColor: ThemedColor.border.resolve(theme: displayedTheme, appearance: appearance),
-                            width: Self.opacitySliderWidth
+                            trackStyle: themeSliderTrackStyle,
+                            width: Self.themeSliderWidth
                         )
-                        .frame(width: Self.opacitySliderWidth, height: 20)
+                        .frame(width: Self.themeSliderWidth, height: 20)
                     }
                 }
             }
@@ -554,21 +555,35 @@ struct SpacesSettingsView: View {
         syncThemeControls()
     }
 
-    /// Loads the selected Space's resolved theme id and effective overlay
-    /// opacity (for the current appearance) into the local control state.
+    /// Loads the selected Space's resolved theme id and effective color
+    /// component into the local control state.
     private func syncThemeControls() {
         guard let spaceId = selectedSpaceId else { return }
         spaceThemeId = spaceManager.resolvedThemeId(forSpaceId: spaceId)
-        let alpha = spaceManager.effectiveOverlayOpacity(
-            forSpaceId: spaceId,
-            appearance: ThemeManager.shared.currentAppearance
-        )
-        spaceOpacitySliderValue = OverlayOpacityScale.sliderValue(forOpacityPercent: alpha * 100)
+        let appearance = ThemeManager.shared.currentAppearance
+        if spaceThemeId == Theme.pure.id {
+            spaceThemeSliderValue = spaceManager.effectivePureThemeSliderValue(
+                forSpaceId: spaceId,
+                appearance: appearance
+            )
+        } else {
+            let saturation = spaceManager.effectiveOverlaySaturation(
+                forSpaceId: spaceId,
+                appearance: appearance
+            )
+            spaceThemeSliderValue = OverlaySaturationScale.sliderValue(
+                forSaturation: Double(saturation)
+            )
+        }
     }
 
     // MARK: - Detail bindings
 
-    private static let opacitySliderWidth: CGFloat = 220
+    private static let themeSliderWidth: CGFloat = 220
+
+    private var themeSliderTrackStyle: ThemeSliderTrackStyle {
+        spaceThemeId == Theme.pure.id ? .pureBrightness(appearance) : .saturation
+    }
 
     /// Inline theme swatch row mirroring the General pane's Color row: one
     /// dot per built-in theme, the Space's resolved theme ringed with its
@@ -612,35 +627,43 @@ struct SpacesSettingsView: View {
         // For the default Space this also switches the global theme
         // (SpaceManager keeps that invariant).
         spaceManager.setTheme(forSpaceId: spaceId, themeId: themeId)
-        // The new theme's own alpha may differ; re-derive the slider (a
-        // custom per-Space opacity survives the switch).
+        // Saturation and Pure brightness are stored separately, so switching
+        // themes restores the selected theme kind's previous adjustment.
         syncThemeControls()
     }
 
-    private func opacityBinding(_ spaceId: String) -> Binding<Double> {
+    private func themeSliderBinding(_ spaceId: String) -> Binding<Double> {
         Binding(
-            get: { spaceOpacitySliderValue },
+            get: { spaceThemeSliderValue },
             set: { newValue in
-                spaceOpacitySliderValue = newValue
-                let percent = OverlayOpacityScale.opacityPercent(forSlider: newValue)
-                spaceManager.setOverlayOpacity(
-                    CGFloat(percent / 100),
-                    forSpaceId: spaceId,
-                    appearance: ThemeManager.shared.currentAppearance
-                )
+                spaceThemeSliderValue = newValue
+                if spaceManager.resolvedThemeId(forSpaceId: spaceId) == Theme.pure.id {
+                    spaceManager.setPureThemeSliderValue(
+                        newValue,
+                        forSpaceId: spaceId
+                    )
+                } else {
+                    let saturation = OverlaySaturationScale.saturation(
+                        forSlider: newValue
+                    )
+                    spaceManager.setOverlaySaturation(
+                        CGFloat(saturation),
+                        forSpaceId: spaceId,
+                        appearance: ThemeManager.shared.currentAppearance
+                    )
+                }
             }
         )
     }
 
-    /// The gradient hue behind the opacity slider: the Space's resolved
-    /// overlay color (alpha is stripped by the track renderer).
-    private func opacitySliderTrackColor(_ spaceId: String) -> NSColor {
+    /// The gradient base behind the color-component slider.
+    private func themeSliderTrackColor(_ spaceId: String) -> NSColor {
         spaceManager.resolvedTheme(forSpaceId: spaceId)
             .color(for: .windowOverlayBackground, appearance: appearance)
     }
 
     /// The selected Space's theme instance, for chrome derived from it
-    /// (the opacity slider's border color).
+    /// (the saturation slider's border color).
     private var displayedTheme: Theme {
         ThemeManager.shared.registeredThemes[spaceThemeId]
             ?? Theme.builtInThemes.first(where: { $0.id == spaceThemeId })

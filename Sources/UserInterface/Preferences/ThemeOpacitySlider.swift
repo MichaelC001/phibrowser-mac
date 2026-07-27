@@ -6,38 +6,23 @@
 import AppKit
 import SwiftUI
 
-// Overlay-opacity slider shared by the General pane (default Space) and the
-// Spaces pane (per-Space). Extracted from GeneralSettingView so both settings
-// panes drive the same control and slider↔opacity mapping.
+// Theme slider shared by the General pane, Spaces pane, and Create Space panel.
 
 func normalizedThemeSliderTrackColor(from color: NSColor) -> NSColor {
     let resolvedColor = color.usingColorSpace(.extendedSRGB) ?? color
     return resolvedColor.withAlphaComponent(1)
 }
 
-/// Linear mapping between the overlay slider position (0...100) and the actual
-/// allowed opacity percentage (10...80). Keeping the slider on a full 0...100
-/// range lets the knob travel to both visual ends, while the underlying overlay
-/// alpha is constrained to a tasteful sub-range.
-enum OverlayOpacityScale {
-    static let minOpacityPercent: Double = 10
-    static let maxOpacityPercent: Double = 80
-
-    static func opacityPercent(forSlider sliderValue: Double) -> Double {
-        let clamped = min(max(sliderValue, 0), 100)
-        return minOpacityPercent + (maxOpacityPercent - minOpacityPercent) * (clamped / 100)
-    }
-
-    static func sliderValue(forOpacityPercent opacityPercent: Double) -> Double {
-        let clamped = min(max(opacityPercent, minOpacityPercent), maxOpacityPercent)
-        return (clamped - minOpacityPercent) / (maxOpacityPercent - minOpacityPercent) * 100
-    }
+enum ThemeSliderTrackStyle {
+    case saturation
+    case pureBrightness(Appearance)
 }
 
 struct ThemeOpacitySliderView: NSViewRepresentable {
     @Binding var value: Double
     let trackColor: NSColor
     let borderColor: NSColor
+    var trackStyle: ThemeSliderTrackStyle = .saturation
     /// Control width; the track image is generated at this width so the
     /// gradient is never stretched. Callers must match their `.frame` width.
     var width: CGFloat = 324
@@ -67,12 +52,13 @@ struct ThemeOpacitySliderView: NSViewRepresentable {
     }
 
     func updateNSView(_ slider: CustomSlider, context: Context) {
+        context.coordinator.value = $value
         slider.trackImage = makeTrackImage(color: trackColor, borderColor: borderColor)
         if let knobView = slider.knobView as? ThemeOpacitySliderKnobView {
             knobView.borderColor = borderColor
         }
         if slider.doubleValue != value {
-            AppLogDebug("[OverlayOpacity] updateNSView push slider \(slider.doubleValue) → \(value)")
+            AppLogDebug("[ThemeSlider] updateNSView push slider \(slider.doubleValue) → \(value)")
             slider.doubleValue = value
         }
     }
@@ -87,8 +73,38 @@ struct ThemeOpacitySliderView: NSViewRepresentable {
         path.addClip()
 
         let baseColor = normalizedThemeSliderTrackColor(from: color)
-        let startColor = baseColor.withAlphaComponent(OverlayOpacityScale.minOpacityPercent / 100)
-        let endColor = baseColor.withAlphaComponent(OverlayOpacityScale.maxOpacityPercent / 100)
+        let startColor: NSColor
+        let endColor: NSColor
+        switch trackStyle {
+        case .saturation:
+            startColor = baseColor.withHSBSaturation(
+                CGFloat(OverlaySaturationScale.minSaturation),
+                alpha: 1
+            )
+            endColor = baseColor.withHSBSaturation(
+                CGFloat(OverlaySaturationScale.maxSaturation),
+                alpha: 1
+            )
+        case .pureBrightness(let appearance):
+            startColor = baseColor.withHSBBrightness(
+                CGFloat(
+                    PureThemeBrightnessScale.brightness(
+                        forSlider: 0,
+                        appearance: appearance
+                    )
+                ),
+                alpha: 1
+            )
+            endColor = baseColor.withHSBBrightness(
+                CGFloat(
+                    PureThemeBrightnessScale.brightness(
+                        forSlider: 100,
+                        appearance: appearance
+                    )
+                ),
+                alpha: 1
+            )
+        }
         let gradient = NSGradient(starting: startColor, ending: endColor)
         gradient?.draw(in: path, angle: 0)
 
@@ -101,15 +117,15 @@ struct ThemeOpacitySliderView: NSViewRepresentable {
     }
 
     final class Coordinator: NSObject {
-        @Binding private var value: Double
+        var value: Binding<Double>
 
         init(value: Binding<Double>) {
-            self._value = value
+            self.value = value
         }
 
         @objc func sliderValueChanged(_ sender: NSSlider) {
-            AppLogDebug("[OverlayOpacity] NSSlider action value=\(sender.doubleValue)")
-            value = sender.doubleValue
+            AppLogDebug("[ThemeSlider] NSSlider action value=\(sender.doubleValue)")
+            value.wrappedValue = sender.doubleValue
         }
     }
 }

@@ -265,7 +265,7 @@ class AccountSettingViewController: NSViewController, SettingsPane {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] name in
                 guard let self else { return }
-                notifyPaneTitleDidChange()
+//                notifyPaneTitleDidChange()
                 AccountController.shared.account?.userDefaults.set(name, forKey: .cachedUserName)
             }
             .store(in: &cancellables)

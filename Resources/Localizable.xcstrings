@@ -3158,9 +3158,6 @@
         }
       }
     },
-    "Cancel" : {
-      "comment" : "Manage User Data - Cancel button on the AI data backup progress modal"
-    },
     "common.bookmarkDeletion.bookmarksMessage" : {
       "comment" : "Bookmark multi-selection delete confirmation body for bookmarks",
       "extractionState" : "extracted_with_value",
@@ -5947,9 +5944,6 @@
           }
         }
       }
-    },
-    "OK" : {
-      "comment" : "Generic - OK button to dismiss an alert"
     },
     "oobe.importBrowserData.arc.untitledSpaceName" : {
       "comment" : "Arc import - fallback name for an Arc Space with no title",
@@ -9024,13 +9018,13 @@
       }
     },
     "settings.general.theme.opacityTitle" : {
-      "comment" : "General settings - Theme opacity row title for adjusting the selected theme overlay transparency",
+      "comment" : "General settings - Theme saturation row title for adjusting the selected theme overlay color",
       "extractionState" : "extracted_with_value",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Opacity"
+            "value" : "Saturation"
           }
         }
       }
@@ -10691,14 +10685,14 @@
         }
       }
     },
-    "settings.spaces.theme.opacityLabel" : {
-      "comment" : "Spaces settings - theme opacity row label for the per-Space window overlay transparency",
+    "settings.spaces.theme.saturationLabel" : {
+      "comment" : "Spaces settings - theme saturation row label for the per-Space window colors",
       "extractionState" : "extracted_with_value",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Opacity"
+            "value" : "Saturation"
           }
         }
       }

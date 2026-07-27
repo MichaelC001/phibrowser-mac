@@ -87,8 +87,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/phibrowser/Settings.git",
       "state" : {
-        "revision" : "8f4ad6f077490312be333f2cc753ef4a47fbe175",
-        "version" : "3.1.4"
+        "revision" : "f41475771f65379ca10852c95119a7f53f0de5a5",
+        "version" : "3.1.2"
       }
     },
     {

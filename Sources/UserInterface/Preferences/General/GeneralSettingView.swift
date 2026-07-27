@@ -48,9 +48,22 @@ private struct ThemeSectionView: View {
     @ObservedObject private var spaceManager = SpaceManager.shared
 
     @State private var selectedThemeId: String = ThemeManager.shared.currentTheme.id
-    @State private var sliderValue: Double = OverlayOpacityScale.sliderValue(
-        forOpacityPercent: ThemeManager.shared.currentTheme.windowOverlayOpacity(for: ThemeManager.shared.currentAppearance) * 100
-    )
+    @State private var sliderValue: Double = {
+        let manager = ThemeManager.shared
+        let overlayColor = manager.currentTheme.color(
+            for: .windowOverlayBackground,
+            appearance: manager.currentAppearance
+        )
+        if manager.currentTheme.id == Theme.pure.id {
+            return PureThemeBrightnessScale.sliderValue(
+                forBrightness: Double(overlayColor.hsbBrightnessComponent),
+                appearance: manager.currentAppearance
+            )
+        }
+        return OverlaySaturationScale.sliderValue(
+            forSaturation: Double(overlayColor.hsbSaturationComponent)
+        )
+    }()
 
     @AppStorage(PhiPreferences.ThemeSettings.selectionTintEnabled.rawValue)
     private var selectionTintEnabled: Bool = true
@@ -73,9 +86,17 @@ private struct ThemeSectionView: View {
         ThemedColor.border.resolve(theme: selectedTheme, appearance: appearance)
     }
 
+    private var usesBrightnessControl: Bool {
+        selectedThemeId == Theme.pure.id
+    }
+
+    private var sliderTrackStyle: ThemeSliderTrackStyle {
+        usesBrightnessControl ? .pureBrightness(appearance) : .saturation
+    }
+
     /// These controls edit the DEFAULT Space. With a single Space that is
     /// the whole browser; once more Spaces exist, each one carries its own
-    /// color and opacity, so the rows lock and defer to the Spaces pane.
+    /// color adjustment, so the rows lock and defer to the Spaces pane.
     private var themeEditingLocked: Bool {
         spaceManager.userSpaces.count > 1
     }
@@ -106,8 +127,8 @@ private struct ThemeSectionView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
 
                         Divider()
-
-                        GeneralRowView(title: NSLocalizedString("settings.general.theme.opacityTitle", value: "Opacity", comment: "General settings - Theme opacity row title for adjusting the selected theme overlay transparency")) {
+                        
+                        GeneralRowView(title: NSLocalizedString("settings.general.theme.opacityTitle", value: "Saturation", comment: "General settings - Theme saturation row title for adjusting the selected theme overlay color")) {
                             ThemeOpacitySliderView(
                                 value: Binding(
                                     get: { sliderValue },
@@ -117,7 +138,8 @@ private struct ThemeSectionView: View {
                                     }
                                 ),
                                 trackColor: sliderTrackColor,
-                                borderColor: sliderBorderColor
+                                borderColor: sliderBorderColor,
+                                trackStyle: sliderTrackStyle
                             )
                             .frame(width: 324, height: 20)
                         }
@@ -156,7 +178,7 @@ private struct ThemeSectionView: View {
         }
     }
 
-    /// Shown while the color/opacity rows are locked: says why and jumps
+    /// Shown while the theme rows are locked: says why and jumps
     /// to the pane where per-Space themes are edited.
     private var editInSpacesHintRow: some View {
         HStack(alignment: .center, spacing: 12) {
@@ -191,25 +213,23 @@ private struct ThemeSectionView: View {
     }
 
     private func handleSliderValueChanged(_ newSliderValue: Double) {
-        // Always resolve the appearance through the manager. The Binding stored in
-        // ThemeOpacitySliderView.Coordinator is created once and captures a stale
-        // `self`, so reading the View's @Environment here would target the wrong
-        // appearance after a light/dark switch.
-        let opacityPercent = OverlayOpacityScale.opacityPercent(forSlider: newSliderValue)
-        let alpha = CGFloat(opacityPercent / 100)
-        AppLogDebug("[OverlayOpacity] slider→opacity slider=\(newSliderValue) percent=\(opacityPercent) alpha=\(alpha) appearance=\(ThemeManager.shared.currentAppearance) theme=\(ThemeManager.shared.currentTheme.id)")
-        // Persist on the default Space first so its window's resolver reads
-        // the new value when the registry rewrite below publishes.
-        SpaceManager.shared.setOverlayOpacity(
-            alpha,
-            forSpaceId: LocalStore.defaultSpaceId,
-            appearance: ThemeManager.shared.currentAppearance
-        )
-        // Keep the registry rewrite: it is what future Spaces (and the
-        // create panel's previews) inherit as their default alpha. Only
-        // reachable with a single user Space, so it can't bleed across
-        // other Spaces' custom opacities.
-        ThemeManager.shared.updateCurrentThemeOverlayOpacity(alpha)
+        let appearance = ThemeManager.shared.currentAppearance
+        let themeId = SpaceManager.shared.resolvedThemeId(forSpaceId: LocalStore.defaultSpaceId)
+        if themeId == Theme.pure.id {
+            SpaceManager.shared.setPureThemeSliderValue(
+                newSliderValue,
+                forSpaceId: LocalStore.defaultSpaceId
+            )
+        } else {
+            let saturation = CGFloat(
+                OverlaySaturationScale.saturation(forSlider: newSliderValue)
+            )
+            SpaceManager.shared.setOverlaySaturation(
+                saturation,
+                forSpaceId: LocalStore.defaultSpaceId,
+                appearance: appearance
+            )
+        }
     }
 
     private func syncThemeControls() {
@@ -219,10 +239,22 @@ private struct ThemeSectionView: View {
 
     private func syncSliderValue() {
         let appearance = ThemeManager.shared.currentAppearance
-        let alpha = SpaceManager.shared.effectiveOverlayOpacity(forSpaceId: LocalStore.defaultSpaceId, appearance: appearance)
-        let opacityPercent = alpha * 100
-        let newSliderValue = OverlayOpacityScale.sliderValue(forOpacityPercent: opacityPercent)
-        AppLogDebug("[OverlayOpacity] sync appearance=\(appearance) theme=\(ThemeManager.shared.currentTheme.id) alpha=\(alpha) percent=\(opacityPercent) slider=\(newSliderValue) (was=\(sliderValue))")
+        let themeId = SpaceManager.shared.resolvedThemeId(forSpaceId: LocalStore.defaultSpaceId)
+        let newSliderValue: Double
+        if themeId == Theme.pure.id {
+            newSliderValue = SpaceManager.shared.effectivePureThemeSliderValue(
+                forSpaceId: LocalStore.defaultSpaceId,
+                appearance: appearance
+            )
+        } else {
+            let saturation = SpaceManager.shared.effectiveOverlaySaturation(
+                forSpaceId: LocalStore.defaultSpaceId,
+                appearance: appearance
+            )
+            newSliderValue = OverlaySaturationScale.sliderValue(
+                forSaturation: Double(saturation)
+            )
+        }
         sliderValue = newSliderValue
     }
 }

@@ -940,9 +940,9 @@ final class SpaceManager: ObservableObject {
     /// one-click "+" path, or the user's explicit choice from the picker.
     ///
     /// The new Space inherits the currently-active Space's pinned theme, which
-    /// is what decides the sidebar's overlay background color and opacity, so
-    /// it opens looking like the Space it was created from rather than snapping
-    /// to the global default theme. A nil pin means "follow the global theme" —
+    /// decides the sidebar's overlay background color, so it opens looking like
+    /// the Space it was created from rather than snapping to the global default
+    /// theme. A nil pin means "follow the global theme" —
     /// the new Space already does, so we only copy an explicit override.
     @discardableResult
     func createSpace(name: String,
@@ -1679,61 +1679,161 @@ final class SpaceManager: ObservableObject {
             map.removeValue(forKey: spaceId)
         }
         account.userDefaults.setSpaceThemeIds(map)
-        if let themeId {
+        if themeId != nil {
             syncColorHexWithTheme(forSpaceId: spaceId)
-            if spaceId == LocalStore.defaultSpaceId {
-                // The default Space's theme doubles as the global theme so
-                // non-browser chrome and pre-Space fallbacks stay in step,
-                // whichever surface the edit came from (settings panes,
-                // strip picker, Spaces menu).
-                MainActor.assumeIsolated {
-                    ThemeManager.shared.switchTheme(to: themeId)
-                }
-            }
         }
+        publishResolvedDefaultSpaceThemeIfNeeded(spaceId: spaceId)
         reapplyResolvedTheme(forSpaceId: spaceId)
         postSpaceThemeDidChange(spaceId: spaceId)
     }
 
-    /// The Space's custom overlay opacity for `appearance`, or nil when it
-    /// uses its theme's own overlay alpha.
-    func overlayOpacity(forSpaceId spaceId: String, appearance: Appearance) -> CGFloat? {
+    /// The Space's custom overlay saturation for `appearance`, or nil when
+    /// it uses its theme's own saturation.
+    func overlaySaturation(forSpaceId spaceId: String, appearance: Appearance) -> CGFloat? {
         guard let value = boundAccount?.userDefaults
-            .spaceOverlayOpacities()[spaceId]?[Self.overlayOpacityKey(for: appearance)] else {
+            .spaceThemeSaturations()[spaceId]?[Self.overlaySaturationKey(for: appearance)] else {
             return nil
         }
         return CGFloat(value)
     }
 
-    /// The overlay opacity the Space's slider should display: the custom
-    /// value when one is stored, else the resolved theme's own alpha.
-    func effectiveOverlayOpacity(forSpaceId spaceId: String, appearance: Appearance) -> CGFloat {
-        if let custom = overlayOpacity(forSpaceId: spaceId, appearance: appearance) {
+    /// The overlay saturation the Space's slider should display: the custom
+    /// value when one is stored, else the resolved registry theme's value.
+    func effectiveOverlaySaturation(forSpaceId spaceId: String, appearance: Appearance) -> CGFloat {
+        if let custom = overlaySaturation(forSpaceId: spaceId, appearance: appearance) {
             return custom
         }
         return MainActor.assumeIsolated {
             let manager = ThemeManager.shared
             let base = manager.registeredThemes[resolvedThemeId(forSpaceId: spaceId)]
                 ?? manager.currentTheme
-            return base.windowOverlayOpacity(for: appearance)
+            return base
+                .color(for: .windowOverlayBackground, appearance: appearance)
+                .hsbSaturationComponent
         }
     }
 
-    /// Persists a custom overlay opacity for `spaceId` and applies it to
-    /// the Space's live windows.
-    func setOverlayOpacity(_ opacity: CGFloat, forSpaceId spaceId: String, appearance: Appearance) {
+    /// Persists the current appearance's overlay saturation and, in dark mode,
+    /// the matching dark window-background saturation, then applies the
+    /// resolved theme to live windows.
+    func setOverlaySaturation(_ saturation: CGFloat, forSpaceId spaceId: String, appearance: Appearance) {
         guard let account = boundAccount else { return }
-        var map = account.userDefaults.spaceOverlayOpacities()
+        let clampedSaturation = min(max(saturation, 0.1), 0.9)
+        var map = account.userDefaults.spaceThemeSaturations()
         var entry = map[spaceId] ?? [:]
-        entry[Self.overlayOpacityKey(for: appearance)] = Double(min(max(opacity, 0), 1))
+        entry[Self.overlaySaturationKey(for: appearance)] = Double(clampedSaturation)
+        if appearance.isDark {
+            entry[Self.windowBackgroundDarkSaturationKey] = Double(clampedSaturation)
+        }
         map[spaceId] = entry
-        account.userDefaults.setSpaceOverlayOpacities(map)
+        account.userDefaults.setSpaceThemeSaturations(map)
+        publishResolvedDefaultSpaceThemeIfNeeded(spaceId: spaceId)
         reapplyResolvedTheme(forSpaceId: spaceId)
         postSpaceThemeDidChange(spaceId: spaceId)
+
+        let appliedTheme = resolvedTheme(forSpaceId: spaceId)
+        Self.logAppliedThemeComponent(
+            appliedTheme.color(for: .windowOverlayBackground, appearance: appearance),
+            category: "OverlaySaturation",
+            role: "windowOverlayBackground",
+            spaceId: spaceId,
+            appearance: appearance
+        )
+        Self.logAppliedThemeComponent(
+            appliedTheme.color(for: .windowBackground, appearance: .dark),
+            category: "WindowBackgroundSaturation",
+            role: "windowBackground",
+            spaceId: spaceId,
+            appearance: .dark
+        )
     }
 
-    private static func overlayOpacityKey(for appearance: Appearance) -> String {
-        appearance.isDark ? "dark" : "light"
+    private static func overlaySaturationKey(for appearance: Appearance) -> String {
+        appearance.isDark ? "overlayDark" : "overlayLight"
+    }
+
+    private static let windowBackgroundDarkSaturationKey = "windowBackgroundDark"
+
+    /// The Pure theme's custom slider position for the Space, or nil when
+    /// the built-in theme value should be used.
+    func pureThemeSliderValue(forSpaceId spaceId: String) -> Double? {
+        boundAccount?.userDefaults.spacePureThemeSliderValues()[spaceId]
+    }
+
+    /// The position the Pure-theme slider should display.
+    func effectivePureThemeSliderValue(forSpaceId spaceId: String, appearance: Appearance) -> Double {
+        if let custom = pureThemeSliderValue(forSpaceId: spaceId) {
+            return custom
+        }
+        return MainActor.assumeIsolated {
+            let manager = ThemeManager.shared
+            let base = manager.registeredThemes[resolvedThemeId(forSpaceId: spaceId)]
+                ?? manager.currentTheme
+            let brightness = base
+                .color(for: .windowOverlayBackground, appearance: appearance)
+                .hsbBrightnessComponent
+            return PureThemeBrightnessScale.sliderValue(
+                forBrightness: Double(brightness),
+                appearance: appearance
+            )
+        }
+    }
+
+    /// Persists one Pure-theme slider position and maps it to the separate
+    /// light and dark brightness ranges.
+    func setPureThemeSliderValue(_ sliderValue: Double, forSpaceId spaceId: String) {
+        guard let account = boundAccount else { return }
+        let clampedSliderValue = min(max(sliderValue, 0), 100)
+        var map = account.userDefaults.spacePureThemeSliderValues()
+        map[spaceId] = clampedSliderValue
+        account.userDefaults.setSpacePureThemeSliderValues(map)
+        publishResolvedDefaultSpaceThemeIfNeeded(spaceId: spaceId)
+        reapplyResolvedTheme(forSpaceId: spaceId)
+        postSpaceThemeDidChange(spaceId: spaceId)
+
+        let appliedTheme = resolvedTheme(forSpaceId: spaceId)
+        Self.logAppliedThemeComponent(
+            appliedTheme.color(for: .windowOverlayBackground, appearance: .light),
+            category: "PureThemeBrightness",
+            role: "windowOverlayBackground",
+            spaceId: spaceId,
+            appearance: .light
+        )
+        Self.logAppliedThemeComponent(
+            appliedTheme.color(for: .windowOverlayBackground, appearance: .dark),
+            category: "PureThemeBrightness",
+            role: "windowOverlayBackground",
+            spaceId: spaceId,
+            appearance: .dark
+        )
+        Self.logAppliedThemeComponent(
+            appliedTheme.color(for: .windowBackground, appearance: .dark),
+            category: "PureThemeBrightness",
+            role: "windowBackground",
+            spaceId: spaceId,
+            appearance: .dark
+        )
+    }
+
+    private static func logAppliedThemeComponent(
+        _ color: NSColor,
+        category: String,
+        role: String,
+        spaceId: String,
+        appearance: Appearance
+    ) {
+        let resolvedColor = color.usingColorSpace(.extendedSRGB) ?? color
+        var hue: CGFloat = 0
+        var saturation: CGFloat = 0
+        var brightness: CGFloat = 0
+        var alpha: CGFloat = 0
+        resolvedColor.getHue(
+            &hue,
+            saturation: &saturation,
+            brightness: &brightness,
+            alpha: &alpha
+        )
+        AppLogDebug("[\(category)] applied \(role) space=\(spaceId) appearance=\(appearance) alpha=\(alpha) hsb=(h:\(hue), s:\(saturation), b:\(brightness))")
     }
 
     private func postSpaceThemeDidChange(spaceId: String) {
@@ -1744,17 +1844,30 @@ final class SpaceManager: ObservableObject {
         )
     }
 
-    /// Whether the Space has anything persisted that its windows must pin
-    /// (a theme id or a custom overlay opacity). Spaces with neither keep
-    /// mirroring the global theme, which is what they resolve to anyway.
+    /// The default Space also supplies application-scoped chrome. Publish its
+    /// resolved copy without writing the per-Space adjustment into the shared
+    /// registry or the canonical built-in themes.
+    private func publishResolvedDefaultSpaceThemeIfNeeded(spaceId: String) {
+        guard spaceId == LocalStore.defaultSpaceId else { return }
+        MainActor.assumeIsolated {
+            ThemeManager.shared.currentTheme = resolvedTheme(forSpaceId: spaceId)
+        }
+    }
+
+    /// Whether the Space has a theme id, saturation, or Pure brightness that
+    /// its windows must pin. Legacy opacity records are deliberately ignored
+    /// because ThemeSnapshot V2 fixes overlay alpha at 0.8.
     fileprivate func hasThemeCustomization(forSpaceId spaceId: String) -> Bool {
         if themeId(forSpaceId: spaceId) != nil {
             return true
         }
-        return !(boundAccount?.userDefaults.spaceOverlayOpacities()[spaceId] ?? [:]).isEmpty
+        if !(boundAccount?.userDefaults.spaceThemeSaturations()[spaceId] ?? [:]).isEmpty {
+            return true
+        }
+        return boundAccount?.userDefaults.spacePureThemeSliderValues()[spaceId] != nil
     }
 
-    /// Removes both per-Space theme maps' entries for a Space id that is
+    /// Removes all per-Space theme maps' entries for a Space id that is
     /// going away for good; nothing else prunes them and the id never
     /// comes back.
     fileprivate func clearThemeRecords(forSpaceId spaceId: String) {
@@ -1766,6 +1879,14 @@ final class SpaceManager: ObservableObject {
         var opacities = account.userDefaults.spaceOverlayOpacities()
         if opacities.removeValue(forKey: spaceId) != nil {
             account.userDefaults.setSpaceOverlayOpacities(opacities)
+        }
+        var saturations = account.userDefaults.spaceThemeSaturations()
+        if saturations.removeValue(forKey: spaceId) != nil {
+            account.userDefaults.setSpaceThemeSaturations(saturations)
+        }
+        var pureSliderValues = account.userDefaults.spacePureThemeSliderValues()
+        if pureSliderValues.removeValue(forKey: spaceId) != nil {
+            account.userDefaults.setSpacePureThemeSliderValues(pureSliderValues)
         }
     }
 
@@ -2203,33 +2324,48 @@ final class SpaceManager: ObservableObject {
         applyResolvedTheme(forSpaceId: spaceId, to: controller)
     }
 
-    /// The Theme instance `spaceId`'s windows display: its resolved
-    /// registry theme, copied with the Space's custom overlay opacity when
-    /// one is stored. The copy keeps the registry id so a pinned
+    /// The Theme instance `spaceId`'s windows display: its resolved registry
+    /// theme with fixed V2 alpha, then the Space's saturation or Pure
+    /// brightness when stored. The copy keeps the registry id so a pinned
     /// `BrowserThemeContext` can re-resolve it after registry-wide edits.
     func resolvedTheme(forSpaceId spaceId: String) -> Theme {
         MainActor.assumeIsolated {
             let manager = ThemeManager.shared
-            let base = manager.registeredThemes[resolvedThemeId(forSpaceId: spaceId)]
+            let registeredBase = manager.registeredThemes[resolvedThemeId(forSpaceId: spaceId)]
                 ?? manager.currentTheme
-            return applyingOverlayOpacity(forSpaceId: spaceId, to: base)
+            let base = ThemeColorAdjustment.applyingStandardAlpha(to: registeredBase)
+            if base.id == Theme.pure.id {
+                return applyingPureThemeBrightness(forSpaceId: spaceId, to: base)
+            }
+            return applyingSaturation(forSpaceId: spaceId, to: base)
         }
     }
 
-    /// `base` copied with the Space's stored overlay opacity applied, or
-    /// `base` itself when the Space has none.
-    fileprivate func applyingOverlayOpacity(forSpaceId spaceId: String, to base: Theme) -> Theme {
-        let light = overlayOpacity(forSpaceId: spaceId, appearance: .light)
-        let dark = overlayOpacity(forSpaceId: spaceId, appearance: .dark)
-        guard light != nil || dark != nil else { return base }
-        let derived = base.duplicating()
-        if let light {
-            derived.setWindowOverlayOpacity(light, for: .light)
+    /// `base` copied with the Space's stored overlay and dark-window
+    /// saturation applied under the fixed V2 alpha contract.
+    fileprivate func applyingSaturation(forSpaceId spaceId: String, to base: Theme) -> Theme {
+        let entry = boundAccount?.userDefaults.spaceThemeSaturations()[spaceId] ?? [:]
+        let overlayLight = entry[Self.overlaySaturationKey(for: .light)].map { CGFloat($0) }
+        let overlayDark = entry[Self.overlaySaturationKey(for: .dark)].map { CGFloat($0) }
+        let windowBackgroundDark = entry[Self.windowBackgroundDarkSaturationKey].map { CGFloat($0) }
+        return ThemeColorAdjustment.applyingSaturation(
+            light: overlayLight,
+            dark: overlayDark,
+            darkWindowBackground: windowBackgroundDark,
+            to: base
+        )
+    }
+
+    /// `base` copied with the Space's Pure-theme brightness applied to both
+    /// overlay appearances and the dark window background.
+    fileprivate func applyingPureThemeBrightness(forSpaceId spaceId: String, to base: Theme) -> Theme {
+        guard let sliderValue = pureThemeSliderValue(forSpaceId: spaceId) else {
+            return base
         }
-        if let dark {
-            derived.setWindowOverlayOpacity(dark, for: .dark)
-        }
-        return derived
+        return ThemeColorAdjustment.applyingPureBrightness(
+            sliderValue: sliderValue,
+            to: base
+        )
     }
 
     /// Applies `spaceId`'s resolved theme to `controller`'s theme context.
@@ -2245,10 +2381,8 @@ final class SpaceManager: ObservableObject {
             let context = controller.browserState.themeContext
             if hasThemeCustomization(forSpaceId: spaceId) {
                 context.mirrorsSharedTheme = false
-                // Registry-wide edits (e.g. the General opacity slider
-                // rewriting every theme's alpha) reach pinned windows by
-                // recomputing from this Space's persisted state, which also
-                // re-applies its own overlay opacity on top.
+                // Registry-wide edits reach pinned windows by recomputing
+                // from this Space's persisted color-component adjustments.
                 context.spaceThemeResolver = { [weak self] in
                     self?.resolvedTheme(forSpaceId: spaceId)
                 }
@@ -2591,6 +2725,9 @@ final class SpaceManager: ObservableObject {
             updated.insert(makeIncognitoSpace(descriptor: descriptor, sortOrder: index), at: index)
         }
         spaces = updated
+        if updated.contains(where: { $0.spaceId == LocalStore.defaultSpaceId }) {
+            publishResolvedDefaultSpaceThemeIfNeeded(spaceId: LocalStore.defaultSpaceId)
+        }
         let validIds = Set(updated.map(\.spaceId))
 
         // Reconcile each slot: if its active Space has been deleted out
@@ -4244,9 +4381,8 @@ final class SpaceWindowSlot: ObservableObject {
         // Same theme choreography as the clicked push-in, except the target
         // theme is resolved from the Space's persisted state — the target
         // window doesn't exist yet. Mirrors what `applyPersistedTheme` sets on
-        // the spawned controller at registration (including the Space's
-        // custom overlay opacity, so the ramp lands on the exact alpha the
-        // registered window will show — no pop at settle).
+        // the spawned controller at registration, including the Space's
+        // color-component adjustment.
         let prevThemeContext = previous.browserState.themeContext
         let sourceTheme = prevThemeContext.currentTheme
         let sourceMirrors = prevThemeContext.mirrorsSharedTheme

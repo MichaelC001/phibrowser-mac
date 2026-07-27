@@ -46,11 +46,12 @@ struct CreateSpacePanel: View {
     /// Theme pinned to the new Space. Every Space owns a theme — there is no
     /// "follow global" anymore. `onAppear` pre-selects a random built-in.
     @State private var selectedThemeId: String = Theme.default.id
-    /// Overlay-opacity slider position. Follows the selected theme's own
-    /// alpha until the user drags it; from then on it's a deliberate choice
-    /// that survives theme switches and is persisted on the new Space.
-    @State private var opacitySliderValue: Double = 50
-    @State private var userAdjustedOpacity = false
+    /// Theme-component slider position. Follows the selected theme's
+    /// saturation (or Pure brightness) until the user drags it; from then on
+    /// it's a deliberate choice that survives theme switches and is persisted
+    /// on the new Space.
+    @State private var themeSliderValue: Double = 50
+    @State private var userAdjustedThemeComponent = false
     @FocusState private var nameFocused: Bool
 
     @Environment(\.phiAppearance) private var appearance
@@ -68,12 +69,12 @@ struct CreateSpacePanel: View {
                 // creating.
                 selectedIcon = .phiIcon(id: PhiIconCatalog.allIds.randomElement() ?? PhiIconCatalog.allIds[0])
                 selectedThemeId = Theme.builtInThemes.randomElement()?.id ?? Theme.default.id
-                syncOpacityToSelectedTheme()
+                syncThemeSliderToSelectedTheme()
                 DispatchQueue.main.async { nameFocused = true }
             }
             .onChange(of: selectedThemeId) { _ in
-                if !userAdjustedOpacity {
-                    syncOpacityToSelectedTheme()
+                if !userAdjustedThemeComponent {
+                    syncThemeSliderToSelectedTheme()
                 }
                 onThemeSelectionChange?(effectiveTheme())
             }
@@ -252,10 +253,10 @@ struct CreateSpacePanel: View {
         .fixedSize()
     }
 
-    /// Color + opacity chooser matching the Spaces settings card: one row of
-    /// theme dots (selected one ringed), a divider, then the overlay-opacity
-    /// slider. Dots spread evenly across the bounded column and shrink with
-    /// the sidebar.
+    /// Color + theme-component chooser matching the Spaces settings card: one
+    /// row of theme dots (selected one ringed), a divider, then the saturation
+    /// or Pure-brightness slider. Dots spread evenly across the bounded column
+    /// and shrink with the sidebar.
     private var colorBlock: some View {
         VStack(spacing: 12) {
             HStack(spacing: 0) {
@@ -284,9 +285,12 @@ struct CreateSpacePanel: View {
             // rather than fixing a width.
             GeometryReader { geo in
                 ThemeOpacitySliderView(
-                    value: opacityBinding,
+                    value: themeSliderBinding,
                     trackColor: effectiveTheme().color(for: .windowOverlayBackground, appearance: appearance),
                     borderColor: ThemedColor.border.resolve(theme: effectiveTheme(), appearance: appearance),
+                    trackStyle: selectedThemeId == Theme.pure.id
+                        ? .pureBrightness(appearance)
+                        : .saturation,
                     width: geo.size.width
                 )
             }
@@ -298,27 +302,37 @@ struct CreateSpacePanel: View {
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
-    private var opacityBinding: Binding<Double> {
+    private var themeSliderBinding: Binding<Double> {
         Binding(
-            get: { opacitySliderValue },
+            get: { themeSliderValue },
             set: { newValue in
-                opacitySliderValue = newValue
-                userAdjustedOpacity = true
+                themeSliderValue = newValue
+                userAdjustedThemeComponent = true
                 onThemeSelectionChange?(effectiveTheme())
             }
         )
     }
 
-    /// Snaps the slider to the selected theme's own overlay alpha — the
-    /// value the new Space inherits unless the user drags the slider.
-    private func syncOpacityToSelectedTheme() {
-        let alpha = effectiveTheme().windowOverlayOpacity(for: appearance)
-        opacitySliderValue = OverlayOpacityScale.sliderValue(forOpacityPercent: Double(alpha) * 100)
-    }
-
-    /// The overlay alpha the slider currently encodes.
-    private var selectedOverlayAlpha: CGFloat {
-        CGFloat(OverlayOpacityScale.opacityPercent(forSlider: opacitySliderValue) / 100)
+    /// Snaps the slider to the selected theme's own saturation or Pure
+    /// brightness — the value the new Space inherits unless the user drags.
+    private func syncThemeSliderToSelectedTheme() {
+        let theme = selectedBaseTheme()
+        if theme.id == Theme.pure.id {
+            let brightness = theme
+                .color(for: .windowOverlayBackground, appearance: appearance)
+                .hsbBrightnessComponent
+            themeSliderValue = PureThemeBrightnessScale.sliderValue(
+                forBrightness: Double(brightness),
+                appearance: appearance
+            )
+        } else {
+            let saturation = theme
+                .color(for: .windowOverlayBackground, appearance: appearance)
+                .hsbSaturationComponent
+            themeSliderValue = OverlaySaturationScale.sliderValue(
+                forSaturation: Double(saturation)
+            )
+        }
     }
 
     private var actions: some View {
@@ -362,18 +376,35 @@ struct CreateSpacePanel: View {
         effectiveTheme().color(for: .windowOverlayBackground, appearance: appearance).hexRGBString
     }
 
-    /// The theme backing the new Space: the selected theme, with the
-    /// user's custom overlay opacity applied on a palette copy once the
-    /// slider has been touched — so the live sidebar preview shows the
-    /// exact look the Space will have.
-    private func effectiveTheme() -> Theme {
-        let base = ThemeManager.shared.registeredThemes[effectiveThemeId]
+    private func selectedBaseTheme() -> Theme {
+        ThemeManager.shared.registeredThemes[effectiveThemeId]
             ?? Theme.builtInThemes.first(where: { $0.id == effectiveThemeId })
             ?? ThemeManager.shared.currentTheme
-        guard userAdjustedOpacity else { return base }
-        let derived = base.duplicating()
-        derived.setWindowOverlayOpacity(selectedOverlayAlpha, for: appearance)
-        return derived
+    }
+
+    /// The theme backing the new Space: the selected theme, with the user's
+    /// custom saturation or Pure brightness applied on a palette copy once
+    /// the slider has been touched, so the live sidebar preview matches the
+    /// theme that will be persisted.
+    private func effectiveTheme() -> Theme {
+        let base = selectedBaseTheme()
+        guard userAdjustedThemeComponent else { return base }
+        if base.id == Theme.pure.id {
+            return ThemeColorAdjustment.applyingPureBrightness(
+                sliderValue: themeSliderValue,
+                to: base
+            )
+        }
+
+        let saturation = CGFloat(
+            OverlaySaturationScale.saturation(forSlider: themeSliderValue)
+        )
+        return ThemeColorAdjustment.applyingSaturation(
+            light: appearance.isLight ? saturation : nil,
+            dark: appearance.isDark ? saturation : nil,
+            darkWindowBackground: appearance.isDark ? saturation : nil,
+            to: base
+        )
     }
 
     // MARK: - Profiles
@@ -422,15 +453,28 @@ struct CreateSpacePanel: View {
                 "non_default_profile": profileId != LocalStore.defaultProfileId,
             ])
         }
-        // Pin the chosen theme (and, when the user touched the slider, the
-        // custom overlay opacity) to the new Space. Persisted now; applied
-        // when its window spawns in activateInFocusedWindow.
+        // Pin the chosen theme (and, when the user touched the slider, its
+        // custom saturation or Pure brightness) to the new Space. Persisted
+        // now; applied when its window spawns in activateInFocusedWindow.
         if let newSpaceId {
             manager.setTheme(forSpaceId: newSpaceId, themeId: selectedThemeId)
-            if userAdjustedOpacity {
-                manager.setOverlayOpacity(selectedOverlayAlpha,
-                                          forSpaceId: newSpaceId,
-                                          appearance: appearance)
+            if userAdjustedThemeComponent {
+                if selectedThemeId == Theme.pure.id {
+                    manager.setPureThemeSliderValue(
+                        themeSliderValue,
+                        forSpaceId: newSpaceId
+                    )
+                } else {
+                    manager.setOverlaySaturation(
+                        CGFloat(
+                            OverlaySaturationScale.saturation(
+                                forSlider: themeSliderValue
+                            )
+                        ),
+                        forSpaceId: newSpaceId,
+                        appearance: appearance
+                    )
+                }
             }
         }
         onClose()

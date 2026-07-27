@@ -181,7 +181,7 @@ public extension Theme {
     static let pure = makeDesignTheme(
         id: "pure",
         name: NSLocalizedString("themes.theme.pure.name", value: "Pure", comment: "Pure theme name"),
-        lightOverlay: 0xEAEAEA,
+        lightOverlay: 0xFFFFFF,
         lightBackground: 0xFFFFFF,
         lightThemeColor: 0x3AA4D5,
         lightExtensionAction: 0x2DC882,

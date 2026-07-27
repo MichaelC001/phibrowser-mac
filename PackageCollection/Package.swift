@@ -20,7 +20,7 @@ let package = Package(
         .package(url: "https://github.com/onevcat/Kingfisher.git", exact: "8.5.0"),
         .package(url: "https://github.com/auth0/Auth0.swift.git", exact: "2.18.0"),
         .package(url: "https://github.com/sparkle-project/Sparkle.git", exact: "2.9.3"),
-        .package(url: "https://github.com/phibrowser/Settings.git", exact: "3.1.4"),
+        .package(url: "https://github.com/phibrowser/Settings.git", exact: "3.1.2"),
         .package(url: "https://github.com/getsentry/sentry-cocoa", exact: "8.57.0"),
         .package(url: "https://github.com/airbnb/lottie-spm.git", exact: "4.5.2"),
         .package(url: "https://github.com/PostHog/posthog-ios.git", exact: "3.53.1"),

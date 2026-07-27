@@ -60,7 +60,7 @@ final class PhiBrowserTests: XCTestCase {
         XCTAssertEqual(shortcut.displayString, "⇧⌃⇥")
     }
 
-    func testThemeSnapshotRoundTripPreservesEditableColorsAndOverlayOpacity() {
+    func testThemeSnapshotRoundTripPreservesRGBAndStandardizesAlpha() {
         let theme = Theme(id: "theme-snapshot-round-trip", name: "Snapshot")
         theme.setColor(
             light: NSColor(calibratedRed: 0.10, green: 0.20, blue: 0.30, alpha: 0.45),
@@ -68,8 +68,8 @@ final class PhiBrowserTests: XCTestCase {
             for: .windowOverlayBackground
         )
         theme.setColor(
-            light: NSColor(calibratedRed: 0.15, green: 0.25, blue: 0.35, alpha: 1.0),
-            dark: NSColor(calibratedRed: 0.65, green: 0.55, blue: 0.45, alpha: 1.0),
+            light: NSColor(calibratedRed: 0.15, green: 0.25, blue: 0.35, alpha: 0.31),
+            dark: NSColor(calibratedRed: 0.65, green: 0.55, blue: 0.45, alpha: 0.79),
             for: .windowBackground
         )
         theme.setColor(
@@ -83,19 +83,34 @@ final class PhiBrowserTests: XCTestCase {
             for: .extensionActonColor
         )
 
-        let restoredTheme = theme.makeSnapshot().makeTheme()
+        let snapshot = theme.makeSnapshot()
+        let restoredTheme = snapshot.makeTheme()
+
+        XCTAssertEqual(snapshot.version, ThemeSnapshot.currentVersion)
 
         assertColor(
             restoredTheme.color(for: .windowOverlayBackground, appearance: .light),
-            equals: theme.color(for: .windowOverlayBackground, appearance: .light)
+            equals: theme
+                .color(for: .windowOverlayBackground, appearance: .light)
+                .withAlphaComponent(0.8)
         )
         assertColor(
             restoredTheme.color(for: .windowOverlayBackground, appearance: .dark),
-            equals: theme.color(for: .windowOverlayBackground, appearance: .dark)
+            equals: theme
+                .color(for: .windowOverlayBackground, appearance: .dark)
+                .withAlphaComponent(0.8)
         )
         assertColor(
             restoredTheme.color(for: .windowBackground, appearance: .light),
-            equals: theme.color(for: .windowBackground, appearance: .light)
+            equals: theme
+                .color(for: .windowBackground, appearance: .light)
+                .withAlphaComponent(1)
+        )
+        assertColor(
+            restoredTheme.color(for: .windowBackground, appearance: .dark),
+            equals: theme
+                .color(for: .windowBackground, appearance: .dark)
+                .withAlphaComponent(1)
         )
         assertColor(
             restoredTheme.color(for: .themeColor, appearance: .dark),
@@ -107,15 +122,319 @@ final class PhiBrowserTests: XCTestCase {
         )
         XCTAssertEqual(
             restoredTheme.windowOverlayOpacity(for: .light),
-            0.45,
+            0.8,
             accuracy: 0.001,
-            "Theme snapshots should preserve the customized light overlay alpha."
+            "ThemeSnapshot V2 must ignore customized light overlay alpha."
         )
         XCTAssertEqual(
             restoredTheme.windowOverlayOpacity(for: .dark),
-            0.85,
+            0.8,
             accuracy: 0.001,
-            "Theme snapshots should preserve the customized dark overlay alpha."
+            "ThemeSnapshot V2 must ignore customized dark overlay alpha."
+        )
+        XCTAssertEqual(snapshot.colors.windowOverlayBackground.light.alpha, 0.8, accuracy: 0.001)
+        XCTAssertEqual(snapshot.colors.windowOverlayBackground.dark.alpha, 0.8, accuracy: 0.001)
+        XCTAssertEqual(snapshot.colors.windowBackground.light.alpha, 1, accuracy: 0.001)
+        XCTAssertEqual(snapshot.colors.windowBackground.dark.alpha, 1, accuracy: 0.001)
+    }
+
+    func testThemeWindowRolesAlwaysExposeStandardAlpha() {
+        let theme = Theme(id: "fixed-alpha-contract", name: "Fixed Alpha")
+        theme.setColor(
+            light: NSColor(hex: 0x112233, alpha: 0.12),
+            dark: NSColor(hex: 0x445566, alpha: 0.93),
+            for: .windowOverlayBackground
+        )
+        theme.setColor(
+            light: NSColor(hex: 0x778899, alpha: 0.24),
+            dark: NSColor(hex: 0xAABBCC, alpha: 0.68),
+            for: .windowBackground
+        )
+
+        XCTAssertEqual(theme.windowOverlayOpacity(for: .light), 0.8, accuracy: 0.0001)
+        XCTAssertEqual(theme.windowOverlayOpacity(for: .dark), 0.8, accuracy: 0.0001)
+        XCTAssertEqual(
+            theme.color(for: .windowBackground, appearance: .light).alphaComponent,
+            1,
+            accuracy: 0.0001
+        )
+        XCTAssertEqual(
+            theme.color(for: .windowBackground, appearance: .dark).alphaComponent,
+            1,
+            accuracy: 0.0001
+        )
+    }
+
+    func testVersion1ColoredThemeSnapshotMigratesFromLatestCanonicalTheme() throws {
+        let legacyTheme = Theme(id: Theme.mint.id, name: "Legacy Mint")
+        legacyTheme.setColor(
+            light: NSColor(calibratedRed: 0.91, green: 0.12, blue: 0.37, alpha: 0.23),
+            dark: NSColor(calibratedRed: 0.17, green: 0.83, blue: 0.41, alpha: 0.67),
+            for: .windowOverlayBackground
+        )
+        legacyTheme.setColor(
+            light: .magenta,
+            dark: .orange,
+            for: .windowBackground
+        )
+        legacyTheme.setColor(light: .red, dark: .blue, for: .themeColor)
+        legacyTheme.setColor(light: .yellow, dark: .purple, for: .extensionActonColor)
+        let legacySnapshot = ThemeSnapshot(
+            version: ThemeSnapshot.version1,
+            id: legacyTheme.id,
+            name: legacyTheme.name,
+            colors: rawEditableColors(from: legacyTheme)
+        )
+
+        let migratedSnapshot = try XCTUnwrap(
+            legacySnapshot.migratedToCurrentVersion(matching: Theme.mint)
+        )
+        let restoredTheme = migratedSnapshot.makeTheme(matching: Theme.mint)
+
+        XCTAssertEqual(migratedSnapshot.version, ThemeSnapshot.currentVersion)
+        XCTAssertEqual(migratedSnapshot.id, Theme.mint.id)
+        XCTAssertEqual(migratedSnapshot.name, Theme.mint.name)
+        assertHSB(
+            restoredTheme.color(for: .windowOverlayBackground, appearance: .light),
+            saturation: 0.40,
+            alpha: 0.8
+        )
+        assertHSB(
+            restoredTheme.color(for: .windowOverlayBackground, appearance: .dark),
+            saturation: 0.40,
+            alpha: 0.8
+        )
+        assertHSB(
+            restoredTheme.color(for: .windowBackground, appearance: .dark),
+            saturation: 0.40,
+            alpha: 1
+        )
+        assertColor(
+            restoredTheme.color(for: .themeColor, appearance: .light),
+            equals: Theme.mint.color(for: .themeColor, appearance: .light)
+        )
+        assertColor(
+            restoredTheme.color(for: .extensionActonColor, appearance: .dark),
+            equals: Theme.mint.color(for: .extensionActonColor, appearance: .dark)
+        )
+    }
+
+    func testVersion1PureThemeSnapshotMigratesToAppearanceSpecificMidpoints() throws {
+        let legacyTheme = Theme(id: Theme.pure.id, name: "Legacy Pure")
+        legacyTheme.setColor(light: .red, dark: .green, for: .windowOverlayBackground)
+        legacyTheme.setColor(light: .blue, dark: .yellow, for: .windowBackground)
+        legacyTheme.setColor(light: .orange, dark: .purple, for: .themeColor)
+        legacyTheme.setColor(light: .cyan, dark: .magenta, for: .extensionActonColor)
+        let legacySnapshot = ThemeSnapshot(
+            version: ThemeSnapshot.version1,
+            id: legacyTheme.id,
+            name: legacyTheme.name,
+            colors: rawEditableColors(from: legacyTheme)
+        )
+
+        let migratedSnapshot = try XCTUnwrap(
+            legacySnapshot.migratedToCurrentVersion(matching: Theme.pure)
+        )
+        let restoredTheme = migratedSnapshot.makeTheme(matching: Theme.pure)
+
+        XCTAssertEqual(migratedSnapshot.version, ThemeSnapshot.currentVersion)
+        assertHSB(
+            restoredTheme.color(for: .windowOverlayBackground, appearance: .light),
+            brightness: 0.89,
+            alpha: 0.8
+        )
+        assertHSB(
+            restoredTheme.color(for: .windowOverlayBackground, appearance: .dark),
+            brightness: 0.20,
+            alpha: 0.8
+        )
+        assertHSB(
+            restoredTheme.color(for: .windowBackground, appearance: .dark),
+            brightness: 0.25,
+            alpha: 1
+        )
+        XCTAssertEqual(
+            Theme.pure
+                .color(for: .windowOverlayBackground, appearance: .light)
+                .hsbBrightnessComponent,
+            1,
+            accuracy: 0.0001,
+            "Migration must not mutate the canonical built-in instance."
+        )
+    }
+
+    func testVersion1DefaultSnapshotAliasMigratesToPure() throws {
+        let legacySnapshot = ThemeSnapshot(
+            version: ThemeSnapshot.version1,
+            id: "default",
+            name: "Default",
+            colors: rawEditableColors(from: Theme.pure)
+        )
+
+        let migratedSnapshot = try XCTUnwrap(
+            legacySnapshot.migratedToCurrentVersion(matching: Theme.pure)
+        )
+
+        XCTAssertEqual(migratedSnapshot.id, Theme.pure.id)
+        XCTAssertEqual(migratedSnapshot.version, ThemeSnapshot.currentVersion)
+    }
+
+    func testVersion1CustomThemeSnapshotKeepsRGBAndStandardizesAlpha() throws {
+        let customTheme = Theme(id: "custom-theme", name: "Custom")
+        customTheme.setColor(
+            light: NSColor(calibratedRed: 0.11, green: 0.22, blue: 0.33, alpha: 0.44),
+            dark: NSColor(calibratedRed: 0.55, green: 0.66, blue: 0.77, alpha: 0.88),
+            for: .windowOverlayBackground
+        )
+        customTheme.setColor(light: .red, dark: .green, for: .windowBackground)
+        customTheme.setColor(light: .blue, dark: .yellow, for: .themeColor)
+        customTheme.setColor(light: .orange, dark: .purple, for: .extensionActonColor)
+        let legacySnapshot = ThemeSnapshot(
+            version: ThemeSnapshot.version1,
+            id: customTheme.id,
+            name: customTheme.name,
+            colors: rawEditableColors(from: customTheme)
+        )
+
+        let migratedSnapshot = try XCTUnwrap(
+            legacySnapshot.migratedToCurrentVersion(matching: nil)
+        )
+        let restoredTheme = migratedSnapshot.makeTheme()
+
+        XCTAssertEqual(migratedSnapshot.version, ThemeSnapshot.currentVersion)
+        XCTAssertEqual(migratedSnapshot.id, customTheme.id)
+        XCTAssertEqual(migratedSnapshot.name, customTheme.name)
+        assertColor(
+            restoredTheme.color(for: .windowOverlayBackground, appearance: .light),
+            equals: customTheme
+                .color(for: .windowOverlayBackground, appearance: .light)
+                .withAlphaComponent(0.8)
+        )
+        assertColor(
+            restoredTheme.color(for: .windowOverlayBackground, appearance: .dark),
+            equals: customTheme
+                .color(for: .windowOverlayBackground, appearance: .dark)
+                .withAlphaComponent(0.8)
+        )
+        assertColor(
+            restoredTheme.color(for: .themeColor, appearance: .light),
+            equals: customTheme.color(for: .themeColor, appearance: .light)
+        )
+    }
+
+    func testVersion2SnapshotRestoreKeepsCanonicalNonEditableRoles() throws {
+        let canonicalTheme = Theme(id: "future-built-in", name: "Future")
+        canonicalTheme.setColor(light: .brown, dark: .gray, for: .textPrimary)
+        let editableTheme = Theme(id: canonicalTheme.id, name: canonicalTheme.name)
+        editableTheme.setColor(light: .red, dark: .green, for: .windowOverlayBackground)
+        let snapshot = editableTheme.makeSnapshot()
+
+        let migratedSnapshot = try XCTUnwrap(
+            snapshot.migratedToCurrentVersion(matching: canonicalTheme)
+        )
+        let restoredTheme = migratedSnapshot.makeTheme(matching: canonicalTheme)
+
+        XCTAssertEqual(migratedSnapshot, snapshot)
+        assertColor(
+            restoredTheme.color(for: .textPrimary, appearance: .light),
+            equals: .brown
+        )
+        assertColor(
+            restoredTheme.color(for: .textPrimary, appearance: .dark),
+            equals: .gray
+        )
+    }
+
+    func testVersion2SnapshotIgnoresPersistedAlpha() throws {
+        let savedTheme = Theme(id: "v2-saved-alpha", name: "Saved Alpha")
+        savedTheme.setColor(
+            light: NSColor(hex: 0x2468AC),
+            dark: NSColor(hex: 0x13579B),
+            for: .windowOverlayBackground
+        )
+        savedTheme.setColor(
+            light: NSColor(hex: 0xF0E0D0),
+            dark: NSColor(hex: 0x302010),
+            for: .windowBackground
+        )
+        let savedSnapshot = ThemeSnapshot(
+            version: ThemeSnapshot.currentVersion,
+            id: savedTheme.id,
+            name: savedTheme.name,
+            colors: rawEditableColors(from: savedTheme)
+        )
+
+        let normalizedSnapshot = try XCTUnwrap(
+            savedSnapshot.migratedToCurrentVersion(matching: nil)
+        )
+        let restoredTheme = normalizedSnapshot.makeTheme()
+
+        XCTAssertEqual(normalizedSnapshot.colors.windowOverlayBackground.light.alpha, 0.8)
+        XCTAssertEqual(normalizedSnapshot.colors.windowOverlayBackground.dark.alpha, 0.8)
+        XCTAssertEqual(normalizedSnapshot.colors.windowBackground.light.alpha, 1)
+        XCTAssertEqual(normalizedSnapshot.colors.windowBackground.dark.alpha, 1)
+        assertColor(
+            restoredTheme.color(for: .windowOverlayBackground, appearance: .light),
+            equals: NSColor(hex: 0x2468AC, alpha: 0.8)
+        )
+        assertColor(
+            restoredTheme.color(for: .windowBackground, appearance: .dark),
+            equals: NSColor(hex: 0x302010, alpha: 1)
+        )
+    }
+
+    func testUnsupportedThemeSnapshotVersionIsNotApplied() {
+        let futureSnapshot = ThemeSnapshot(
+            version: ThemeSnapshot.currentVersion + 1,
+            id: Theme.mint.id,
+            name: Theme.mint.name,
+            colors: Theme.mint.makeSnapshot().colors
+        )
+
+        XCTAssertNil(
+            futureSnapshot.migratedToCurrentVersion(matching: Theme.mint)
+        )
+    }
+
+    func testThemeColorAdjustmentForcesStandardAlpha() {
+        let base = Theme(id: "alpha-normalization", name: "Alpha")
+        base.setColor(
+            light: NSColor(calibratedRed: 0.2, green: 0.5, blue: 0.8, alpha: 0.37),
+            dark: NSColor(calibratedRed: 0.8, green: 0.5, blue: 0.2, alpha: 0.63),
+            for: .windowOverlayBackground
+        )
+        base.setColor(
+            light: NSColor(calibratedWhite: 0.9, alpha: 0.71),
+            dark: NSColor(calibratedWhite: 0.1, alpha: 0.79),
+            for: .windowBackground
+        )
+
+        let adjusted = ThemeColorAdjustment.applyingSaturation(
+            light: 0.4,
+            dark: 0.4,
+            darkWindowBackground: 0.4,
+            to: base
+        )
+
+        XCTAssertEqual(
+            adjusted.color(for: .windowOverlayBackground, appearance: .light).alphaComponent,
+            0.8,
+            accuracy: 0.0001
+        )
+        XCTAssertEqual(
+            adjusted.color(for: .windowOverlayBackground, appearance: .dark).alphaComponent,
+            0.8,
+            accuracy: 0.0001
+        )
+        XCTAssertEqual(
+            adjusted.color(for: .windowBackground, appearance: .dark).alphaComponent,
+            1,
+            accuracy: 0.0001
+        )
+        XCTAssertEqual(
+            adjusted.color(for: .windowBackground, appearance: .light).alphaComponent,
+            1,
+            accuracy: 0.0001
         )
     }
 
@@ -128,6 +447,51 @@ final class PhiBrowserTests: XCTestCase {
             normalizedColor,
             equals: NSColor(calibratedRed: 0.21, green: 0.42, blue: 0.63, alpha: 1.0)
         )
+    }
+
+    func testPureThemeBrightnessScaleGetsDarkerFromLeftToRight() {
+        XCTAssertEqual(PureThemeBrightnessScale.brightness(forSlider: -1, appearance: .light), 0.94, accuracy: 0.0001)
+        XCTAssertEqual(PureThemeBrightnessScale.brightness(forSlider: 0, appearance: .light), 0.94, accuracy: 0.0001)
+        XCTAssertEqual(PureThemeBrightnessScale.brightness(forSlider: 50, appearance: .light), 0.89, accuracy: 0.0001)
+        XCTAssertEqual(PureThemeBrightnessScale.brightness(forSlider: 100, appearance: .light), 0.84, accuracy: 0.0001)
+        XCTAssertEqual(PureThemeBrightnessScale.brightness(forSlider: 101, appearance: .light), 0.84, accuracy: 0.0001)
+        XCTAssertEqual(PureThemeBrightnessScale.sliderValue(forBrightness: 0.89, appearance: .light), 50, accuracy: 0.0001)
+
+        XCTAssertEqual(PureThemeBrightnessScale.brightness(forSlider: 0, appearance: .dark), 0.40, accuracy: 0.0001)
+        XCTAssertEqual(PureThemeBrightnessScale.brightness(forSlider: 50, appearance: .dark), 0.20, accuracy: 0.0001)
+        XCTAssertEqual(PureThemeBrightnessScale.brightness(forSlider: 100, appearance: .dark), 0, accuracy: 0.0001)
+        XCTAssertEqual(PureThemeBrightnessScale.sliderValue(forBrightness: 0.20, appearance: .dark), 50, accuracy: 0.0001)
+
+        XCTAssertEqual(PureThemeBrightnessScale.darkWindowBackgroundBrightness(forSlider: 0), 0.30, accuracy: 0.0001)
+        XCTAssertEqual(PureThemeBrightnessScale.darkWindowBackgroundBrightness(forSlider: 50), 0.25, accuracy: 0.0001)
+        XCTAssertEqual(PureThemeBrightnessScale.darkWindowBackgroundBrightness(forSlider: 100), 0.20, accuracy: 0.0001)
+    }
+
+    func testDefaultColoredThemeSaturationIsFortyPercent() {
+        XCTAssertEqual(ThemeColorAdjustment.defaultSaturation, 0.40, accuracy: 0.0001)
+        XCTAssertEqual(
+            OverlaySaturationScale.sliderValue(
+                forSaturation: Double(ThemeColorAdjustment.defaultSaturation)
+            ),
+            37.5,
+            accuracy: 0.0001
+        )
+    }
+
+    func testHSBBrightnessReplacementPreservesSaturationAndSetsAlpha() {
+        let sourceColor = NSColor(
+            colorSpace: .extendedSRGB,
+            hue: 0,
+            saturation: 0,
+            brightness: 1,
+            alpha: 0.4
+        )
+
+        let adjustedColor = sourceColor.withHSBBrightness(0.76, alpha: 0.8)
+
+        XCTAssertEqual(adjustedColor.hsbSaturationComponent, 0, accuracy: 0.0001)
+        XCTAssertEqual(adjustedColor.hsbBrightnessComponent, 0.76, accuracy: 0.0001)
+        XCTAssertEqual(adjustedColor.alphaComponent, 0.8, accuracy: 0.0001)
     }
 
     @MainActor
@@ -148,22 +512,33 @@ final class PhiBrowserTests: XCTestCase {
             )
         )
 
-        var observedLightOverlayOpacity: [CGFloat] = []
+        var observedLightOverlayColors: [NSColor] = []
         let subscription = context.subscribe { theme, appearance in
-            observedLightOverlayOpacity.append(theme.windowOverlayOpacity(for: appearance))
+            observedLightOverlayColors.append(
+                theme.color(for: .windowOverlayBackground, appearance: appearance)
+            )
         }
 
-        let updatedTheme = initialTheme.makeSnapshot()
-            .updatingOverlayOpacity(0.72, for: .light)
-            .makeTheme()
+        let updatedTheme = initialTheme.duplicating()
+        updatedTheme.setColor(
+            light: NSColor(hex: 0xAA8844, alpha: 0.72),
+            dark: NSColor(hex: 0x335577, alpha: 0.36),
+            for: .windowOverlayBackground
+        )
         context.setTheme(updatedTheme)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.01))
 
         _ = subscription
 
-        XCTAssertEqual(
-            observedLightOverlayOpacity,
-            [0.40, 0.72],
-            "Replacing a window theme with a new instance that keeps the same theme identifier should still notify subscribers so overlay alpha changes hot-update active UI."
+        XCTAssertEqual(observedLightOverlayColors.count, 2)
+        guard observedLightOverlayColors.count == 2 else { return }
+        assertColor(
+            observedLightOverlayColors[0],
+            equals: NSColor(hex: 0x445566, alpha: 0.8)
+        )
+        assertColor(
+            observedLightOverlayColors[1],
+            equals: NSColor(hex: 0xAA8844, alpha: 0.8)
         )
     }
 
@@ -701,6 +1076,56 @@ final class PhiBrowserTests: XCTestCase {
 
     private func renewTimer(in authManager: AuthManager) -> Timer? {
         Mirror(reflecting: authManager).descendant("renewTimer") as? Timer
+    }
+
+    /// Builds a pre-V2 payload without applying the current fixed-alpha rule.
+    private func rawEditableColors(from theme: Theme) -> ThemeEditableColors {
+        let overlay = theme.colorPair(for: .windowOverlayBackground)
+        let windowBackground = theme.colorPair(for: .windowBackground)
+        return ThemeEditableColors(
+            windowOverlayBackground: StoredColorPair(
+                light: StoredRGBAColor(overlay.light.withAlphaComponent(0.23)),
+                dark: StoredRGBAColor(overlay.dark.withAlphaComponent(0.67))
+            ),
+            windowBackground: StoredColorPair(
+                light: StoredRGBAColor(windowBackground.light.withAlphaComponent(0.31)),
+                dark: StoredRGBAColor(windowBackground.dark.withAlphaComponent(0.79))
+            ),
+            themeColor: StoredColorPair(theme.colorPair(for: .themeColor)),
+            extensionActonColor: StoredColorPair(
+                theme.colorPair(for: .extensionActonColor)
+            )
+        )
+    }
+
+    private func assertHSB(
+        _ color: NSColor,
+        saturation: CGFloat? = nil,
+        brightness: CGFloat? = nil,
+        alpha: CGFloat? = nil,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let resolvedColor = color.usingColorSpace(.extendedSRGB) ?? color
+        var actualSaturation: CGFloat = 0
+        var actualBrightness: CGFloat = 0
+        var actualAlpha: CGFloat = 0
+        resolvedColor.getHue(
+            nil,
+            saturation: &actualSaturation,
+            brightness: &actualBrightness,
+            alpha: &actualAlpha
+        )
+
+        if let saturation {
+            XCTAssertEqual(actualSaturation, saturation, accuracy: 0.001, file: file, line: line)
+        }
+        if let brightness {
+            XCTAssertEqual(actualBrightness, brightness, accuracy: 0.001, file: file, line: line)
+        }
+        if let alpha {
+            XCTAssertEqual(actualAlpha, alpha, accuracy: 0.001, file: file, line: line)
+        }
     }
 
     private func assertColor(
