@@ -75,11 +75,11 @@
     @try {
         // Resolve the embedded Chromium framework from the app bundle.
         NSBundle *mainBundle = [NSBundle mainBundle];
-        NSString *frameworksPath = [mainBundle pathForResource:@"Phi framework" ofType:@"framework"];
+        NSString *frameworksPath = [mainBundle pathForResource:@"Phi Framework" ofType:@"framework"];
         
         if (!frameworksPath) {
             // Fall back to the standard Frameworks directory layout.
-            NSString *bundleFrameworksPath = [[mainBundle bundlePath] stringByAppendingPathComponent:@"Contents/Frameworks/Phi framework.framework"];
+            NSString *bundleFrameworksPath = [[mainBundle bundlePath] stringByAppendingPathComponent:@"Contents/Frameworks/Phi Framework.framework"];
             if ([[NSFileManager defaultManager] fileExistsAtPath:bundleFrameworksPath]) {
                 frameworksPath = bundleFrameworksPath;
                 AppLogDebug(@"Found Phi framework in bundle Frameworks: %@", frameworksPath);
@@ -93,7 +93,7 @@
         }
         
         // Load the framework dynamically so the app can fail gracefully when it is missing.
-        NSString *chromiumLibPath = [frameworksPath stringByAppendingPathComponent:@"Phi framework"];
+        NSString *chromiumLibPath = [frameworksPath stringByAppendingPathComponent:@"Phi Framework"];
         self.chromiumHandle = dlopen([chromiumLibPath UTF8String], RTLD_LAZY | RTLD_LOCAL);
         
         if (!self.chromiumHandle) {
