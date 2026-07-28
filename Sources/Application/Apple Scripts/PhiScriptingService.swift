@@ -249,6 +249,7 @@ struct PhiScriptingDependencies {
     var openTab: (String, String?) -> PhiScriptingOperationResult
     var createWindow: (PhiScriptingWindowKind) -> PhiScriptingOperationResult
     var applicationVersion: () -> (version: String, build: String)
+    var chromiumDataDirectory: () -> String
 }
 
 @MainActor
@@ -397,9 +398,6 @@ final class PhiScriptingService {
         }
         let requestedSpaceId = nonEmpty(spaceId)
         let snapshot = dependencies.snapshot()
-        guard !snapshot.windows.isEmpty else {
-            return failure(.noWindows)
-        }
         if let requestedSpaceId,
            !snapshot.spaces.contains(where: { $0.id == requestedSpaceId }) {
             return failure(.spaceNotFound)
@@ -421,6 +419,12 @@ final class PhiScriptingService {
             "apiVersion": Self.apiVersion,
             "version": version.version,
             "build": version.build,
+        ])
+    }
+
+    func getChromiumDataDirectory() -> [String: Any] {
+        success([
+            "chromiumDataDirectory": dependencies.chromiumDataDirectory(),
         ])
     }
 
@@ -502,7 +506,8 @@ extension PhiScriptingDependencies {
                     info?["CFBundleShortVersionString"] as? String ?? "unknown",
                     info?["CFBundleVersion"] as? String ?? "unknown"
                 )
-            }
+            },
+            chromiumDataDirectory: FileSystemUtils.applicationSupportDirctory
         )
     }
 
@@ -903,29 +908,137 @@ extension PhiScriptingDependencies {
         spaceId: String?
     ) -> PhiScriptingOperationResult {
         let manager = SpaceManager.shared
-        guard let slot = manager.keySlot ?? manager.slots.first,
-              ChromiumLauncher.sharedInstance().bridge != nil else {
-            return .failed
+
+        if ChromiumLauncher.sharedInstance().bridge == nil
+            || shouldDeferOpenTabUntilLaunchIsReady(manager) {
+            retryOpenLiveTabAfterLaunch(
+                address,
+                spaceId: spaceId,
+                attemptsRemaining: 40
+            )
+            return .accepted
         }
-        let targetSpaceId = spaceId ?? slot.activeSpaceId
+
+        let preferredSlot = PhiScriptingSlotRouting.preferredSlot(
+            focusedSlot: manager.keySlot,
+            slots: manager.slots,
+            containsTargetSpace: { slot in
+                guard let spaceId else { return false }
+                return slot.windowController(for: spaceId) != nil
+            }
+        )
+        let targetSpaceId = spaceId
+            ?? preferredSlot?.activeSpaceId
+            ?? [manager.activeSpaceId, manager.persistedActiveSpaceId]
+                .compactMap { $0 }
+                .first(where: { candidate in
+                    manager.userSpaces.contains(where: { $0.spaceId == candidate })
+                })
+            ?? manager.userSpaces.first?.spaceId
         guard let targetSpaceId,
               manager.userSpaces.contains(where: { $0.spaceId == targetSpaceId }) else {
             return .failed
         }
+        let slot = preferredSlot ?? manager.createSlot(initialSpaceId: targetSpaceId)
         let processedAddress = URLProcessor.processUserInput(address)
-        let create: () -> Void = { [weak slot] in
-            slot?.windowController(for: targetSpaceId)?.browserState.createTab(
+
+        var didOpen = false
+        let openWhenReady: () -> Bool = { [weak slot] in
+            if didOpen {
+                return true
+            }
+            guard let slot,
+                  slot.activeSpaceId == targetSpaceId,
+                  ChromiumLauncher.sharedInstance().bridge != nil,
+                  let controller = slot.windowController(for: targetSpaceId) else {
+                return false
+            }
+
+            didOpen = true
+            NSApp.activate(ignoringOtherApps: true)
+            controller.window?.makeKeyAndOrderFront(nil)
+            controller.browserState.createTab(
                 processedAddress,
                 focusAfterCreate: true
             )
+            return true
         }
-        if slot.activeSpaceId == targetSpaceId,
-           slot.windowController(for: targetSpaceId) != nil {
-            create()
-        } else {
-            slot.activate(spaceId: targetSpaceId, onSwapSettled: create)
+
+        if openWhenReady() {
+            return .completed
+        }
+
+        let hadRegisteredController = slot.windowController(for: targetSpaceId) != nil
+        slot.activate(spaceId: targetSpaceId) {
+            _ = openWhenReady()
+        }
+        if !hadRegisteredController {
+            // Window creation normally invokes the completion after synchronous
+            // registration. Keep a bounded fallback for Chromium callbacks that
+            // register on a later run-loop turn and cannot invoke that completion.
+            retryOpenLiveTabWhenWindowIsReady(
+                openWhenReady,
+                attemptsRemaining: 40
+            )
         }
         return .accepted
+    }
+
+    private static func shouldDeferOpenTabUntilLaunchIsReady(
+        _ manager: SpaceManager
+    ) -> Bool {
+        manager.userSpaces.isEmpty
+            || (
+                manager.slots.isEmpty
+                    && !manager.hasEverHostedSlotWindow
+                    && !manager.hasLoadedURLRules
+            )
+    }
+
+    private static func retryOpenLiveTabAfterLaunch(
+        _ address: String,
+        spaceId: String?,
+        attemptsRemaining: Int
+    ) {
+        guard attemptsRemaining > 0 else {
+            AppLogWarn("[PhiScripting] open tab timed out waiting for launch readiness")
+            return
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            let manager = SpaceManager.shared
+            guard !shouldDeferOpenTabUntilLaunchIsReady(manager),
+                  ChromiumLauncher.sharedInstance().bridge != nil else {
+                retryOpenLiveTabAfterLaunch(
+                    address,
+                    spaceId: spaceId,
+                    attemptsRemaining: attemptsRemaining - 1
+                )
+                return
+            }
+
+            if openLiveTab(address, spaceId: spaceId) == .failed {
+                AppLogWarn("[PhiScripting] deferred open tab could not be routed")
+            }
+        }
+    }
+
+    private static func retryOpenLiveTabWhenWindowIsReady(
+        _ openWhenReady: @escaping () -> Bool,
+        attemptsRemaining: Int
+    ) {
+        guard attemptsRemaining > 0 else {
+            AppLogWarn("[PhiScripting] open tab timed out waiting for a browser window")
+            return
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            guard !openWhenReady() else { return }
+            retryOpenLiveTabWhenWindowIsReady(
+                openWhenReady,
+                attemptsRemaining: attemptsRemaining - 1
+            )
+        }
     }
 
     private static func createLiveWindow(

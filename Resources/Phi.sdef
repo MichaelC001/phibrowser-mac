@@ -164,5 +164,12 @@
             </parameter>
             <result type="text" description="A JSON response containing the Phi and scripting API versions."/>
         </command>
+        <command name="get chromium data directory" code="PhisGDat" description="Return the current Phi application's Chromium data directory as versioned JSON.">
+            <cocoa class="PhiGetChromiumDataDirectoryScriptCommand"/>
+            <parameter name="client context" code="ClCt" type="text" optional="yes" description="Optional versioned client attribution context.">
+                <cocoa key="clientContext"/>
+            </parameter>
+            <result type="text" description="A JSON response containing the Chromium data directory."/>
+        </command>
     </suite>
 </dictionary>

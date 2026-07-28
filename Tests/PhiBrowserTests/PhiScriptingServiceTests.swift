@@ -441,7 +441,6 @@ final class PhiScriptingServiceTests: XCTestCase {
         XCTAssertEqual(allWithoutWindows["ok"] as? Bool, true)
         XCTAssertEqual(tabIds(in: allWithoutWindows), [])
         XCTAssertEqual(errorCode(in: noWindowService.activateSpace(spaceId: "space-a")), "no_windows")
-        XCTAssertEqual(errorCode(in: noWindowService.openTab(address: "https://example.com", spaceId: nil)), "no_windows")
 
         dependencies.snapshot = {
             let snapshot = self.makeSnapshot()
@@ -453,6 +452,28 @@ final class PhiScriptingServiceTests: XCTestCase {
         }
         let noActiveService = PhiScriptingService(dependencies: dependencies)
         XCTAssertEqual(errorCode(in: noActiveService.listTabs(scope: .current)), "no_active_window")
+    }
+
+    func testOpenTabDelegatesWhenNoBrowserWindowIsOpen() {
+        let recorder = Recorder()
+        var dependencies = makeDependencies(recorder: recorder)
+        dependencies.snapshot = {
+            PhiScriptingSnapshot(
+                spaces: self.makeSnapshot().spaces,
+                windows: [],
+                activeWindowId: nil
+            )
+        }
+        let service = PhiScriptingService(dependencies: dependencies)
+
+        let response = service.openTab(
+            address: "https://example.com/history",
+            spaceId: nil
+        )
+
+        XCTAssertEqual(response["ok"] as? Bool, true)
+        XCTAssertEqual(response["outcome"] as? String, "completed")
+        XCTAssertEqual(recorder.calls, ["open:https://example.com/history:current"])
     }
 
     func testActiveSpaceUsesTheActiveWindowInsteadOfAStaleSpaceFlag() throws {
@@ -540,6 +561,18 @@ final class PhiScriptingServiceTests: XCTestCase {
         XCTAssertEqual(response["apiVersion"] as? Int, 1)
         XCTAssertEqual(response["version"] as? String, "1.2.3")
         XCTAssertEqual(response["build"] as? String, "456")
+    }
+
+    func testChromiumDataDirectoryResponseUsesTheCurrentApplicationPath() {
+        let service = makeService(recorder: Recorder())
+        let response = service.getChromiumDataDirectory()
+
+        XCTAssertEqual(response["schemaVersion"] as? Int, 1)
+        XCTAssertEqual(response["ok"] as? Bool, true)
+        XCTAssertEqual(
+            response["chromiumDataDirectory"] as? String,
+            "/Users/test/Library/Application Support/com.phibrowser.Mac"
+        )
     }
 
     func testRaycastClientContextProducesPrivacyMinimalAttributionProperties() throws {
@@ -641,6 +674,7 @@ final class PhiScriptingServiceTests: XCTestCase {
         let definitionURL = try XCTUnwrap(Bundle.main.url(forResource: "Phi", withExtension: "sdef"))
         let definition = try String(contentsOf: definitionURL, encoding: .utf8)
         XCTAssertTrue(definition.contains("<command name=\"get scripting version\""))
+        XCTAssertTrue(definition.contains("<command name=\"get chromium data directory\""))
         XCTAssertTrue(definition.contains("<command name=\"create phi window\""))
         XCTAssertTrue(definition.contains("<command name=\"create phi incognito window\""))
         XCTAssertTrue(definition.contains("<command name=\"force reload tab\""))
@@ -710,7 +744,10 @@ final class PhiScriptingServiceTests: XCTestCase {
                 }
                 return .completed
             },
-            applicationVersion: { ("1.2.3", "456") }
+            applicationVersion: { ("1.2.3", "456") },
+            chromiumDataDirectory: {
+                "/Users/test/Library/Application Support/com.phibrowser.Mac"
+            }
         )
     }
 
