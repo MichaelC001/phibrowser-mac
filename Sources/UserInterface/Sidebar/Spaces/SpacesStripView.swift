@@ -818,12 +818,16 @@ struct SpacesStripView: View {
                 return ("circle.fill", .green)
             }()
             if let (symbol, color) = badge {
+                // No outward offset: the pip row clips hard at its bounds
+                // (`pipsViewport`'s `.clipped()` — load-bearing for the
+                // sliding window), so a badge nudged past the pip frame
+                // loses its top/right arc. Inside the frame it still reads
+                // as a corner badge — the glyph is only `iconSize` centered
+                // in the wider pip, so the dot lands on the glyph's corner.
                 Image(systemName: symbol)
                     .font(.system(size: 8))
                     .foregroundStyle(color)
                     .padding(2)
-                    .background(Circle().fill(Color(nsColor: .windowBackgroundColor)))
-                    .offset(x: 3, y: -3)
             }
         }
     }
