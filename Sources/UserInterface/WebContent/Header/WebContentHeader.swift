@@ -114,7 +114,7 @@ class WebContentHeader: NSView {
         didSetupHostingView = true
 
         wantsLayer = true
-        phiLayer?.setBackgroundColor(.contentOverlayBackground)
+        phiLayer?.setBackgroundColor(.windowBackground)
 
         themeObserver = ThemeObserver(themeSource: themeStateProvider)
         let swiftUIView = makeSwiftUIView()
