@@ -75,3 +75,75 @@ final class IconPickerSearchTests: XCTestCase {
         )
     }
 }
+
+final class EmojiGridLayoutTests: XCTestCase {
+    func testGroupedLayoutBuildsStableRowsAndMapsSkinVariants() {
+        let variant = EmojiVariant(
+            id: "emoji-2-variant",
+            text: "variant",
+            name: "variant"
+        )
+        let items = [
+            makeItem(id: "emoji-1"),
+            makeItem(id: "emoji-2", skinVariants: [variant]),
+            makeItem(id: "emoji-3"),
+            makeItem(id: "emoji-4"),
+            makeItem(id: "emoji-5")
+        ]
+        let layout = EmojiGridLayout(
+            groups: [EmojiCatalog.Group(name: "People", items: items)],
+            showsGroups: true,
+            columnCount: 2
+        )
+
+        XCTAssertEqual(
+            layout.rows.map(\.id),
+            [
+                .header(groupID: "People"),
+                .items(groupID: "People", firstItemID: "emoji-1"),
+                .items(groupID: "People", firstItemID: "emoji-3"),
+                .items(groupID: "People", firstItemID: "emoji-5")
+            ]
+        )
+        XCTAssertEqual(
+            layout.rowID(for: "emoji-2"),
+            layout.rowID(for: "emoji-2-variant")
+        )
+    }
+
+    func testUngroupedLayoutFlattensGroupsWithoutHeaderRows() {
+        let layout = EmojiGridLayout(
+            groups: [
+                EmojiCatalog.Group(
+                    name: "First",
+                    items: [makeItem(id: "emoji-1"), makeItem(id: "emoji-2")]
+                ),
+                EmojiCatalog.Group(
+                    name: "Second",
+                    items: [makeItem(id: "emoji-3")]
+                )
+            ],
+            showsGroups: false,
+            columnCount: 2
+        )
+
+        XCTAssertEqual(
+            layout.rows.map(\.id),
+            [
+                .items(groupID: nil, firstItemID: "emoji-1"),
+                .items(groupID: nil, firstItemID: "emoji-3")
+            ]
+        )
+    }
+
+    private func makeItem(id: String,
+                          skinVariants: [EmojiVariant] = []) -> EmojiItem {
+        EmojiItem(
+            id: id,
+            text: id,
+            name: id,
+            subgroup: "test",
+            skinVariants: skinVariants
+        )
+    }
+}
