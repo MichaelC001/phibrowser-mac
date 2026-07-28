@@ -74,6 +74,19 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
     PhiOmniboxSuggestionDispositionSwitchToTab
 };
 
+/// Where a window is in Browser's two-phase close model (browser.h), as
+/// reported by `windowCloseStateForWindowId:`.
+typedef NS_ENUM(NSInteger, PhiWindowCloseState) {
+    /// No resolvable browser (mid-teardown or delete-scheduled) — the window
+    /// will drop from the Mac window map on its own.
+    PhiWindowCloseStateGone = 0,
+    /// The beforeunload phase is in flight: a prompt is up, or the close is
+    /// unwinding after the user chose to leave.
+    PhiWindowCloseStateAttemptingClose = 1,
+    /// Alive with the attempting flag cleared — the user kept this window.
+    PhiWindowCloseStateNotAttempting = 2,
+};
+
 @protocol PhiChromiumBridgeDelegate <NSObject>
 @property (nonatomic, copy, readonly, nullable) void (^extensionChangedCallback)(NSArray<NSDictionary *> *list, int64_t windowId);
 - (NSView * _Nullable)getWebContentSuperView;
@@ -858,6 +871,13 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
 /// group gets committed a window at a time and only its last Space survives a
 /// restore.
 - (void)windowGroupCloseDidSettle;
+
+/// Read-only probe for the window-group close cascade: reports where a
+/// window is in Browser's two-phase close (browser.h). The Mac client polls
+/// this at each veto-recovery deadline and treats a cascade as vetoed only
+/// when every surviving window reports NotAttempting; see
+/// `windowGroupCloseDidSettle` for the settle contract this protects.
+- (PhiWindowCloseState)windowCloseStateForWindowId:(int64_t)windowId;
 
 // Favicon service
 - (void)getFaviconForURL:(NSString *)urlString completion:(void (^)(NSData * _Nullable faviconData))completion;
