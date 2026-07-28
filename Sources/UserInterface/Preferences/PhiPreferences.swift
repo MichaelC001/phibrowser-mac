@@ -249,9 +249,24 @@ extension PhiPreferences {
         /// just UI hiding: agent CDP access and the agent password manager are
         /// disabled with it (see `AppController.setDeveloperModeEnabled`).
         /// Turning it back ON re-enables nothing automatically — each feature
-        /// is re-enabled individually in the Developer tab. Defaults on.
+        /// is re-enabled individually in the Developer tab. Defaults off,
+        /// with a backfill: while the toggle was never touched, a user who
+        /// already enabled agent CDP access or the agent password manager
+        /// (pre-default-off users, or Bitwarden picked during onboarding) has
+        /// opted into the developer surfaces, so `true` is adopted and
+        /// persisted on first read — the features they enabled must not
+        /// vanish behind a hidden tab.
         static var developerModeEnabled: Bool {
-            get { UserDefaults.standard.bool(forKey: developerModeKey, default: true) }
+            get {
+                guard UserDefaults.standard.object(forKey: developerModeKey) == nil else {
+                    return UserDefaults.standard.bool(forKey: developerModeKey)
+                }
+                let alreadyOptedIn = cdpAgentAccessEnabled
+                    || PasswordManagerSettings.bitwardenEnabled.loadValue()
+                guard alreadyOptedIn else { return false }
+                UserDefaults.standard.set(true, forKey: developerModeKey)
+                return true
+            }
             set { UserDefaults.standard.set(newValue, forKey: developerModeKey) }
         }
 
