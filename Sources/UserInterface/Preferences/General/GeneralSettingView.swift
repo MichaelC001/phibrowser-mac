@@ -33,6 +33,7 @@ struct GeneralSettingView: View {
                 }
                 AppearanceSectionView()
                 BrowsingSectionView()
+                ProfileSectionView()
                 DeveloperModeSectionView()
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -479,6 +480,63 @@ private struct BrowsingSectionView: View {
             .activeWindowController?
             .browserState
             .createTab("chrome://settings")
+    }
+}
+
+/// The sole profile's browser settings, inlined so a single-profile user never
+/// needs the Profiles pane. Mirrors the Theme section's per-Space behavior:
+/// once more profiles exist each one carries its own settings, so the section
+/// collapses to a hint that jumps to the Profiles pane.
+private struct ProfileSectionView: View {
+    @ObservedObject private var profileManager = ProfileManager.shared
+
+    /// Counts only user-assignable profiles: the agent's auto-created fallback
+    /// profile belongs to the agent and must not push a single-profile user
+    /// into the "more than one profile" hint.
+    private var hasMultipleProfiles: Bool {
+        profileManager.userAssignableProfiles.count > 1
+    }
+
+    private var soleProfileId: String {
+        profileManager.userAssignableProfiles.first?.profileId ?? LocalStore.defaultProfileId
+    }
+
+    var body: some View {
+        GeneralSectionView(title: NSLocalizedString("settings.general.profile.sectionTitle", value: "Profile", comment: "General settings - Profile section title")) {
+            if hasMultipleProfiles {
+                GeneralContainerView {
+                    editInProfilesHintRow
+                }
+            } else {
+                ProfileDetailSettingsView(profileId: soleProfileId)
+            }
+        }
+        .onAppear {
+            profileManager.refresh()
+        }
+    }
+
+    /// Shown instead of the inline settings once several profiles exist: says
+    /// why and jumps to the pane where each profile is edited on its own.
+    private var editInProfilesHintRow: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Text(NSLocalizedString("settings.general.profile.multipleProfilesHint", value: "You have more than one profile, so each profile manages its own settings.", comment: "General settings - Hint shown in place of the inline profile settings because multiple profiles exist"))
+                .font(.system(size: 11))
+                .themedForeground(.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 12)
+            Button {
+                AppController.shared?.showSettings(pane: .profiles)
+            } label: {
+                Text(NSLocalizedString("settings.general.profile.openProfilesSettingsLink", value: "Edit in Profiles settings\u{2026}", comment: "General settings - Link that jumps to the Profiles settings pane"))
+                    .font(.system(size: 12))
+                    .foregroundStyle(Color.accentColor)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

@@ -9005,6 +9005,42 @@
         }
       }
     },
+    "settings.general.profile.multipleProfilesHint" : {
+      "comment" : "General settings - Hint shown in place of the inline profile settings because multiple profiles exist",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "You have more than one profile, so each profile manages its own settings."
+          }
+        }
+      }
+    },
+    "settings.general.profile.openProfilesSettingsLink" : {
+      "comment" : "General settings - Link that jumps to the Profiles settings pane",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Edit in Profiles settings…"
+          }
+        }
+      }
+    },
+    "settings.general.profile.sectionTitle" : {
+      "comment" : "General settings - Profile section title",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Profile"
+          }
+        }
+      }
+    },
     "settings.general.theme.colorTitle" : {
       "comment" : "General settings - Theme color row title",
       "extractionState" : "extracted_with_value",

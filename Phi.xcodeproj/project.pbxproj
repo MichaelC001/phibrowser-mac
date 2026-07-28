@@ -180,6 +180,7 @@
 		5ACE0000000000000000000E /* ProfilesSettingViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ACE0000000000000000000B /* ProfilesSettingViewController.swift */; };
 		5ACE0000000000000000000F /* ProfilesSettingHostingViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ACE0000000000000000000C /* ProfilesSettingHostingViewController.swift */; };
 		5ACE00000000000000000010 /* ProfilesSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ACE0000000000000000000D /* ProfilesSettingsView.swift */; };
+		5ACE00000000000000000A22 /* ProfileDetailSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ACE00000000000000000A21 /* ProfileDetailSettingsView.swift */; };
 		5ACE00000000000000000012 /* ThemeOpacitySlider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ACE00000000000000000011 /* ThemeOpacitySlider.swift */; };
 		5EA17ABC0000000000000100 /* SearchTabsModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5EA17ABC0000000000000110 /* SearchTabsModels.swift */; };
 		5EA17ABC0000000000000101 /* SearchTabsQueryMatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5EA17ABC0000000000000111 /* SearchTabsQueryMatcher.swift */; };
@@ -746,6 +747,7 @@
 		5ACE0000000000000000000B /* ProfilesSettingViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfilesSettingViewController.swift; sourceTree = "<group>"; };
 		5ACE0000000000000000000C /* ProfilesSettingHostingViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfilesSettingHostingViewController.swift; sourceTree = "<group>"; };
 		5ACE0000000000000000000D /* ProfilesSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfilesSettingsView.swift; sourceTree = "<group>"; };
+		5ACE00000000000000000A21 /* ProfileDetailSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileDetailSettingsView.swift; sourceTree = "<group>"; };
 		5ACE00000000000000000011 /* ThemeOpacitySlider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThemeOpacitySlider.swift; sourceTree = "<group>"; };
 		5EA17ABC0000000000000110 /* SearchTabsModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchTabsModels.swift; sourceTree = "<group>"; };
 		5EA17ABC0000000000000111 /* SearchTabsQueryMatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchTabsQueryMatcher.swift; sourceTree = "<group>"; };
@@ -1493,6 +1495,7 @@
 				5ACE0000000000000000000B /* ProfilesSettingViewController.swift */,
 				5ACE0000000000000000000C /* ProfilesSettingHostingViewController.swift */,
 				5ACE0000000000000000000D /* ProfilesSettingsView.swift */,
+				5ACE00000000000000000A21 /* ProfileDetailSettingsView.swift */,
 			);
 			path = Profiles;
 			sourceTree = "<group>";
@@ -2705,6 +2708,7 @@
 				5ACE0000000000000000000E /* ProfilesSettingViewController.swift in Sources */,
 				5ACE0000000000000000000F /* ProfilesSettingHostingViewController.swift in Sources */,
 				5ACE00000000000000000010 /* ProfilesSettingsView.swift in Sources */,
+				5ACE00000000000000000A22 /* ProfileDetailSettingsView.swift in Sources */,
 				8EC70DB52F0A5E04009FE2CD /* BookmarkBar.swift in Sources */,
 				CC5025FC2E702603004223DC /* NSImage+Extension.swift in Sources */,
 				37C9E68C2F3F322D00353A03 /* Shimmer.swift in Sources */,
