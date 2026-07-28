@@ -267,8 +267,8 @@ struct SpacesStripView: View {
 
     /// Single-row height — matches the visual rhythm of pinned-tab rows above.
     static let height: CGFloat = 30
-    /// Slimmer height used when the switch sits at the top of the sidebar.
-    static let sidebarHeight: CGFloat = 24
+    /// Sidebar row height, leaving 4pt above and below each 24pt item.
+    static let sidebarHeight: CGFloat = 32
     private static let horizontalPadding: CGFloat = 10
     /// Tighter horizontal padding for the lone horizontal-layout chip, so the
     /// single Space icon hugs its glyph instead of floating in a wide chip.
@@ -287,6 +287,7 @@ struct SpacesStripView: View {
     /// them. Drives the fit arithmetic in `visiblePipCount` and the wheel
     /// tracker's per-pip scroll distance (hence fileprivate).
     fileprivate static let stripItemWidth: CGFloat = 24
+    private static let stripItemHeight: CGFloat = 24
     fileprivate static let stripSpacing: CGFloat = 4
     /// How long a pip must stay hovered before its card appears, so brushing
     /// the cursor across the strip doesn't flash cards.
@@ -640,6 +641,7 @@ struct SpacesStripView: View {
                 spacePip(for: space)
                     .overlay(alignment: .topTrailing) {
                         agentBadge(for: space.spaceId)
+                            .offset(y: max(0, (rowHeight - Self.stripItemHeight) / 2))
                     }
                     .opacity(stripDraggingId == space.spaceId ? 0.5 : 1)
                     // `.clipped()` below is visual only — pips beyond the
@@ -878,7 +880,7 @@ struct SpacesStripView: View {
             activatePip(space)
         } label: {
             pipIcon(for: space)
-            .frame(width: 24, height: rowHeight)
+            .frame(width: Self.stripItemWidth, height: Self.stripItemHeight)
             // Publishes this pip's frame under its spaceId, for the
             // strip-level glass chip to target (see `iconStrip`).
             .matchedGeometryEffect(id: space.spaceId, in: pipGlassNamespace)
@@ -893,6 +895,8 @@ struct SpacesStripView: View {
                 }
             }
             .contentShape(RoundedRectangle(cornerRadius: 8))
+            .frame(width: Self.stripItemWidth, height: rowHeight)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(space.name)
@@ -1151,12 +1155,14 @@ struct SpacesStripView: View {
             Image(systemName: "plus")
                 .font(.system(size: Self.iconSize, weight: .semibold))
                 .foregroundStyle(Color.secondary)
-                .frame(width: Self.stripItemWidth, height: rowHeight)
+                .frame(width: Self.stripItemWidth, height: Self.stripItemHeight)
                 .background(
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
                         .fill(isAddButtonHovered ? Color.sidebarTabHovered : Color.clear)
                 )
                 .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .frame(width: Self.stripItemWidth, height: rowHeight)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .opacity(slot.isStripRowHovered ? 1 : 0)
@@ -1181,12 +1187,14 @@ struct SpacesStripView: View {
             Image(systemName: "ellipsis")
                 .font(.system(size: Self.iconSize, weight: .semibold))
                 .foregroundStyle(Color.secondary)
-                .frame(width: Self.stripItemWidth, height: rowHeight)
+                .frame(width: Self.stripItemWidth, height: Self.stripItemHeight)
                 .background(
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
                         .fill(isMoreButtonHovered ? Color.sidebarTabHovered : Color.clear)
                 )
                 .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .frame(width: Self.stripItemWidth, height: rowHeight)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .onHover { isMoreButtonHovered = $0 }
