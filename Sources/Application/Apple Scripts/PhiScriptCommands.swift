@@ -326,3 +326,12 @@ final class PhiGetVersionScriptCommand: NSScriptCommand {
         }
     }
 }
+
+@objc(PhiGetChromiumDataDirectoryScriptCommand)
+final class PhiGetChromiumDataDirectoryScriptCommand: NSScriptCommand {
+    override func performDefaultImplementation() -> Any? {
+        runPhiCommand("get_chromium_data_directory") {
+            PhiScriptingService.shared.getChromiumDataDirectory()
+        }
+    }
+}
