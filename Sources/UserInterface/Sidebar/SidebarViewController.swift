@@ -212,6 +212,7 @@ class SidebarViewController: NSViewController {
     private var contentCancellables = Set<AnyCancellable>()
     private var headerHeightConstraint: Constraint?
     private var pinnedTabsHeightConstraint: Constraint?
+    private var pinSpacerHeightConstraint: Constraint?
     private var bottomBarHeightConstraint: Constraint?
     private var messageCardHeightConstraint: Constraint?
     private var hasSetupObservers = false
@@ -352,10 +353,15 @@ class SidebarViewController: NSViewController {
             && state.participatesInSpaces
             && (SpaceManager.shared.spaces.count > 1 || headerView.forcesSpaceSwitchVisible)
         // Base = nav row (+ address bar in sidebar layouts). The Spaces switch
-        // row adds 32 (24 row + 8 gap) only when the row is shown, so the header
-        // reclaims the row's height when the row is hidden.
-        let base: CGFloat = addressInSidebar ? 80 : 42
-        let headerHeight = base + (spacesEnabled ? 32 : 0)
+        // adds its row height plus the 8pt gap below the nav row only while it
+        // is shown, so the header reclaims the full band when it is hidden.
+        // In top-navigation layouts, 42.5pt leaves the Space strip exactly
+        // 8pt above the next sidebar band once the 5pt header spacer below is
+        // included. The half point follows the legacy header controls' 15.5pt
+        // top alignment.
+        let base: CGFloat = addressInSidebar ? 80 : 42.5
+        let spacesBandHeight = SpacesStripView.sidebarHeight + 8
+        let headerHeight = base + (spacesEnabled ? spacesBandHeight : 0)
         headerHeightConstraint?.update(offset: headerHeight)
     }
 
@@ -424,13 +430,17 @@ class SidebarViewController: NSViewController {
         // are suppressed for incognito).
         if !state.isIncognito {
             setupFavoriteContainer()
+            let initialPinnedHeight = loadCachedFavoriteHeight()
             mainStackView.addArrangedSubview(pinnedTabContainerView)
             pinnedTabContainerView.snp.makeConstraints { make in
                 make.leading.trailing.equalToSuperview()
-                pinnedTabsHeightConstraint = make.height.equalTo(loadCachedFavoriteHeight()).constraint
+                pinnedTabsHeightConstraint = make.height.equalTo(initialPinnedHeight).constraint
             }
 
-            let pinSpacer = createSpacer(height: 3)
+            let pinSpacer = NSView()
+            pinSpacer.snp.makeConstraints { make in
+                pinSpacerHeightConstraint = make.height.equalTo(initialPinnedHeight > 0 ? 3 : 0).constraint
+            }
             mainStackView.addArrangedSubview(pinSpacer)
         }
 
@@ -800,8 +810,9 @@ class SidebarViewController: NSViewController {
         } else {
             clampedHeight = newHeight
         }
-        
+
         pinnedTabsHeightConstraint?.update(offset: clampedHeight)
+        pinSpacerHeightConstraint?.update(offset: clampedHeight > 0 ? 3 : 0)
         view.layoutSubtreeIfNeeded()
         persistFavoriteHeightIfNeeded(clampedHeight, isDragging: isDragging)
     }
