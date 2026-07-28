@@ -5309,9 +5309,6 @@
     "e.g. 123456:ABC-DEF..." : {
 
     },
-    "Emoji" : {
-
-    },
     "extensions.list.manageExtensionsButton" : {
       "comment" : "Extension list - Button to open extensions management page",
       "extractionState" : "extracted_with_value",
@@ -5701,9 +5698,6 @@
     },
     "https://vault.example.com" : {
 
-    },
-    "Icon" : {
-      "comment" : "Spaces settings - icon section header"
     },
     "imagePreview.error.failedToDecodeImage" : {
       "comment" : "Image preview error",

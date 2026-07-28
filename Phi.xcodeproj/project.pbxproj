@@ -268,6 +268,7 @@
 		A1B2C3D4E5F60718293A4B56 /* SharedAuthTokenStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60718293A4B55 /* SharedAuthTokenStore.swift */; };
 		A71E00000000000000000002 /* PhiAlert.swift in Sources */ = {isa = PBXBuildFile; fileRef = A71E00000000000000000001 /* PhiAlert.swift */; };
 		A71E00000000000000000004 /* CredentialApprovalAlert.swift in Sources */ = {isa = PBXBuildFile; fileRef = A71E00000000000000000003 /* CredentialApprovalAlert.swift */; };
+		D12800000000000000000001 /* PhiSegmentedPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = D12800000000000000000002 /* PhiSegmentedPicker.swift */; };
 		A7C021022FFD000000000002 /* ContextMenuEvent.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7C021012FFD000000000001 /* ContextMenuEvent.swift */; };
 		AA10000000000000000000B1 /* TabSwitchMetrics.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA10000000000000000000F1 /* TabSwitchMetrics.swift */; };
 		AA10000000000000000000B2 /* TabSwitchItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA10000000000000000000F2 /* TabSwitchItem.swift */; };
@@ -836,6 +837,7 @@
 		A1B2C3D4E5F60718293A4B55 /* SharedAuthTokenStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedAuthTokenStore.swift; sourceTree = "<group>"; };
 		A71E00000000000000000001 /* PhiAlert.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhiAlert.swift; sourceTree = "<group>"; };
 		A71E00000000000000000003 /* CredentialApprovalAlert.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CredentialApprovalAlert.swift; sourceTree = "<group>"; };
+		D12800000000000000000002 /* PhiSegmentedPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhiSegmentedPicker.swift; sourceTree = "<group>"; };
 		A7C021012FFD000000000001 /* ContextMenuEvent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextMenuEvent.swift; sourceTree = "<group>"; };
 		AA10000000000000000000F1 /* TabSwitchMetrics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabSwitchMetrics.swift; sourceTree = "<group>"; };
 		AA10000000000000000000F2 /* TabSwitchItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabSwitchItem.swift; sourceTree = "<group>"; };
@@ -2186,6 +2188,7 @@
 				A7C021012FFD000000000001 /* ContextMenuEvent.swift */,
 				A71E00000000000000000001 /* PhiAlert.swift */,
 				A71E00000000000000000003 /* CredentialApprovalAlert.swift */,
+				D12800000000000000000002 /* PhiSegmentedPicker.swift */,
 				C70000000000000000000020 /* Tooltip */,
 				CD1100050000000000000001 /* IconPicker */,
 				8EF36C022F4E9E7000FCC91E /* Tabs */,
@@ -2566,6 +2569,7 @@
 				A11E00000000000000000002 /* PhiScriptCommands.swift in Sources */,
 				A71E00000000000000000002 /* PhiAlert.swift in Sources */,
 				A71E00000000000000000004 /* CredentialApprovalAlert.swift in Sources */,
+				D12800000000000000000001 /* PhiSegmentedPicker.swift in Sources */,
 				B17DE0000000000000000005 /* CredentialProvider.swift in Sources */,
 				B17DE0000000000000000006 /* BitwardenService.swift in Sources */,
 				B17DE0000000000000000031 /* BitwardenSessionSettings.swift in Sources */,
