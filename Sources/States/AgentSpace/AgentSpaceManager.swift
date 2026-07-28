@@ -110,7 +110,10 @@ struct AgentDriverBadge {
                                     symbol: "chevron.left.forwardslash.chevron.right",
                                     label: "Claude Code")
         }
-        if lower.contains("codex") || lower.contains("openai") {
+        // "chatgpt": Codex run inside the ChatGPT desktop app resolves to the
+        // bundled binary, whose display name is the OUTER bundle's ("ChatGPT",
+        // not its signing id "codex" — see AgentPeerIdentity.signingIdentity).
+        if lower.contains("codex") || lower.contains("openai") || lower.contains("chatgpt") {
             return AgentDriverBadge(assetName: "agent-openai",
                                     symbol: "chevron.left.forwardslash.chevron.right",
                                     label: "Codex")
