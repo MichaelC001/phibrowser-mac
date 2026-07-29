@@ -601,14 +601,12 @@ final class PhiScriptingServiceTests: XCTestCase {
         XCTAssertEqual(properties["source_client"] as? String, "raycast")
         XCTAssertEqual(properties["client_command"] as? String, "search-tabs")
         XCTAssertEqual(properties["client_action"] as? String, "activate-tab")
-        XCTAssertEqual(properties["client_invocation_id"] as? String, invocationId.lowercased())
         XCTAssertEqual(properties["scripting_command"] as? String, "activate_tab")
         XCTAssertEqual(properties["succeeded"] as? Bool, true)
         XCTAssertEqual(properties["operation_outcome"] as? String, "accepted")
         XCTAssertEqual(Set(properties.keys), Set([
             "client_action",
             "client_command",
-            "client_invocation_id",
             "operation_outcome",
             "scripting_command",
             "source_client",
@@ -663,8 +661,12 @@ final class PhiScriptingServiceTests: XCTestCase {
             XCTAssertEqual(properties["source_client"] as? String, "other")
             XCTAssertNil(properties["client_command"])
             XCTAssertNil(properties["client_action"])
-            XCTAssertNil(properties["client_invocation_id"])
         }
+    }
+
+    func testVersionCommandIsExcludedFromScriptingAnalytics() {
+        XCTAssertFalse(PhiScriptingAnalytics.shouldCapture(scriptingCommand: "get_version"))
+        XCTAssertTrue(PhiScriptingAnalytics.shouldCapture(scriptingCommand: "list_spaces"))
     }
 
     func testAppBundleExposesScriptingDefinition() throws {
