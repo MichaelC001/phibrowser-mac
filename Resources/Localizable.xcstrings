@@ -9779,30 +9779,6 @@
         }
       }
     },
-    "settings.profiles.dataLinks.passwords" : {
-      "comment" : "Profiles settings - data link to saved passwords",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Passwords"
-          }
-        }
-      }
-    },
-    "settings.profiles.dataLinks.paymentMethods" : {
-      "comment" : "Profiles settings - data link to payment methods",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Credit Cards"
-          }
-        }
-      }
-    },
     "settings.profiles.dataLinks.privacyAndSecurity" : {
       "comment" : "Profiles settings - data link to privacy settings",
       "extractionState" : "extracted_with_value",
@@ -9918,7 +9894,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Download location"
+            "value" : "Download Location"
           }
         }
       }
@@ -9935,18 +9911,6 @@
         }
       }
     },
-    "settings.profiles.details.passwordManagerLabel" : {
-      "comment" : "Profiles settings - password manager row label",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Password Manager"
-          }
-        }
-      }
-    },
     "settings.profiles.details.searchEngineLabel" : {
       "comment" : "Profiles settings - search engine row label",
       "extractionState" : "extracted_with_value",
@@ -9954,7 +9918,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Search engine"
+            "value" : "Search Engine"
           }
         }
       }
@@ -10039,42 +10003,6 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "New profile"
-          }
-        }
-      }
-    },
-    "settings.profiles.passwordManager.installAction" : {
-      "comment" : "Profiles settings - install password manager menu label",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Install…"
-          }
-        }
-      }
-    },
-    "settings.profiles.passwordManager.installingTooltip" : {
-      "comment" : "Profiles settings - tooltip on the spinner of a password manager mid-install",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Installing %@"
-          }
-        }
-      }
-    },
-    "settings.profiles.passwordManager.installTooltip" : {
-      "comment" : "Profiles settings - tooltip on the install password manager menu",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Install a password manager"
           }
         }
       }
