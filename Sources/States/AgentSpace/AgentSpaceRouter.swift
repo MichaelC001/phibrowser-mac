@@ -144,7 +144,14 @@ enum AgentSpaceRouter {
                 ) { spaceId, windowId in
                     var replyObject: [String: Any]?
                     if let spaceId, let windowId {
-                        replyObject = ["ok": true, "spaceId": spaceId, "windowId": windowId]
+                        // A create normally yields an agent-owned Space, but a
+                        // restart re-adoption returns the task as it stands —
+                        // possibly mid-handoff with the USER holding control —
+                        // so the reply carries the authoritative owner.
+                        let owner = AgentSpaceManager.shared
+                            .task(forTaskId: taskId)?.ownership == .user ? "user" : "agent"
+                        replyObject = ["ok": true, "spaceId": spaceId,
+                                       "windowId": windowId, "ownership": owner]
                     }
                     if let replyObject,
                        let data = try? JSONSerialization.data(withJSONObject: replyObject),

@@ -46,8 +46,10 @@ struct AgentTask {
     let origin: AgentTaskOrigin
     /// Owning logical external-agent session. Required for `.cdp` tasks and
     /// nil for the in-app `.phiAgent` backend. This is authorization state;
-    /// `agentName` below is presentation only.
-    let driverPrincipalId: String?
+    /// `agentName` below is presentation only. Mutable for exactly one flow:
+    /// a restarted agent re-adopting its own task once the original owning
+    /// process is gone (see `createAgentSpace`).
+    var driverPrincipalId: String?
     /// Small, stable ordinal (1, 2, 3…) shown as a corner badge so several live
     /// agent Spaces can be told apart at a glance. Assigned at creation as the
     /// lowest number not currently in use, so it's reused after a Space closes.
@@ -385,6 +387,13 @@ final class AgentSpaceManager: ObservableObject {
         tasksBySpaceId[spaceId]
     }
 
+    /// Principals owning a live task — retained by the driver-session
+    /// registry's prune sweep, so a dead owner's session stays resolvable
+    /// (and its task adoptable) until the task itself ends. Main thread.
+    var liveDriverPrincipalIds: Set<String> {
+        Set(tasksBySpaceId.values.compactMap(\.driverPrincipalId))
+    }
+
     func task(forTaskId taskId: String) -> AgentTask? {
         guard let spaceId = spaceIdByTaskId[taskId] else { return nil }
         return tasksBySpaceId[spaceId]
@@ -486,15 +495,35 @@ final class AgentSpaceManager: ObservableObject {
             }
         }
         if let existingSpaceId = spaceIdByTaskId[taskId] {
-            guard let existing = tasksBySpaceId[existingSpaceId],
-                  existing.origin == origin,
-                  existing.driverPrincipalId == driverPrincipalId else {
+            guard var existing = tasksBySpaceId[existingSpaceId],
+                  existing.origin == origin else {
                 // A different driver owns this taskId. Reveal nothing about its
                 // Space — the same "as if it doesn't exist" boundary the control
                 // handlers draw — and fail the create instead of sharing ids.
                 AppLogWarn("[AgentSpace] createAgentSpace: taskId \(taskId) belongs to another origin")
                 completion(nil, nil)
                 return
+            }
+            if existing.driverPrincipalId != driverPrincipalId {
+                // Restart recovery: a re-launched agent arrives with a fresh
+                // principal but the same consent identity. It may adopt its
+                // own task only once the original owning process is provably
+                // gone — a LIVE owner keeps its task isolated, and the deny
+                // stays indistinguishable from "no such task".
+                guard origin == .cdp,
+                      let taskPrincipal = existing.driverPrincipalId,
+                      let callerPrincipal = driverPrincipalId,
+                      AgentDriverSessionRegistry.shared.canAdopt(
+                        taskPrincipalId: taskPrincipal,
+                        callerPrincipalId: callerPrincipal) else {
+                    AppLogWarn("[AgentSpace] createAgentSpace: taskId \(taskId) belongs to another origin")
+                    completion(nil, nil)
+                    return
+                }
+                AppLogInfo("[AgentSpace] createAgentSpace: task \(taskId) re-adopted "
+                           + "by a restarted \(existing.agentName.isEmpty ? "agent" : existing.agentName)")
+                existing.driverPrincipalId = callerPrincipal
+                tasksBySpaceId[existingSpaceId] = existing
             }
             guard existing.windowId != 0 else {
                 // A concurrent create is still spawning the window. Returning
@@ -1296,6 +1325,10 @@ final class AgentSpaceManager: ObservableObject {
         guard let data = try? JSONSerialization.data(
                 withJSONObject: ["taskId": taskId, "owner": owner]),
               let payload = String(data: data, encoding: .utf8) else { return }
+        // Delivery needs the task's owning principal; once the record is gone
+        // the event is deliberately dropped — drivers learn of an ended task
+        // from its disappearance in agentSpace.list, not from a final
+        // ownership flip.
         guard let task = task(forTaskId: taskId) else { return }
         ExtensionMessaging.shared.broadcastToTaskDriver(
             type: "agentSpace.ownershipChanged",

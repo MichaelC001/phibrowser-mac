@@ -231,16 +231,38 @@ final class AgentCDPListener {
             .map(String.init)
         let isPhiAgent = requestLine?.hasPrefix("GET /phi-agent") ?? false
 
-        // Resolve the actual peer ancestry first. A direct `/phi-agent`
-        // connection may present an app-issued capability from an earlier
-        // connection; that is the proof that a detached/sandboxed helper was
-        // delegated this logical agent session. The caller-supplied pid stays
-        // an identification aid for stock Chromium connections, but is never
-        // sufficient to join an existing Swift task principal.
+        // Resolve the actual peer ancestry first. Any connection may present
+        // an app-issued capability from an earlier `/phi-agent` upgrade; that
+        // is the proof that a detached/sandboxed helper was delegated the
+        // logical agent session, and it binds this connection — task channel
+        // or stock CDP alike — to that session's identity and grant. The
+        // caller-supplied pid is a log-only identification aid: it neither
+        // joins a Swift task principal nor substitutes the consent identity.
         let peerIdentity = AgentPeerIdentity.resolve(socketFD: fd)
             ?? AgentIdentity(key: "unknown", displayName: "Unknown process",
                              teamId: nil, verified: false, executablePath: "",
                              pid: nil)
+
+        let delegatedSession: AgentDriverSession?
+        switch Self.capabilityClaim(inRequestHead: requestHead) {
+        case .absent:
+            delegatedSession = nil
+        case .invalid:
+            // Presenting a capability at all commits the connection to
+            // capability auth — a malformed one never falls back to peer
+            // identity, on any route.
+            AppLogWarn("[AgentCDP] rejected malformed agent-session capability")
+            Self.denyAndClose(fd)
+            return
+        case .valid(let capability):
+            guard let session = AgentDriverSessionRegistry.shared
+                    .session(forCapability: capability) else {
+                AppLogWarn("[AgentCDP] rejected unknown agent-session capability")
+                Self.denyAndClose(fd)
+                return
+            }
+            delegatedSession = session
+        }
 
         // Route by the request line: a `/phi-agent` upgrade is an agentSpace.*
         // channel served in the app; everything else (/json, /devtools) is
@@ -248,16 +270,8 @@ final class AgentCDPListener {
         // consumed it).
         if isPhiAgent {
             let session: AgentDriverSession
-            if Self.hasAgentCapabilityHeader(inRequestHead: requestHead) {
-                guard let capability = Self.claimedAgentCapability(
-                        inRequestHead: requestHead),
-                      let delegated = AgentDriverSessionRegistry.shared
-                        .session(forCapability: capability) else {
-                    AppLogWarn("[AgentCDP] rejected invalid agent-session capability")
-                    Self.denyAndClose(fd)
-                    return
-                }
-                session = delegated
+            if let delegatedSession {
+                session = delegatedSession
                 guard evaluate(session.identity) else {
                     AppLogInfo("[AgentCDP] denied delegated access to \(session.identity.displayName)")
                     Self.denyAndClose(fd)
@@ -281,12 +295,16 @@ final class AgentCDPListener {
             return
         }
 
-        var identity = peerIdentity
-        if let claimedPid = Self.claimedAgentPid(inRequestHead: requestHead),
+        // Stock CDP consent follows the same session rules: a delegated
+        // helper is evaluated as its session's identity; otherwise the peer's
+        // OWN resolved ancestry decides. Naming another agent's pid therefore
+        // cannot piggyback that agent's remembered grant onto raw CDP.
+        let identity = delegatedSession?.identity ?? peerIdentity
+        if delegatedSession == nil,
+           let claimedPid = Self.claimedAgentPid(inRequestHead: requestHead),
            let claimed = AgentPeerIdentity.resolveClaimed(pid: claimedPid) {
-            AppLogInfo("[AgentCDP] peer \(identity.displayName) acts for agent pid "
-                       + "\(claimedPid) (\(claimed.displayName))")
-            identity = claimed
+            AppLogInfo("[AgentCDP] peer \(identity.displayName) claims agent pid "
+                       + "\(claimedPid) (\(claimed.displayName)) — identification only")
         }
 
         guard evaluate(identity) else {
@@ -350,29 +368,35 @@ final class AgentCDPListener {
     /// App-issued bearer capability proving that this connection belongs to
     /// an already-established logical driver session. Kept in a dedicated
     /// header so stock Chromium simply ignores it on its own connections.
-    private static func claimedAgentCapability(inRequestHead head: String) -> String? {
+    /// One parser answers both "is one present?" and "what is it?", so the
+    /// routing decision and the value can never disagree.
+    enum CapabilityClaim: Equatable {
+        case absent
+        case invalid
+        case valid(String)
+    }
+
+    /// Scanning stops at the head/body boundary (a stray match in peeked body
+    /// bytes is not a claim), and a malformed or duplicated header is
+    /// `.invalid` — never silently ignored. Internal for unit coverage.
+    static func capabilityClaim(inRequestHead head: String) -> CapabilityClaim {
+        var found: String?
         for header in head.components(separatedBy: "\r\n").dropFirst() {
-            if header.isEmpty { break }
+            if header.isEmpty { break }  // end of headers
             guard let colon = header.firstIndex(of: ":"),
                   header[..<colon].lowercased() == "x-phi-agent-capability" else {
                 continue
             }
+            if found != nil { return .invalid }  // duplicate header
             let value = header[header.index(after: colon)...]
                 .trimmingCharacters(in: .whitespaces)
             guard value.count >= 32, value.count <= 128,
                   value.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") }) else {
-                return nil
+                return .invalid
             }
-            return value
+            found = value
         }
-        return nil
-    }
-
-    private static func hasAgentCapabilityHeader(inRequestHead head: String) -> Bool {
-        head.components(separatedBy: "\r\n").dropFirst().contains { header in
-            guard let colon = header.firstIndex(of: ":") else { return false }
-            return header[..<colon].lowercased() == "x-phi-agent-capability"
-        }
+        return found.map(CapabilityClaim.valid) ?? .absent
     }
 
     /// Returns true when `identity` may connect: a cached session grant, a

@@ -364,9 +364,9 @@ control, every mutating helper fails with "user is controlling".
 Whenever your turn ends with the USER holding control — after a `handOff()`,
 or after a round died with "user is controlling" — start a background watcher
 before ending the turn, so the task resumes the moment they hand back instead
-of waiting for a chat message. Run it in the background with your
-shell-execution tool (e.g. Claude Code's `run_in_background: true`, or your
-agent's equivalent background/detached mode):
+of waiting for a chat message. Run it with a background mode that keeps the
+watcher a live CHILD of your agent session (e.g. Claude Code's
+`run_in_background: true`):
 
 ```bash
 node <skill-dir>/scripts/runner.mjs <<'EOF'
@@ -374,6 +374,15 @@ await ensureAgentSpace('same-task-name')
 cliLog(await waitForAgentControl({ timeout: 3600 }))
 EOF
 ```
+
+Do NOT background the watcher with a bare shell `… &`: once its spawning
+shell exits, the watcher is reparented away from your session, and Phi's
+per-agent task isolation then treats it as a NEW driver that cannot see your
+task (the round fails with "lost its agent session" — treat that as a broken
+watcher, never as the task ending). If your harness has no such tracked
+background mode (Codex), skip the watcher: prefer the blocking
+`handOffAndWait()`, and for hand-offs too long for one round, tell the user
+what you're waiting for and end the turn — you resume on their chat message.
 
 Rounds that start while the user is driving are passive — no tab activation,
 no viewport override, no busy badge — so the watcher never disturbs what the

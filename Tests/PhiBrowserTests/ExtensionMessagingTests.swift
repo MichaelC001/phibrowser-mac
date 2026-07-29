@@ -88,4 +88,178 @@ final class ExtensionMessagingTests: XCTestCase {
             callerOrigin: .phiAgent,
             callerPrincipalId: nil))
     }
+
+    // MARK: - Capability header parsing
+
+    private static let sampleCapability = String(repeating: "a", count: 43)
+
+    private func head(_ headers: [String], body: String? = nil) -> String {
+        var lines = ["GET /phi-agent HTTP/1.1", "Host: localhost"] + headers
+        lines.append("")
+        lines.append(body ?? "")
+        return lines.joined(separator: "\r\n")
+    }
+
+    func testCapabilityClaimParsesValidHeader() {
+        let value = Self.sampleCapability
+        XCTAssertEqual(
+            AgentCDPListener.capabilityClaim(
+                inRequestHead: head(["X-Phi-Agent-Capability: \(value)"])),
+            .valid(value))
+        // Header names are case-insensitive.
+        XCTAssertEqual(
+            AgentCDPListener.capabilityClaim(
+                inRequestHead: head(["x-phi-agent-capability: \(value)"])),
+            .valid(value))
+    }
+
+    func testCapabilityClaimAbsentWhenNoHeader() {
+        XCTAssertEqual(
+            AgentCDPListener.capabilityClaim(
+                inRequestHead: head(["X-Phi-Agent-Pid: 123"])),
+            .absent)
+    }
+
+    func testCapabilityClaimRejectsMalformedValues() {
+        // Too short, too long, and bad characters are all .invalid — a
+        // presented capability never silently degrades to peer identity.
+        XCTAssertEqual(
+            AgentCDPListener.capabilityClaim(
+                inRequestHead: head(["X-Phi-Agent-Capability: short"])),
+            .invalid)
+        XCTAssertEqual(
+            AgentCDPListener.capabilityClaim(
+                inRequestHead: head(["X-Phi-Agent-Capability: \(String(repeating: "a", count: 129))"])),
+            .invalid)
+        XCTAssertEqual(
+            AgentCDPListener.capabilityClaim(
+                inRequestHead: head(["X-Phi-Agent-Capability: \(String(repeating: "a", count: 40))$$$"])),
+            .invalid)
+    }
+
+    func testCapabilityClaimRejectsDuplicateHeaders() {
+        XCTAssertEqual(
+            AgentCDPListener.capabilityClaim(inRequestHead: head([
+                "X-Phi-Agent-Capability: \(Self.sampleCapability)",
+                "X-Phi-Agent-Capability: \(String(repeating: "b", count: 43))",
+            ])),
+            .invalid)
+    }
+
+    func testCapabilityClaimIgnoresBodyBytes() {
+        // A matching line in peeked BODY bytes is not a claim: scanning stops
+        // at the head/body boundary.
+        XCTAssertEqual(
+            AgentCDPListener.capabilityClaim(inRequestHead: head(
+                [], body: "X-Phi-Agent-Capability: \(Self.sampleCapability)")),
+            .absent)
+    }
+
+    // MARK: - Restart adoption
+
+    private func identity(key: String, pid: pid_t?) -> AgentIdentity {
+        AgentIdentity(key: key, displayName: key, teamId: "test",
+                      verified: true, executablePath: "/test/\(key)", pid: pid)
+    }
+
+    func testDeadOwnerSameIdentityIsAdoptable() {
+        // A nil pid never resolves a process anchor, so the owner counts as
+        // gone; the caller is the same identity, freshly launched.
+        let owner = AgentDriverSessionRegistry.shared
+            .session(for: identity(key: "test:adopt-dead", pid: nil))
+        let caller = AgentDriverSessionRegistry.shared
+            .session(for: identity(key: "test:adopt-dead",
+                                   pid: ProcessInfo.processInfo.processIdentifier))
+        XCTAssertTrue(AgentDriverSessionRegistry.shared.canAdopt(
+            taskPrincipalId: owner.principalId,
+            callerPrincipalId: caller.principalId))
+    }
+
+    func testLiveOwnerIsNeverAdoptable() {
+        let pid = ProcessInfo.processInfo.processIdentifier
+        let owner = AgentDriverSessionRegistry.shared
+            .session(for: identity(key: "test:adopt-live", pid: pid))
+        let caller = AgentDriverSessionRegistry.shared
+            .session(for: identity(key: "test:adopt-live", pid: nil))
+        XCTAssertFalse(AgentDriverSessionRegistry.shared.canAdopt(
+            taskPrincipalId: owner.principalId,
+            callerPrincipalId: caller.principalId))
+    }
+
+    func testDifferentIdentityCannotAdoptDeadOwnersTask() {
+        let owner = AgentDriverSessionRegistry.shared
+            .session(for: identity(key: "test:adopt-owner", pid: nil))
+        let caller = AgentDriverSessionRegistry.shared
+            .session(for: identity(key: "test:adopt-other",
+                                   pid: ProcessInfo.processInfo.processIdentifier))
+        XCTAssertFalse(AgentDriverSessionRegistry.shared.canAdopt(
+            taskPrincipalId: owner.principalId,
+            callerPrincipalId: caller.principalId))
+    }
+
+    func testUnknownIdentityIsNeverAdoptable() {
+        // "unknown" is the unresolvable-peer fallback — treating two unknown
+        // peers as the same agent would make them interchangeable.
+        let owner = AgentDriverSessionRegistry.shared
+            .session(for: AgentIdentity(key: "unknown", displayName: "Unknown process",
+                                        teamId: nil, verified: false,
+                                        executablePath: "", pid: nil))
+        let caller = AgentDriverSessionRegistry.shared
+            .session(for: AgentIdentity(key: "unknown", displayName: "Unknown process",
+                                        teamId: nil, verified: false,
+                                        executablePath: "", pid: nil))
+        XCTAssertFalse(AgentDriverSessionRegistry.shared.canAdopt(
+            taskPrincipalId: owner.principalId,
+            callerPrincipalId: caller.principalId))
+    }
+
+    func testPrincipalCannotAdoptItself() {
+        let session = AgentDriverSessionRegistry.shared
+            .session(for: identity(key: "test:adopt-self", pid: nil))
+        XCTAssertFalse(AgentDriverSessionRegistry.shared.canAdopt(
+            taskPrincipalId: session.principalId,
+            callerPrincipalId: session.principalId))
+    }
+
+    // MARK: - Session pruning
+
+    private var afterGrace: Date {
+        Date().addingTimeInterval(AgentDriverSessionRegistry.pruneGraceSeconds + 60)
+    }
+
+    func testPruneDropsDeadUnretainedSessions() {
+        let dead = AgentDriverSessionRegistry.shared
+            .session(for: identity(key: "test:prune-dead", pid: nil))
+        AgentDriverSessionRegistry.shared.prune(retaining: [], now: afterGrace)
+        XCTAssertNil(AgentDriverSessionRegistry.shared
+            .session(forCapability: dead.capability))
+    }
+
+    func testPruneKeepsRetainedSessions() {
+        // Retention (a live task or connection) outlives the owner process —
+        // the mirror daemon's deferred completion depends on this.
+        let dead = AgentDriverSessionRegistry.shared
+            .session(for: identity(key: "test:prune-retained", pid: nil))
+        AgentDriverSessionRegistry.shared.prune(retaining: [dead.principalId],
+                                                now: afterGrace)
+        XCTAssertEqual(AgentDriverSessionRegistry.shared
+            .session(forCapability: dead.capability)?.principalId,
+            dead.principalId)
+    }
+
+    func testPruneKeepsLiveOwnersAndYoungSessions() {
+        let live = AgentDriverSessionRegistry.shared
+            .session(for: identity(key: "test:prune-live",
+                                   pid: ProcessInfo.processInfo.processIdentifier))
+        AgentDriverSessionRegistry.shared.prune(retaining: [], now: afterGrace)
+        XCTAssertNotNil(AgentDriverSessionRegistry.shared
+            .session(forCapability: live.capability))
+
+        // Within the issuance grace even a dead-looking session survives.
+        let young = AgentDriverSessionRegistry.shared
+            .session(for: identity(key: "test:prune-young", pid: nil))
+        AgentDriverSessionRegistry.shared.prune(retaining: [])
+        XCTAssertNotNil(AgentDriverSessionRegistry.shared
+            .session(forCapability: young.capability))
+    }
 }

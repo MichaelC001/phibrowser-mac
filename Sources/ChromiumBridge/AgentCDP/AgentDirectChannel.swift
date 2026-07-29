@@ -35,6 +35,15 @@ struct AgentDriverSession {
     let principalId: String
     let capability: String
     let identity: AgentIdentity
+    /// The owning process's session anchor at issuance (see
+    /// `AgentPeerIdentity.processSessionAnchor`), nil when the identity had
+    /// no resolvable process. Re-resolving it answers "is the owner still
+    /// that same process launch?" for adoption and pruning.
+    let processAnchor: String?
+    /// Issuance time — the prune sweep's grace reference, so a session can't
+    /// be dropped between being minted on the auth queue and its connection
+    /// or task becoming visible.
+    let createdAt: Date
 }
 
 /// App-session registry for logical driver principals. A live agent process
@@ -46,6 +55,13 @@ final class AgentDriverSessionRegistry {
     private let lock = NSLock()
     private var sessionsByCapability: [String: AgentDriverSession] = [:]
     private var capabilityByProcessAnchor: [String: String] = [:]
+    private var sweepTimer: DispatchSourceTimer?
+
+    private static let sweepInterval: TimeInterval = 60
+    /// A session younger than this is never pruned, covering the gap between
+    /// issuance on the auth queue and its connection/task becoming visible to
+    /// the sweep's retention query.
+    static let pruneGraceSeconds: TimeInterval = 120
 
     private init() {}
 
@@ -56,7 +72,9 @@ final class AgentDriverSessionRegistry {
 
     func session(for identity: AgentIdentity) -> AgentDriverSession {
         lock.lock(); defer { lock.unlock() }
-        if let anchor = AgentPeerIdentity.processSessionAnchor(for: identity),
+        ensureSweepScheduledLocked()
+        let anchor = AgentPeerIdentity.processSessionAnchor(for: identity)
+        if let anchor,
            let capability = capabilityByProcessAnchor[anchor],
            let existing = sessionsByCapability[capability] {
             return existing
@@ -65,12 +83,82 @@ final class AgentDriverSessionRegistry {
         let session = AgentDriverSession(
             principalId: UUID().uuidString,
             capability: Self.makeCapability(),
-            identity: identity)
+            identity: identity,
+            processAnchor: anchor,
+            createdAt: Date())
         sessionsByCapability[session.capability] = session
-        if let anchor = AgentPeerIdentity.processSessionAnchor(for: identity) {
+        if let anchor {
             capabilityByProcessAnchor[anchor] = session.capability
         }
         return session
+    }
+
+    /// Bounds capability lifetime and registry growth: drops every session
+    /// whose owning process launch is gone — invalidating its capability —
+    /// EXCEPT principals named in `retaining` (live task owners and live
+    /// connections), so a mirror daemon can finish its deferred completion
+    /// after its agent exits and a dead owner's task stays adoptable until
+    /// the task itself ends. `now` is injectable for tests.
+    func prune(retaining retainedPrincipals: Set<String>, now: Date = Date()) {
+        lock.lock(); defer { lock.unlock() }
+        for (capability, session) in sessionsByCapability {
+            guard now.timeIntervalSince(session.createdAt) > Self.pruneGraceSeconds,
+                  !retainedPrincipals.contains(session.principalId),
+                  !Self.ownerProcessAlive(session) else { continue }
+            sessionsByCapability[capability] = nil
+            if let anchor = session.processAnchor,
+               capabilityByProcessAnchor[anchor] == capability {
+                capabilityByProcessAnchor[anchor] = nil
+            }
+        }
+    }
+
+    /// Lazy periodic sweep, armed once the first session exists. Retention
+    /// state lives on the main thread (task records) and behind the channel
+    /// registry's own lock, so the gather hops to main before pruning.
+    private func ensureSweepScheduledLocked() {
+        guard sweepTimer == nil else { return }
+        let timer = DispatchSource.makeTimerSource(queue: .global(qos: .utility))
+        timer.schedule(deadline: .now() + Self.sweepInterval,
+                       repeating: Self.sweepInterval)
+        timer.setEventHandler {
+            DispatchQueue.main.async {
+                let retained = AgentSpaceManager.shared.liveDriverPrincipalIds
+                    .union(AgentDirectChannelRegistry.shared.livePrincipalIds)
+                AgentDriverSessionRegistry.shared.prune(retaining: retained)
+            }
+        }
+        timer.resume()
+        sweepTimer = timer
+    }
+
+    /// The restart-recovery rule: `callerPrincipalId` may adopt a task owned
+    /// by `taskPrincipalId` only when the owning session's process is GONE
+    /// (its anchor no longer resolves to the same launch) and the caller is
+    /// the same consent identity that owned it. Never true while the owner
+    /// still runs — a live task stays isolated to its own principal — and
+    /// never true for the unresolvable "unknown" identity, which would make
+    /// every unidentified peer interchangeable.
+    func canAdopt(taskPrincipalId: String, callerPrincipalId: String) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard taskPrincipalId != callerPrincipalId,
+              let owner = sessionsByCapability.values
+                .first(where: { $0.principalId == taskPrincipalId }),
+              let caller = sessionsByCapability.values
+                .first(where: { $0.principalId == callerPrincipalId }),
+              owner.identity.key == caller.identity.key,
+              owner.identity.key != "unknown" else {
+            return false
+        }
+        return !Self.ownerProcessAlive(owner)
+    }
+
+    /// True while the session's owning process is still the launch the
+    /// session was issued to. A nil anchor (identity with no resolvable
+    /// process) can never be revalidated and counts as gone.
+    private static func ownerProcessAlive(_ session: AgentDriverSession) -> Bool {
+        guard let anchor = session.processAnchor else { return false }
+        return AgentPeerIdentity.processSessionAnchor(for: session.identity) == anchor
     }
 
     private static func makeCapability() -> String {
@@ -105,6 +193,13 @@ final class AgentDirectChannelRegistry {
     var hasConnections: Bool {
         lock.lock(); defer { lock.unlock() }
         return !connections.isEmpty
+    }
+
+    /// Principals with at least one live `/phi-agent` connection — retained
+    /// by the driver-session registry's prune sweep.
+    var livePrincipalIds: Set<String> {
+        lock.lock(); defer { lock.unlock() }
+        return Set(connections.values.map(\.driverPrincipalId))
     }
 
     func add(_ connection: AgentDirectConnection) {

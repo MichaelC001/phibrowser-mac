@@ -89,14 +89,11 @@ export function discoverEndpoint() {
 
 /**
  * The claim header carried on every connection to the app socket: names the
- * agent session this process acts for, so the app's consent prompt resolves
- * the AGENT even when the connecting process's ancestry no longer reaches it
- * (a hand-back watcher orphaned by a backgrounding shell, the detached mirror
- * daemon). Chromium-bound requests carry it too — DevTools ignores unknown
- * headers — so every connection of a round lands on the same identity and
- * grant. An identification aid like argv[0] branding, not a security
- * boundary: the app only honors a live same-user pid (see
- * AgentPeerIdentity.resolveClaimed).
+ * agent session this process acts for. IDENTIFICATION ONLY — the app logs it
+ * but neither joins a task principal nor substitutes the consent identity
+ * from it; a process whose ancestry no longer reaches its agent proves the
+ * delegation with the app-issued capability instead (agentCapabilityHeader).
+ * Chromium-bound requests carry it too — DevTools ignores unknown headers.
  */
 function agentPidHeader(agentPid) {
   return Number.isInteger(agentPid) && agentPid > 0
@@ -114,11 +111,14 @@ function agentCapabilityHeader(agentCapability) {
 }
 
 /** GETs a JSON document from the app socket over HTTP. */
-function httpGetJson(endpoint, path, timeoutMs, agentPid = null) {
+function httpGetJson(endpoint, path, timeoutMs, agentPid = null,
+                     agentCapability = null) {
   return new Promise((resolve, reject) => {
     const req = http.request(
       { socketPath: endpoint.socketPath, path,
-        headers: { Host: 'localhost', ...agentPidHeader(agentPid) } },
+        headers: { Host: 'localhost',
+                   ...agentCapabilityHeader(agentCapability),
+                   ...agentPidHeader(agentPid) } },
       (res) => {
       let body = ''
       res.setEncoding('utf8')
@@ -142,10 +142,12 @@ function httpGetJson(endpoint, path, timeoutMs, agentPid = null) {
  * path for the browser-target WebSocket upgrade. This is the first connection,
  * so it may trigger (and wait on) the consent prompt.
  */
-export async function verifyEndpoint(endpoint, { agentPid = null } = {}) {
+export async function verifyEndpoint(endpoint, { agentPid = null,
+                                                 agentCapability = null } = {}) {
   let version
   try {
-    version = await httpGetJson(endpoint, '/json/version', CONSENT_WAIT_MS, agentPid)
+    version = await httpGetJson(endpoint, '/json/version', CONSENT_WAIT_MS,
+                                agentPid, agentCapability)
   } catch (err) {
     if (err.message === DENIED_MESSAGE) throw err
     // Codex runs shell commands in a seatbelt sandbox that by default denies
@@ -377,7 +379,8 @@ export class UnixWebSocket {
 }
 
 export class CdpClient {
-  /** `transport` is `{ socketPath, wsPath, agentPid? }` on the app socket. */
+  /** `transport` is `{ socketPath, wsPath, agentPid?, agentCapability? }` on
+   *  the app socket. */
   constructor(transport) {
     this.transport = transport
     this.nextId = 1
@@ -388,7 +391,9 @@ export class CdpClient {
   async connect() {
     this.ws = new UnixWebSocket({ socketPath: this.transport.socketPath,
                                   path: this.transport.wsPath,
-                                  agentPid: this.transport.agentPid ?? null })
+                                  agentPid: this.transport.agentPid ?? null,
+                                  agentCapability:
+                                    this.transport.agentCapability ?? null })
     await new Promise((resolve, reject) => {
       this.ws.addEventListener('open', () => resolve(), { once: true })
       this.ws.addEventListener('error', (ev) =>
@@ -601,7 +606,8 @@ export async function connectBrowser({ agentPid = null, agentCapability = null }
   for (const endpoint of uds) {
     let browserWsPath
     try {
-      ({ browserWsPath } = await verifyEndpoint(endpoint, { agentPid }))
+      ({ browserWsPath } = await verifyEndpoint(endpoint,
+                                                { agentPid, agentCapability }))
     } catch (err) {
       // A crashed app's leftover socket refuses instantly — walk on so a
       // dead canary pointer can never shadow a live stable Phi. Real
@@ -610,7 +616,8 @@ export async function connectBrowser({ agentPid = null, agentCapability = null }
       throw err
     }
     const client = new CdpClient({ socketPath: endpoint.socketPath,
-                                   wsPath: browserWsPath, agentPid })
+                                   wsPath: browserWsPath, agentPid,
+                                   agentCapability })
     await client.connect()
     // Management + lifecycle go straight to the app over a second WS on the
     // same socket (/phi-agent); page automation stays on the Chromium

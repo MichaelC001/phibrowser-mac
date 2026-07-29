@@ -254,6 +254,13 @@ export async function ensureAgentSpace(name, { profile = '', persistent = false 
     throw new Error('ensureAgentSpace(name): name is required')
   }
   const tasks = await listAgentSpaces()
+  // An orphaned round must not bind (or worse, re-create) the task under its
+  // fresh principal: the agent's own task is invisible to it, so a create
+  // here would either be rejected by the app or mint a phantom task the real
+  // agent can never reach.
+  if (roundLostAgentSession()) {
+    throw new Error(`ensureAgentSpace: ${ORPHANED_ROUND_MESSAGE}`)
+  }
   let task = tasks.find((t) => t.taskId === name)
   const rebound = !!task
   if (!task) {
@@ -266,7 +273,10 @@ export async function ensureAgentSpace(name, { profile = '', persistent = false 
       taskId: name,
       spaceId: created.spaceId,
       windowId: created.windowId,
-      ownership: 'agent',
+      // Normally 'agent' by construction — but a create that re-adopted a
+      // restarted agent's task returns the task as it stands, possibly with
+      // the USER still holding control from a pre-restart handoff.
+      ownership: created.ownership || 'agent',
       status: 'running',
       persistent: !!persistent,
     }
@@ -279,8 +289,8 @@ export async function ensureAgentSpace(name, { profile = '', persistent = false 
   // and prose flow into this Space's console, and console commands flow
   // back into the session (see scripts/mirror-tailer.mjs).
   spawnSessionMirror(task.taskId)
-  // `task.ownership` here is authoritative (fresh from list, or 'agent' by
-  // construction on create), so seed the staleness clock and avoid a redundant
+  // `task.ownership` here is authoritative (fresh from list, or echoed on the
+  // create reply), so seed the staleness clock and avoid a redundant
   // getOwnership on the first guarded action.
   state.ownerCheckedAt = Date.now()
   state.sessionId = null
@@ -687,15 +697,16 @@ function discoverSessionTranscript(taskId, agentPid) {
 }
 
 // The pid of the agent session this round acts for, claimed on every
-// app-socket connection (the X-Phi-Agent-Pid header — see cdp.mjs) so the
-// consent prompt names the AGENT even when process ancestry can't. Normally
-// that ancestry walk finds it directly; an ORPHANED round — e.g. a hand-back
-// watcher an agent without a tracked background mode ran with `… &`,
-// reparented to launchd once its spawning shell exited — walks to nothing,
-// and without a claim the app can only present its "phi-browser" fallback
-// identity (re-prompting despite the agent's existing grant). Such a round
-// inherits the pid a fully-parented round of the SAME session recorded in
-// the mirror control file. Null when neither source knows the agent.
+// app-socket connection (the X-Phi-Agent-Pid header — see cdp.mjs).
+// IDENTIFICATION ONLY: the app logs it but neither substitutes the consent
+// identity nor joins a task principal from it — delegation is proven with
+// the app-issued capability instead. Also the reference value for the
+// orphaned-round check (roundLostAgentSession): a mismatch against what the
+// app actually resolved marks this round as severed from its agent session.
+// Normally the live ancestry walk finds the agent directly; a sandboxed
+// round (Codex's seatbelt denies the sysctls `ps` needs) inherits the pid a
+// fully-parented round of the SAME session recorded in the mirror control
+// file. Null when neither source knows the agent.
 function claimAgentPid() {
   const live = agentRootPid()
   if (live) return live
@@ -721,6 +732,33 @@ function appProvidedAgentPid() {
 function appProvidedAgentCapability() {
   return state.cdp?.phi?.peerAgentCapability ?? null
 }
+
+// True when this round claims to act for a live agent session it is NOT
+// joined to: it named the agent's pid, the connection is a real app-socket
+// channel (the app always echoes a session capability on those — its absence
+// means the legacy tunnel or an older app, where this check does not apply),
+// and the app resolved a different driver than the claimed agent. That is
+// the orphaned-round signature — a watcher backgrounded with `… &` is
+// reparented away from the agent once its shell exits, and the app's
+// per-principal task isolation then gives it a FRESH driver principal that
+// can neither see nor drive the agent's tasks. Such a round must fail
+// loudly: its empty task list would otherwise read as "the task ended".
+function roundLostAgentSession() {
+  const claimed = claimAgentPid()
+  if (!claimed) return false
+  if (!appProvidedAgentCapability()) return false
+  return appProvidedAgentPid() !== claimed
+}
+
+const ORPHANED_ROUND_MESSAGE =
+  'this round lost its agent session: it runs orphaned from the driving ' +
+  'agent (typically backgrounded with `… &`, which reparents it away from ' +
+  'the agent once its spawning shell exits), so the app isolates it under ' +
+  'a fresh driver principal that cannot see the agent\'s tasks. Its view ' +
+  'of task state is NOT authoritative — do not conclude the task ended. ' +
+  'Run watchers with a background mode that keeps them parented to the ' +
+  'agent session (e.g. Claude Code\'s run_in_background), or use the ' +
+  'blocking handOffAndWait() — see SKILL.md "Hand-back watcher".'
 
 function spawnSessionMirror(taskId) {
   if (process.env.PHI_NO_SESSION_MIRROR) return
@@ -751,6 +789,10 @@ function spawnSessionMirror(taskId) {
       detached: true,
       stdio: ['pipe', 'ignore', 'ignore'],
     })
+    // A tailer that dies before reading (or a failed spawn) EPIPEs the pipe;
+    // without a listener that surfaces as an UNCAUGHT stream error in this
+    // round — the enclosing try/catch never sees async stream errors.
+    child.stdin.on('error', () => {})
     child.stdin.end(agentCapability || '')
     child.stdin.unref?.()
     child.unref()
@@ -3793,6 +3835,12 @@ export async function waitForAgentControl({ timeout = 600 } = {}) {
     const tasks = await listAgentSpaces()
     const t = tasks.find((x) => x.taskId === task.taskId)
     if (!t) {
+      // "Task missing" is only authoritative from a round that still holds
+      // the agent's driver principal — from an orphaned round it means "not
+      // visible to YOU", and reporting {gone} would falsely end the task.
+      if (roundLostAgentSession()) {
+        throw new Error(`waitForAgentControl: ${ORPHANED_ROUND_MESSAGE}`)
+      }
       state.task = null
       state.sessionId = null
       state.targetId = null
