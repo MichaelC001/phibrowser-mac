@@ -578,20 +578,32 @@ class FloatingSidebarViewController: NSViewController {
     /// hide scheduling so a pointer exit can't dismiss the form mid-typing.
     var hasCreateSpaceOverlay: Bool { createSpaceOverlay != nil }
 
+    /// The active Space theme inherited when the form opened, restored on
+    /// cancel, after the new target fronts, or when activation fails.
+    private var themeBeforeCreateSpacePreview: Theme?
+
     func showCreateSpaceOverlay(initialProfileId: String?) {
-        guard createSpaceOverlay == nil else { return }
+        // A successful create retains the source theme until activation
+        // finishes. Do not start another preview session during that handoff.
+        guard createSpaceOverlay == nil,
+              themeBeforeCreateSpacePreview == nil else { return }
         let panel = CreateSpacePanel(
             style: .sidebar,
             manager: .shared,
             profileManager: .shared,
-            initialProfileId: initialProfileId
-        ) { [weak self] in
-            self?.dismissCreateSpaceOverlay()
+            initialProfileId: initialProfileId,
+            initialThemeId: state.themeContext.currentTheme.id
+        ) { [weak self] restorePreviewTheme in
+            self?.dismissCreateSpaceOverlay(
+                restorePreviewTheme: restorePreviewTheme
+            )
+        } onThemeSelectionChange: { [weak self] theme in
+            self?.previewCreateSpaceOverlayTheme(theme)
+        } onCreatedSpaceActivationFinished: { [weak self] in
+            self?.restoreCreateSpacePreviewTheme()
         }
-        // Keep the Spaces icon row visible above the form while creating —
-        // forced on so it shows even with a single Space — and reserve its
-        // header height BEFORE the overlay anchors, so the strip's frame is
-        // settled when the overlay pins beneath it (mirrors the docked flow).
+        // Keep the Spaces icon row visible above the form, even with a single
+        // Space, and settle its header band before anchoring the overlay.
         headerView.forcesSpaceSwitchVisible = true
         updateHeaderHeight()
         view.layoutSubtreeIfNeeded()
@@ -624,9 +636,9 @@ class FloatingSidebarViewController: NSViewController {
         }
         host.view.alphaValue = 0
         createSpaceOverlay = host
-        // Strip pip clicks are disabled while creating (a switch would swap
-        // the form's window away); hover info keeps working — see
-        // `SpacesStripView.spacePip` / `isHoverCardPresented`.
+        themeBeforeCreateSpacePreview = state.themeContext.currentTheme
+        // Keep the visible strip read-only while creating so a pip click cannot
+        // switch the form's window away.
         spacesStripSlot.isCreatingSpace = true
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.18
@@ -636,12 +648,19 @@ class FloatingSidebarViewController: NSViewController {
         }
     }
 
-    func dismissCreateSpaceOverlay() {
+    private func previewCreateSpaceOverlayTheme(_ theme: Theme) {
+        guard createSpaceOverlay != nil else { return }
+        state.themeContext.setTheme(theme)
+    }
+
+    func dismissCreateSpaceOverlay(restorePreviewTheme: Bool = true) {
         guard let host = createSpaceOverlay else { return }
         createSpaceOverlay = nil
+        if restorePreviewTheme {
+            restoreCreateSpacePreviewTheme()
+        }
         spacesStripSlot.isCreatingSpace = false
-        // Release the forced strip visibility. A Space just created leaves the
-        // count > 1, so the row stays; a cancel from a single Space re-hides it.
+        // Release forced visibility. Normal Space-count rules take over again.
         headerView.forcesSpaceSwitchVisible = false
         updateHeaderHeight()
         NSAnimationContext.runAnimationGroup({ context in
@@ -656,6 +675,14 @@ class FloatingSidebarViewController: NSViewController {
         // The form no longer pins the panel open; re-run the pointer-driven
         // hide so the panel retracts if the pointer has already left.
         (parent as? WebContentContainerViewController)?.scheduleFloatingSidebarHide()
+    }
+
+    /// Restores the source Space after the new target fronts, or immediately
+    /// when activation fails and the source window remains visible.
+    private func restoreCreateSpacePreviewTheme() {
+        guard let savedTheme = themeBeforeCreateSpacePreview else { return }
+        themeBeforeCreateSpacePreview = nil
+        state.themeContext.setTheme(savedTheme)
     }
 
     /// Fades the panel content below the strip row while the create-Space
