@@ -19,14 +19,20 @@ struct ExtensionMessageContext {
     /// Chromium tunnel and extension senders. Used to badge the Space with who
     /// is driving it (see `agentSpace.create`).
     let agentName: String
+    /// Opaque app-issued identity for one logical external-agent session.
+    /// Shared by that agent's reconnecting/sandboxed helpers, distinct from
+    /// every other approved agent session. Nil for extensions and the legacy
+    /// Chromium message tunnel, which therefore cannot own CDP tasks.
+    let driverPrincipalId: String?
 
     init(type: String, payload: String, requestId: String,
-         senderId: String, agentName: String = "") {
+         senderId: String, agentName: String = "", driverPrincipalId: String? = nil) {
         self.type = type
         self.payload = payload
         self.requestId = requestId
         self.senderId = senderId
         self.agentName = agentName
+        self.driverPrincipalId = driverPrincipalId
     }
 }
 
@@ -63,11 +69,11 @@ final class ExtensionMessageRouter {
     }
 
     func handle(type: String, payload: String, requestId: String, senderId: String = "",
-                agentName: String = "") -> String? {
+                agentName: String = "", driverPrincipalId: String? = nil) -> String? {
         configureIfNeeded()
         let context = ExtensionMessageContext(
             type: type, payload: payload, requestId: requestId, senderId: senderId,
-            agentName: agentName)
+            agentName: agentName, driverPrincipalId: driverPrincipalId)
         if let handler = handlers[type] {
             return handler(context)
         }

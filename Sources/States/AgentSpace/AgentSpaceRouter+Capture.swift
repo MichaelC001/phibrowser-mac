@@ -16,7 +16,8 @@ extension AgentSpaceRouter {
     /// content it already captured over CDP — which Chromium renders regardless
     /// of window visibility — at `webPath`, and this composites it onto the
     /// chrome. `outPath` receives the PNG; the path is echoed back on success.
-    /// Passive (no control gate): a screenshot is safe while the user watches.
+    /// Passive with respect to user/agent ownership, but still restricted to
+    /// the task's owning driver principal.
     static func handleCaptureWindow(context: ExtensionMessageContext) -> String? {
         guard let obj = json(context.payload),
               let taskId = obj["taskId"] as? String,
@@ -24,6 +25,10 @@ extension AgentSpaceRouter {
             return invalid()
         }
         let webPath = obj["webPath"] as? String
+        guard callerMayControl(taskId: taskId, context: context,
+                               touchKeepAlive: false) else {
+            return unknownTask()
+        }
 
         return MainActor.assumeIsolated {
             guard let windowId = AgentSpaceManager.shared.task(forTaskId: taskId)?.windowId,

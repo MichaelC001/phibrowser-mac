@@ -27,6 +27,61 @@ import Foundation
 ///   response ← {"id": N, "responseJson": "…"}  or  {"id": N, "error": "…"}
 ///   event    ← {"event": "agentSpace.…", "payloadJson": "…"}
 
+/// One app-issued logical driver session. `capability` is a bearer secret
+/// returned on the first `/phi-agent` upgrade and presented by sandboxed or
+/// detached helpers on later connections. It keeps process churn from
+/// collapsing authorization back to a caller-supplied pid or display name.
+struct AgentDriverSession {
+    let principalId: String
+    let capability: String
+    let identity: AgentIdentity
+}
+
+/// App-session registry for logical driver principals. A live agent process
+/// gets one principal across its short-lived helper connections; a detached
+/// helper must prove delegation by presenting the issued capability.
+final class AgentDriverSessionRegistry {
+    static let shared = AgentDriverSessionRegistry()
+
+    private let lock = NSLock()
+    private var sessionsByCapability: [String: AgentDriverSession] = [:]
+    private var capabilityByProcessAnchor: [String: String] = [:]
+
+    private init() {}
+
+    func session(forCapability capability: String) -> AgentDriverSession? {
+        lock.lock(); defer { lock.unlock() }
+        return sessionsByCapability[capability]
+    }
+
+    func session(for identity: AgentIdentity) -> AgentDriverSession {
+        lock.lock(); defer { lock.unlock() }
+        if let anchor = AgentPeerIdentity.processSessionAnchor(for: identity),
+           let capability = capabilityByProcessAnchor[anchor],
+           let existing = sessionsByCapability[capability] {
+            return existing
+        }
+
+        let session = AgentDriverSession(
+            principalId: UUID().uuidString,
+            capability: Self.makeCapability(),
+            identity: identity)
+        sessionsByCapability[session.capability] = session
+        if let anchor = AgentPeerIdentity.processSessionAnchor(for: identity) {
+            capabilityByProcessAnchor[anchor] = session.capability
+        }
+        return session
+    }
+
+    private static func makeCapability() -> String {
+        let bytes = SymmetricKey(size: .bits256).withUnsafeBytes { Data($0) }
+        return bytes.base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+    }
+}
+
 /// Tracks live `/phi-agent` connections and routes app responses/broadcasts to
 /// them. `ExtensionMessaging` consults this before falling back to the Chromium
 /// bridge, so a response for a direct-channel request never leaves the app.
@@ -118,7 +173,17 @@ final class AgentDirectChannelRegistry {
         return true
     }
 
-    /// Pushes an `agentSpace.*` broadcast to every live direct connection.
+    /// Pushes a task event only to connections authorized as its owning
+    /// logical driver. Several round/helper connections may share a principal.
+    func broadcast(type: String, payloadJson: String, principalId: String) {
+        lock.lock()
+        let conns = connections.values.filter { $0.driverPrincipalId == principalId }
+        lock.unlock()
+        for c in conns { c.sendEvent(type: type, payloadJson: payloadJson) }
+    }
+
+    /// App-global, non-task event fan-out retained for existing extension-style
+    /// broadcasts. Task/user-content events must use the principal overload.
     func broadcast(type: String, payloadJson: String) {
         lock.lock(); let conns = Array(connections.values); lock.unlock()
         for c in conns { c.sendEvent(type: type, payloadJson: payloadJson) }
@@ -130,11 +195,15 @@ final class AgentDirectChannelRegistry {
 /// requests and encodes responses/events. Owns its fd for its whole lifetime.
 final class AgentDirectConnection {
     let id = UUID().uuidString
+    let driverPrincipalId: String
 
     private let fd: Int32
     /// The authenticated identity of the connecting code agent, forwarded to
     /// `agentSpace.create` so the Space it opens is badged with who drives it.
     private let agentName: String
+    /// Bearer capability for this logical driver session. Echoed on the 101
+    /// response so the skill can delegate it to its sandboxed/detached helpers.
+    private let agentCapability: String
     /// Pid of the resolved agent process, echoed back on the 101 upgrade
     /// (X-Phi-Agent-Pid) — the authoritative ancestry answer for a skill
     /// round that cannot walk its own (Codex's seatbelt denies the sysctls
@@ -152,10 +221,13 @@ final class AgentDirectConnection {
     private static let wsGUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
     private static let maxFrameBytes = 8 * 1024 * 1024
 
-    init(fd: Int32, agentName: String = "", agentPid: pid_t? = nil) {
+    init(fd: Int32, agentName: String = "", agentPid: pid_t? = nil,
+         driverPrincipalId: String, agentCapability: String) {
         self.fd = fd
         self.agentName = agentName
         self.agentPid = agentPid
+        self.driverPrincipalId = driverPrincipalId
+        self.agentCapability = agentCapability
         self.queue = DispatchQueue(label: "com.phibrowser.cdp.direct.\(fd)")
     }
 
@@ -217,10 +289,12 @@ final class AgentDirectConnection {
         }
         let accept = Self.acceptKey(for: key)
         let claim = agentPid.map { "X-Phi-Agent-Pid: \($0)\r\n" } ?? ""
+        let capability = "X-Phi-Agent-Capability: \(agentCapability)\r\n"
         writeRaw(
             "HTTP/1.1 101 Switching Protocols\r\n" +
             "Upgrade: websocket\r\nConnection: Upgrade\r\n" +
             claim +
+            capability +
             "Sec-WebSocket-Accept: \(accept)\r\n\r\n")
         handshakeDone = true
         return true
@@ -310,7 +384,7 @@ final class AgentDirectConnection {
             timeoutSeconds: timeout)
         let sync = ExtensionMessageRouter.shared.handle(
             type: type, payload: payloadJson, requestId: requestId, senderId: "cdp",
-            agentName: agentName)
+            agentName: agentName, driverPrincipalId: driverPrincipalId)
         if let sync {
             AgentDirectChannelRegistry.shared.deliverResponse(
                 requestId: requestId, response: sync)

@@ -80,7 +80,9 @@ const INTER_ROUND_KEEPALIVE_SECONDS = 30 * 60
 
 async function cdpClient() {
   if (state.cdp) return state.cdp
-  state.cdp = await connectBrowser({ agentPid: claimAgentPid() })
+  state.cdp = await connectBrowser({
+    agentPid: claimAgentPid(),
+  })
   // `state.cdp.phi` is the agentSpace.* channel — direct to Swift over the
   // app socket, or the Chromium tunnel under the TCP dev override. Either way
   // the ownership push lands here.
@@ -716,6 +718,10 @@ function appProvidedAgentPid() {
   return state.cdp?.phi?.peerAgentPid ?? null
 }
 
+function appProvidedAgentCapability() {
+  return state.cdp?.phi?.peerAgentCapability ?? null
+}
+
 function spawnSessionMirror(taskId) {
   if (process.env.PHI_NO_SESSION_MIRROR) return
   try {
@@ -724,6 +730,7 @@ function spawnSessionMirror(taskId) {
     if (!transcript) return  // unknown driver: say() remains
     const prev = readDaemonControl(transcript.sessionKey)
     const livePid = prev && prev.pid && pidAlive(prev.pid) ? prev.pid : null
+    const agentCapability = appProvidedAgentCapability()
     writeDaemonControl(transcript.sessionKey, {
       taskId, transcriptPath: transcript.path, format: transcript.format,
       ts: Date.now(),
@@ -738,8 +745,15 @@ function spawnSessionMirror(taskId) {
     })
     if (livePid) return  // the live tailer follows the control-file update
     const tailer = fileURLToPath(new URL('../mirror-tailer.mjs', import.meta.url))
-    spawn(process.execPath, [tailer, transcript.sessionKey],
-          { detached: true, stdio: 'ignore' }).unref()
+    // Delegate through an inherited one-shot pipe, never argv/env/a shared
+    // temp file. The detached daemon keeps the capability only in memory.
+    const child = spawn(process.execPath, [tailer, transcript.sessionKey], {
+      detached: true,
+      stdio: ['pipe', 'ignore', 'ignore'],
+    })
+    child.stdin.end(agentCapability || '')
+    child.stdin.unref?.()
+    child.unref()
   } catch {}
 }
 

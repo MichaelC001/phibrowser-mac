@@ -38,7 +38,7 @@
 // Everything is best-effort and silent: the daemon must never outlive its
 // usefulness, and a premature exit only costs a respawn on the next round.
 
-import { openSync, readSync, closeSync, statSync } from 'node:fs'
+import { openSync, readSync, closeSync, statSync, readFileSync } from 'node:fs'
 import {
   readDaemonControl, writeDaemonControl, clearDaemonControl, readCursor,
   writeCursor, forwardEntries, openPhiChannel, pidAlive, BACKFILL_GRACE_MS,
@@ -89,6 +89,15 @@ const COMPLETE_MAX_WAIT_MS = 90 * 1000
 const sessionKey = process.argv[2]
 process.title = 'phi-mirror-tailer'
 if (!sessionKey) process.exit(0)
+
+// The spawning round delegates its app-issued logical-driver capability over
+// stdin, an inherited one-shot pipe. Keep it only in memory: argv, env, and
+// the shared mirror control file remain free of authorization material.
+let delegatedAgentCapability = null
+try {
+  const value = readFileSync(0, 'utf8').trim()
+  if (/^[A-Za-z0-9_-]{32,128}$/.test(value)) delegatedAgentCapability = value
+} catch {}
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
@@ -152,7 +161,10 @@ async function main() {
     // detached (reparented to launchd once its spawning round exits), so the
     // app's ancestry walk can't reach the agent — the claimed pid keeps the
     // consent identity on the agent instead of this daemon.
-    channel = await openPhiChannel({ agentPid: Number(ctl.agentPid) || null })
+    channel = await openPhiChannel({
+      agentPid: Number(ctl.agentPid) || null,
+      agentCapability: delegatedAgentCapability,
+    })
     channel.onEvent('agentSpace.userMessage', ({ taskId }) => {
       const cur = readDaemonControl(sessionKey)
       if (cur && cur.taskId === taskId) bridgeWake = true

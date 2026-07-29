@@ -104,6 +104,15 @@ function agentPidHeader(agentPid) {
     : {}
 }
 
+/** App-issued proof that a helper belongs to an existing logical agent
+ * session. Unlike X-Phi-Agent-Pid this is authorization material, so callers
+ * only receive it from Phi and pass it unchanged to delegated helpers. */
+function agentCapabilityHeader(agentCapability) {
+  return typeof agentCapability === 'string' && /^[A-Za-z0-9_-]{32,128}$/.test(agentCapability)
+    ? { 'X-Phi-Agent-Capability': agentCapability }
+    : {}
+}
+
 /** GETs a JSON document from the app socket over HTTP. */
 function httpGetJson(endpoint, path, timeoutMs, agentPid = null) {
   return new Promise((resolve, reject) => {
@@ -176,7 +185,8 @@ export async function verifyEndpoint(endpoint, { agentPid = null } = {}) {
  * with continuation reassembly and ping/pong handling.
  */
 export class UnixWebSocket {
-  constructor({ socketPath, path, host = 'localhost', agentPid = null }) {
+  constructor({ socketPath, path, host = 'localhost', agentPid = null,
+                agentCapability = null }) {
     this._listeners = { open: [], message: [], error: [], close: [] }
     this._buf = Buffer.alloc(0)
     this._handshakeDone = false
@@ -184,6 +194,7 @@ export class UnixWebSocket {
     this._fragOpcode = 0
     this._fragChunks = []
     this._agentPid = agentPid
+    this._agentCapability = agentCapability
     this._openSocket(socketPath, path, host)
   }
 
@@ -218,10 +229,13 @@ export class UnixWebSocket {
     // The claim header sits right after Host so it lands inside the app's
     // single request-head peek (see agentPidHeader / AgentCDPListener).
     const [claimName, claimValue] = Object.entries(agentPidHeader(this._agentPid))[0] ?? []
+    const [capabilityName, capabilityValue] =
+      Object.entries(agentCapabilityHeader(this._agentCapability))[0] ?? []
     this._sock.on('connect', () => {
       this._sock.write(
         `GET ${path} HTTP/1.1\r\n` +
         `Host: ${host}\r\n` +
+        (capabilityName ? `${capabilityName}: ${capabilityValue}\r\n` : '') +
         (claimName ? `${claimName}: ${claimValue}\r\n` : '') +
         `Upgrade: websocket\r\n` +
         `Connection: Upgrade\r\n` +
@@ -243,6 +257,8 @@ export class UnixWebSocket {
       // that cannot walk its own (see helpers.appProvidedAgentPid).
       const claim = /^x-phi-agent-pid:\s*(\d+)\s*$/im.exec(head)
       this.peerAgentPid = claim ? Number(claim[1]) : null
+      const capability = /^x-phi-agent-capability:\s*([A-Za-z0-9_-]{32,128})\s*$/im.exec(head)
+      this.peerAgentCapability = capability ? capability[1] : null
       if (!/ 101 /.test(statusLine)) {
         const denied = / 403 /.test(statusLine)
         this._emit('error', {
@@ -481,9 +497,10 @@ export class CdpClient {
  * `onEvent(type, cb)` surface, so helpers.mjs doesn't care which is in play.
  */
 export class DirectPhiChannel {
-  constructor({ socketPath, agentPid = null }) {
+  constructor({ socketPath, agentPid = null, agentCapability = null }) {
     this.socketPath = socketPath
     this.agentPid = agentPid
+    this.agentCapability = agentCapability
     this.nextId = 1
     this.pending = new Map()
     this.listeners = []
@@ -498,7 +515,8 @@ export class DirectPhiChannel {
       ? `/phi-agent?agentPid=${this.agentPid}`
       : '/phi-agent'
     this.ws = new UnixWebSocket({ socketPath: this.socketPath, path,
-                                  agentPid: this.agentPid })
+                                  agentPid: this.agentPid,
+                                  agentCapability: this.agentCapability })
     await new Promise((resolve, reject) => {
       this.ws.addEventListener('open', () => resolve(), { once: true })
       this.ws.addEventListener('error', (ev) =>
@@ -509,6 +527,7 @@ export class DirectPhiChannel {
     })
     // The agent pid the app resolved for this connection (see _onData).
     this.peerAgentPid = this.ws.peerAgentPid ?? null
+    this.peerAgentCapability = this.ws.peerAgentCapability ?? null
     this.ws.addEventListener('message', (ev) => this.#onMessage(ev.data))
     this.ws.addEventListener('close', () => {
       for (const [, p] of this.pending) p.reject(new Error('phi-agent channel closed'))
@@ -569,7 +588,7 @@ export class DirectPhiChannel {
   close() { try { this.ws.close() } catch {} }
 }
 
-export async function connectBrowser({ agentPid = null } = {}) {
+export async function connectBrowser({ agentPid = null, agentCapability = null } = {}) {
   const candidates = discoverEndpoints()
   if (candidates.length === 0) throw new Error(NOT_FOUND_MESSAGE)
   const uds = candidates.filter((c) => c.kind === 'uds')
@@ -596,8 +615,11 @@ export async function connectBrowser({ agentPid = null } = {}) {
     // Management + lifecycle go straight to the app over a second WS on the
     // same socket (/phi-agent); page automation stays on the Chromium
     // browser-target WS above.
-    client.phi = await new DirectPhiChannel({ socketPath: endpoint.socketPath,
-                                              agentPid }).connect()
+    client.phi = await new DirectPhiChannel({
+      socketPath: endpoint.socketPath,
+      agentPid,
+      agentCapability,
+    }).connect()
     return client
   }
   throw lastErr ?? new Error(NOT_FOUND_MESSAGE)
