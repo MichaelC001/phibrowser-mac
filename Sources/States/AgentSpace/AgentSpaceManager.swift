@@ -309,6 +309,9 @@ final class AgentSpaceManager: ObservableObject {
     /// user to visit — see `presentHandoffPrompt`.
     private var handoffPromptPanel: NSPanel?
     private var handoffPromptSpaceId: String?
+    /// Dock-bounce request shown with the handoff prompt, cancelled with it —
+    /// an auto-dismissed prompt (hand-back, completion) must not keep bouncing.
+    private var handoffPromptAttentionRequest: Int?
 
     private init() {}
 
@@ -894,6 +897,11 @@ final class AgentSpaceManager: ObservableObject {
                                      y: anchor.midY - size.height / 2))
         panel.orderFrontRegardless()
 
+        // The panel is non-activating, so it alone never bounces the Dock
+        // icon; ask for attention explicitly the way a modal prompt would.
+        // No-op while Phi is already the active app.
+        handoffPromptAttentionRequest = NSApp.requestUserAttention(.criticalRequest)
+
         handoffPromptPanel = panel
         handoffPromptSpaceId = spaceId
     }
@@ -903,6 +911,10 @@ final class AgentSpaceManager: ObservableObject {
     /// completion, deletion) must not tear down a newer task's prompt.
     private func dismissHandoffPrompt(forSpaceId spaceId: String? = nil) {
         if let spaceId, handoffPromptSpaceId != spaceId { return }
+        if let request = handoffPromptAttentionRequest {
+            NSApp.cancelUserAttentionRequest(request)
+            handoffPromptAttentionRequest = nil
+        }
         handoffPromptPanel?.close()
         handoffPromptPanel = nil
         handoffPromptSpaceId = nil
