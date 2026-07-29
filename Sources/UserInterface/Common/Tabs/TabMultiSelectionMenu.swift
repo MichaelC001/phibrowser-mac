@@ -254,9 +254,7 @@ enum TabMultiSelectionMenu {
                                        action: #selector(TabMultiSelectionMenuController.moveSelectedToSpace(_:)),
                                        keyEquivalent: "")
                 entry.target = controller
-                if let icon = NSImage(systemSymbolName: space.iconName, accessibilityDescription: nil) {
-                    entry.image = icon
-                }
+                entry.image = SpaceIconView.menuImage(for: space.iconName)
                 entry.representedObject = space.spaceId
                 submenu.addItem(entry)
             }
@@ -276,9 +274,7 @@ enum TabMultiSelectionMenu {
                                        action: #selector(TabMultiSelectionMenuController.cloneSelectedToSpace(_:)),
                                        keyEquivalent: "")
                 entry.target = controller
-                if let icon = NSImage(systemSymbolName: space.iconName, accessibilityDescription: nil) {
-                    entry.image = icon
-                }
+                entry.image = SpaceIconView.menuImage(for: space.iconName)
                 entry.representedObject = space.spaceId
                 submenu.addItem(entry)
             }

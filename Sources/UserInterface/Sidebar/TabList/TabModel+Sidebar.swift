@@ -718,9 +718,7 @@ extension Tab: ContextMenuRepresentable {
                                    action: #selector(moveTabToSpace(_:)),
                                    keyEquivalent: "")
             entry.target = self
-            if let icon = NSImage(systemSymbolName: space.iconName, accessibilityDescription: nil) {
-                entry.image = icon
-            }
+            entry.image = SpaceIconView.menuImage(for: space.iconName)
             entry.representedObject = space.spaceId
             submenu.addItem(entry)
         }
