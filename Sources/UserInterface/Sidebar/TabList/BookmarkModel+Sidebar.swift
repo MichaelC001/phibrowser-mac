@@ -175,9 +175,7 @@ extension Bookmark: ContextMenuRepresentable {
                                        action: #selector(moveToSpace(_:)),
                                        keyEquivalent: "")
                 entry.target = self
-                if let icon = NSImage(systemSymbolName: space.iconName, accessibilityDescription: nil) {
-                    entry.image = icon
-                }
+                entry.image = SpaceIconView.menuImage(for: space.iconName)
                 entry.representedObject = space.spaceId
                 submenu.addItem(entry)
             }
@@ -197,9 +195,7 @@ extension Bookmark: ContextMenuRepresentable {
                                        action: #selector(cloneToSpace(_:)),
                                        keyEquivalent: "")
                 entry.target = self
-                if let icon = NSImage(systemSymbolName: space.iconName, accessibilityDescription: nil) {
-                    entry.image = icon
-                }
+                entry.image = SpaceIconView.menuImage(for: space.iconName)
                 entry.representedObject = space.spaceId
                 submenu.addItem(entry)
             }
