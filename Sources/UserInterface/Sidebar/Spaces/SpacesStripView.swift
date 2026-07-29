@@ -585,11 +585,19 @@ struct SpacesStripView: View {
         .onDrop(of: [.text], delegate: SpaceListResetDropDelegate(
             draggingSpaceId: $stripDraggingId,
             orderedIds: $stripOrderedIds,
-            commit: { manager.reorder(spaceIds: $0) }
+            commit: { ids in
+                guard !slot.isCreatingSpace else { return }
+                manager.reorder(spaceIds: ids)
+            }
         ))
         .onAppear {
             stripOrderedIds = manager.spaces.map(\.spaceId)
             wireTooltipPointerWatchdog()
+        }
+        .onChange(of: slot.isCreatingSpace) { isCreating in
+            guard isCreating else { return }
+            stripDraggingId = nil
+            stripOrderedIds = manager.spaces.map(\.spaceId)
         }
         .onChange(of: manager.spaces.map(\.spaceId)) { ids in
             // A deleted Space's pip leaves the ForEach with no mouse-exit, so
@@ -649,6 +657,12 @@ struct SpacesStripView: View {
                     // Spacer and the trailing button without this.
                     .allowsHitTesting(index >= start && index < start + visibleCount)
                     .onDrag {
+                        // Keep hover available while the create form is open,
+                        // but do not vend a reorder payload from its read-only
+                        // Space strip.
+                        guard !slot.isCreatingSpace else {
+                            return NSItemProvider()
+                        }
                         stripDraggingId = space.spaceId
                         return NSItemProvider(object: space.spaceId as NSString)
                     }
@@ -656,7 +670,10 @@ struct SpacesStripView: View {
                         targetSpaceId: space.spaceId,
                         draggingSpaceId: $stripDraggingId,
                         orderedIds: $stripOrderedIds,
-                        commit: { manager.reorder(spaceIds: $0) }
+                        commit: { ids in
+                            guard !slot.isCreatingSpace else { return }
+                            manager.reorder(spaceIds: ids)
+                        }
                     ))
             }
         }

@@ -1010,16 +1010,25 @@ final class SpaceManager: ObservableObject {
     /// correct per-layout switch animation (vertical push-in / horizontal
     /// slide). No-op when no window is open — the persisted default then seeds
     /// the next window to launch.
-    func activateInFocusedWindow(spaceId: String) {
+    func activateInFocusedWindow(
+        spaceId: String,
+        onActivationFailed: (() -> Void)? = nil,
+        onSwapSettled: (() -> Void)? = nil
+    ) {
         // `keySlot` is weak and can be nil in edge states (e.g. right after a
         // sheet held key, or mid slot-teardown); falling back to the first
         // live slot beats silently dropping the switch — the agent-handoff
         // prompt's "Switch to Agent Space" button lands here.
         guard let slot = keySlot ?? slots.first else {
             AppLogWarn("[SpaceManager] activateInFocusedWindow(\(spaceId)): no live slot")
+            onActivationFailed?()
             return
         }
-        slot.activate(spaceId: spaceId)
+        slot.activate(
+            spaceId: spaceId,
+            onActivationFailed: onActivationFailed,
+            onSwapSettled: onSwapSettled
+        )
     }
 
     /// Moves `tab` out of its current Space and into the Space identified by
@@ -3350,7 +3359,14 @@ final class SpaceWindowSlot: ObservableObject {
     /// usable snapshot — the override holds the composite captured at
     /// `markTabDrivenClose` time. Per-style animation functions consult
     /// it as a fallback after their own snapshot attempt fails.
-    func activate(spaceId: String, leavingSnapshotOverride: NSImage? = nil, animated: Bool = true, userInitiated: Bool = false, onSwapSettled: (() -> Void)? = nil) {
+    func activate(
+        spaceId: String,
+        leavingSnapshotOverride: NSImage? = nil,
+        animated: Bool = true,
+        userInitiated: Bool = false,
+        onActivationFailed: (() -> Void)? = nil,
+        onSwapSettled: (() -> Void)? = nil
+    ) {
         // A Space-switch animation is treated as atomic: once it starts, further
         // user-initiated switches (pip/icon click, keyboard shortcut, swipe,
         // menu selection) are dropped until it settles, so a second trigger
@@ -3362,6 +3378,7 @@ final class SpaceWindowSlot: ObservableObject {
         AppLogInfo("[SpaceWindowSlot] activate(\(spaceId)) from=\(activeSpaceId ?? "nil") userInitiated=\(userInitiated) animated=\(animated)")
         if userInitiated, spaceId != activeSpaceId, isSwitchAnimationInFlight {
             AppLogInfo("[SpaceWindowSlot] activate(\(spaceId)) dropped: switch animation in flight")
+            onActivationFailed?()
             return
         }
         isPerformingActivate = true
@@ -3369,6 +3386,7 @@ final class SpaceWindowSlot: ObservableObject {
         guard let manager,
               manager.spaces.contains(where: { $0.spaceId == spaceId }) else {
             AppLogWarn("[SpaceWindowSlot] activate ignored: unknown spaceId \(spaceId)")
+            onActivationFailed?()
             return
         }
 
@@ -3549,6 +3567,8 @@ final class SpaceWindowSlot: ObservableObject {
                     visibleController = target
                     onSwapSettled?()
                 }
+            } else {
+                onSwapSettled?()
             }
             return
         }
@@ -3567,10 +3587,12 @@ final class SpaceWindowSlot: ObservableObject {
         // hide or close. Bail here; the in-flight spawn will surface the Space.
         if pendingSpawnSpaceIds.contains(spaceId) {
             AppLogInfo("[SpaceWindowSlot] activate(\(spaceId)): spawn already in flight, ignoring repeat")
+            onActivationFailed?()
             return
         }
         guard let bridge = ChromiumLauncher.sharedInstance().bridge else {
             AppLogWarn("[SpaceWindowSlot] activate cannot spawn: bridge unavailable")
+            onActivationFailed?()
             return
         }
         // Settle any in-flight swap before spawning, exactly as the swap
@@ -3620,12 +3642,17 @@ final class SpaceWindowSlot: ObservableObject {
                 direction: direction,
                 sourceColorHex: sourceColorHex,
                 targetColorHex: targetColorHex,
+                onActivationFailed: onActivationFailed,
                 onSwapSettled: onSwapSettled
             )
             : nil
         let spawn: () -> Void = { [weak self, weak previous, weak manager] in
             guard let self = self else {
-                spawnSwitch?.settle()
+                if let spawnSwitch {
+                    spawnSwitch.settle()
+                } else {
+                    onActivationFailed?()
+                }
                 return
             }
             // Record the spawn intent *before* createBrowser. Chromium's
@@ -3666,13 +3693,21 @@ final class SpaceWindowSlot: ObservableObject {
             guard let dict else {
                 AppLogWarn("[SpaceWindowSlot] createBrowserWithWindowType returned nil")
                 self.pendingSpawnSpaceIds.remove(spaceId)
-                spawnSwitch?.spawnFailed()
+                if let spawnSwitch {
+                    spawnSwitch.spawnFailed()
+                } else {
+                    onActivationFailed?()
+                }
                 return
             }
             guard let windowIdNumber = dict["windowId"] as? NSNumber else {
                 AppLogWarn("[SpaceWindowSlot] createBrowserWithWindowType returned no windowId")
                 self.pendingSpawnSpaceIds.remove(spaceId)
-                spawnSwitch?.spawnFailed()
+                if let spawnSwitch {
+                    spawnSwitch.spawnFailed()
+                } else {
+                    onActivationFailed?()
+                }
                 return
             }
             let id = windowIdNumber.intValue
@@ -3765,7 +3800,11 @@ final class SpaceWindowSlot: ObservableObject {
                 // the animation back onto the leaving window instead of
                 // leaving it armed forever.
                 AppLogWarn("[SpaceWindowSlot] spawn(\(spaceId)): window \(id) not registered synchronously, skipping reveal")
-                spawnSwitch?.settle()
+                if let spawnSwitch {
+                    spawnSwitch.settle()
+                } else {
+                    onActivationFailed?()
+                }
                 return
             }
             if let spawnSwitch, spawnSwitch.spawnCompleted(registered) {
@@ -3776,7 +3815,10 @@ final class SpaceWindowSlot: ObservableObject {
             // entirely if the user switched elsewhere mid-spawn: the window
             // stays registered and hidden, and a later switch back surfaces
             // it through the normal swap path.
-            guard self.activeSpaceId == spaceId else { return }
+            guard self.activeSpaceId == spaceId else {
+                onActivationFailed?()
+                return
+            }
             self.makeKeyAndOrderFrontHidingSlotTabBar(registered.window)
             self.orderOutIfNotTabbedWithTarget(previous?.window, targetWindow: registered.window)
             // The spawned target is up and the leaving window is hidden — let
@@ -3805,7 +3847,11 @@ final class SpaceWindowSlot: ObservableObject {
                     guard success else {
                         AppLogWarn("[SpaceWindowSlot] ensureIncognitoSpaceProfileLoaded failed; not spawning")
                         self?.pendingSpawnSpaceIds.remove(spaceId)
-                        spawnSwitch?.spawnFailed()
+                        if let spawnSwitch {
+                            spawnSwitch.spawnFailed()
+                        } else {
+                            onActivationFailed?()
+                        }
                         return
                     }
                     spawn()
@@ -3820,7 +3866,11 @@ final class SpaceWindowSlot: ObservableObject {
                         // here so the previous window simply stays on screen.
                         AppLogWarn("[SpaceWindowSlot] ensureProfileLoaded failed for \(pid); not spawning")
                         self?.pendingSpawnSpaceIds.remove(spaceId)
-                        spawnSwitch?.spawnFailed()
+                        if let spawnSwitch {
+                            spawnSwitch.spawnFailed()
+                        } else {
+                            onActivationFailed?()
+                        }
                         return
                     }
                     spawn()
@@ -4365,6 +4415,7 @@ final class SpaceWindowSlot: ObservableObject {
         direction: SwapDirection,
         sourceColorHex: String?,
         targetColorHex: String?,
+        onActivationFailed: (() -> Void)?,
         onSwapSettled: (() -> Void)?
     ) -> SpawnSwitchAnimation? {
         let duration = Self.swapAnimationDuration
@@ -4458,6 +4509,7 @@ final class SpaceWindowSlot: ObservableObject {
         handle.restore = { [weak self] in
             restoreLeaving()
             self?.verticalSwapCancel = nil
+            onActivationFailed?()
         }
 
         handle.armSpawnDeadline = { [weak self, weak handle] in
