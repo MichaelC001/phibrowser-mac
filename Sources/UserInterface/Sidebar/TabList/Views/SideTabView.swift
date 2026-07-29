@@ -13,6 +13,7 @@ struct SideTabView: View {
     var model: TabViewModel
     var onClose: (() -> Void)? = nil
 
+    @Environment(\.phiTheme) private var theme
     @Environment(\.phiAppearance) private var appearance
 
     private var backgroundColor: Color {
@@ -20,7 +21,10 @@ struct SideTabView: View {
             return Color(nsColor: NSColor(resource: .sidebarTabSelected))
         }
         if model.isMultiSelected {
-            return Color(nsColor: NSColor(resource: .sidebarTabSubSelected))
+            return ThemedColor.tabSubSelectionBackground.swiftUIColor(
+                theme: theme,
+                appearance: appearance
+            )
         }
         if model.isHovered {
             return Color(nsColor: NSColor(resource: .sidebarTabHovered))

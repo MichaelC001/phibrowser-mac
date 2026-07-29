@@ -467,6 +467,40 @@ final class PhiBrowserTests: XCTestCase {
         XCTAssertEqual(PureThemeBrightnessScale.darkWindowBackgroundBrightness(forSlider: 100), 0.20, accuracy: 0.0001)
     }
 
+    func testPureTabSubSelectionUsesContrastOverlayAcrossBrightnessRange() {
+        for sliderValue in [0.0, 50.0, 100.0] {
+            let theme = ThemeColorAdjustment.applyingPureBrightness(
+                sliderValue: sliderValue,
+                to: .pure
+            )
+
+            assertColor(
+                ThemedColor.tabSubSelectionBackground.resolve(
+                    theme: theme,
+                    appearance: .light
+                ),
+                equals: NSColor.black.withAlphaComponent(0.08)
+            )
+        }
+    }
+
+    func testColoredThemeTabSubSelectionKeepsExistingColors() {
+        assertColor(
+            ThemedColor.tabSubSelectionBackground.resolve(
+                theme: .mint,
+                appearance: .light
+            ),
+            equals: NSColor(white: 0.9, alpha: 1)
+        )
+        assertColor(
+            ThemedColor.tabSubSelectionBackground.resolve(
+                theme: .mint,
+                appearance: .dark
+            ),
+            equals: NSColor.white.withAlphaComponent(0.18)
+        )
+    }
+
     func testDefaultColoredThemeSaturationIsFortyPercent() {
         XCTAssertEqual(ThemeColorAdjustment.defaultSaturation, 0.40, accuracy: 0.0001)
         XCTAssertEqual(
