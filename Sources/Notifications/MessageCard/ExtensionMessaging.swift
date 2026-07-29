@@ -63,4 +63,25 @@ final class ExtensionMessaging: @MainActor ExtensionMessagingProtocol {
                 .broadcastMessageToExtensions(withType: type, payload: payload)
         }
     }
+
+    /// Delivers a task event only to that task's driver. External CDP tasks
+    /// stay inside their app-issued principal; in-app phi-agent tasks continue
+    /// through the Chromium extension bridge. This prevents user messages and
+    /// ownership changes from leaking across approved direct connections.
+    @MainActor
+    func broadcastToTaskDriver(type: String, payload: String,
+                               origin: AgentTaskOrigin,
+                               driverPrincipalId: String?) {
+        DispatchQueue.main.async {
+            switch origin {
+            case .cdp:
+                guard let driverPrincipalId, !driverPrincipalId.isEmpty else { return }
+                AgentDirectChannelRegistry.shared.broadcast(
+                    type: type, payloadJson: payload, principalId: driverPrincipalId)
+            case .phiAgent:
+                _ = ChromiumLauncher.sharedInstance().bridge?
+                    .broadcastMessageToExtensions(withType: type, payload: payload)
+            }
+        }
+    }
 }

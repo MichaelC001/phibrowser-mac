@@ -184,14 +184,17 @@ function sanitizeKey(id) {
  * agent session for the app's consent identity — pass it from any process
  * (the detached daemon) that no longer shares the agent's ancestry.
  */
-export async function openPhiChannel({ agentPid = null } = {}) {
+export async function openPhiChannel({ agentPid = null, agentCapability = null } = {}) {
   const uds = discoverEndpoints().filter((c) => c.kind === 'uds')
   if (uds.length === 0) throw new Error('no app socket endpoint')
   let lastErr = null
   for (const endpoint of uds) {
     try {
-      return await new DirectPhiChannel({ socketPath: endpoint.socketPath,
-                                          agentPid }).connect()
+      return await new DirectPhiChannel({
+        socketPath: endpoint.socketPath,
+        agentPid,
+        agentCapability,
+      }).connect()
     } catch (err) {
       // Crash-orphaned socket file — walk on to the next candidate. (Never
       // probe with a naked connect: see isDeadSocketError in cdp.mjs.)

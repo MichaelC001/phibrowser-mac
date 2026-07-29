@@ -44,6 +44,10 @@ struct AgentTask {
     let spaceId: String
     let profileId: String
     let origin: AgentTaskOrigin
+    /// Owning logical external-agent session. Required for `.cdp` tasks and
+    /// nil for the in-app `.phiAgent` backend. This is authorization state;
+    /// `agentName` below is presentation only.
+    let driverPrincipalId: String?
     /// Small, stable ordinal (1, 2, 3…) shown as a corner badge so several live
     /// agent Spaces can be told apart at a glance. Assigned at creation as the
     /// lowest number not currently in use, so it's reused after a Space closes.
@@ -471,11 +475,20 @@ final class AgentSpaceManager: ObservableObject {
         origin: AgentTaskOrigin = .phiAgent,
         persistent: Bool = false,
         agentName: String = "",
+        driverPrincipalId: String? = nil,
         completion: @escaping (_ spaceId: String?, _ windowId: Int?) -> Void
     ) {
+        if origin == .cdp {
+            guard let driverPrincipalId, !driverPrincipalId.isEmpty else {
+                AppLogWarn("[AgentSpace] createAgentSpace: CDP task has no driver principal")
+                completion(nil, nil)
+                return
+            }
+        }
         if let existingSpaceId = spaceIdByTaskId[taskId] {
             guard let existing = tasksBySpaceId[existingSpaceId],
-                  existing.origin == origin else {
+                  existing.origin == origin,
+                  existing.driverPrincipalId == driverPrincipalId else {
                 // A different driver owns this taskId. Reveal nothing about its
                 // Space — the same "as if it doesn't exist" boundary the control
                 // handlers draw — and fail the create instead of sharing ids.
@@ -514,7 +527,9 @@ final class AgentSpaceManager: ObservableObject {
             }
             rebindPersistentSpace(taskId: taskId, spaceId: survivor.spaceId,
                                   profileId: survivor.profileId, origin: origin,
-                                  agentName: agentName, completion: completion)
+                                  agentName: agentName,
+                                  driverPrincipalId: driverPrincipalId,
+                                  completion: completion)
             return
         }
         // The cached profile list is empty when ProfileManager's init ran
@@ -556,6 +571,7 @@ final class AgentSpaceManager: ObservableObject {
             spaceId: spaceId,
             profileId: profile.profileId,
             origin: origin,
+            driverPrincipalId: driverPrincipalId,
             number: number,
             windowId: 0,
             ownership: .agent,
@@ -630,6 +646,7 @@ final class AgentSpaceManager: ObservableObject {
         profileId: String,
         origin: AgentTaskOrigin,
         agentName: String = "",
+        driverPrincipalId: String? = nil,
         completion: @escaping (_ spaceId: String?, _ windowId: Int?) -> Void
     ) {
         func record(windowId: Int, status: AgentTaskStatus) {
@@ -638,6 +655,7 @@ final class AgentSpaceManager: ObservableObject {
                 spaceId: spaceId,
                 profileId: profileId,
                 origin: origin,
+                driverPrincipalId: driverPrincipalId,
                 number: nextAgentNumber(),
                 windowId: windowId,
                 ownership: .agent,
@@ -1021,7 +1039,11 @@ final class AgentSpaceManager: ObservableObject {
         guard let data = try? JSONSerialization.data(withJSONObject: [
                 "taskId": taskId, "id": message.id.uuidString, "text": capped]),
               let payload = String(data: data, encoding: .utf8) else { return }
-        ExtensionMessaging.shared.broadcast(type: "agentSpace.userMessage", payload: payload)
+        ExtensionMessaging.shared.broadcastToTaskDriver(
+            type: "agentSpace.userMessage",
+            payload: payload,
+            origin: task.origin,
+            driverPrincipalId: task.driverPrincipalId)
     }
 
     /// The between-rounds delivery warning, scoped to Codex: nothing is ever
@@ -1274,7 +1296,12 @@ final class AgentSpaceManager: ObservableObject {
         guard let data = try? JSONSerialization.data(
                 withJSONObject: ["taskId": taskId, "owner": owner]),
               let payload = String(data: data, encoding: .utf8) else { return }
-        ExtensionMessaging.shared.broadcast(type: "agentSpace.ownershipChanged", payload: payload)
+        guard let task = task(forTaskId: taskId) else { return }
+        ExtensionMessaging.shared.broadcastToTaskDriver(
+            type: "agentSpace.ownershipChanged",
+            payload: payload,
+            origin: task.origin,
+            driverPrincipalId: task.driverPrincipalId)
     }
 }
 

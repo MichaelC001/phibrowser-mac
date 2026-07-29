@@ -463,6 +463,21 @@ enum AgentPeerIdentity {
         return uid == getuid()
     }
 
+    /// Stable for one launch of the resolved driving agent, including when
+    /// several short-lived/sandboxed helper processes connect on its behalf.
+    /// The start timestamp prevents a recycled pid from inheriting the prior
+    /// agent session's task principal.
+    static func processSessionAnchor(for identity: AgentIdentity) -> String? {
+        guard let pid = identity.pid else { return nil }
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.stride)
+        let rc = withUnsafeMutablePointer(to: &info) {
+            proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, $0, size)
+        }
+        guard rc == size else { return nil }
+        return "\(identity.key)|\(pid)|\(info.pbi_start_tvsec)|\(info.pbi_start_tvusec)"
+    }
+
     // MARK: - Peer credentials
 
     private static func peerProcessID(socketFD: Int32) -> pid_t? {

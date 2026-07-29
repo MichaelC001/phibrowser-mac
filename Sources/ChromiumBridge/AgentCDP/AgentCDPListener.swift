@@ -231,18 +231,57 @@ final class AgentCDPListener {
             .map(String.init)
         let isPhiAgent = requestLine?.hasPrefix("GET /phi-agent") ?? false
 
-        // The consent identity: normally the peer's process ancestry. A peer
-        // whose ancestry no longer reaches the agent it acts for — the
-        // skill's detached mirror daemon, or a hand-back watcher orphaned by
-        // a backgrounding shell (`… &` under Codex) — names its driving
-        // agent's pid in the request instead (an `agentPid` query or
-        // `X-Phi-Agent-Pid` header, on any route: Chromium ignores unknown
-        // headers), resolving to the same identity (and grant) the agent's
-        // own connections use.
-        var identity = AgentPeerIdentity.resolve(socketFD: fd)
+        // Resolve the actual peer ancestry first. A direct `/phi-agent`
+        // connection may present an app-issued capability from an earlier
+        // connection; that is the proof that a detached/sandboxed helper was
+        // delegated this logical agent session. The caller-supplied pid stays
+        // an identification aid for stock Chromium connections, but is never
+        // sufficient to join an existing Swift task principal.
+        let peerIdentity = AgentPeerIdentity.resolve(socketFD: fd)
             ?? AgentIdentity(key: "unknown", displayName: "Unknown process",
                              teamId: nil, verified: false, executablePath: "",
                              pid: nil)
+
+        // Route by the request line: a `/phi-agent` upgrade is an agentSpace.*
+        // channel served in the app; everything else (/json, /devtools) is
+        // stock CDP handed to Chromium with the fd intact (the peek never
+        // consumed it).
+        if isPhiAgent {
+            let session: AgentDriverSession
+            if Self.hasAgentCapabilityHeader(inRequestHead: requestHead) {
+                guard let capability = Self.claimedAgentCapability(
+                        inRequestHead: requestHead),
+                      let delegated = AgentDriverSessionRegistry.shared
+                        .session(forCapability: capability) else {
+                    AppLogWarn("[AgentCDP] rejected invalid agent-session capability")
+                    Self.denyAndClose(fd)
+                    return
+                }
+                session = delegated
+                guard evaluate(session.identity) else {
+                    AppLogInfo("[AgentCDP] denied delegated access to \(session.identity.displayName)")
+                    Self.denyAndClose(fd)
+                    return
+                }
+            } else {
+                guard evaluate(peerIdentity) else {
+                    AppLogInfo("[AgentCDP] denied access to \(peerIdentity.displayName)")
+                    Self.denyAndClose(fd)
+                    return
+                }
+                session = AgentDriverSessionRegistry.shared.session(for: peerIdentity)
+            }
+            AgentDirectConnection(
+                fd: fd,
+                agentName: session.identity.displayName,
+                agentPid: session.identity.pid,
+                driverPrincipalId: session.principalId,
+                agentCapability: session.capability
+            ).start()
+            return
+        }
+
+        var identity = peerIdentity
         if let claimedPid = Self.claimedAgentPid(inRequestHead: requestHead),
            let claimed = AgentPeerIdentity.resolveClaimed(pid: claimedPid) {
             AppLogInfo("[AgentCDP] peer \(identity.displayName) acts for agent pid "
@@ -253,16 +292,6 @@ final class AgentCDPListener {
         guard evaluate(identity) else {
             AppLogInfo("[AgentCDP] denied access to \(identity.displayName)")
             Self.denyAndClose(fd)
-            return
-        }
-
-        // Route by the request line: a `/phi-agent` upgrade is an agentSpace.*
-        // channel served in the app; everything else (/json, /devtools) is
-        // stock CDP handed to Chromium with the fd intact (the peek never
-        // consumed it).
-        if isPhiAgent {
-            AgentDirectConnection(fd: fd, agentName: identity.displayName,
-                                  agentPid: identity.pid).start()
             return
         }
 
@@ -316,6 +345,34 @@ final class AgentCDPListener {
             return pid_t(value)
         }
         return nil
+    }
+
+    /// App-issued bearer capability proving that this connection belongs to
+    /// an already-established logical driver session. Kept in a dedicated
+    /// header so stock Chromium simply ignores it on its own connections.
+    private static func claimedAgentCapability(inRequestHead head: String) -> String? {
+        for header in head.components(separatedBy: "\r\n").dropFirst() {
+            if header.isEmpty { break }
+            guard let colon = header.firstIndex(of: ":"),
+                  header[..<colon].lowercased() == "x-phi-agent-capability" else {
+                continue
+            }
+            let value = header[header.index(after: colon)...]
+                .trimmingCharacters(in: .whitespaces)
+            guard value.count >= 32, value.count <= 128,
+                  value.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") }) else {
+                return nil
+            }
+            return value
+        }
+        return nil
+    }
+
+    private static func hasAgentCapabilityHeader(inRequestHead head: String) -> Bool {
+        head.components(separatedBy: "\r\n").dropFirst().contains { header in
+            guard let colon = header.firstIndex(of: ":") else { return false }
+            return header[..<colon].lowercased() == "x-phi-agent-capability"
+        }
     }
 
     /// Returns true when `identity` may connect: a cached session grant, a
