@@ -47,20 +47,23 @@ public extension ThemedColor {
     }
 
     /// Background for tabs in the temporary multi-selection (excluding the active tab).
-    /// Offset from `contentOverlayBackground` so a sub-selected tab reads as distinct
-    /// from both the active tab and a hover.
+    /// Pure uses a relative neutral overlay so the selection stays visible
+    /// across its adjustable light-background brightness range.
     static let tabSubSelectionBackground = ThemedColor { theme, appearance in
-        let base = contentOverlayBackground.resolve(theme: theme, appearance: appearance)
+        if theme.id == Theme.pure.id, appearance.isLight {
+            return NSColor.black.withAlphaComponent(0.08)
+        }
+
         return appearance.isLight
-            ? base.adjustingBrightness(percent: -8)
-            : base.adjustingBrightness(percent: 12)
+            ? NSColor(white: 0.9, alpha: 1)
+            : NSColor.white.withAlphaComponent(0.18)
     }
     
     // MARK: - Sidebar Colors
     
     /// Selected sidebar tab background color.
     static let sidebarTabSelectedBackground = ThemedColor(role: .sidebarTabSelectedBackground)
-    
+
     /// Hovered sidebar tab background color.
     static let sidebarTabHoveredBackground = ThemedColor(role: .sidebarTabHoveredBackground)
     

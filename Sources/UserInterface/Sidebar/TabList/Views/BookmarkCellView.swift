@@ -691,6 +691,7 @@ private struct SidebarBookmarkCellContentView: View {
     @State private var primaryFaviconHoverAction: BookmarkFaviconHoverAction?
     @State private var secondaryFaviconHoverAction: BookmarkFaviconHoverAction?
 
+    @Environment(\.phiTheme) private var theme
     @Environment(\.phiAppearance) private var appearance
 
     private var isHighlighted: Bool {
@@ -702,7 +703,10 @@ private struct SidebarBookmarkCellContentView: View {
             return Color(nsColor: NSColor(resource: .sidebarTabSelected))
         }
         if state.isMultiSelected {
-            return Color(nsColor: NSColor(resource: .sidebarTabSubSelected))
+            return ThemedColor.tabSubSelectionBackground.swiftUIColor(
+                theme: theme,
+                appearance: appearance
+            )
         }
         if state.isHovered {
             return Color(nsColor: NSColor(resource: .sidebarTabHovered))

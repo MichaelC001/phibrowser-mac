@@ -508,6 +508,9 @@ class SidebarSplitPairCellView: SidebarCellView {
         outerBackground.layer?.cornerRadius = 8
         outerBackground.layer?.cornerCurve = .continuous
         addSubview(outerBackground)
+        _ = outerBackground.phi.subscribe { [weak self] _, _ in
+            self?.updateSelected()
+        }
         outerBackground.snp.makeConstraints { make in
             make.edges.equalToSuperview().inset(NSEdgeInsets(
                 top: 2, left: WebContentConstant.edgesSpacing, bottom: 2, right: WebContentConstant.edgesSpacing))
@@ -999,9 +1002,9 @@ class SidebarSplitPairCellView: SidebarCellView {
             state?.multiSelection.contains(pair.rightTab.guid) == true ||
             isBookmarkSelected
         let isActive = pair.leftTab.isActive || pair.rightTab.isActive
-        outerBackground.selectedColor = NSColor(
-            resource: isActive ? .sidebarTabSelected : .sidebarTabSubSelected
-        )
+        outerBackground.selectedColor = isActive
+            ? NSColor(resource: .sidebarTabSelected)
+            : ThemedColor.tabSubSelectionBackground.resolve(in: outerBackground)
         outerBackground.isSelected = isActive || isMultiSelected
     }
 
