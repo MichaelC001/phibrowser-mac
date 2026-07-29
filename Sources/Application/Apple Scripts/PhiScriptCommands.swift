@@ -60,6 +60,11 @@ struct PhiScriptingClientContext: Decodable, Equatable {
 }
 
 enum PhiScriptingAnalytics {
+    static func shouldCapture(scriptingCommand: String) -> Bool {
+        // Version checks are compatibility plumbing, not user operations.
+        scriptingCommand != "get_version"
+    }
+
     static func properties(
         clientContext: String?,
         scriptingCommand: String,
@@ -93,6 +98,10 @@ enum PhiScriptingAnalytics {
         succeeded: Bool,
         operationOutcome: PhiScriptingOperationResult
     ) {
+        guard shouldCapture(scriptingCommand: scriptingCommand) else {
+            return
+        }
+
         PostHogSDK.shared.capture(
             "scripting_command_invoked",
             properties: properties(
