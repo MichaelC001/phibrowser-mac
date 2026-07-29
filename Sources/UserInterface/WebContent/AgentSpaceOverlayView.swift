@@ -19,6 +19,8 @@ final class AgentSpaceOverlayView: NSView {
     private var ownership: AgentTaskOwnership = .agent
 
     private let cursorLayer = CALayer()
+    private let cursorFillLayer = CAGradientLayer()
+    private let cursorStrokeLayer = CAShapeLayer()
     /// The current typing-pulse outline, replaced (not stacked) on rapid fills.
     private weak var typingPulseLayer: CALayer?
     private let pill = NSVisualEffectView()
@@ -48,12 +50,109 @@ final class AgentSpaceOverlayView: NSView {
 
     // MARK: - Setup
 
+    /// The cursor glyph's design-asset size (viewBox units) and its scale to
+    /// the rendered 27pt-tall cursor.
+    private static let cursorDesignSize = CGSize(width: 14.0089, height: 15.9927)
+    private static let cursorScale: CGFloat = 27.0 / cursorDesignSize.height
+
     private func setupCursor() {
-        cursorLayer.frame = CGRect(x: 0, y: 0, width: 18, height: 18)
-        cursorLayer.contents = NSImage(
-            systemSymbolName: "cursorarrow", accessibilityDescription: "Agent cursor")
+        // The arrow is a path, not an image, so its fill and border can follow
+        // the Space's theme — colors are applied by `applyTheme`, called from
+        // the hosting controller on mount and on every theme change.
+        let path = Self.makeCursorPath()
+        let pad = Self.cursorScale  // room for the centered border stroke
+        cursorLayer.bounds = CGRect(
+            x: 0, y: 0,
+            width: path.boundingBoxOfPath.maxX + pad,
+            height: path.boundingBoxOfPath.maxY + pad)
+        // Pin the glyph's tip (top-left) to the reported cursor point, the way
+        // a real pointer's hotspot sits at its tip.
+        cursorLayer.anchorPoint = CGPoint(x: 0.1, y: 0.89)
         cursorLayer.isHidden = true
+
+        let mask = CAShapeLayer()
+        mask.path = path
+        mask.frame = cursorLayer.bounds
+        cursorFillLayer.frame = cursorLayer.bounds
+        cursorFillLayer.mask = mask
+        // Pale at the visual top of the arrow, theme color at the bottom
+        // (unit coords are y-up in an unflipped view).
+        cursorFillLayer.startPoint = CGPoint(x: 0.5, y: 1)
+        cursorFillLayer.endPoint = CGPoint(x: 0.5, y: 0)
+        cursorLayer.addSublayer(cursorFillLayer)
+
+        cursorStrokeLayer.path = path
+        cursorStrokeLayer.frame = cursorLayer.bounds
+        cursorStrokeLayer.fillColor = nil
+        cursorStrokeLayer.lineWidth = Self.cursorScale  // the design's 1px border
+        cursorStrokeLayer.lineJoin = .round
+        cursorLayer.addSublayer(cursorStrokeLayer)
+
         layer?.addSublayer(cursorLayer)
+    }
+
+    /// Tints the agent cursor from the Space's theme. Light appearance fills
+    /// the arrow with a vertical gradient from a pale tint of the theme color
+    /// down to the theme color itself, bordered in a dark shade of the same
+    /// hue; dark appearance fills with the theme color outlined in white.
+    func applyTheme(_ theme: Theme, appearance: Appearance) {
+        guard let themeColor = theme.color(for: .themeColor, appearance: appearance)
+            .usingColorSpace(.sRGB) else { return }
+        var hue: CGFloat = 0
+        var saturation: CGFloat = 0
+        var brightness: CGFloat = 0
+        var alpha: CGFloat = 0
+        themeColor.getHue(
+            &hue, saturation: &saturation, brightness: &brightness, alpha: &alpha)
+        switch appearance {
+        case .light:
+            let tint = NSColor(
+                hue: hue, saturation: saturation * 0.28,
+                brightness: max(brightness, 0.96), alpha: 1)
+            let border = NSColor(
+                hue: hue, saturation: min(saturation + 0.05, 1),
+                brightness: 0.3, alpha: 1)
+            cursorFillLayer.colors = [tint.cgColor, themeColor.cgColor]
+            cursorStrokeLayer.strokeColor = border.cgColor
+        case .dark:
+            cursorFillLayer.colors = [themeColor.cgColor, themeColor.cgColor]
+            cursorStrokeLayer.strokeColor = NSColor.white.cgColor
+        }
+    }
+
+    /// The arrow glyph from the design, authored y-down in a
+    /// 14.0089 × 15.9927 viewBox and flipped/scaled into layer space.
+    private static func makeCursorPath() -> CGPath {
+        let p = CGMutablePath()
+        p.move(to: CGPoint(x: 0.5039, y: 1.8181))
+        p.addCurve(
+            to: CGPoint(x: 2.8730, y: 0.8133),
+            control1: CGPoint(x: 0.5893, y: 0.6644),
+            control2: CGPoint(x: 1.9677, y: 0.1012))
+        p.addLine(to: CGPoint(x: 12.9990, y: 8.7879))
+        p.addCurve(
+            to: CGPoint(x: 12.1641, y: 11.1219),
+            control1: CGPoint(x: 14.0076, y: 9.5821),
+            control2: CGPoint(x: 13.3921, y: 11.1219))
+        p.addLine(to: CGPoint(x: 6.5400, y: 11.1219))
+        p.addCurve(
+            to: CGPoint(x: 6.1689, y: 11.2039),
+            control1: CGPoint(x: 6.4112, y: 11.1219),
+            control2: CGPoint(x: 6.2842, y: 11.1504))
+        p.addCurve(
+            to: CGPoint(x: 5.8750, y: 11.4285),
+            control1: CGPoint(x: 6.0539, y: 11.2573),
+            control2: CGPoint(x: 5.9535, y: 11.3341))
+        p.addLine(to: CGPoint(x: 2.8984, y: 15.0076))
+        p.addCurve(
+            to: CGPoint(x: 0.5000, y: 14.1668),
+            control1: CGPoint(x: 2.1136, y: 15.9510),
+            control2: CGPoint(x: 0.5001, y: 15.4459))
+        p.addLine(to: CGPoint(x: 0.5000, y: 1.9314))
+        p.closeSubpath()
+        var flip = CGAffineTransform(scaleX: cursorScale, y: -cursorScale)
+            .translatedBy(x: 0, y: -cursorDesignSize.height)
+        return p.copy(using: &flip) ?? p
     }
 
     private func setupPill() {
