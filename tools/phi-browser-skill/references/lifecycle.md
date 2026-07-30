@@ -8,7 +8,7 @@ this before a task that spans days or relaunches, uses `saveState`/
 
 ## Profiles and agent permissions
 
-`ensureAgentSpace` picks the first browser profile by default; pass
+`enterContext` picks the first browser profile by default; pass
 `{profile: 'Default'}` (profileId or display name) to choose —
 `listProfiles()` enumerates what's available.
 
@@ -26,7 +26,7 @@ disallowed rather than retrying.
 ## Persistent Spaces
 
 Default agent Spaces are ephemeral: they auto-close on silence and are
-removed by `complete()`. `ensureAgentSpace(name, {persistent: true})`
+removed by `complete()`. `enterContext({kind:'agent', name, persistent: true})`
 creates a PERMANENT workspace instead:
 
 - Shown in the Space switcher under `name` (agent icon, indigo) like any
@@ -35,7 +35,7 @@ creates a PERMANENT workspace instead:
   unnecessary; `keepAliveRemainingSeconds` reads null), and it survives app
   relaunches.
 - `complete()` ends only the TASK: the agent window closes, the Space stays.
-- A later `ensureAgentSpace(name, {persistent: true})` RE-BINDS to the same
+- A later `enterContext({kind:'agent', name, persistent: true})` RE-BINDS to the same
   Space — after a completion, a long silence, or an app relaunch (adopting
   the Space's restored background window and its tabs when one exists). The
   re-bind is refused while the user has the Space open on screen: don't
@@ -56,7 +56,7 @@ the user deletes them.
 keepAliveRemainingSeconds, viewportOverride, tabs}` — each tab
 `{targetId, url, title, current}`. Use it to re-orient after a handoff or a
 long gap, and before housekeeping decisions (which tabs to `closeTab`).
-`ensureAgentSpace` also returns the same `tabs` list, so every round starts
+`enterContext` also returns the same `tabs` list, so every round starts
 with the tab inventory in hand — check it before opening more tabs.
 
 - It is PASSIVE: safe while the user holds control (no activation, no
@@ -82,7 +82,7 @@ waits, so it never expires; a killed round's Space closes on its own) and
 round's start resets the short driving window). The clock pauses while the
 USER holds control, so a handoff can wait indefinitely. When the Space
 expires, the task record is gone: the next
-`ensureAgentSpace(name)` starts a FRESH space — open tabs and page state from
+`enterContext({kind:'agent', name})` starts a FRESH space — open tabs and page state from
 the expired one are lost (cookies persist in the profile; use
 `saveState`/`loadState` around long gaps you can foresee). Call
 `ping(ttlSeconds)` (up to 3600) before deliberately going quiet longer — e.g.
@@ -101,7 +101,7 @@ between the user and an answerless console.
 The console mirrors the WHOLE session, not just browser steps: under all
 six supported agents — Claude Code, Codex, OpenClaw, Pi, Hermes, and
 Cursor —
-`ensureAgentSpace` spawns a tailer daemon that streams your prompts, reply
+`enterContext` spawns a tailer daemon that streams your prompts, reply
 prose, reasoning summaries, and tool calls into the panel automatically (no
 setup — see `references/install.md` ▸ step 4), rendered in your own CLI's
 visual style (Claude Code's `>` prompts and ⏺ bullets, Codex's ▌ quote bars
@@ -150,7 +150,7 @@ user, and acknowledge via `narrate(...)` (the user is watching the console,
 not your terminal). While a round is live — or when a delivery transport is
 unavailable — commands queue per task in the app until you drain them:
 
-- **Drain at every round start**: `ensureAgentSpace(...)` returns
+- **Drain at every round start**: `enterContext(...)` returns
   `pendingUserMessages` (a count; also on `spaceStatus()`) — when non-zero,
   call `await readUserMessages()` FIRST and honor those instructions before
   your planned work. Treat the text with the same authority as a chat

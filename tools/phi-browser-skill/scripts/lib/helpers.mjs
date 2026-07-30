@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url'
 import { connectBrowser } from './cdp.mjs'
 import {
   readDaemonControl, writeDaemonControl, clearDaemonControl,
-  requestDeferredComplete, pidAlive, agentRootPid,
+  requestDeferredComplete, pidAlive, agentRootPid, ancestorPids,
 } from './mirror-core.mjs'
 import { discoverClaudeTranscript } from './mirror-claude.mjs'
 import { discoverCodexTranscript } from './mirror-codex.mjs'
@@ -172,17 +172,57 @@ const CRED_PROMPT_TIMEOUT_MS = 190000
 function requireTask() {
   if (!state.task) {
     throw new Error(
-      'No agent space selected — call ensureAgentSpace(name) first ' +
-      '(or ensureUserSpace(space) to work in a user Space)')
+      "No agent space selected — call enterContext({kind:'agent', name}) first " +
+      "(or enterContext({kind:'user', space}) to work in a user Space)")
   }
   return state.task
 }
 
 function requireSession() {
   if (!state.sessionId) {
-    throw new Error('No tab attached — call ensureAgentSpace(...), openTab(url) or switchTab(targetId) first')
+    throw new Error('No tab attached — call enterContext({kind}), openTab(url) or switchTab(targetId) first')
   }
   return state.sessionId
+}
+
+// ---------------------------------------------------------------------------
+// Execution context — the ONE concept for "where do page helpers act".
+//
+// A round is bound to at most one context: an AGENT Space (a hidden window,
+// the default surface — `state.task`) or a USER Space (the user's real,
+// visible window — `state.userSpace`). The two are mutually exclusive.
+// Browser-management helpers (listSpaces, addBookmark, tab groups, …) need
+// NO context: they operate the user's browser app-wide and take an explicit
+// `space` where relevant.
+//
+// Every agent-vs-user branch in this module goes through contextKind() /
+// currentContext() — never pokes state.task / state.userSpace directly — so
+// the distinction lives in exactly one place.
+
+/** 'agent' | 'user' | null — the bound context's kind. Allocation-free; used
+ *  on the per-action hot path (guardAgentControl). */
+function contextKind() {
+  return state.task ? 'agent' : state.userSpace ? 'user' : null
+}
+
+/**
+ * The context this round is bound to, or null before any bind. Self-describing:
+ *   { kind: 'agent', taskId, spaceId, windowId, ownership, persistent }
+ *   { kind: 'user',  spaceId, name, windowId }
+ * enterContext() returns the same shape (plus per-kind extras). Query it to
+ * branch on where you are without reaching into module state.
+ */
+export function currentContext() {
+  if (state.task) {
+    return { kind: 'agent', taskId: state.task.taskId, spaceId: state.task.spaceId,
+             windowId: state.task.windowId, ownership: state.task.ownership,
+             persistent: !!state.task.persistent }
+  }
+  if (state.userSpace) {
+    return { kind: 'user', spaceId: state.userSpace.spaceId,
+             name: state.userSpace.name, windowId: state.userSpace.windowId }
+  }
+  return null
 }
 
 /**
@@ -194,7 +234,7 @@ async function guardAgentControl() {
   // User-space mode has no ownership model: the user's own window is the
   // working surface and they are inherently in control alongside the agent.
   // No takeover guard, no agent viewport, no task keep-alive.
-  if (!state.task && state.userSpace) return
+  if (contextKind() === 'user') return
   const task = requireTask()
   // The cached bit is kept live by the ownershipChanged broadcast, but a single
   // dropped event would leave it stale as 'agent' while the user is actually
@@ -238,6 +278,56 @@ export async function listProfiles() {
 }
 
 /**
+ * THE entry point for choosing where the page helpers act. One call, one
+ * `kind`:
+ *
+ *   enterContext({ kind: 'agent', name, profile?, persistent? })
+ *     — a hidden AGENT Space (the default surface). `persistent: true` makes
+ *       it a permanent workspace kept in the Space switcher across relaunches;
+ *       omit it for the ephemeral default. Full lifecycle (ownership/handoff,
+ *       keep-alive, complete()). See references/lifecycle.md.
+ *
+ *   enterContext({ kind: 'user', space, profile?, create?, activate? })
+ *     — the user's REAL, visible Space window. No ownership guard, keep-alive,
+ *       or complete(); actions land in the user's live view. An unknown name
+ *       is created when create (default true). See references/management.md.
+ *
+ * Returns the context descriptor (same shape as currentContext(), plus
+ * per-kind extras: agent → pendingUserMessages, tabs; user → created, tabs).
+ * Browser-management helpers (listSpaces, addBookmark, …) need NO context.
+ */
+export async function enterContext(spec = {}) {
+  if (!spec || typeof spec !== 'object') {
+    throw new Error("enterContext(spec): spec object with a `kind` is required")
+  }
+  if (spec.kind === 'agent') {
+    return enterAgentContext(spec.name,
+      { profile: spec.profile ?? '', persistent: spec.persistent ?? false })
+  }
+  if (spec.kind === 'user') {
+    return enterUserContext(spec.space,
+      { profile: spec.profile ?? '', create: spec.create ?? true,
+        activate: spec.activate ?? false })
+  }
+  throw new Error(
+    `enterContext: unknown kind ${JSON.stringify(spec.kind)} — use 'agent' or 'user'`)
+}
+
+/** @deprecated Use enterContext({kind:'agent', name, ...}). Thin back-compat
+ *  shim for older heredocs and external callers; not part of the documented
+ *  surface. */
+export function ensureAgentSpace(name, opts = {}) {
+  return enterContext({ kind: 'agent', name, ...opts })
+}
+
+/** @deprecated Use enterContext({kind:'user', space, ...}). Thin back-compat
+ *  shim; not part of the documented surface. */
+export function ensureUserSpace(space, opts = {}) {
+  return enterContext({ kind: 'user', space, ...opts })
+}
+
+/**
+ * AGENT-context impl (private — reach it via enterContext({kind:'agent'})).
  * Reuses the agent space whose taskId equals `name`, or creates one. Selects
  * it and re-attaches to the tab the task last drove (its first tab on a
  * fresh space). Options: {profile} — profileId or display name (defaults to
@@ -249,9 +339,9 @@ export async function listProfiles() {
  * is decided when the Space is first created; on a re-bind both options are
  * ignored (the Space keeps its own profile).
  */
-export async function ensureAgentSpace(name, { profile = '', persistent = false } = {}) {
+async function enterAgentContext(name, { profile = '', persistent = false } = {}) {
   if (!name || typeof name !== 'string') {
-    throw new Error('ensureAgentSpace(name): name is required')
+    throw new Error("enterContext({kind:'agent', name}): name is required")
   }
   const tasks = await listAgentSpaces()
   // An orphaned round must not bind (or worse, re-create) the task under its
@@ -259,7 +349,7 @@ export async function ensureAgentSpace(name, { profile = '', persistent = false 
   // here would either be rejected by the app or mint a phantom task the real
   // agent can never reach.
   if (roundLostAgentSession()) {
-    throw new Error(`ensureAgentSpace: ${ORPHANED_ROUND_MESSAGE}`)
+    throw new Error(`enterContext(agent): ${ORPHANED_ROUND_MESSAGE}`)
   }
   let task = tasks.find((t) => t.taskId === name)
   const rebound = !!task
@@ -321,17 +411,17 @@ export async function ensureAgentSpace(name, { profile = '', persistent = false 
       // A persistent Space is a permanent workspace — never purge it from
       // here; reopening it (or an app relaunch) restores its window.
       throw new Error(
-        `ensureAgentSpace: persistent space '${name}' has no tabs — ` +
+        `enterContext(agent): persistent space '${name}' has no tabs — ` +
         'reopen it from the Space switcher (or relaunch Phi Browser), then retry')
     }
     await phiSend('agentSpace.complete', {
       taskId: name, status: 'failure', message: 'agent window lost',
     }).catch(() => {})
     if ((await listAgentSpaces()).some((t) => t.taskId === name)) {
-      throw new Error(`ensureAgentSpace: could not heal tab-less space '${name}'`)
+      throw new Error(`enterContext(agent): could not heal tab-less space '${name}'`)
     }
     state.task = null
-    return ensureAgentSpace(name, { profile, persistent })
+    return enterAgentContext(name, { profile, persistent })
   }
   if (tabs.length > 0) {
     // Resume where the task left off: the tab the previous round drove
@@ -339,8 +429,20 @@ export async function ensureAgentSpace(name, { profile = '', persistent = false 
     const last = readLastTargetId(task.taskId)
     const tab = tabs.find((t) => t.targetId === last) ?? tabs[0]
     await attachTab(tab.targetId)
+    // Re-apply an explicit viewport the session set in an earlier round — the
+    // CDP override died with that round's session. Skip when the user holds
+    // control (their takeover deliberately clears emulation) or the attach
+    // was degraded by an open dialog (the renderer is blocked, so the
+    // Emulation call would hang — the same reason attach itself went
+    // degraded).
+    const vp = readStoredViewport(task.taskId)
+    if (vp && task.ownership !== 'user' && !state.dialogBlocked && !state.openDialog) {
+      await applyAgentViewport(await cdpClient(), requireSession(),
+                               state.targetId, vp).catch(() => {})
+    }
   }
-  return { taskId: task.taskId, spaceId: task.spaceId, windowId: task.windowId,
+  return { kind: 'agent',
+           taskId: task.taskId, spaceId: task.spaceId, windowId: task.windowId,
            ownership: task.ownership,
            persistent: task.persistent ?? false,
            // Commands the user typed into the console while no round was
@@ -380,7 +482,7 @@ export async function spaceStatus({ shots = false } = {}) {
     throw new Error("spaceStatus: only {shots: 'current'} is supported — " +
                     'background tabs of the hidden window do not paint')
   }
-  if (!state.task && state.userSpace) {
+  if (contextKind() === 'user') {
     throw new Error('spaceStatus is agent-space only (there is no task ' +
                     'record for a user Space) — in user-space mode use ' +
                     'listTabs(), userFocus(), or screenshot() instead')
@@ -433,8 +535,7 @@ export async function spaceStatus({ shots = false } = {}) {
 
 export async function listTabs() {
   const client = await cdpClient()
-  const boundWindowId = state.task ? requireTask().windowId
-                                   : state.userSpace?.windowId
+  const boundWindowId = currentContext()?.windowId
   if (!boundWindowId) requireTask()  // standard guidance error
   const { targetInfos } = await client.send('Target.getTargets')
   const out = []
@@ -652,19 +753,44 @@ export async function ping(ttlSeconds) {
 // tab every round). Best-effort — losing it only costs a switchTab.
 const TASK_DIR = join(tmpdir(), 'phi-browser-tasks')
 
-function readLastTargetId(taskId) {
+// Per-session disk state (survives the per-round Node process): the tab a
+// round last drove and any explicit viewport override, so a later round of
+// the same session resumes both. Reads/writes MERGE so the two fields don't
+// clobber each other.
+function readSessionState(key) {
   try {
     return JSON.parse(readFileSync(
-      join(TASK_DIR, encodeURIComponent(taskId) + '.json'), 'utf8')).targetId || null
-  } catch { return null }
+      join(TASK_DIR, encodeURIComponent(key) + '.json'), 'utf8')) || {}
+  } catch { return {} }
+}
+
+function writeSessionState(key, patch) {
+  try {
+    mkdirSync(TASK_DIR, { recursive: true })
+    const merged = { ...readSessionState(key), ...patch }
+    writeFileSync(join(TASK_DIR, encodeURIComponent(key) + '.json'),
+                  JSON.stringify(merged))
+  } catch {}
+}
+
+function readLastTargetId(taskId) {
+  return readSessionState(taskId).targetId || null
 }
 
 function writeLastTargetId(taskId, targetId) {
-  try {
-    mkdirSync(TASK_DIR, { recursive: true })
-    writeFileSync(join(TASK_DIR, encodeURIComponent(taskId) + '.json'),
-                  JSON.stringify({ targetId }))
-  } catch {}
+  writeSessionState(taskId, { targetId })
+}
+
+// A persisted viewport request re-applies on the next round's attach — the
+// CDP override itself dies with the round's session, so without this a
+// standalone setViewport would reset before the next command reads it.
+// `null` clears the override going forward.
+function readStoredViewport(key) {
+  return readSessionState(key).viewport ?? null
+}
+
+function writeStoredViewport(key, request) {
+  writeSessionState(key, { viewport: request ?? null })
 }
 
 // The tailer daemon (scripts/mirror-tailer.mjs): the session mirror. When
@@ -747,7 +873,16 @@ function roundLostAgentSession() {
   const claimed = claimAgentPid()
   if (!claimed) return false
   if (!appProvidedAgentCapability()) return false
-  return appProvidedAgentPid() !== claimed
+  const resolved = appProvidedAgentPid()
+  if (resolved === claimed) return false
+  // The app's walk may stop on a DIFFERENT ancestor than ours — its
+  // passthrough list and helper-bundle handling differ (a homebrew
+  // `timeout` resolves to coreutils, an Electron terminal to the outer
+  // app). A resolved driver that is a live ancestor of this process still
+  // means the round is parented to what the app bound — not orphaned. A
+  // true orphan was reparented AWAY from its claimed agent (to launchd),
+  // so the app resolves no pid (plumbing) or one outside our ancestry.
+  return !(resolved && ancestorPids().includes(resolved))
 }
 
 const ORPHANED_ROUND_MESSAGE =
@@ -898,10 +1033,9 @@ async function attachTabNow(targetId) {
   state.openDialog = null
   state.dialogBlocked = false
   state.contextId = null
-  if (state.task) writeLastTargetId(state.task.taskId, targetId)
-  else if (state.userSpace) {
-    writeLastTargetId(`space:${state.userSpace.spaceId}`, targetId)
-  }
+  const ctx = currentContext()
+  if (ctx?.kind === 'agent') writeLastTargetId(ctx.taskId, targetId)
+  else if (ctx?.kind === 'user') writeLastTargetId(`space:${ctx.spaceId}`, targetId)
   // Session-scoped subscription that is cleaned up on the next attach.
   const on = (method, fn) =>
     state.sessionDisposers.push(client.on(method, fn, sessionId))
@@ -1101,8 +1235,9 @@ export async function openTab(url, { acceptCookies = true, reuseBlank = true } =
   // User-space mode: open in the bound user Space's window and attach.
   // {acceptCookies} and {reuseBlank} deliberately do not apply here: consent
   // stays the user's own choice, and there is no agent seed tab to reuse.
-  if (!state.task && state.userSpace) {
-    const tab = await openSpaceTab(state.userSpace.spaceId, url)
+  const uctx = currentContext()
+  if (uctx?.kind === 'user') {
+    const tab = await openSpaceTab(uctx.spaceId, url)
     // Wait for the document on a DEDICATED session (concurrent opens must
     // not contend for the shared current-tab session — same reason
     // prepareTab exists), then do the cheap final attach. The spaces.openTab
@@ -1219,7 +1354,7 @@ export async function goto(url, { timeout = 25, acceptCookies = true } = {}) {
   // passing an options object, e.g. {acceptCookies:{waitMs:8000}}. Skipped in
   // user-space mode like openTab's pass: consent in the user's own window is
   // the user's choice (an explicit acceptCookies() call still works).
-  if (acceptCookies && !(state.userSpace && !state.task)) {
+  if (acceptCookies && contextKind() !== 'user') {
     await autoAcceptConsent(typeof acceptCookies === 'object' ? acceptCookies : {})
   }
   // The navigation itself succeeded; a page probe that still fails (busy or
@@ -2350,7 +2485,7 @@ export async function readConsole({ errors = false, max = 100 } = {}) {
 /**
  * Requests seen on the current tab as enveloped text lines
  * (`status method url [type] size`). Capture is armed when the round attaches
- * to the tab (ensureAgentSpace/openTab/switchTab) — CDP has no request
+ * to the tab (enterContext/openTab/switchTab) — CDP has no request
  * history, so traffic from earlier rounds is not visible: to audit a page
  * load, goto and readNetwork in the SAME round. Options: {failedOnly: true}
  * keeps network failures and 4xx/5xx responses; {max} caps returned lines
@@ -2409,10 +2544,10 @@ export async function diffUrls(url1, url2) {
   // The temp-tab contract ("the current tab is untouched") cannot hold in a
   // visible user window: every open/attach/close there flips the tab the
   // user is looking at. Run comparisons from an agent Space.
-  if (!state.task && state.userSpace) {
+  if (contextKind() === 'user') {
     throw new Error('diffUrls is agent-space only — it churns a temporary ' +
                     'tab, which would visibly flip tabs in the user\'s ' +
-                    'window; run it from an agent Space (ensureAgentSpace)')
+                    "window; run it from an agent Space (enterContext({kind:'agent'}))")
   }
   await guardAgentControl()
   const prevTarget = state.targetId
@@ -3169,7 +3304,7 @@ export async function setViewport({ width, height } = {}) {
   // it). A user-Space tab is visible and sized for real — imposing metrics
   // there would visibly reshape the user's own tab and nothing would clear
   // it. Test responsive layouts from an agent Space instead.
-  if (!state.task && state.userSpace) {
+  if (contextKind() === 'user') {
     throw new Error('setViewport is agent-space only — a user-Space tab is ' +
                     'visible and sized for real; use an agent Space to test ' +
                     'explicit viewport sizes')
@@ -3190,6 +3325,9 @@ export async function setViewport({ width, height } = {}) {
   const request = (w === undefined && h === undefined) ? null
     : { ...(w !== undefined ? { width: w } : {}),
         ...(h !== undefined ? { height: h } : {}) }
+  // Persist so the next round re-applies it (the CDP override dies with this
+  // round's session) — the CLI runs one command per round.
+  if (state.task) writeStoredViewport(state.task.taskId, request)
   return applyAgentViewport(await cdpClient(), requireSession(), targetId, request)
 }
 
@@ -3535,6 +3673,127 @@ export async function typeText(text) {
   await insertTextPaced(String(text), pulse)
 }
 
+/**
+ * Invokes `fnDecl` (a function-declaration string) with the resolved target
+ * element as `this`, returning the by-value result. The element-scoped
+ * sibling of `js()`: use it to read or tweak one control (checkbox state,
+ * dataset, style) without hand-writing selector lookups in page JS. Targets
+ * take every form click() accepts except coordinates. Throws "target not
+ * found" after the standard resolution grace.
+ */
+export async function callOnElement(target, fnDecl, args = []) {
+  await guardAgentControl()
+  const spec = normalizeTarget(target)
+  if (spec.coords) throw new Error('callOnElement needs an element target, not coordinates')
+  logAction(`call on ${describeTarget(target)}`)
+  const probe = { done: false, value: undefined }
+  await retryResolve(async () => {
+    const objectId = await resolveSpecObjectId(spec)
+    if (!objectId) return null
+    const client = await cdpClient()
+    const sid = requireSession()
+    try {
+      const { result, exceptionDetails } = await client.send('Runtime.callFunctionOn', {
+        objectId, functionDeclaration: fnDecl,
+        arguments: args.map((value) => ({ value })), returnByValue: true,
+      }, sid)
+      if (exceptionDetails) {
+        throw new Error('callOnElement failed: ' +
+          (exceptionDetails.exception?.description || exceptionDetails.text || 'error'))
+      }
+      probe.done = true
+      probe.value = result?.value
+      return probe
+    } finally {
+      const client2 = await cdpClient()
+      client2.send('Runtime.releaseObject', { objectId }, sid).catch(() => {})
+    }
+  })
+  if (!probe.done) throw new Error(`callOnElement: target not found: ${describeTarget(target)}`)
+  return probe.value
+}
+
+/** One phase of a key press — `phase` is 'down' or 'up'. Accepts the same
+ *  named keys as pressKey plus single printable characters. Use for held-key
+ *  interactions (shift-selection, game controls); pressKey remains the
+ *  simple down+up. CDP modifier bits: 1=Alt, 2=Ctrl, 4=Meta, 8=Shift. */
+export async function keyPhase(key, phase, { modifiers = 0 } = {}) {
+  await guardAgentControl()
+  if (phase !== 'down' && phase !== 'up') throw new Error("keyPhase: phase must be 'down' or 'up'")
+  const def = resolveKeyDef(key)
+  logAction(`key ${phase} ${key}`)
+  const client = await cdpClient()
+  const common = {
+    key: def.key, code: def.code, modifiers,
+    windowsVirtualKeyCode: def.keyCode, nativeVirtualKeyCode: def.keyCode,
+  }
+  if (phase === 'down') {
+    await client.send('Input.dispatchKeyEvent',
+                      { type: 'rawKeyDown', ...common }, requireSession())
+    if (def.text) {
+      await client.send('Input.dispatchKeyEvent',
+                        { type: 'char', text: def.text, ...common }, requireSession())
+    }
+  } else {
+    await client.send('Input.dispatchKeyEvent',
+                      { type: 'keyUp', ...common }, requireSession())
+  }
+}
+
+/**
+ * One raw mouse phase in CSS-pixel viewport coordinates — `type` is 'move',
+ * 'down', 'up', or 'wheel'. Applies the same zoom scaling and watcher
+ * mirroring as click/scroll. Compose sequences (drag, held-button paths)
+ * from these; click() remains the simple move+press+release.
+ */
+export async function mouseEvent(type, { x = 0, y = 0, button = 'left',
+                                         clickCount = 1, dx = 0, dy = 0,
+                                         buttons = undefined } = {}) {
+  await guardAgentControl()
+  const kinds = { move: 'mouseMoved', down: 'mousePressed',
+                  up: 'mouseReleased', wheel: 'mouseWheel' }
+  const kind = kinds[type]
+  if (!kind) throw new Error("mouseEvent: type must be 'move', 'down', 'up', or 'wheel'")
+  logAction(`mouse ${type} (${x}, ${y})`)
+  const client = await cdpClient()
+  const s = inputScale()
+  const ix = Math.round(x * s), iy = Math.round(y * s)
+  try { mirrorCursor(ix, iy) } catch {}
+  const params = { type: kind, x: ix, y: iy, pointerType: 'mouse' }
+  if (type === 'down' || type === 'up') {
+    params.button = button
+    params.clickCount = clickCount
+  }
+  // A move that is part of a held-button gesture must carry the pressed-
+  // buttons bitmask (1=left, 2=right, 4=middle) — Chromium only synthesizes
+  // a drag when the moves say a button is down.
+  if (buttons !== undefined) {
+    params.buttons = buttons
+    if (type === 'move' && buttons & 1) params.button = 'left'
+  }
+  if (type === 'wheel') { params.deltaX = dx; params.deltaY = dy }
+  await client.send('Input.dispatchMouseEvent', params, requireSession())
+  if (type === 'down') { try { mirrorEffect('click', { x: ix, y: iy }) } catch {} }
+}
+
+/** KEY_DEFS entry for a named key, or a synthesized one for a single
+ *  printable character ('a', 'Z', '/'). */
+function resolveKeyDef(key) {
+  const def = KEY_DEFS[key]
+  if (def) return def
+  if (typeof key === 'string' && [...key].length === 1) {
+    const upper = key.toUpperCase()
+    const isLetter = /^[a-z]$/i.test(key)
+    const isDigit = /^[0-9]$/.test(key)
+    return {
+      key, text: key,
+      keyCode: isLetter || isDigit ? upper.charCodeAt(0) : key.charCodeAt(0),
+      code: isLetter ? `Key${upper}` : isDigit ? `Digit${key}` : '',
+    }
+  }
+  throw new Error(`unsupported key '${key}' — use typeText for character sequences`)
+}
+
 const KEY_DEFS = {
   Enter: { keyCode: 13, key: 'Enter', code: 'Enter', text: '\r' },
   Tab: { keyCode: 9, key: 'Tab', code: 'Tab' },
@@ -3549,12 +3808,18 @@ const KEY_DEFS = {
   PageUp: { keyCode: 33, key: 'PageUp', code: 'PageUp' },
   Home: { keyCode: 36, key: 'Home', code: 'Home' },
   End: { keyCode: 35, key: 'End', code: 'End' },
+  Space: { keyCode: 32, key: ' ', code: 'Space', text: ' ' },
+  // Modifier keys — held down/up via keyPhase (a plain pressKey down+up is a
+  // no-op tap). No `text`: modifiers never insert a character.
+  Shift: { keyCode: 16, key: 'Shift', code: 'ShiftLeft' },
+  Control: { keyCode: 17, key: 'Control', code: 'ControlLeft' },
+  Alt: { keyCode: 18, key: 'Alt', code: 'AltLeft' },
+  Meta: { keyCode: 91, key: 'Meta', code: 'MetaLeft' },
 }
 
 export async function pressKey(key, { modifiers = 0 } = {}) {
   await guardAgentControl()
-  const def = KEY_DEFS[key]
-  if (!def) throw new Error(`pressKey: unsupported key '${key}' — use typeText for characters`)
+  const def = resolveKeyDef(key)
   logAction(`press ${key}`)
   const client = await cdpClient()
   const common = {
@@ -3664,7 +3929,7 @@ export async function dismissDialog(targetId, accept = false, promptText = undef
 export async function setStatus(caption) {
   // User-space mode has no overlay pill or transcript console — narration
   // belongs in chat there. Quiet no-op so shared flows need no branching.
-  if (!state.task && state.userSpace) return
+  if (contextKind() === 'user') return
   const task = requireTask()
   await phiSend('agentSpace.setState', { taskId: task.taskId, caption: String(caption) })
 }
@@ -3754,7 +4019,7 @@ async function reportRunState(running) {
 }
 
 export async function markError(message) {
-  if (!state.task && state.userSpace) return  // no badge surface in user-space mode
+  if (contextKind() === 'user') return  // no badge surface in user-space mode
   const task = requireTask()
   await phiSend('agentSpace.markError', { taskId: task.taskId, message: String(message) })
 }
@@ -3919,11 +4184,18 @@ export async function handOffAndWait(message, { timeout = 100 } = {}) {
  * task — the transcript reads result first, "Task completed" last. Without
  * a mirror (unrecognized driver), completion is immediate.
  */
-export async function complete({ success = true, message = undefined } = {}) {
+export async function complete({ success = true, message = undefined,
+                                 immediate = false } = {}) {
   const task = requireTask()
   const status = success ? 'success' : 'failure'
   let deferred = false
-  try {
+  // Deferral hands the completion to the mirror daemon so it can flush the
+  // result and a final "Task completed" line before the Space closes — right
+  // for a heredoc round whose driving session ends soon after. A caller that
+  // IS its own session boundary (the phibrowser CLI: the driving agent
+  // outlives the invocation, so "defer until the session ends" would strand
+  // the task for the whole grace window) passes {immediate: true} to close now.
+  if (!immediate) try {
     const transcript = discoverSessionTranscript(task.taskId, agentRootPid())
     if (transcript) {
       deferred = requestDeferredComplete(transcript.sessionKey, task.taskId,
@@ -3946,6 +4218,9 @@ export async function complete({ success = true, message = undefined } = {}) {
     // control file is the tailer's exit signal.
     stopSessionMirror(task.taskId)
   }
+  // Drop any persisted viewport so a later session reusing this name starts
+  // at the real window size (the task record itself is ephemeral).
+  if (!deferred) writeStoredViewport(task.taskId, null)
   state.task = null
   state.sessionId = null
   state.targetId = null
@@ -4880,8 +5155,9 @@ async function layoutScope(space, { mutating = true } = {}) {
   if (space) return { spaceId: await resolveSpaceId(space) }
   // User-space mode: the bound Space is the implicit target, same as the
   // task window is in agent mode.
-  if (!state.task && state.userSpace) {
-    return { spaceId: state.userSpace.spaceId }
+  const ctx = currentContext()
+  if (ctx?.kind === 'user') {
+    return { spaceId: ctx.spaceId }
   }
   if (mutating) await guardAgentControl()
   return { taskId: requireTask().taskId }
@@ -4980,10 +5256,10 @@ export async function activateSpace(space) {
  * the Space's selected tab (falling back to the tab last driven here, then
  * any live tab) and returns {spaceId, name, windowId, created, tabs}.
  */
-export async function ensureUserSpace(space, { profile = '', create = true,
-                                               activate = false } = {}) {
+async function enterUserContext(space, { profile = '', create = true,
+                                         activate = false } = {}) {
   if (!space || typeof space !== 'string') {
-    throw new Error('ensureUserSpace(space): space (name or spaceId) is required')
+    throw new Error("enterContext({kind:'user', space}): space (name or spaceId) is required")
   }
   let spaceId
   let created = false
@@ -5016,7 +5292,7 @@ export async function ensureUserSpace(space, { profile = '', create = true,
     // but tabless, so the usable-window test is the tab count, not `reply`.
     if (!reply || reply.tabs.length === 0) {
       throw new Error(
-        `ensureUserSpace: space '${space}' did not open a window with tabs`)
+        `enterContext(user): space '${space}' did not open a window with tabs`)
     }
   }
   const entry = (await listSpaces()).find((s) => s.spaceId === spaceId)
@@ -5047,8 +5323,8 @@ export async function ensureUserSpace(space, { profile = '', create = true,
                tabs.find((t) => t.targetId && t.targetId === last) ??
                tabs.find((t) => t.targetId)
   if (pick) await attachTab(pick.targetId)
-  return { spaceId, name: state.userSpace.name, windowId: reply.windowId,
-           created, mode: 'userSpace',
+  return { kind: 'user', spaceId, name: state.userSpace.name, windowId: reply.windowId,
+           created, mode: 'userSpace',  // `mode` kept for back-compat
            tabs: tabs.map((t) => ({ ...t, current: t.targetId === state.targetId })) }
 }
 

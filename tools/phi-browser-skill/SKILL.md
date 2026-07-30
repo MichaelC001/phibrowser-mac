@@ -47,7 +47,7 @@ folder, never another agent's:
 
 ```bash
 node <skill-dir>/scripts/runner.mjs <<'EOF'
-const task = await ensureAgentSpace('inspect example page')
+const ctx = await enterContext({ kind: 'agent', name: 'inspect example page' })
 await openTab('https://example.com')
 cliLog(await snapshotText())
 EOF
@@ -55,15 +55,40 @@ EOF
 
 The heredoc body is a Node.js script; all helpers below are preloaded.
 
+## Execution contexts
+
+Every round binds ONE execution context — where the page helpers act — with a
+single call, `enterContext({ kind, … })`. There are two kinds, plus an
+app-level surface that needs no binding:
+
+- **Agent Space** (the default) — `enterContext({ kind: 'agent', name })`: a
+  hidden window bound to a profile, watchable as a pip. Full lifecycle
+  (ownership/handoff, keep-alive, `complete()`). `{ persistent: true }` makes
+  it a lasting workspace instead of the ephemeral default — persistent is a
+  *property of an agent Space*, not a separate kind. See "Task lifecycle".
+- **User Space** — `enterContext({ kind: 'user', space })`: the user's REAL,
+  visible window. No ownership guard, keep-alive, or `complete()`. Reach for
+  it ONLY when the user asks to work in their own Space. See
+  `references/management.md`.
+- **App-level** (no context) — browser-management helpers (`listSpaces`,
+  `addBookmark`, tab groups, downloads, …) operate the user's browser
+  app-wide and need no `enterContext`; they take an explicit `space` where
+  relevant.
+
+`currentContext()` returns the bound context (`{ kind, spaceId, windowId, … }`)
+or null; `contextKind()` is the bare `'agent' | 'user' | null`. Branch on
+these rather than assuming where you are.
+
 ## Helpers
 
 Core surface — full semantics in this file:
 
-- Agent spaces: `ensureAgentSpace(name, {profile, persistent})` (returns the
-  Space's open `tabs` and `pendingUserMessages` too), `listAgentSpaces()`,
-  `listProfiles()`, `spaceStatus({shots})` (one-call digest of the current
-  Space), `complete({success, message})`, `ping(ttlSeconds?)` — see "Task
-  lifecycle"
+- Context: `enterContext({kind, name?/space?, profile?, persistent?, create?,
+  activate?})` (the one entry — agent returns the Space's `tabs` and
+  `pendingUserMessages`, user returns `tabs`/`created`), `currentContext()`,
+  `contextKind()`, `listAgentSpaces()`, `listProfiles()`,
+  `spaceStatus({shots})` (one-call digest of the current agent Space),
+  `complete({success, message})`, `ping(ttlSeconds?)` — see "Task lifecycle"
 - Ownership: `ownership()`, `handOff(message)`, `handOffAndWait(message,
   {timeout})`, `takeOver()`, `waitForAgentControl({timeout})` — see "Control
   handoff"
@@ -113,7 +138,8 @@ before first use:
   below for the always-true rules
 - Browser management → `references/management.md`: Spaces `listSpaces`,
   `createSpace`, `updateSpace`, `deleteSpace`, `openSpaceTab`,
-  `activateSpace`, `userFocus`, `ensureUserSpace`; profiles `createProfile`,
+  `activateSpace`, `userFocus`, `enterContext({kind:'user'})`; profiles
+  `createProfile`,
   `renameProfile`; URL rules `listUrlRules`, `addUrlRule`, `updateUrlRule`,
   `deleteUrlRule`; pinned tabs `listPinnedTabs`, `addPinnedTab`,
   `updatePinnedTab`, `removePinnedTab`; bookmarks `listBookmarks`,
@@ -255,10 +281,10 @@ instructions:
 ## Task lifecycle
 
 The Node runtime exits after each heredoc and keeps no state. Start every
-round with `await ensureAgentSpace(name)` using the SAME name for the whole
-user goal — it reuses the existing space (matching `taskId === name`) or
-creates one, and re-attaches to the tab the task was last driving (the first
-tab on a fresh space). Reuse one space for follow-ups,
+round with `await enterContext({ kind: 'agent', name })` using the SAME name
+for the whole user goal — it reuses the existing space (matching `taskId ===
+name`) or creates one, and re-attaches to the tab the task was last driving
+(the first tab on a fresh space). Reuse one space for follow-ups,
 corrections, and validation; create a new one only for a clearly separate
 goal.
 
@@ -273,19 +299,19 @@ Agent Spaces are **ephemeral by default**: auto-closed after ~120s of driving
 silence (a live round heartbeats automatically, even through long waits — it
 never expires mid-round) and ~30 minutes between rounds; the clock pauses
 while the USER holds control, so a handoff can wait indefinitely. An expired
-Space is GONE — the next `ensureAgentSpace(name)` starts FRESH, open tabs and
-page state lost (cookies persist in the profile). Call `ping(ttlSeconds)`
-(up to 3600) before deliberately going quiet longer.
-`ensureAgentSpace(name, {persistent: true})` creates a permanent workspace
-instead — use it only when the user asks for a lasting workspace or the task
-spans days/relaunches, never unprompted (they accumulate in the user's
-switcher). Persistent-Space semantics, keep-alive detail, and saved state
-around long gaps: `references/lifecycle.md`.
+Space is GONE — the next `enterContext({kind:'agent', name})` starts FRESH,
+open tabs and page state lost (cookies persist in the profile). Call
+`ping(ttlSeconds)` (up to 3600) before deliberately going quiet longer.
+`enterContext({kind:'agent', name, persistent: true})` creates a permanent
+workspace instead — use it only when the user asks for a lasting workspace or
+the task spans days/relaunches, never unprompted (they accumulate in the
+user's switcher). Persistent-Space semantics, keep-alive detail, and saved
+state around long gaps: `references/lifecycle.md`.
 
 `spaceStatus()` is the one-call digest of the current Space — ownership,
 status, tabs, keep-alive; passive and safe while the user holds control
 (`{gone: true}` means the Space no longer exists — the task is over, do not
-recreate it just to look around). `ensureAgentSpace` returns the same `tabs`
+recreate it just to look around). `enterContext` returns the same `tabs`
 list, so every round starts with the tab inventory in hand — check it before
 opening more tabs. Full field list and screenshot option:
 `references/lifecycle.md`.
@@ -317,7 +343,7 @@ prose into the console yourself. Mirror internals:
 `references/lifecycle.md`.
 
 **User commands from the console**: the user can type commands to you from
-Phi's Agent Transcript panel. When `ensureAgentSpace(...)`/`spaceStatus()`
+Phi's Agent Transcript panel. When `enterContext(...)`/`spaceStatus()`
 report `pendingUserMessages` > 0, call `await readUserMessages()` FIRST and
 honor those instructions before your planned work — they carry the same
 authority as chat; check once more before `complete()` so a late command
@@ -370,7 +396,7 @@ watcher a live CHILD of your agent session (e.g. Claude Code's
 
 ```bash
 node <skill-dir>/scripts/runner.mjs <<'EOF'
-await ensureAgentSpace('same-task-name')
+await enterContext({ kind: 'agent', name: 'same-task-name' })
 cliLog(await waitForAgentControl({ timeout: 3600 }))
 EOF
 ```
@@ -398,7 +424,7 @@ result says which happened:
   in chat.
 - `{gone: true, reason: 'deleted'}` — rare backstop: the Space's window died
   but a stale task record lingers. The task is over; purge the record with
-  one dedicated `ensureAgentSpace(name)` + `complete({success: false})`
+  one dedicated `enterContext({kind:'agent', name})` + `complete({success: false})`
   round, then report in chat.
 - exits with "timed out" — the user never handed back: leave the Space alone
   and ask in chat.
@@ -463,7 +489,7 @@ secret-touching step. The always-true rules:
 
 An app-level surface operates the USER's real browser data — their Spaces,
 profiles, URL rules, pinned tabs, bookmarks, tab groups, split view,
-downloads, and `ensureUserSpace` (binding the page helpers to a user Space's
+downloads, and `enterContext({kind:'user'})` (binding the page helpers to a user Space's
 visible window). Read `references/management.md` BEFORE first use. The
 always-true rules:
 
@@ -478,12 +504,12 @@ always-true rules:
   this", "bookmark that"): just do it. Bulk edits they didn't spell out
   (reorganizing bookmarks, rewriting rules): confirm first.
 - The agent Space stays the default working surface. Bind to a user Space
-  (`ensureUserSpace`) ONLY when the user explicitly asks for work in their
+  (`enterContext({kind:'user'})`) ONLY when the user explicitly asks for work in their
   own Space — everything there happens before their eyes.
 
 ## Workflow
 
-1. `ensureAgentSpace(name)` → `openTab(url)` (or `goto` in the current tab).
+1. `enterContext({kind:'agent', name})` → `openTab(url)` (or `goto` in the current tab).
    Its return includes the Space's open `tabs` — check it before opening more
    (`spaceStatus()` gives the same view any time).
 2. Observe with `observe()` to get the `{ref, role, name, loc}` element map;
@@ -525,7 +551,7 @@ always-true rules:
 - If `pageInfo()` returns `{dialog: ...}`, page JS is blocked — call
   `handleDialog(true|false)` before anything else. This holds ACROSS rounds:
   a native dialog (e.g. a beforeunload "Leave page?" prompt) blocks the
-  tab's renderer, but `ensureAgentSpace`/`switchTab` still attach and
+  tab's renderer, but `enterContext`/`switchTab` still attach and
   surface it on `pageInfo()`; renderer-gated helpers (`js`, `observe`,
   `screenshot`, …) fail fast with a "dialog is open" error. For beforeunload:
   `accept: true` leaves the page, `false` stays. For a dialog wedging a
@@ -533,15 +559,15 @@ always-true rules:
 - `js()` takes a string. For multi-step page logic use one self-invoking
   closure and return once. Inside a normal template string, double regex
   backslashes or use `String.raw`.
-- The first tab appears ~1s after a space is created; `ensureAgentSpace`
+- The first tab appears ~1s after a space is created; `enterContext`
   already waits for it. If `listTabs()` is empty, `openTab(url)` first.
 - Don't close EVERY tab as housekeeping: a Space whose last tab is gone is
   broken, not empty (`openTab` silently no-ops into it) — end the task with
   `complete()` instead; an ephemeral Space's tabs die with it anyway. If it
-  happens, the next `ensureAgentSpace(name)` heals by starting a FRESH Space
+  happens, the next `enterContext({kind:'agent', name})` heals by starting a FRESH Space
   under that name (page state is lost; a persistent Space instead errors
   until reopened from the switcher).
-- `ensureAgentSpace` re-attaches to the tab the task last drove (first tab as
+- `enterContext` re-attaches to the tab the task last drove (first tab as
   a fallback). To act in a different tab, find it via `listTabs()` and
   `switchTab` to it first — keystrokes land in the attached tab only.
 - `openTab`/`goto` return when the initial document is ready; a SPA may still

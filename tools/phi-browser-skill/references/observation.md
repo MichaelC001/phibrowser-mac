@@ -44,7 +44,7 @@ no args resets to it. Both dimensions clamp to 320–4096.
 Notes:
 - Per-tab: it never affects other tabs, even of the same site (unlike Chrome's
   Ctrl± zoom). Restored when you `switchTab` back; reset between heredoc
-  rounds — re-apply after `ensureAgentSpace` if still needed.
+  rounds — re-apply after `enterContext` if still needed.
 - A user surfacing the Space always sees the WHOLE viewport scaled to fit
   their window, never a clipped slice.
 - Screenshots capture the full viewport at full resolution; refs and
