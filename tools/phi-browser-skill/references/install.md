@@ -59,7 +59,7 @@ your agent's skills folder):
 
 ```bash
 node ~/.claude/skills/phi-browser/scripts/runner.mjs <<'EOF'
-const task = await ensureAgentSpace('smoke test')
+const task = await enterContext({kind:'agent', name: 'smoke test'})
 cliLog(task)
 await openTab('https://example.com')
 cliLog(await pageInfo())
@@ -92,7 +92,7 @@ The Agent Transcript panel (View ▸ Agent Transcript) always shows the browser
 action steps, narration, rounds, and lifecycle. Under all six supported
 agents — Claude Code, Codex, OpenClaw, Pi, Hermes, and Cursor — the driving
 session is ALSO mirrored automatically, in both directions, with no setup:
-`ensureAgentSpace` locates the session's own transcript and spawns a small
+`enterContext` locates the session's own transcript and spawns a small
 tailer daemon (`scripts/mirror-tailer.mjs`). Discovery is per agent,
 mirroring nothing rather than guessing wrong:
 
@@ -225,5 +225,5 @@ needed): `node scripts/selftest-mirror.mjs`.
   predates the PhiAgentSpace domain. Rebuild it:
   `autoninja -C out/PhiRelease "Phi Framework.framework"` in chromium/src,
   then rebuild/relaunch the Swift app (scheme PhiBrowser-canary).
-- **create_failed from ensureAgentSpace**: no browser window is open yet —
+- **create_failed from enterContext**: no browser window is open yet —
   open one Phi window first, then retry.

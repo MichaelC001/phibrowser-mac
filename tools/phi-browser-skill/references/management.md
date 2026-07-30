@@ -7,7 +7,7 @@ downloads. Read this before your FIRST call into any of them.
 These helpers operate the USER's real browser data — their Spaces, profiles,
 URL rules, pinned tabs, and bookmarks — immediately and app-wide, not some
 agent-private sandbox. They need no agent Space (callable before
-`ensureAgentSpace`) and ignore control ownership, since they don't touch the
+`enterContext`) and ignore control ownership, since they don't touch the
 agent window.
 
 The data model, in one breath: a **Space** is a workspace bound to exactly one
@@ -71,14 +71,14 @@ work is never affected.
 
 ## Working in a user Space
 
-`ensureUserSpace(space, {profile, create, activate})` binds the round to a
+`enterContext({kind:'user', space, profile, create, activate})` binds the round to a
 USER Space so every page helper (observe, click, fillInput, goto, openTab,
 switchTab, closeTab, …) drives its window instead of an agent window.
 
 **The agent Space stays the default.** Bind to a user Space ONLY when the
 user explicitly asks for work in their own Space ("go to my space 1 and …",
 "open X in my space") — never as a convenience, and switch back to
-`ensureAgentSpace` for the next ordinary task. Everything you do there
+`enterContext` for the next ordinary task. Everything you do there
 happens in the user's REAL, visible window: tabs open, navigate, and close
 before their eyes, and `attachTab`/`switchTab` select the tab on screen.
 
@@ -121,10 +121,10 @@ unchanged — they are tab-scoped, not Space-scoped.
 
 Arrange tabs inside a window: group related tabs, or show two pages side by
 side. By default these operate on the current agent Space's window — they
-take the CDP `targetId`s from `listTabs()`/`ensureAgentSpace`, map them to
+take the CDP `targetId`s from `listTabs()`/`enterContext`, map them to
 Phi's internal tab ids automatically, follow control ownership like every
 other action (hard stop while the user is controlling), and need the usual
-`ensureAgentSpace` first.
+`enterContext` first.
 
 Every helper also takes a `{space}` option (Space name or id) to target a
 USER Space's open window instead — app-level like the rest of browser

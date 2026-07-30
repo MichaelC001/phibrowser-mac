@@ -66,6 +66,35 @@ export function agentRootPid() {
   return null
 }
 
+/**
+ * Every live ancestor pid of this process, nearest first (from the parent up
+ * to just below launchd). Empty when ps is unavailable. Used to judge
+ * whether a pid the app resolved for a connection is genuinely above us —
+ * the app's ancestry walk may stop on a different ancestor than
+ * agentRootPid() does (wrapper binaries, helper bundles), and any ancestor
+ * is proof the round is parented to what the app bound, not orphaned.
+ */
+export function ancestorPids() {
+  try {
+    const out = execFileSync('/bin/ps', ['-axo', 'pid=,ppid='],
+                             { encoding: 'utf8' })
+    const ppidOf = new Map()
+    for (const line of out.split('\n')) {
+      const m = /^\s*(\d+)\s+(\d+)/.exec(line)
+      if (m) ppidOf.set(Number(m[1]), Number(m[2]))
+    }
+    const ancestors = []
+    let pid = process.ppid
+    for (let hops = 0; hops < 64 && pid > 1; hops++) {
+      ancestors.push(pid)
+      const next = ppidOf.get(pid)
+      if (!next || next === pid) break
+      pid = next
+    }
+    return ancestors
+  } catch { return [] }
+}
+
 // Shell and wrapper processes skipped when walking ancestry for the agent
 // root — the JS mirror of AgentPeerIdentity.passthroughNames plus the shells
 // that sit between an agent and the tools it spawns.
