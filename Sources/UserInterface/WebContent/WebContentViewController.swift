@@ -53,8 +53,8 @@ enum WebContentConstant {
     static let contentEdgeSpacing = 4
 
     static func titleAwareAreaHeight(for layoutMode: LayoutMode) -> CGFloat {
-        // Performance content reaches the window top, so keep the draggable
-        // strip aligned with the panel's standard outer edge spacing.
+        // The collapsed performance top bar retains the panel's outer edge
+        // spacing as a non-web gap above WebContents.
         layoutMode == .performance ? edgesSpacing : 12
     }
 }

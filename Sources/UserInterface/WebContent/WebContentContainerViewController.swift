@@ -1443,6 +1443,7 @@ class WebContentContainerViewController: NSViewController {
             tabStripBarController?.view.isHidden = true
             topBarHeightConstraint?.update(offset: 0)
             topBarTopConstraint?.update(inset: WebContentConstant.edgesSpacing)
+            // This owns only the 8pt non-web gap above WebContents.
             titleAwareArea.isHidden = false
         }
 

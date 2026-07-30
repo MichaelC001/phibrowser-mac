@@ -296,11 +296,12 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
                     url:(NSString *)urlString
          sourceWindowId:(int64_t)sourceWindowId;
 
-/// A Space URL rule routed a navigation that started from a new tab page to a
-/// DIFFERENT Space, so the URL is opening elsewhere. The Mac client should reset
-/// `windowId`'s active new-tab page back to a clean state because the source
-/// navigation was cancelled before it could complete. A no-op if that window's
-/// active tab is not a new tab page.
+/// A Space URL rule routed a navigation that started from a new tab / native NTP
+/// to a DIFFERENT Space, so the URL is opening elsewhere. The Mac client should
+/// reset `windowId`'s active new-tab page back to a clean state: submitting the
+/// URL from the NTP omnibox hid the NTP's native controls in anticipation of a
+/// page load that never happens here, leaving a blank tab. A no-op if that
+/// window's active tab is not a new tab / NTP.
 - (void)refreshNewTabInWindow:(int64_t)windowId;
 
 // ==========================================================================
@@ -342,7 +343,11 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
 @optional
 // Per-window extension action badge state (text/colors/visibility/enabled).
 // Keys: windowId, extensionId, tabId, badgeText, backgroundColor, textColor,
-// visible, enabled.
+// visible (false only for a page action hidden on this tab — remove from
+// layout), enabled (false => a click falls back to the context menu),
+// grayscale (true => render the icon grayed out, keep it laid out).
+// Semantics mirror Chrome's ExtensionActionViewModel: grayscale only when the
+// action is disabled AND the extension cannot interact with the page.
 - (void)badgeInfoChanged:(NSDictionary *)info;
 // Per-window dynamic extension action icon. Keys: windowId, extensionId, tabId,
 // iconData (PNG NSData, empty => no dynamic icon), dipSize, scale.
@@ -448,6 +453,11 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
 /// flight) or the URL is invalid; the caller falls back to a regular tab.
 - (id<WebContentWrapper> _Nullable)newWebContentsForUrl:(NSString *)urlString
                                                 windowId:(int64_t)windowId;
+
+/// When enabled, mouse-downs whose hit view is WebContents remain page-owned
+/// instead of moving the native window.
+- (void)setWebContentsOwnsMouseDown:(BOOL)ownsMouseDown
+                           windowId:(int64_t)windowId;
 
 // Resolves `urlString` against the Space URL routing table for `windowId` and,
 // if a rule matches, hands the URL off through the same routing path the
@@ -768,10 +778,11 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
 - (void)installExtensionsWithIds:(NSArray<NSString *> *)extensionIds
                         windowId:(int64_t)windowId;
 
-/// Install one or more Chrome Web Store extensions into a specific profile,
-/// resolved by its on-disk basename. The profile must already be loaded (call
-/// `ensureProfileLoaded:` first). Mirrors the OOBE iCloud Passwords choice onto
-/// newly created profiles. Results report via extensionInstallResult:status:.
+/// Install one or more extensions from Chrome Web Store into a specific profile.
+/// Results are reported per-extension via extensionInstallResult:status: delegate callback.
+/// Status values: @"success", @"skipped", @"disabled", @"blocked", @"failed"
+/// @param extensionIds Array of Chrome Web Store extension IDs to install
+/// @param profileId The on-disk profile basename (must already be loaded)
 - (void)installExtensionsWithIds:(NSArray<NSString *> *)extensionIds
                        profileId:(NSString *)profileId;
 

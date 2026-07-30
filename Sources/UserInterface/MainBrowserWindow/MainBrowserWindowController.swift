@@ -76,6 +76,11 @@ class MainBrowserWindowController: NSWindowController {
         self.spaceId = spaceId
         self.mainSplitViewController = MainSplitViewController(state: state)
         super.init(window: window)
+        ChromiumLauncher.sharedInstance().bridge?
+            .setWebContentsOwnsMouseDown(
+                true,
+                windowId: Int64(windowId)
+            )
         self.slot = slot
         browserState.windowController = self
         setupWindow()
