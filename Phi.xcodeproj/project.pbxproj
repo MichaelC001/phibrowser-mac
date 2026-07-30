@@ -390,6 +390,7 @@
 		CC98F8A22E8BCE0900DAD237 /* AppController+Settings.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC98F8A12E8BCE0900DAD237 /* AppController+Settings.swift */; };
 		CC98F8A82E8BEB4F00DAD237 /* SidebarViewController+UpdateReminder.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC98F8A72E8BEB4F00DAD237 /* SidebarViewController+UpdateReminder.swift */; };
 		CC99096D2EBC86940046BC81 /* PhiPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC99096C2EBC86940046BC81 /* PhiPreferences.swift */; };
+		CC99096F3000000000000001 /* PhiPreferences+AppLanguage.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC99096E3000000000000001 /* PhiPreferences+AppLanguage.swift */; };
 		CC99097C2EBC9F090046BC81 /* login-bg.mp4 in Resources */ = {isa = PBXBuildFile; fileRef = CC99097B2EBC9F090046BC81 /* login-bg.mp4 */; };
 		CC9AF3442EC192BC00C27C98 /* AppControlle+LaunchInfo.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC9AF3432EC192BC00C27C98 /* AppControlle+LaunchInfo.swift */; };
 		CCAA00012F00010000000001 /* PinnedSplitItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCAA00012F00010000000002 /* PinnedSplitItem.swift */; };
@@ -972,6 +973,7 @@
 		CC98F8A12E8BCE0900DAD237 /* AppController+Settings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppController+Settings.swift"; sourceTree = "<group>"; };
 		CC98F8A72E8BEB4F00DAD237 /* SidebarViewController+UpdateReminder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SidebarViewController+UpdateReminder.swift"; sourceTree = "<group>"; };
 		CC99096C2EBC86940046BC81 /* PhiPreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhiPreferences.swift; sourceTree = "<group>"; };
+		CC99096E3000000000000001 /* PhiPreferences+AppLanguage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "PhiPreferences+AppLanguage.swift"; sourceTree = "<group>"; };
 		CC99097B2EBC9F090046BC81 /* login-bg.mp4 */ = {isa = PBXFileReference; lastKnownFileType = file; path = "login-bg.mp4"; sourceTree = "<group>"; };
 		CC9AF3432EC192BC00C27C98 /* AppControlle+LaunchInfo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppControlle+LaunchInfo.swift"; sourceTree = "<group>"; };
 		CCAA00012F00010000000002 /* PinnedSplitItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PinnedSplitItem.swift; sourceTree = "<group>"; };
@@ -2090,6 +2092,7 @@
 				37686A9B2F10D61E00DC3990 /* UserDefaultsRegistration.swift */,
 				CC98F89B2E8BC71800DAD237 /* Settings.swift */,
 				CC99096C2EBC86940046BC81 /* PhiPreferences.swift */,
+				CC99096E3000000000000001 /* PhiPreferences+AppLanguage.swift */,
 				CC376CF92EC6D3F900270B93 /* SettingItemBackgroundView.swift */,
 				37C1B0E52ED8515C00DD4496 /* AISettings */,
 				37C1B0E42ED8515400DD4496 /* Account */,
@@ -2492,6 +2495,13 @@
 			hasScannedForEncodings = 0;
 			knownRegions = (
 				en,
+				zh_CN,
+				zh_TW,
+				ja,
+				fr,
+				de,
+				nl,
+				es,
 				Base,
 			);
 			mainGroup = B0C4693F2E3B10E1007F0C7A;
@@ -2813,6 +2823,7 @@
 				54A1000C2FE000000000000C /* TimeMachineInstallerCore.swift in Sources */,
 				54A1000D2FE000000000000D /* TimeMachineMenuPresenter.swift in Sources */,
 				CC99096D2EBC86940046BC81 /* PhiPreferences.swift in Sources */,
+				CC99096F3000000000000001 /* PhiPreferences+AppLanguage.swift in Sources */,
 				CC2708A62E7A65E500B65AB8 /* TabDataModel.swift in Sources */,
 				CC6335F92E4DF65700A176DA /* PhiLogFormatter.swift in Sources */,
 				8E486A752F3ED68600078DEC /* StatusURLView.swift in Sources */,
@@ -3762,6 +3773,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = 87DQ3HMK5G;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;

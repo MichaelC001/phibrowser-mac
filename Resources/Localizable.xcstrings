@@ -8795,6 +8795,276 @@
         }
       }
     },
+    "settings.general.language.displayLanguageTitle" : {
+      "comment" : "General settings - Row title for choosing Phi's native interface language",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Display language"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Anzeigesprache"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Idioma de visualización"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Langue d’affichage"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "表示言語"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Weergavetaal"
+          }
+        },
+        "zh_CN" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "显示语言"
+          }
+        },
+        "zh_TW" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "顯示語言"
+          }
+        }
+      }
+    },
+    "settings.general.language.restartButton" : {
+      "comment" : "General settings - Button to restart Phi and apply the selected display language",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Restart Phi"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Phi neu starten"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reiniciar Phi"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Redémarrer Phi"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Phiを再起動"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Phi opnieuw starten"
+          }
+        },
+        "zh_CN" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重启 Phi"
+          }
+        },
+        "zh_TW" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重新啟動 Phi"
+          }
+        }
+      }
+    },
+    "settings.general.language.relaunchHint" : {
+      "comment" : "General settings - Hint shown after changing the display language explaining that a restart is required",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Restart Phi to apply this language."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Starten Sie Phi neu, um diese Sprache anzuwenden."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reinicia Phi para aplicar este idioma."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Redémarrez Phi pour appliquer cette langue."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "この言語を適用するには、Phiを再起動してください。"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Start Phi opnieuw om deze taal toe te passen."
+          }
+        },
+        "zh_CN" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重启 Phi 以应用此语言。"
+          }
+        },
+        "zh_TW" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重新啟動 Phi 以套用此語言。"
+          }
+        }
+      }
+    },
+    "settings.general.language.sectionTitle" : {
+      "comment" : "General settings - Language section title",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Language"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sprache"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Idioma"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Langue"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "言語"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Taal"
+          }
+        },
+        "zh_CN" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "语言"
+          }
+        },
+        "zh_TW" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "語言"
+          }
+        }
+      }
+    },
+    "settings.general.language.systemDefaultOption" : {
+      "comment" : "General settings - Language option that follows macOS, including its per-app language preference",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "System Default"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Systemeinstellung"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Configuración del sistema"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Réglage système"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "システム設定に従う"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Systeeminstelling"
+          }
+        },
+        "zh_CN" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "跟随系统"
+          }
+        },
+        "zh_TW" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "跟隨系統"
+          }
+        }
+      }
+    },
     "settings.general.layoutMode.balancedOption" : {
       "comment" : "Layout option - Vertical tabs with address bar at the top of webcontent",
       "extractionState" : "extracted_with_value",

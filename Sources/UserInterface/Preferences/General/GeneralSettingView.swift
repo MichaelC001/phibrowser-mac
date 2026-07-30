@@ -32,6 +32,7 @@ struct GeneralSettingView: View {
                     ThemeSectionView()
                 }
                 AppearanceSectionView()
+                LanguageSectionView()
                 BrowsingSectionView()
                 ProfileSectionView()
                 DeveloperModeSectionView()
@@ -333,6 +334,101 @@ private struct AppearanceSectionView: View {
         case .dark:
             return "appearance-dark"
         }
+    }
+}
+
+private struct LanguageSectionView: View {
+    @State private var selection = PhiPreferences.GeneralSettings.loadAppLanguagePreference()
+    @State private var repairedStoredLanguage = false
+    @State private var hasPreparedStoredLanguage = false
+
+    private var requiresRelaunch: Bool {
+        selection != PhiPreferences.GeneralSettings.appLanguagePreferenceAtLaunch
+            || repairedStoredLanguage
+    }
+
+    var body: some View {
+        GeneralSectionView(
+            title: NSLocalizedString(
+                "settings.general.language.sectionTitle",
+                value: "Language",
+                comment: "General settings - Language section title"
+            )
+        ) {
+            GeneralContainerView {
+                GeneralRowView(
+                    title: NSLocalizedString(
+                        "settings.general.language.displayLanguageTitle",
+                        value: "Display language",
+                        comment: "General settings - Row title for choosing Phi's native interface language"
+                    )
+                ) {
+                    Picker("", selection: $selection) {
+                        Text(
+                            NSLocalizedString(
+                                "settings.general.language.systemDefaultOption",
+                                value: "System Default",
+                                comment: "General settings - Language option that follows macOS, including its per-app language preference"
+                            )
+                        )
+                        .tag(AppLanguagePreference.system)
+
+                        ForEach(SupportedAppLanguage.allCases) { language in
+                            Text(language.displayName)
+                                .tag(AppLanguagePreference.language(language))
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .fixedSize()
+                }
+
+                if requiresRelaunch {
+                    Divider()
+
+                    HStack(alignment: .center, spacing: 12) {
+                        Text(
+                            NSLocalizedString(
+                                "settings.general.language.relaunchHint",
+                                value: "Restart Phi to apply this language.",
+                                comment: "General settings - Hint shown after changing the display language explaining that a restart is required"
+                            )
+                        )
+                        .font(.system(size: 11))
+                        .themedForeground(.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                        Spacer(minLength: 12)
+
+                        Button(
+                            NSLocalizedString(
+                                "settings.general.language.restartButton",
+                                value: "Restart Phi",
+                                comment: "General settings - Button to restart Phi and apply the selected display language"
+                            ),
+                            action: restartApplication
+                        )
+                        .controlSize(.small)
+                    }
+                    .padding(.vertical, 12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
+        .onAppear {
+            guard !hasPreparedStoredLanguage else { return }
+            hasPreparedStoredLanguage = true
+            repairedStoredLanguage = PhiPreferences.GeneralSettings.saveAppLanguagePreference(
+                selection
+            )
+        }
+        .onChange(of: selection) { _, newValue in
+            PhiPreferences.GeneralSettings.saveAppLanguagePreference(newValue)
+        }
+    }
+
+    private func restartApplication() {
+        // TODO: Coordinate Phi and Sentinel before implementing application relaunch.
     }
 }
 

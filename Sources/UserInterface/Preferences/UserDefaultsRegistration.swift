@@ -15,6 +15,7 @@ enum UserDefaultsRegistration {
     /// Registers every default value during app launch.
     static func registerDefaults() {
         UserDefaults.standard.register(defaults: allDefaults)
+        _ = PhiPreferences.GeneralSettings.appLanguagePreferenceAtLaunch
     }
     
     /// Merges defaults contributed by each settings namespace.
@@ -40,6 +41,8 @@ enum UserDefaultsRegistration {
         for setting in PhiPreferences.GeneralSettings.allCases {
             defaults[setting.rawValue] = setting.defaultValue
         }
+        defaults[PhiPreferences.GeneralSettings.appLanguagePreferenceKey] =
+            AppLanguagePreference.system.storageValue
         return defaults
     }
     
