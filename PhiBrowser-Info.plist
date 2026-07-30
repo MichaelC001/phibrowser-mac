@@ -69,6 +69,10 @@
 	</dict>
 	<key>NSRequiresAquaSystemAppearance</key>
 	<false/>
+	<key>NSAppleScriptEnabled</key>
+	<true/>
+	<key>OSAScriptingDefinition</key>
+	<string>Phi.sdef</string>
 	<key>NSUserActivityTypes</key>
 	<array>
 		<string>NSUserActivityTypeBrowsingWeb</string>

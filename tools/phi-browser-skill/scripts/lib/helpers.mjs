@@ -9,13 +9,14 @@ import {
   mkdirSync, readFileSync, writeFileSync, unlinkSync, readdirSync, existsSync,
 } from 'node:fs'
 import { spawn } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { tmpdir, homedir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { connectBrowser } from './cdp.mjs'
 import {
   readDaemonControl, writeDaemonControl, clearDaemonControl,
-  requestDeferredComplete, pidAlive, agentRootPid,
+  requestDeferredComplete, pidAlive, agentRootPid, ancestorPids,
 } from './mirror-core.mjs'
 import { discoverClaudeTranscript } from './mirror-claude.mjs'
 import { discoverCodexTranscript } from './mirror-codex.mjs'
@@ -42,10 +43,17 @@ const VIEWPORT_MAX = 4096
 const state = {
   cdp: null,            // CdpClient (browser target)
   task: null,           // {taskId, spaceId, windowId, ownership, status}
+  userSpace: null,      // {spaceId, name, windowId} when bound to a USER
+                        // Space via ensureUserSpace instead of a task —
+                        // mutually exclusive with `task` (see ensureUserSpace)
   sessionId: null,      // current page session (flat mode)
   targetId: null,       // current page target
   contextId: null,      // main frame's default execution context (tracked)
   openDialog: null,     // {type, message} while a JS dialog blocks the page
+  dialogBlocked: false, // true when the attach was DEGRADED: a dialog was
+                        // already holding the renderer, so the renderer-gated
+                        // session setup was skipped — handleDialog() closes
+                        // the dialog browser-level and completes the attach
   ownerCheckedAt: 0,    // epoch ms of the last authoritative ownership read
   network: null,        // {requests: Map<id,entry>, order: [id]} — capture for
                         // the CURRENT tab, armed at attach (see readNetwork)
@@ -72,7 +80,9 @@ const INTER_ROUND_KEEPALIVE_SECONDS = 30 * 60
 
 async function cdpClient() {
   if (state.cdp) return state.cdp
-  state.cdp = await connectBrowser({ agentPid: claimAgentPid() })
+  state.cdp = await connectBrowser({
+    agentPid: claimAgentPid(),
+  })
   // `state.cdp.phi` is the agentSpace.* channel — direct to Swift over the
   // app socket, or the Chromium tunnel under the TCP dev override. Either way
   // the ownership push lands here.
@@ -95,27 +105,124 @@ export async function cdp(method, params = {}) {
   return client.send(method, params, browserLevel ? undefined : requireSession())
 }
 
-async function phiSend(type, payload) {
+// Incremental reveal: SKILL.md carries only each domain's hard rules and
+// defers the full semantics to references/*.md. These hooks surface the right
+// file at the moment it is needed, so an agent that skipped SKILL.md's
+// routing table still gets pointed there: a failed domain call names the file
+// in its error, and the first successful call into a domain prints a one-line
+// nudge on stderr.
+const DOMAIN_DOCS = [
+  [/^credentials\./, 'credentials'],
+  [/^agentSpace\.(spaces|profiles|urlRules|pinnedTabs|bookmarks|tabGroups|splitView|downloads)\./,
+   'management'],
+]
+const ERROR_DOCS = {
+  user_space_operations_disabled: 'management',
+  space_not_open: 'management',
+  profile_not_agent_allowed: 'lifecycle',
+}
+
+function domainDocFor(type, errorCode) {
+  if (errorCode && ERROR_DOCS[errorCode]) return ERROR_DOCS[errorCode]
+  const hit = DOMAIN_DOCS.find(([re]) => re.test(type))
+  return hit ? hit[1] : null
+}
+
+// One nudge per (task, domain), recorded beside the task's tab memory so it
+// survives heredoc rounds. Best-effort: losing it only repeats the one-liner.
+function revealDomainDocs(type) {
+  const domain = domainDocFor(type, null)
+  if (!domain) return
+  try {
+    const key = encodeURIComponent(state.task?.taskId || '_app')
+    mkdirSync(TASK_DIR, { recursive: true })
+    const file = join(TASK_DIR, `${key}.docs.json`)
+    let seen = {}
+    try { seen = JSON.parse(readFileSync(file, 'utf8')) } catch {}
+    if (seen[domain]) return
+    seen[domain] = true
+    writeFileSync(file, JSON.stringify(seen))
+    process.stderr.write(
+      `ℹ phi-browser: first ${domain} call this task — full semantics: ` +
+      `<skill-dir>/references/${domain}.md\n`)
+  } catch {}
+}
+
+async function phiSend(type, payload, timeoutMs) {
   const client = await cdpClient()
-  const parsed = await client.phi.send(type, payload ?? {})
+  const parsed = await client.phi.send(type, payload ?? {}, timeoutMs)
   if (parsed && parsed.ok === false) {
-    throw new Error(`${type}: ${parsed.error || 'failed'}`)
+    // The full reply rides along for handlers that need more than the error
+    // code (e.g. an ambiguous credential lookup's candidate list).
+    const doc = domainDocFor(type, parsed.error)
+    const err = new Error(`${type}: ${parsed.error || 'failed'}` +
+      (doc ? ` — see references/${doc}.md` : ''))
+    err.reply = parsed
+    throw err
   }
+  revealDomainDocs(type)
   return parsed
 }
 
+// Credential requests can legitimately sit behind the app's 60s approval
+// prompt AND a 60s in-flow vault-unlock prompt; the app's transport allows
+// them 180s, so sit just past that and let its cleaner error arrive first.
+const CRED_PROMPT_TIMEOUT_MS = 190000
+
 function requireTask() {
   if (!state.task) {
-    throw new Error('No agent space selected — call ensureAgentSpace(name) first')
+    throw new Error(
+      "No agent space selected — call enterContext({kind:'agent', name}) first " +
+      "(or enterContext({kind:'user', space}) to work in a user Space)")
   }
   return state.task
 }
 
 function requireSession() {
   if (!state.sessionId) {
-    throw new Error('No tab attached — call ensureAgentSpace(...), openTab(url) or switchTab(targetId) first')
+    throw new Error('No tab attached — call enterContext({kind}), openTab(url) or switchTab(targetId) first')
   }
   return state.sessionId
+}
+
+// ---------------------------------------------------------------------------
+// Execution context — the ONE concept for "where do page helpers act".
+//
+// A round is bound to at most one context: an AGENT Space (a hidden window,
+// the default surface — `state.task`) or a USER Space (the user's real,
+// visible window — `state.userSpace`). The two are mutually exclusive.
+// Browser-management helpers (listSpaces, addBookmark, tab groups, …) need
+// NO context: they operate the user's browser app-wide and take an explicit
+// `space` where relevant.
+//
+// Every agent-vs-user branch in this module goes through contextKind() /
+// currentContext() — never pokes state.task / state.userSpace directly — so
+// the distinction lives in exactly one place.
+
+/** 'agent' | 'user' | null — the bound context's kind. Allocation-free; used
+ *  on the per-action hot path (guardAgentControl). */
+function contextKind() {
+  return state.task ? 'agent' : state.userSpace ? 'user' : null
+}
+
+/**
+ * The context this round is bound to, or null before any bind. Self-describing:
+ *   { kind: 'agent', taskId, spaceId, windowId, ownership, persistent }
+ *   { kind: 'user',  spaceId, name, windowId }
+ * enterContext() returns the same shape (plus per-kind extras). Query it to
+ * branch on where you are without reaching into module state.
+ */
+export function currentContext() {
+  if (state.task) {
+    return { kind: 'agent', taskId: state.task.taskId, spaceId: state.task.spaceId,
+             windowId: state.task.windowId, ownership: state.task.ownership,
+             persistent: !!state.task.persistent }
+  }
+  if (state.userSpace) {
+    return { kind: 'user', spaceId: state.userSpace.spaceId,
+             name: state.userSpace.name, windowId: state.userSpace.windowId }
+  }
+  return null
 }
 
 /**
@@ -124,6 +231,10 @@ function requireSession() {
  * own — ask the user and wait.
  */
 async function guardAgentControl() {
+  // User-space mode has no ownership model: the user's own window is the
+  // working surface and they are inherently in control alongside the agent.
+  // No takeover guard, no agent viewport, no task keep-alive.
+  if (contextKind() === 'user') return
   const task = requireTask()
   // The cached bit is kept live by the ownershipChanged broadcast, but a single
   // dropped event would leave it stale as 'agent' while the user is actually
@@ -167,21 +278,79 @@ export async function listProfiles() {
 }
 
 /**
+ * THE entry point for choosing where the page helpers act. One call, one
+ * `kind`:
+ *
+ *   enterContext({ kind: 'agent', name, profile?, persistent? })
+ *     — a hidden AGENT Space (the default surface). `persistent: true` makes
+ *       it a permanent workspace kept in the Space switcher across relaunches;
+ *       omit it for the ephemeral default. Full lifecycle (ownership/handoff,
+ *       keep-alive, complete()). See references/lifecycle.md.
+ *
+ *   enterContext({ kind: 'user', space, profile?, create?, activate? })
+ *     — the user's REAL, visible Space window. No ownership guard, keep-alive,
+ *       or complete(); actions land in the user's live view. An unknown name
+ *       is created when create (default true). See references/management.md.
+ *
+ * Returns the context descriptor (same shape as currentContext(), plus
+ * per-kind extras: agent → pendingUserMessages, tabs; user → created, tabs).
+ * Browser-management helpers (listSpaces, addBookmark, …) need NO context.
+ */
+export async function enterContext(spec = {}) {
+  if (!spec || typeof spec !== 'object') {
+    throw new Error("enterContext(spec): spec object with a `kind` is required")
+  }
+  if (spec.kind === 'agent') {
+    return enterAgentContext(spec.name,
+      { profile: spec.profile ?? '', persistent: spec.persistent ?? false })
+  }
+  if (spec.kind === 'user') {
+    return enterUserContext(spec.space,
+      { profile: spec.profile ?? '', create: spec.create ?? true,
+        activate: spec.activate ?? false })
+  }
+  throw new Error(
+    `enterContext: unknown kind ${JSON.stringify(spec.kind)} — use 'agent' or 'user'`)
+}
+
+/** @deprecated Use enterContext({kind:'agent', name, ...}). Thin back-compat
+ *  shim for older heredocs and external callers; not part of the documented
+ *  surface. */
+export function ensureAgentSpace(name, opts = {}) {
+  return enterContext({ kind: 'agent', name, ...opts })
+}
+
+/** @deprecated Use enterContext({kind:'user', space, ...}). Thin back-compat
+ *  shim; not part of the documented surface. */
+export function ensureUserSpace(space, opts = {}) {
+  return enterContext({ kind: 'user', space, ...opts })
+}
+
+/**
+ * AGENT-context impl (private — reach it via enterContext({kind:'agent'})).
  * Reuses the agent space whose taskId equals `name`, or creates one. Selects
  * it and re-attaches to the tab the task last drove (its first tab on a
  * fresh space). Options: {profile} — profileId or display name (defaults to
  * the first profile); {persistent: true} — a PERMANENT workspace: named
  * `name` in the Space switcher, never expired by the keep-alive sweep,
  * kept on complete(), surviving app relaunches, and re-bound to by a later
- * call with the same name (see SKILL.md "Persistent Spaces"). Persistence
+ * call with the same name (see references/lifecycle.md "Persistent
+ * Spaces"). Persistence
  * is decided when the Space is first created; on a re-bind both options are
  * ignored (the Space keeps its own profile).
  */
-export async function ensureAgentSpace(name, { profile = '', persistent = false } = {}) {
+async function enterAgentContext(name, { profile = '', persistent = false } = {}) {
   if (!name || typeof name !== 'string') {
-    throw new Error('ensureAgentSpace(name): name is required')
+    throw new Error("enterContext({kind:'agent', name}): name is required")
   }
   const tasks = await listAgentSpaces()
+  // An orphaned round must not bind (or worse, re-create) the task under its
+  // fresh principal: the agent's own task is invisible to it, so a create
+  // here would either be rejected by the app or mint a phantom task the real
+  // agent can never reach.
+  if (roundLostAgentSession()) {
+    throw new Error(`enterContext(agent): ${ORPHANED_ROUND_MESSAGE}`)
+  }
   let task = tasks.find((t) => t.taskId === name)
   const rebound = !!task
   if (!task) {
@@ -194,7 +363,10 @@ export async function ensureAgentSpace(name, { profile = '', persistent = false 
       taskId: name,
       spaceId: created.spaceId,
       windowId: created.windowId,
-      ownership: 'agent',
+      // Normally 'agent' by construction — but a create that re-adopted a
+      // restarted agent's task returns the task as it stands, possibly with
+      // the USER still holding control from a pre-restart handoff.
+      ownership: created.ownership || 'agent',
       status: 'running',
       persistent: !!persistent,
     }
@@ -202,12 +374,13 @@ export async function ensureAgentSpace(name, { profile = '', persistent = false 
     await wait(1.6)
   }
   state.task = task
+  state.userSpace = null  // task binding supersedes any user-space binding
   // Start (or re-target) the session mirror: the driving session's prompts
   // and prose flow into this Space's console, and console commands flow
   // back into the session (see scripts/mirror-tailer.mjs).
   spawnSessionMirror(task.taskId)
-  // `task.ownership` here is authoritative (fresh from list, or 'agent' by
-  // construction on create), so seed the staleness clock and avoid a redundant
+  // `task.ownership` here is authoritative (fresh from list, or echoed on the
+  // create reply), so seed the staleness clock and avoid a redundant
   // getOwnership on the first guarded action.
   state.ownerCheckedAt = Date.now()
   state.sessionId = null
@@ -238,17 +411,17 @@ export async function ensureAgentSpace(name, { profile = '', persistent = false 
       // A persistent Space is a permanent workspace — never purge it from
       // here; reopening it (or an app relaunch) restores its window.
       throw new Error(
-        `ensureAgentSpace: persistent space '${name}' has no tabs — ` +
+        `enterContext(agent): persistent space '${name}' has no tabs — ` +
         'reopen it from the Space switcher (or relaunch Phi Browser), then retry')
     }
     await phiSend('agentSpace.complete', {
       taskId: name, status: 'failure', message: 'agent window lost',
     }).catch(() => {})
     if ((await listAgentSpaces()).some((t) => t.taskId === name)) {
-      throw new Error(`ensureAgentSpace: could not heal tab-less space '${name}'`)
+      throw new Error(`enterContext(agent): could not heal tab-less space '${name}'`)
     }
     state.task = null
-    return ensureAgentSpace(name, { profile, persistent })
+    return enterAgentContext(name, { profile, persistent })
   }
   if (tabs.length > 0) {
     // Resume where the task left off: the tab the previous round drove
@@ -256,8 +429,20 @@ export async function ensureAgentSpace(name, { profile = '', persistent = false 
     const last = readLastTargetId(task.taskId)
     const tab = tabs.find((t) => t.targetId === last) ?? tabs[0]
     await attachTab(tab.targetId)
+    // Re-apply an explicit viewport the session set in an earlier round — the
+    // CDP override died with that round's session. Skip when the user holds
+    // control (their takeover deliberately clears emulation) or the attach
+    // was degraded by an open dialog (the renderer is blocked, so the
+    // Emulation call would hang — the same reason attach itself went
+    // degraded).
+    const vp = readStoredViewport(task.taskId)
+    if (vp && task.ownership !== 'user' && !state.dialogBlocked && !state.openDialog) {
+      await applyAgentViewport(await cdpClient(), requireSession(),
+                               state.targetId, vp).catch(() => {})
+    }
   }
-  return { taskId: task.taskId, spaceId: task.spaceId, windowId: task.windowId,
+  return { kind: 'agent',
+           taskId: task.taskId, spaceId: task.spaceId, windowId: task.windowId,
            ownership: task.ownership,
            persistent: task.persistent ?? false,
            // Commands the user typed into the console while no round was
@@ -296,6 +481,11 @@ export async function spaceStatus({ shots = false } = {}) {
   if (shots && shots !== true && shots !== 'current') {
     throw new Error("spaceStatus: only {shots: 'current'} is supported — " +
                     'background tabs of the hidden window do not paint')
+  }
+  if (contextKind() === 'user') {
+    throw new Error('spaceStatus is agent-space only (there is no task ' +
+                    'record for a user Space) — in user-space mode use ' +
+                    'listTabs(), userFocus(), or screenshot() instead')
   }
   const task = requireTask()
   const tasks = await listAgentSpaces()
@@ -345,7 +535,8 @@ export async function spaceStatus({ shots = false } = {}) {
 
 export async function listTabs() {
   const client = await cdpClient()
-  const task = requireTask()
+  const boundWindowId = currentContext()?.windowId
+  if (!boundWindowId) requireTask()  // standard guidance error
   const { targetInfos } = await client.send('Target.getTargets')
   const out = []
   for (const t of targetInfos) {
@@ -353,7 +544,7 @@ export async function listTabs() {
     try {
       const { windowId } = await client.send('Browser.getWindowForTarget',
                                              { targetId: t.targetId })
-      if (windowId === task.windowId) {
+      if (windowId === boundWindowId) {
         out.push({ targetId: t.targetId, url: t.url, title: t.title,
                    current: t.targetId === state.targetId })
       }
@@ -499,7 +690,9 @@ async function applyAgentViewport(client, sessionId, targetId, request = null) {
  */
 async function maybeTrackWindowResize() {
   if (!state.sessionId || !state.targetId) return
-  if (state.task?.ownership === 'user') return
+  // Agent-window emulation only: a user-Space tab is visible and sized for
+  // real — never impose device metrics on it.
+  if (!state.task || state.task.ownership === 'user') return
   const now = Date.now()
   if (now - state.windowBoundsCheckedAt < 1000) return
   state.windowBoundsCheckedAt = now
@@ -560,19 +753,44 @@ export async function ping(ttlSeconds) {
 // tab every round). Best-effort — losing it only costs a switchTab.
 const TASK_DIR = join(tmpdir(), 'phi-browser-tasks')
 
-function readLastTargetId(taskId) {
+// Per-session disk state (survives the per-round Node process): the tab a
+// round last drove and any explicit viewport override, so a later round of
+// the same session resumes both. Reads/writes MERGE so the two fields don't
+// clobber each other.
+function readSessionState(key) {
   try {
     return JSON.parse(readFileSync(
-      join(TASK_DIR, encodeURIComponent(taskId) + '.json'), 'utf8')).targetId || null
-  } catch { return null }
+      join(TASK_DIR, encodeURIComponent(key) + '.json'), 'utf8')) || {}
+  } catch { return {} }
+}
+
+function writeSessionState(key, patch) {
+  try {
+    mkdirSync(TASK_DIR, { recursive: true })
+    const merged = { ...readSessionState(key), ...patch }
+    writeFileSync(join(TASK_DIR, encodeURIComponent(key) + '.json'),
+                  JSON.stringify(merged))
+  } catch {}
+}
+
+function readLastTargetId(taskId) {
+  return readSessionState(taskId).targetId || null
 }
 
 function writeLastTargetId(taskId, targetId) {
-  try {
-    mkdirSync(TASK_DIR, { recursive: true })
-    writeFileSync(join(TASK_DIR, encodeURIComponent(taskId) + '.json'),
-                  JSON.stringify({ targetId }))
-  } catch {}
+  writeSessionState(taskId, { targetId })
+}
+
+// A persisted viewport request re-applies on the next round's attach — the
+// CDP override itself dies with the round's session, so without this a
+// standalone setViewport would reset before the next command reads it.
+// `null` clears the override going forward.
+function readStoredViewport(key) {
+  return readSessionState(key).viewport ?? null
+}
+
+function writeStoredViewport(key, request) {
+  writeSessionState(key, { viewport: request ?? null })
 }
 
 // The tailer daemon (scripts/mirror-tailer.mjs): the session mirror. When
@@ -605,15 +823,16 @@ function discoverSessionTranscript(taskId, agentPid) {
 }
 
 // The pid of the agent session this round acts for, claimed on every
-// app-socket connection (the X-Phi-Agent-Pid header — see cdp.mjs) so the
-// consent prompt names the AGENT even when process ancestry can't. Normally
-// that ancestry walk finds it directly; an ORPHANED round — e.g. a hand-back
-// watcher an agent without a tracked background mode ran with `… &`,
-// reparented to launchd once its spawning shell exited — walks to nothing,
-// and without a claim the app can only present its "phi-browser" fallback
-// identity (re-prompting despite the agent's existing grant). Such a round
-// inherits the pid a fully-parented round of the SAME session recorded in
-// the mirror control file. Null when neither source knows the agent.
+// app-socket connection (the X-Phi-Agent-Pid header — see cdp.mjs).
+// IDENTIFICATION ONLY: the app logs it but neither substitutes the consent
+// identity nor joins a task principal from it — delegation is proven with
+// the app-issued capability instead. Also the reference value for the
+// orphaned-round check (roundLostAgentSession): a mismatch against what the
+// app actually resolved marks this round as severed from its agent session.
+// Normally the live ancestry walk finds the agent directly; a sandboxed
+// round (Codex's seatbelt denies the sysctls `ps` needs) inherits the pid a
+// fully-parented round of the SAME session recorded in the mirror control
+// file. Null when neither source knows the agent.
 function claimAgentPid() {
   const live = agentRootPid()
   if (live) return live
@@ -636,6 +855,46 @@ function appProvidedAgentPid() {
   return state.cdp?.phi?.peerAgentPid ?? null
 }
 
+function appProvidedAgentCapability() {
+  return state.cdp?.phi?.peerAgentCapability ?? null
+}
+
+// True when this round claims to act for a live agent session it is NOT
+// joined to: it named the agent's pid, the connection is a real app-socket
+// channel (the app always echoes a session capability on those — its absence
+// means the legacy tunnel or an older app, where this check does not apply),
+// and the app resolved a different driver than the claimed agent. That is
+// the orphaned-round signature — a watcher backgrounded with `… &` is
+// reparented away from the agent once its shell exits, and the app's
+// per-principal task isolation then gives it a FRESH driver principal that
+// can neither see nor drive the agent's tasks. Such a round must fail
+// loudly: its empty task list would otherwise read as "the task ended".
+function roundLostAgentSession() {
+  const claimed = claimAgentPid()
+  if (!claimed) return false
+  if (!appProvidedAgentCapability()) return false
+  const resolved = appProvidedAgentPid()
+  if (resolved === claimed) return false
+  // The app's walk may stop on a DIFFERENT ancestor than ours — its
+  // passthrough list and helper-bundle handling differ (a homebrew
+  // `timeout` resolves to coreutils, an Electron terminal to the outer
+  // app). A resolved driver that is a live ancestor of this process still
+  // means the round is parented to what the app bound — not orphaned. A
+  // true orphan was reparented AWAY from its claimed agent (to launchd),
+  // so the app resolves no pid (plumbing) or one outside our ancestry.
+  return !(resolved && ancestorPids().includes(resolved))
+}
+
+const ORPHANED_ROUND_MESSAGE =
+  'this round lost its agent session: it runs orphaned from the driving ' +
+  'agent (typically backgrounded with `… &`, which reparents it away from ' +
+  'the agent once its spawning shell exits), so the app isolates it under ' +
+  'a fresh driver principal that cannot see the agent\'s tasks. Its view ' +
+  'of task state is NOT authoritative — do not conclude the task ended. ' +
+  'Run watchers with a background mode that keeps them parented to the ' +
+  'agent session (e.g. Claude Code\'s run_in_background), or use the ' +
+  'blocking handOffAndWait() — see SKILL.md "Hand-back watcher".'
+
 function spawnSessionMirror(taskId) {
   if (process.env.PHI_NO_SESSION_MIRROR) return
   try {
@@ -644,6 +903,7 @@ function spawnSessionMirror(taskId) {
     if (!transcript) return  // unknown driver: say() remains
     const prev = readDaemonControl(transcript.sessionKey)
     const livePid = prev && prev.pid && pidAlive(prev.pid) ? prev.pid : null
+    const agentCapability = appProvidedAgentCapability()
     writeDaemonControl(transcript.sessionKey, {
       taskId, transcriptPath: transcript.path, format: transcript.format,
       ts: Date.now(),
@@ -658,8 +918,19 @@ function spawnSessionMirror(taskId) {
     })
     if (livePid) return  // the live tailer follows the control-file update
     const tailer = fileURLToPath(new URL('../mirror-tailer.mjs', import.meta.url))
-    spawn(process.execPath, [tailer, transcript.sessionKey],
-          { detached: true, stdio: 'ignore' }).unref()
+    // Delegate through an inherited one-shot pipe, never argv/env/a shared
+    // temp file. The detached daemon keeps the capability only in memory.
+    const child = spawn(process.execPath, [tailer, transcript.sessionKey], {
+      detached: true,
+      stdio: ['pipe', 'ignore', 'ignore'],
+    })
+    // A tailer that dies before reading (or a failed spawn) EPIPEs the pipe;
+    // without a listener that surfaces as an UNCAUGHT stream error in this
+    // round — the enclosing try/catch never sees async stream errors.
+    child.stdin.on('error', () => {})
+    child.stdin.end(agentCapability || '')
+    child.stdin.unref?.()
+    child.unref()
   } catch {}
 }
 
@@ -689,6 +960,60 @@ function attachTab(targetId) {
   return run
 }
 
+// ---------------------------------------------------------------------------
+// Browser-level JavaScript-dialog recovery (PhiAgentSpace domain)
+//
+// A JavaScript dialog (alert/confirm/prompt/beforeunload) parks the tab's
+// renderer main thread inside a modal IPC, so every renderer-gated command —
+// Page.enable (its response comes from the renderer), Runtime.evaluate,
+// Page.captureScreenshot — hangs until the dialog closes. A session attached
+// AFTER the dialog opened can neither see it (no javascriptDialogOpening
+// replay) nor close it (Page.handleJavaScriptDialog only reaches dialogs its
+// own session saw open). These helpers ride the BROWSER session instead, so
+// they answer regardless of renderer state.
+
+/** {open, type?, message?} for the target's displayed dialog, or null when
+ *  the probe is unavailable (an app build that predates the command). */
+async function browserDialogState(targetId) {
+  const client = await cdpClient()
+  try {
+    return await client.send('PhiAgentSpace.getJavaScriptDialogState',
+                             { targetId }, undefined, 5000)
+  } catch { return null }
+}
+
+/** Closes the target's dialog from the browser process. Returns {handled},
+ *  or null when the app build predates the command; other errors propagate. */
+async function browserHandleDialog(targetId, accept, promptText) {
+  const client = await cdpClient()
+  const params = { targetId, accept: !!accept }
+  if (promptText !== undefined) params.promptText = String(promptText)
+  try {
+    return await client.send('PhiAgentSpace.handleJavaScriptDialog',
+                             params, undefined, 8000)
+  } catch (err) {
+    if (/wasn't found|not found/i.test(String(err?.message || ''))) return null
+    throw err
+  }
+}
+
+/** Degraded-attach check: when the target is wedged behind a displayed
+ *  dialog, surface it on state.openDialog and skip the renderer-gated setup
+ *  (the attach still succeeds — pageInfo() reports the dialog and
+ *  handleDialog(accept) closes it and completes the attach). */
+async function dialogBlockedAttach(targetId) {
+  const st = await browserDialogState(targetId)
+  if (!st || !st.open) return false
+  state.openDialog = { type: st.type || 'dialog', message: st.message || '' }
+  state.dialogBlocked = true
+  // Network capture never armed for this tab — drop the previous tab's
+  // buffer so readNetwork can't report stale requests as this tab's.
+  state.network = { requests: new Map(), order: [] }
+  logAction('tab blocked by dialog',
+            `${state.openDialog.type} — handleDialog(accept?) to close it`)
+  return true
+}
+
 async function attachTabNow(targetId) {
   const client = await cdpClient()
   // Detach the previous page session so sessions don't accumulate across a
@@ -706,11 +1031,26 @@ async function attachTabNow(targetId) {
   state.sessionId = sessionId
   state.targetId = targetId
   state.openDialog = null
+  state.dialogBlocked = false
   state.contextId = null
-  if (state.task) writeLastTargetId(state.task.taskId, targetId)
+  const ctx = currentContext()
+  if (ctx?.kind === 'agent') writeLastTargetId(ctx.taskId, targetId)
+  else if (ctx?.kind === 'user') writeLastTargetId(`space:${ctx.spaceId}`, targetId)
   // Session-scoped subscription that is cleaned up on the next attach.
   const on = (method, fn) =>
     state.sessionDisposers.push(client.on(method, fn, sessionId))
+  // Armed BEFORE the domain enables (and re-armed by the deaf-session retry
+  // below): a dialog that opens while the setup is still in flight must not
+  // be missed — it is the only signal the CDP side ever sends about it.
+  const armDialogListeners = () => {
+    on('Page.javascriptDialogOpening', (params) => {
+      state.openDialog = { type: params.type, message: params.message }
+    })
+    on('Page.javascriptDialogClosed', () => {
+      state.openDialog = null
+    })
+  }
+  armDialogListeners()
   // While the USER controls the Space, attach stays passive — no tab
   // activation, no viewport override below — so their live view never shifts
   // under them; takeOver()/waitForAgentControl restores agent presentation.
@@ -722,17 +1062,25 @@ async function attachTabNow(targetId) {
   if (!userDriving) {
     await client.send('Target.activateTarget', { targetId }).catch(() => {})
   }
+  // A tab wedged behind a dialog from an EARLIER round would hang every
+  // renderer-gated command below — probe browser-side and degrade instead of
+  // timing out (see dialogBlockedAttach).
+  if (await dialogBlockedAttach(targetId)) return sessionId
   try {
     await client.send('Page.enable', {}, sessionId, 15000)
   } catch (err) {
+    if (!/timed out/i.test(String(err?.message || ''))) throw err
+    // A dialog can also have opened in the race window after the probe
+    // above — re-check before treating the session as deaf.
+    if (await dialogBlockedAttach(targetId)) return sessionId
     // A just-created session can go deaf under a storm of simultaneous target
     // attaches (its commands dropped, never answered). One fresh session
     // recovers it; any other failure is real.
-    if (!/timed out/i.test(String(err?.message || ''))) throw err
     client.send('Target.detachFromTarget', { sessionId }).catch(() => {})
     ;({ sessionId } = await client.send('Target.attachToTarget',
                                         { targetId, flatten: true }))
     state.sessionId = sessionId
+    armDialogListeners()
     await client.send('Page.enable', {}, sessionId)
   }
   // Track the main frame's default execution context and pin evaluations to
@@ -791,17 +1139,12 @@ async function attachTabNow(targetId) {
   })
   await client.send('Network.enable', {}, sessionId).catch(() => {})
   // Restore this tab's viewport override if one was set earlier this round
-  // (switching back keeps it); default = the real window size.
-  if (!userDriving) {
+  // (switching back keeps it); default = the real window size. Agent-window
+  // tabs only — a user-Space tab is visible and needs no emulation.
+  if (!userDriving && state.task) {
     await applyAgentViewport(client, sessionId, targetId,
                              state.viewportByTarget.get(targetId)?.request ?? null)
   }
-  on('Page.javascriptDialogOpening', (params) => {
-    state.openDialog = { type: params.type, message: params.message }
-  })
-  on('Page.javascriptDialogClosed', () => {
-    state.openDialog = null
-  })
   return sessionId
 }
 
@@ -889,6 +1232,41 @@ async function prepareTab(client, targetId, { navigateTo = null, acceptCookies }
  * the current tab, so switchTab before acting on a specific one.
  */
 export async function openTab(url, { acceptCookies = true, reuseBlank = true } = {}) {
+  // User-space mode: open in the bound user Space's window and attach.
+  // {acceptCookies} and {reuseBlank} deliberately do not apply here: consent
+  // stays the user's own choice, and there is no agent seed tab to reuse.
+  const uctx = currentContext()
+  if (uctx?.kind === 'user') {
+    const tab = await openSpaceTab(uctx.spaceId, url)
+    // Wait for the document on a DEDICATED session (concurrent opens must
+    // not contend for the shared current-tab session — same reason
+    // prepareTab exists), then do the cheap final attach. The spaces.openTab
+    // reply predates the navigation's commit, and the initial about:blank
+    // document reports readyState 'complete', so require the real page to
+    // have committed before trusting readiness.
+    const client = await cdpClient()
+    const { sessionId } = await client.send('Target.attachToTarget',
+      { targetId: tab.targetId, flatten: true })
+    try {
+      const deadline = Date.now() + 20000
+      while (Date.now() < deadline) {
+        const s = await evalOnSession(sessionId,
+          "document.readyState + '|' + location.href", 4000).catch(() => null)
+        if (s) {
+          const sep = String(s).indexOf('|')
+          const ready = String(s).slice(0, sep)
+          const href = String(s).slice(sep + 1)
+          const committed = url === 'about:blank' || href !== 'about:blank'
+          if (committed && (ready === 'complete' || ready === 'interactive')) break
+        }
+        await wait(0.25)
+      }
+    } finally {
+      client.send('Target.detachFromTarget', { sessionId }).catch(() => {})
+    }
+    await attachTab(tab.targetId)
+    return { targetId: tab.targetId, windowId: tab.windowId, tabId: tab.tabId }
+  }
   await guardAgentControl()
   const task = requireTask()
   const client = await cdpClient()
@@ -973,8 +1351,10 @@ export async function goto(url, { timeout = 25, acceptCookies = true } = {}) {
   // Dismiss a cookie-consent banner with the static rule set (CMP selectors
   // only — high precision, no model turn), polling briefly for a late-injected
   // banner to surface. Opt out with {acceptCookies:false}; tune the wait by
-  // passing an options object, e.g. {acceptCookies:{waitMs:8000}}.
-  if (acceptCookies) {
+  // passing an options object, e.g. {acceptCookies:{waitMs:8000}}. Skipped in
+  // user-space mode like openTab's pass: consent in the user's own window is
+  // the user's choice (an explicit acceptCookies() call still works).
+  if (acceptCookies && contextKind() !== 'user') {
     await autoAcceptConsent(typeof acceptCookies === 'object' ? acceptCookies : {})
   }
   // The navigation itself succeeded; a page probe that still fails (busy or
@@ -1154,6 +1534,12 @@ export async function waitForNetworkIdle({ timeout = 30, idleMs = 500, maxInflig
 }
 
 async function evalInPage(expression, timeoutMs = 20000, depth = 0) {
+  // Fail fast instead of burning the timeout: an open dialog holds the
+  // renderer main thread, so the evaluate below could never run.
+  if (state.openDialog) {
+    throw new Error(`a JavaScript dialog is open (${state.openDialog.type}) — ` +
+                    'call handleDialog(accept) first')
+  }
   const client = await cdpClient()
   const params = { expression, returnByValue: true, awaitPromise: true }
   // Pin to the tracked main-frame context (see attachTab); retry unpinned
@@ -1248,7 +1634,7 @@ export async function pageInfo() {
  * Observation only — not ownership-gated. NEVER try to solve or wait out a
  * challenge: hand off to the user the FIRST time one appears (the widget is a
  * cross-origin iframe and synthetic input is exactly what it scores). See
- * SKILL.md ("Cloudflare challenges").
+ * SKILL.md ("Cloudflare challenges") and references/challenges.md.
  */
 export async function detectChallenge() {
   if (state.openDialog) return { dialog: state.openDialog }
@@ -1788,14 +2174,23 @@ const PHI_SCAN_FN = `function (opts) {
     }
     if (tag === 'input') {
       const nm = nameOf(el)
+      // Never echo a password field's content into the scan (and thus into
+      // the agent's context) — report only that a value is present. Covers
+      // secrets the agent filled AND ones the user typed during a handoff.
+      // data-phi-filled is the app's durable vault-fill marker: it keeps
+      // the mask on even after a show-password toggle flips the input to
+      // type=text (the type check alone would then leak the value).
+      const secretVal = (el.type || '').toLowerCase() === 'password' ||
+                        el.hasAttribute('data-phi-filled')
+      const shownVal = el.value ? (secretVal ? '•••' : String(el.value).slice(0, 120)) : ''
       const { n, loc } = record(el, 'input', {
         name: nm, type: el.type || 'text',
-        value: el.value ? String(el.value).slice(0, 120) : '',
+        value: shownVal,
       })
       out.push('[' + fmtAnno(n, loc) + ' input' + hid() + ' type=' + (el.type || 'text') +
                (el.name ? ' name=' + el.name : '') +
                (el.placeholder ? ' placeholder="' + el.placeholder + '"' : '') +
-               (el.value ? ' value="' + String(el.value).slice(0, 80) + '"' : '') + ']')
+               (shownVal ? ' value="' + shownVal.slice(0, 80) + '"' : '') + ']')
       return
     }
     if (tag === 'textarea' || tag === 'select') {
@@ -2090,7 +2485,7 @@ export async function readConsole({ errors = false, max = 100 } = {}) {
 /**
  * Requests seen on the current tab as enveloped text lines
  * (`status method url [type] size`). Capture is armed when the round attaches
- * to the tab (ensureAgentSpace/openTab/switchTab) — CDP has no request
+ * to the tab (enterContext/openTab/switchTab) — CDP has no request
  * history, so traffic from earlier rounds is not visible: to audit a page
  * load, goto and readNetwork in the SAME round. Options: {failedOnly: true}
  * keeps network failures and 4xx/5xx responses; {max} caps returned lines
@@ -2146,6 +2541,14 @@ export async function readNetwork({ failedOnly = false, max = 100 } = {}) {
  * line-multiset format as snapshotText({diff: true})), enveloped.
  */
 export async function diffUrls(url1, url2) {
+  // The temp-tab contract ("the current tab is untouched") cannot hold in a
+  // visible user window: every open/attach/close there flips the tab the
+  // user is looking at. Run comparisons from an agent Space.
+  if (contextKind() === 'user') {
+    throw new Error('diffUrls is agent-space only — it churns a temporary ' +
+                    'tab, which would visibly flip tabs in the user\'s ' +
+                    "window; run it from an agent Space (enterContext({kind:'agent'}))")
+  }
   await guardAgentControl()
   const prevTarget = state.targetId
   // A separate tab is the contract here (it is closed in the finally): reusing
@@ -2453,6 +2856,12 @@ async function locateObjectId(target) {
 
 /** PNG screenshot of the current tab. Returns the file path. */
 export async function screenshot(path) {
+  // An open dialog blocks the renderer — the capture below would time out
+  // after 30s instead of ever painting.
+  if (state.openDialog) {
+    throw new Error(`a JavaScript dialog is open (${state.openDialog.type}) — ` +
+                    'call handleDialog(accept) first')
+  }
   await maybeTrackWindowResize()
   await maybePing()
   logAction('screenshot')
@@ -2486,6 +2895,9 @@ export async function screenshotBrowser(path) {
   const webFile = join(tmpdir(), `phi-web-${Date.now()}.png`)
   let webPath
   try {
+    // A dialog-blocked renderer cannot paint — skip straight to the
+    // chrome-only shot instead of stalling 30s on the capture.
+    if (state.openDialog) throw new Error('dialog open')
     const { data } = await client.send('Page.captureScreenshot',
                                        { format: 'png' }, requireSession(), 30000)
     writeFileSync(webFile, Buffer.from(data, 'base64'))
@@ -2888,6 +3300,15 @@ export async function scrapeMedia({ types = ['image'], within = null, dir,
  * applied {width, height, scale}.
  */
 export async function setViewport({ width, height } = {}) {
+  // The emulation override exists for the HIDDEN agent window (0×0 without
+  // it). A user-Space tab is visible and sized for real — imposing metrics
+  // there would visibly reshape the user's own tab and nothing would clear
+  // it. Test responsive layouts from an agent Space instead.
+  if (contextKind() === 'user') {
+    throw new Error('setViewport is agent-space only — a user-Space tab is ' +
+                    'visible and sized for real; use an agent Space to test ' +
+                    'explicit viewport sizes')
+  }
   await guardAgentControl()
   const clamp = (v, name) => {
     if (v === undefined) return undefined
@@ -2904,6 +3325,9 @@ export async function setViewport({ width, height } = {}) {
   const request = (w === undefined && h === undefined) ? null
     : { ...(w !== undefined ? { width: w } : {}),
         ...(h !== undefined ? { height: h } : {}) }
+  // Persist so the next round re-applies it (the CDP override dies with this
+  // round's session) — the CLI runs one command per round.
+  if (state.task) writeStoredViewport(state.task.taskId, request)
   return applyAgentViewport(await cdpClient(), requireSession(), targetId, request)
 }
 
@@ -2913,7 +3337,8 @@ export async function setViewport({ width, height } = {}) {
 // Fire-and-forget: the overlay cursor is cosmetic, so don't spend an app-bus
 // round trip of latency on every click/hover waiting for it.
 function mirrorCursor(x, y) {
-  const task = requireTask()
+  const task = state.task
+  if (!task) return  // no overlay in user-space mode
   phiSend('agentSpace.cursor', { taskId: task.taskId, x, y }).catch(() => {})
 }
 
@@ -2922,7 +3347,8 @@ function mirrorCursor(x, y) {
 // native overlay. Coordinates are widget space (like mirrorCursor); cosmetic,
 // so never block input on it.
 function mirrorEffect(kind, props = {}) {
-  const task = requireTask()
+  const task = state.task
+  if (!task) return  // no overlay in user-space mode
   phiSend('agentSpace.effect', { taskId: task.taskId, kind, ...props }).catch(() => {})
 }
 
@@ -3124,7 +3550,12 @@ export async function fillInput(target, text, { instant = false } = {}) {
   }
   const str = String(text)
   logAction(`fill ${describeTarget(target)}`, `${str.length} chars`)
+  return await fillTargetValue(spec, target, str, { instant })
+}
 
+/** Shared fill machinery behind fillInput and fillCredential: resolve, focus,
+ *  type-or-set, verify. Does not log — callers write their own action line. */
+async function fillTargetValue(spec, target, str, { instant = false, label = 'fillInput' } = {}) {
   // One pass: scroll into view, focus, select-all (so typed text REPLACES the
   // current value), classify, and measure for the overlay's typing pulse.
   // Resolution rides the same short grace as click (see retryResolve); the
@@ -3165,7 +3596,7 @@ export async function fillInput(target, text, { instant = false } = {}) {
     return { typeable: typeable, rect: rect,
              focused: el.ownerDocument.activeElement === el }
   }`))
-  if (!prep) throw new Error('fillInput: target not found: ' + describeTarget(target))
+  if (!prep) throw new Error(label + ': target not found: ' + describeTarget(target))
 
   let pulse = null
   if (prep.rect) {
@@ -3213,8 +3644,8 @@ export async function fillInput(target, text, { instant = false } = {}) {
     }
     return { ok: false, err: 'not an editable element (' + tag + ')' }
   }`, [str])
-  if (!res) throw new Error('fillInput: target not found: ' + describeTarget(target))
-  if (!res.ok) throw new Error('fillInput: ' + (res.err || 'failed'))
+  if (!res) throw new Error(label + ': target not found: ' + describeTarget(target))
+  if (!res.ok) throw new Error(label + ': ' + (res.err || 'failed'))
   return { done: true }
 }
 
@@ -3242,6 +3673,127 @@ export async function typeText(text) {
   await insertTextPaced(String(text), pulse)
 }
 
+/**
+ * Invokes `fnDecl` (a function-declaration string) with the resolved target
+ * element as `this`, returning the by-value result. The element-scoped
+ * sibling of `js()`: use it to read or tweak one control (checkbox state,
+ * dataset, style) without hand-writing selector lookups in page JS. Targets
+ * take every form click() accepts except coordinates. Throws "target not
+ * found" after the standard resolution grace.
+ */
+export async function callOnElement(target, fnDecl, args = []) {
+  await guardAgentControl()
+  const spec = normalizeTarget(target)
+  if (spec.coords) throw new Error('callOnElement needs an element target, not coordinates')
+  logAction(`call on ${describeTarget(target)}`)
+  const probe = { done: false, value: undefined }
+  await retryResolve(async () => {
+    const objectId = await resolveSpecObjectId(spec)
+    if (!objectId) return null
+    const client = await cdpClient()
+    const sid = requireSession()
+    try {
+      const { result, exceptionDetails } = await client.send('Runtime.callFunctionOn', {
+        objectId, functionDeclaration: fnDecl,
+        arguments: args.map((value) => ({ value })), returnByValue: true,
+      }, sid)
+      if (exceptionDetails) {
+        throw new Error('callOnElement failed: ' +
+          (exceptionDetails.exception?.description || exceptionDetails.text || 'error'))
+      }
+      probe.done = true
+      probe.value = result?.value
+      return probe
+    } finally {
+      const client2 = await cdpClient()
+      client2.send('Runtime.releaseObject', { objectId }, sid).catch(() => {})
+    }
+  })
+  if (!probe.done) throw new Error(`callOnElement: target not found: ${describeTarget(target)}`)
+  return probe.value
+}
+
+/** One phase of a key press — `phase` is 'down' or 'up'. Accepts the same
+ *  named keys as pressKey plus single printable characters. Use for held-key
+ *  interactions (shift-selection, game controls); pressKey remains the
+ *  simple down+up. CDP modifier bits: 1=Alt, 2=Ctrl, 4=Meta, 8=Shift. */
+export async function keyPhase(key, phase, { modifiers = 0 } = {}) {
+  await guardAgentControl()
+  if (phase !== 'down' && phase !== 'up') throw new Error("keyPhase: phase must be 'down' or 'up'")
+  const def = resolveKeyDef(key)
+  logAction(`key ${phase} ${key}`)
+  const client = await cdpClient()
+  const common = {
+    key: def.key, code: def.code, modifiers,
+    windowsVirtualKeyCode: def.keyCode, nativeVirtualKeyCode: def.keyCode,
+  }
+  if (phase === 'down') {
+    await client.send('Input.dispatchKeyEvent',
+                      { type: 'rawKeyDown', ...common }, requireSession())
+    if (def.text) {
+      await client.send('Input.dispatchKeyEvent',
+                        { type: 'char', text: def.text, ...common }, requireSession())
+    }
+  } else {
+    await client.send('Input.dispatchKeyEvent',
+                      { type: 'keyUp', ...common }, requireSession())
+  }
+}
+
+/**
+ * One raw mouse phase in CSS-pixel viewport coordinates — `type` is 'move',
+ * 'down', 'up', or 'wheel'. Applies the same zoom scaling and watcher
+ * mirroring as click/scroll. Compose sequences (drag, held-button paths)
+ * from these; click() remains the simple move+press+release.
+ */
+export async function mouseEvent(type, { x = 0, y = 0, button = 'left',
+                                         clickCount = 1, dx = 0, dy = 0,
+                                         buttons = undefined } = {}) {
+  await guardAgentControl()
+  const kinds = { move: 'mouseMoved', down: 'mousePressed',
+                  up: 'mouseReleased', wheel: 'mouseWheel' }
+  const kind = kinds[type]
+  if (!kind) throw new Error("mouseEvent: type must be 'move', 'down', 'up', or 'wheel'")
+  logAction(`mouse ${type} (${x}, ${y})`)
+  const client = await cdpClient()
+  const s = inputScale()
+  const ix = Math.round(x * s), iy = Math.round(y * s)
+  try { mirrorCursor(ix, iy) } catch {}
+  const params = { type: kind, x: ix, y: iy, pointerType: 'mouse' }
+  if (type === 'down' || type === 'up') {
+    params.button = button
+    params.clickCount = clickCount
+  }
+  // A move that is part of a held-button gesture must carry the pressed-
+  // buttons bitmask (1=left, 2=right, 4=middle) — Chromium only synthesizes
+  // a drag when the moves say a button is down.
+  if (buttons !== undefined) {
+    params.buttons = buttons
+    if (type === 'move' && buttons & 1) params.button = 'left'
+  }
+  if (type === 'wheel') { params.deltaX = dx; params.deltaY = dy }
+  await client.send('Input.dispatchMouseEvent', params, requireSession())
+  if (type === 'down') { try { mirrorEffect('click', { x: ix, y: iy }) } catch {} }
+}
+
+/** KEY_DEFS entry for a named key, or a synthesized one for a single
+ *  printable character ('a', 'Z', '/'). */
+function resolveKeyDef(key) {
+  const def = KEY_DEFS[key]
+  if (def) return def
+  if (typeof key === 'string' && [...key].length === 1) {
+    const upper = key.toUpperCase()
+    const isLetter = /^[a-z]$/i.test(key)
+    const isDigit = /^[0-9]$/.test(key)
+    return {
+      key, text: key,
+      keyCode: isLetter || isDigit ? upper.charCodeAt(0) : key.charCodeAt(0),
+      code: isLetter ? `Key${upper}` : isDigit ? `Digit${key}` : '',
+    }
+  }
+  throw new Error(`unsupported key '${key}' — use typeText for character sequences`)
+}
+
 const KEY_DEFS = {
   Enter: { keyCode: 13, key: 'Enter', code: 'Enter', text: '\r' },
   Tab: { keyCode: 9, key: 'Tab', code: 'Tab' },
@@ -3256,12 +3808,18 @@ const KEY_DEFS = {
   PageUp: { keyCode: 33, key: 'PageUp', code: 'PageUp' },
   Home: { keyCode: 36, key: 'Home', code: 'Home' },
   End: { keyCode: 35, key: 'End', code: 'End' },
+  Space: { keyCode: 32, key: ' ', code: 'Space', text: ' ' },
+  // Modifier keys — held down/up via keyPhase (a plain pressKey down+up is a
+  // no-op tap). No `text`: modifiers never insert a character.
+  Shift: { keyCode: 16, key: 'Shift', code: 'ShiftLeft' },
+  Control: { keyCode: 17, key: 'Control', code: 'ControlLeft' },
+  Alt: { keyCode: 18, key: 'Alt', code: 'AltLeft' },
+  Meta: { keyCode: 91, key: 'Meta', code: 'MetaLeft' },
 }
 
 export async function pressKey(key, { modifiers = 0 } = {}) {
   await guardAgentControl()
-  const def = KEY_DEFS[key]
-  if (!def) throw new Error(`pressKey: unsupported key '${key}' — use typeText for characters`)
+  const def = resolveKeyDef(key)
   logAction(`press ${key}`)
   const client = await cdpClient()
   const common = {
@@ -3295,16 +3853,83 @@ export async function scroll({ dy = 600, dx = 0, x = 400, y = 300 } = {}) {
 export async function handleDialog(accept = true, promptText = undefined) {
   const client = await cdpClient()
   logAction(accept ? 'accept dialog' : 'dismiss dialog')
-  const params = { accept }
-  if (promptText !== undefined) params.promptText = promptText
-  await client.send('Page.handleJavaScriptDialog', params, requireSession())
+  const targetId = state.targetId
+  const wasBlocked = state.dialogBlocked
+  // The per-session path reaches only dialogs THIS session saw open (Page
+  // enabled at the time). A dialog inherited from an earlier round — the
+  // degraded-attach case — needs the browser-level command instead.
+  if (!wasBlocked) {
+    const params = { accept }
+    if (promptText !== undefined) params.promptText = promptText
+    try {
+      await client.send('Page.handleJavaScriptDialog', params, requireSession())
+      state.openDialog = null
+      return
+    } catch (err) {
+      // Fall through: the browser-level path below can still close a dialog
+      // this session never witnessed. Unavailable there → rethrow this.
+      const fallback = await browserHandleDialog(targetId, accept, promptText)
+        .catch(() => null)
+      if (!fallback) throw err
+      state.openDialog = null
+      return
+    }
+  }
+  const res = await browserHandleDialog(targetId, accept, promptText)
+  if (!res) {
+    throw new Error(
+      'handleDialog: a dialog from an earlier round blocks this tab, and ' +
+      'this Phi build has no browser-level dialog handling ' +
+      '(PhiAgentSpace.handleJavaScriptDialog) — update Phi Browser, or drop ' +
+      'the tab with closeTab()')
+  }
   state.openDialog = null
+  // The degraded attach skipped the renderer-gated session setup; the
+  // renderer is unblocked now, so complete it with a full re-attach.
+  state.dialogBlocked = false
+  await attachTab(targetId)
+}
+
+/**
+ * Browser-level dialog control that needs NO attached page session:
+ * PhiAgentSpace.handleJavaScriptDialog resolves the tab in the browser
+ * process and closes its dialog there, so it reaches tabs whose renderer is
+ * blocked and tabs other than the current one — without touching the attach
+ * flow. Prefer handleDialog(accept) for the current tab; use this to free a
+ * NON-current tab (targetIds from listTabs()). accept=false keeps a
+ * beforeunload'd page in place; accept=true lets the navigation proceed.
+ * Returns {handled} — false means no dialog was showing.
+ */
+export async function dismissDialog(targetId, accept = false, promptText = undefined) {
+  if (!targetId || typeof targetId !== 'string') {
+    throw new Error('dismissDialog(targetId, accept): targetId is required')
+  }
+  logAction(accept ? 'accept dialog (browser-level)'
+                   : 'dismiss dialog (browser-level)',
+            `target ${String(targetId).slice(0, 8)}…`)
+  const res = await browserHandleDialog(targetId, accept, promptText)
+  if (!res) {
+    throw new Error(
+      'dismissDialog: this Phi build has no ' +
+      'PhiAgentSpace.handleJavaScriptDialog — update Phi Browser')
+  }
+  if (res.handled && targetId === state.targetId) {
+    state.openDialog = null
+    if (state.dialogBlocked) {
+      state.dialogBlocked = false
+      await attachTab(targetId)
+    }
+  }
+  return res
 }
 
 // ---------------------------------------------------------------------------
 // Presence / ownership / lifecycle
 
 export async function setStatus(caption) {
+  // User-space mode has no overlay pill or transcript console — narration
+  // belongs in chat there. Quiet no-op so shared flows need no branching.
+  if (contextKind() === 'user') return
   const task = requireTask()
   await phiSend('agentSpace.setState', { taskId: task.taskId, caption: String(caption) })
 }
@@ -3394,6 +4019,7 @@ async function reportRunState(running) {
 }
 
 export async function markError(message) {
+  if (contextKind() === 'user') return  // no badge surface in user-space mode
   const task = requireTask()
   await phiSend('agentSpace.markError', { taskId: task.taskId, message: String(message) })
 }
@@ -3474,6 +4100,12 @@ export async function waitForAgentControl({ timeout = 600 } = {}) {
     const tasks = await listAgentSpaces()
     const t = tasks.find((x) => x.taskId === task.taskId)
     if (!t) {
+      // "Task missing" is only authoritative from a round that still holds
+      // the agent's driver principal — from an orphaned round it means "not
+      // visible to YOU", and reporting {gone} would falsely end the task.
+      if (roundLostAgentSession()) {
+        throw new Error(`waitForAgentControl: ${ORPHANED_ROUND_MESSAGE}`)
+      }
       state.task = null
       state.sessionId = null
       state.targetId = null
@@ -3552,11 +4184,18 @@ export async function handOffAndWait(message, { timeout = 100 } = {}) {
  * task — the transcript reads result first, "Task completed" last. Without
  * a mirror (unrecognized driver), completion is immediate.
  */
-export async function complete({ success = true, message = undefined } = {}) {
+export async function complete({ success = true, message = undefined,
+                                 immediate = false } = {}) {
   const task = requireTask()
   const status = success ? 'success' : 'failure'
   let deferred = false
-  try {
+  // Deferral hands the completion to the mirror daemon so it can flush the
+  // result and a final "Task completed" line before the Space closes — right
+  // for a heredoc round whose driving session ends soon after. A caller that
+  // IS its own session boundary (the phibrowser CLI: the driving agent
+  // outlives the invocation, so "defer until the session ends" would strand
+  // the task for the whole grace window) passes {immediate: true} to close now.
+  if (!immediate) try {
     const transcript = discoverSessionTranscript(task.taskId, agentRootPid())
     if (transcript) {
       deferred = requestDeferredComplete(transcript.sessionKey, task.taskId,
@@ -3579,6 +4218,9 @@ export async function complete({ success = true, message = undefined } = {}) {
     // control file is the tailer's exit signal.
     stopSessionMirror(task.taskId)
   }
+  // Drop any persisted viewport so a later session reusing this name starts
+  // at the real window size (the task record itself is ephemeral).
+  if (!deferred) writeStoredViewport(task.taskId, null)
   state.task = null
   state.sessionId = null
   state.targetId = null
@@ -3744,8 +4386,10 @@ export async function importCookies(source, { url } = {}) {
 
 /** Management writes commit on a background queue in the app; this polls
  *  `check` until it returns a truthy value (the settled read) or the timeout
- *  lapses (best effort: returns the last value, no throw), so every mutation
- *  helper reads its own write before returning. */
+ *  lapses (best effort: returns the last value, no throw). Mutation helpers
+ *  surface the outcome as a `settled` flag (or their `deleted`/`closed`/…
+ *  confirmation boolean) — false means the write was SENT but not yet
+ *  readable within the wait, not that it failed; re-list to check. */
 async function settle(check, { timeout = 4, poll = 0.15 } = {}) {
   const deadline = Date.now() + timeout * 1000
   let last
@@ -3823,13 +4467,13 @@ export async function updateSpace(space, { name, colorHex, iconName } = {}) {
     ...(colorHex ? { colorHex } : {}),
     ...(iconName ? { iconName } : {}),
   })
-  await settle(async () => {
+  const settled = !!(await settle(async () => {
     const s = (await listSpaces()).find((x) => x.spaceId === spaceId)
     return s && (!name || s.name === name) &&
            (!colorHex || s.colorHex === colorHex) &&
            (!iconName || s.iconName === iconName)
-  })
-  return { spaceId }
+  }))
+  return { spaceId, settled }
 }
 
 /** Deletes a Space: closes its windows and cascade-deletes its bookmarks and
@@ -3838,9 +4482,9 @@ export async function updateSpace(space, { name, colorHex, iconName } = {}) {
 export async function deleteSpace(space) {
   const spaceId = await resolveSpaceId(space)
   await phiSend('agentSpace.spaces.delete', { spaceId })
-  await settle(async () =>
-    !(await listSpaces()).some((s) => s.spaceId === spaceId))
-  return { spaceId, deleted: true }
+  const settled = !!(await settle(async () =>
+    !(await listSpaces()).some((s) => s.spaceId === spaceId)))
+  return { spaceId, deleted: settled }
 }
 
 /** Creates a browser profile (its own cookies/logins). Returns {profileId}.
@@ -3896,17 +4540,17 @@ export async function updateUrlRule(id, { host, pathPrefix, ask, space } = {}) {
   if (ask !== undefined) payload.ask = !!ask
   if (space !== undefined) payload.spaceId = await resolveSpaceId(space)
   await phiSend('agentSpace.urlRules.update', payload)
-  await settle(async () =>
-    !(await listUrlRules()).some((r) => r.id === id))
-  return { id }
+  const settled = !!(await settle(async () =>
+    !(await listUrlRules()).some((r) => r.id === id)))
+  return { id, settled }
 }
 
 /** Deletes one rule by id (from a FRESH listUrlRules()). */
 export async function deleteUrlRule(id) {
   await phiSend('agentSpace.urlRules.delete', { id })
-  await settle(async () =>
-    !(await listUrlRules()).some((r) => r.id === id))
-  return { id, deleted: true }
+  const settled = !!(await settle(async () =>
+    !(await listUrlRules()).some((r) => r.id === id)))
+  return { id, deleted: settled }
 }
 
 /** The profile's pinned tabs (pinned tabs are per-profile, shared by all of
@@ -3929,10 +4573,10 @@ export async function addPinnedTab(url, { title, profile = '', index } = {}) {
     ...(profile ? { profileId: profile } : {}),
     ...(Number.isInteger(index) ? { index } : {}),
   })
-  await settle(async () =>
+  const settled = !!(await settle(async () =>
     (await listPinnedTabs({ profile: created.profileId }))
-      .some((p) => p.guid === created.guid))
-  return { guid: created.guid, profileId: created.profileId }
+      .some((p) => p.guid === created.guid)))
+  return { guid: created.guid, profileId: created.profileId, settled }
 }
 
 /** Edits a pinned tab's {url, title} by guid (from listPinnedTabs()). */
@@ -3942,20 +4586,20 @@ export async function updatePinnedTab(guid, { url, title } = {}) {
     ...(url !== undefined ? { url } : {}),
     ...(title !== undefined ? { title } : {}),
   })
-  await settle(async () => {
+  const settled = !!(await settle(async () => {
     const p = (await listPinnedTabs()).find((x) => x.guid === guid)
     return p && (url === undefined || p.url === url) &&
            (title === undefined || p.title === title)
-  })
-  return { guid }
+  }))
+  return { guid, settled }
 }
 
 /** Unpins (deletes the pinned record) by guid. */
 export async function removePinnedTab(guid) {
   await phiSend('agentSpace.pinnedTabs.remove', { guid })
-  await settle(async () =>
-    !(await listPinnedTabs()).some((p) => p.guid === guid))
-  return { guid, deleted: true }
+  const settled = !!(await settle(async () =>
+    !(await listPinnedTabs()).some((p) => p.guid === guid)))
+  return { guid, deleted: settled }
 }
 
 /** The Space's bookmark tree (bookmarks are per-Space). Folders carry
@@ -3977,12 +4621,12 @@ export async function addBookmark(url, { title, space, folder, index } = {}) {
   if (folder) payload.parentGuid = folder
   if (Number.isInteger(index)) payload.index = index
   const created = await phiSend('agentSpace.bookmarks.add', payload)
-  await settle(async () => {
+  const settled = !!(await settle(async () => {
     const tree = await phiSend('agentSpace.bookmarks.list',
       payload.spaceId ? { spaceId: payload.spaceId } : {})
     return findBookmarkNode(tree.bookmarks, created.guid)
-  })
-  return { guid: created.guid }
+  }))
+  return { guid: created.guid, settled }
 }
 
 /** Creates a bookmark folder. Options: {space, parent (folder guid), index}.
@@ -3994,12 +4638,12 @@ export async function addBookmarkFolder(title, { space, parent, index } = {}) {
   if (parent) payload.parentGuid = parent
   if (Number.isInteger(index)) payload.index = index
   const created = await phiSend('agentSpace.bookmarks.addFolder', payload)
-  await settle(async () => {
+  const settled = !!(await settle(async () => {
     const tree = await phiSend('agentSpace.bookmarks.list',
       payload.spaceId ? { spaceId: payload.spaceId } : {})
     return findBookmarkNode(tree.bookmarks, created.guid)
-  })
-  return { guid: created.guid }
+  }))
+  return { guid: created.guid, settled }
 }
 
 /** Edits a bookmark's {title, url} by guid; folders take title only. */
@@ -4009,14 +4653,14 @@ export async function updateBookmark(guid, { title, url } = {}) {
     ...(title !== undefined ? { title } : {}),
     ...(url !== undefined ? { url } : {}),
   })
-  await settle(async () => {
+  const settled = !!(await settle(async () => {
     const tree = await phiSend('agentSpace.bookmarks.list', { spaceId: res.spaceId })
     const node = findBookmarkNode(tree.bookmarks, guid)
     return node && (title === undefined || node.title === title)
     // URL is normalized by the app (scheme, trailing slash), so it is not
     // string-compared here; the title check settles the same write.
-  })
-  return { guid }
+  }))
+  return { guid, settled }
 }
 
 /** Moves a bookmark/folder. Options: {folder: parent folder guid (omit for
@@ -4027,24 +4671,432 @@ export async function moveBookmark(guid, { folder, index } = {}) {
     ...(folder ? { parentGuid: folder } : {}),
     ...(Number.isInteger(index) ? { index } : {}),
   })
-  await settle(async () => {
+  const settled = !!(await settle(async () => {
     const tree = await phiSend('agentSpace.bookmarks.list', { spaceId: res.spaceId })
     if (!folder) return findBookmarkNode(tree.bookmarks, guid) // at root or anywhere: moved
     const parent = findBookmarkNode(tree.bookmarks, folder)
     return parent && findBookmarkNode(parent.children ?? [], guid)
-  })
-  return { guid }
+  }))
+  return { guid, settled }
 }
 
 /** Deletes a bookmark — or a folder with everything in it. DESTRUCTIVE for
  *  folders: only on the user's explicit ask. */
 export async function removeBookmark(guid) {
   const res = await phiSend('agentSpace.bookmarks.remove', { guid })
-  await settle(async () => {
+  const settled = !!(await settle(async () => {
     const tree = await phiSend('agentSpace.bookmarks.list', { spaceId: res.spaceId })
     return !findBookmarkNode(tree.bookmarks, guid)
+  }))
+  return { guid, deleted: settled }
+}
+
+// --- Credentials -------------------------------------------------------------
+//
+// Fetch items from the user's password manager (Bitwarden) — logins, secure
+// notes, cards, identities, and SSH keys. A served item carries `type`
+// ('login'|'note'|'card'|'identity'|'sshKey') and `name`; domain queries reach
+// logins only (they match through login URIs), while {search} and {id} reach
+// every type. Every secret-touching call pops an approve/deny prompt in Phi
+// first; the user may grant a 10-minute remember for the same site. Gated by
+// Settings ▸ Developer ▸ Agent permissions. fillCredential is the fill-first
+// path: Phi fills the page field itself, so the secret never enters this
+// process at all (logins only — other types have no origin to bind a fill
+// to). Values returned by getCredential DO enter the agent's context — prefer
+// fillCredential / runWithCredential, then field-limited requests, and never
+// log the values.
+// TOTP is deliberately not exposed (the app answers totp_not_supported):
+// releasing a live 2FA code to an agent collapses both factors behind one
+// approval prompt — 2FA steps stay with the user via handOff().
+
+function normalizeCredentialQuery(query) {
+  if (typeof query === 'string') return { domain: query }
+  if (query && (query.domain || query.id || query.search)) return query
+  throw new Error('credential query must be a domain string or {domain|id|search}')
+}
+
+/** Lowercase host of a URI, tolerating a missing scheme; null when unparsable.
+ *  Feeds the origin check, so the parse must not be spoofable: the authority
+ *  is isolated BEFORE userinfo is stripped — stripping at an `@` first would
+ *  let "https://evil.com/x@github.com" read as github.com. Mirrors the
+ *  app-side `hostOfURI`. */
+function hostOfUri(uri) {
+  const trimmed = String(uri || '').trim()
+  const afterScheme = trimmed.includes('://') ? trimmed.split('://')[1] : trimmed
+  const authority = afterScheme.split(/[/?#]/)[0]
+  const afterUserinfo = authority.includes('@')
+    ? authority.slice(authority.lastIndexOf('@') + 1) : authority
+  const host = afterUserinfo.split(':')[0].toLowerCase()
+  return host || null
+}
+
+/** Whether the page's host and a credential's host belong together: equal, or
+ *  one a subdomain of the other (github.com ↔ auth.github.com). The subdomain
+ *  arm requires the parent to have at least two labels, so a bare public suffix
+ *  ("com") can't be treated as the parent of every host under it — otherwise
+ *  this origin guard would pass a fill to the wrong site. Mirrors the helper's
+ *  `host_matches`; a full public-suffix list is future work. */
+function credHostMatches(pageHost, credHost) {
+  const a = String(pageHost || '').toLowerCase()
+  const b = String(credHost || '').toLowerCase()
+  if (!a || !b) return false
+  if (a === b) return true
+  return (b.includes('.') && a.endsWith('.' + b))
+      || (a.includes('.') && b.endsWith('.' + a))
+}
+
+/** Password-manager readiness: {status: 'ready'|'locked'|'logged_out'|
+ *  'not_installed'|'unavailable', ready: boolean}. No approval, no secret. */
+export async function credentialStatus() {
+  return await phiSend('credentials.status', {})
+}
+
+/** For an `ambiguous` credential error: a message naming the (non-secret)
+ *  candidate items and how to narrow; null for any other error. Phi never
+ *  picks among several matching vault items — the right item is the user's
+ *  call, made by narrowing the query, not a default taken on their behalf. */
+function ambiguousCredentialMessage(label, err) {
+  const reply = err?.reply
+  if (!reply || reply.error !== 'ambiguous') return null
+  const names = (reply.candidates || [])
+    .map((c) => {
+      // Logins go by username; notes/cards/identities/keys by name + type.
+      const base = c.username || c.name ||
+        (c.credentialId ? `id ${c.credentialId}` : null)
+      if (!base) return null
+      return c.type && c.type !== 'login' ? `${base} (${c.type})` : base
+    })
+    .filter(Boolean)
+  return `${label}: ${reply.matches || 'several'} vault items match this query ` +
+    'and Phi will not pick one — narrow it to a single item with ' +
+    '{domain, username} (or {id: credentialId})' +
+    (names.length ? `. Candidates: ${names.join(', ')}` : '') +
+    (Array.isArray(reply.candidates) && reply.matches > reply.candidates.length
+      ? ` (first ${reply.candidates.length} of ${reply.matches})` : '') +
+    ' — see references/credentials.md'
+}
+
+/** Fetches a vault item after the user approves in Phi. `query` is a domain
+ *  string or {domain|id|search}; a domain query also takes a `username` to
+ *  pick one of several accounts on the same site. Domain queries serve
+ *  logins; {search: 'item name'} and {id} also reach secure notes, cards,
+ *  identities, and SSH keys. The reply always carries `type`
+ *  ('login'|'note'|'card'|'identity'|'sshKey') and `name`. opts.fields limits
+ *  returned fields; the default follows the type — login:
+ *  username/password/uri/domain (its notes require an explicit ask), note:
+ *  notes (the note body), card: cardholderName/brand/number/expMonth/expYear/
+ *  code, identity: its name/address/contact fields plus ssn etc., sshKey:
+ *  privateKey/publicKey/fingerprint. opts.purpose is a short line shown in
+ *  the approval prompt saying why the item is needed. Returns the credential
+ *  object; a served item is always the query's UNIQUE match — when several
+ *  vault items fit, Phi releases no secret and this throws 'ambiguous' with
+ *  the candidate identities, so narrow with {domain, username} (or {id}) and
+ *  call again. Throws 'user_denied' if the user declines. */
+export async function getCredential(query, { fields, purpose } = {}) {
+  const payload = { query: normalizeCredentialQuery(query), mode: 'reveal' }
+  if (Array.isArray(fields)) payload.fields = fields
+  if (purpose) payload.purpose = String(purpose)
+  let res
+  try {
+    res = await phiSend('credentials.get', payload, CRED_PROMPT_TIMEOUT_MS)
+  } catch (err) {
+    const ambiguous = ambiguousCredentialMessage('getCredential', err)
+    if (ambiguous) throw new Error(ambiguous)
+    throw err
+  }
+  return { ...res.credential,
+           ...(Number.isInteger(res.matches) ? { matches: res.matches } : {}) }
+}
+
+/**
+ * Fills a login field from the password manager WITHOUT the secret ever
+ * reaching this runner or the agent. The element is resolved here with the
+ * full target machinery and stamped with a one-time `data-phi-autofill`
+ * marker; Phi then opens its own DevTools session on this tab, finds the
+ * marker, and sets the value itself (`credentials.autofill`): the value goes
+ * app → page, and this call gets back only {filled, field}. The filled value
+ * is always the query's UNIQUE vault match — several matches throw
+ * 'ambiguous' with candidate usernames (no secret moves); narrow with
+ * {domain, username} or {id} and retry. `field` is 'password' (default) or
+ * 'username'. 2FA/TOTP steps are the user's — hand off.
+ *
+ * On an older Phi build without the in-app dispatch this throws
+ * `autofill_not_available` — it deliberately does NOT fall back to fetching
+ * the secret here, because a fill must never quietly become a reveal. If the
+ * value genuinely has to enter the agent, use getCredential, which shares it
+ * explicitly.
+ *
+ * Origin-bound: a domain query is refused with origin_mismatch when the current
+ * page's host doesn't belong to the credential's site — a misdirected fill is
+ * exactly how a prompt-injected agent would leak a login to the wrong site.
+ * Pre-checked here (no approval spent), and enforced again by the app against
+ * the page's real URL and the item's own uri/domain (id/search queries are
+ * only checkable there). `{allowCrossOrigin: true}` overrides — only when the
+ * user confirmed the page (e.g. an SSO portal that legitimately takes another
+ * site's login); the app then shows the destination in the approval prompt.
+ */
+export async function fillCredential(target, query,
+                                     { field = 'password', allowCrossOrigin = false } = {}) {
+  await guardAgentControl()
+  const spec = normalizeTarget(target)
+  if (spec.coords) {
+    throw new Error('fillCredential needs an element target (selector/@ref/loc), not coordinates')
+  }
+  if (!['password', 'username'].includes(field)) {
+    throw new Error("fillCredential: field must be 'password' or 'username'")
+  }
+  const q = normalizeCredentialQuery(query)
+  const scope = q.domain || q.id || q.search
+
+  // Origin pre-check for a domain query: refuse a misdirected fill before the
+  // vault is even asked (no approval spent). The app re-derives the page host
+  // from the browser side and enforces this again — this early check just
+  // fails fast and words the error usefully.
+  const pageHost = hostOfUri(await evalInPage('location.hostname'))
+  if (!allowCrossOrigin && q.domain && !credHostMatches(pageHost, q.domain)) {
+    throw new Error(
+      `fillCredential: origin_mismatch — the page is on "${pageHost}" but the ` +
+      `credential is for "${q.domain}". If the user confirmed this page should ` +
+      `take that login (e.g. an SSO portal), retry with {allowCrossOrigin: true}.`)
+  }
+
+  logAction(`fill ${field} for ${scope}`, 'from password manager')
+
+  // Resolve the element with the same machinery every acting helper uses
+  // (selector/@ref/loc, same-origin frames, short mount grace) and stamp it
+  // with a one-time marker for Phi to find — no selector scheme crosses the
+  // app boundary. Field-shape problems fail HERE, before any approval prompt.
+  const token = randomUUID()
+  const tagged = await retryResolve(() => callOnTarget(spec, `function (token, field) {
+    var el = this
+    if (el.tagName !== 'INPUT') {
+      return { ok: false, err: 'not an <input> (' + el.tagName.toLowerCase() + ')' }
+    }
+    var type = (el.getAttribute('type') || 'text').toLowerCase()
+    if (field === 'password' && type !== 'password') {
+      return { ok: false, err: 'not a password field (type=' + type + ')' }
+    }
+    if (field === 'username' && ['text', 'email', 'tel'].indexOf(type) < 0) {
+      return { ok: false, err: 'not a username field (type=' + type + ')' }
+    }
+    try { el.scrollIntoView({ block: 'center' }) } catch (e) {}
+    el.setAttribute('data-phi-autofill', token)
+    return { ok: true }
+  }`, [token, field]))
+  if (!tagged) {
+    throw new Error('fillCredential: target not found: ' + describeTarget(target))
+  }
+  if (!tagged.ok) throw new Error(`fillCredential: ${tagged.err}`)
+
+  const purpose = `fill the ${field} field on ${pageHost || 'the current page'}`
+  // The fill happens IN PHI — the value goes app → page and never enters this
+  // runner or the agent's context. We hand Phi the marker + query and get back
+  // only {filled}. Contrast getCredential, which returns the value to the agent.
+  let res
+  try {
+    res = await phiSend('credentials.autofill', {
+      query: q, field, token, targetId: state.targetId, purpose, allowCrossOrigin,
+    }, CRED_PROMPT_TIMEOUT_MS)
+  } catch (err) {
+    // A fill attempt consumes the marker in-page; on failures that never
+    // reached the page, sweep it off so no stale attribute lingers.
+    await removeAutofillMarker(token).catch(() => {})
+    throw new Error(remapAutofillError(err))
+  }
+  const matches = res.matches
+  return { filled: true, field, ...(Number.isInteger(matches) ? { matches } : {}) }
+}
+
+/** Rewords app-side `credentials.autofill` failures that have a useful next
+ *  step; everything else passes through under the fillCredential label. */
+function remapAutofillError(err) {
+  const ambiguous = ambiguousCredentialMessage('fillCredential', err)
+  if (ambiguous) return ambiguous
+  const msg = String(err?.message || err)
+  if (msg.includes('autofill_not_available')) {
+    return 'fillCredential: in-app autofill is not available in this Phi build. ' +
+      'By design Phi will not release the password to the agent for a fill, so ' +
+      'there is no client-side fallback. If the value genuinely needs to enter ' +
+      'the agent, use getCredential (which shares it with the agent).'
+  }
+  if (msg.includes('target_not_found')) {
+    return 'fillCredential: the field disappeared while the fill was pending ' +
+      '(the page navigated or re-rendered, e.g. during the approval prompt) — ' +
+      're-observe and retry.'
+  }
+  if (msg.includes('origin_mismatch')) {
+    return 'fillCredential: origin_mismatch — Phi refused to fill this ' +
+      'credential into the current page (it does not belong to the ' +
+      "credential's site). If the user confirmed this page should take that " +
+      'login, retry with {allowCrossOrigin: true}.'
+  }
+  return `fillCredential: ${msg.replace(/^credentials\.autofill:\s*/, '')}`
+}
+
+/** Best-effort removal of a stale autofill marker (top document + same-origin
+ *  frames), for fills that failed before Phi consumed it. */
+async function removeAutofillMarker(token) {
+  await evalInPage(`(function (token) {
+    var docs = [document]
+    var collect = function (win) {
+      for (var i = 0; i < win.frames.length; i++) {
+        try {
+          var d = win.frames[i].document
+          if (d) { docs.push(d); collect(win.frames[i]) }
+        } catch (e) {}
+      }
+    }
+    try { collect(window) } catch (e) {}
+    for (var i = 0; i < docs.length; i++) {
+      try {
+        var el = docs[i].querySelector('input[data-phi-autofill="' + token + '"]')
+        if (el) { el.removeAttribute('data-phi-autofill'); return true }
+      } catch (e) {}
+    }
+    return false
+  })(${JSON.stringify(token)})`)
+}
+
+// Every field an env mapping may name: the fixed item fields, then the
+// type-specific fields of cards, identities, and SSH keys (wire-named, as the
+// app serves them).
+const CRED_RUN_FIELDS = [
+  'username', 'password', 'uri', 'notes', 'domain', 'credentialId',
+  'type', 'name',
+  // card
+  'cardholderName', 'brand', 'number', 'expMonth', 'expYear', 'code',
+  // identity
+  'title', 'firstName', 'middleName', 'lastName', 'address1', 'address2',
+  'address3', 'city', 'state', 'postalCode', 'country', 'company', 'email',
+  'phone', 'ssn', 'passportNumber', 'licenseNumber',
+  // SSH key
+  'privateKey', 'publicKey', 'fingerprint',
+]
+// Values scrubbed from captured child output; the rest are not secret.
+const CRED_SECRET_FIELDS = ['password', 'notes', 'number', 'code', 'ssn',
+                            'passportNumber', 'licenseNumber', 'privateKey']
+
+/** Replaces every occurrence of each secret in `text` with •••. */
+function scrubSecrets(text, secrets) {
+  let out = String(text)
+  for (const s of secrets) {
+    if (s) out = out.split(s).join('•••')
+  }
+  return out
+}
+
+// Secret values this round has handled (filled into a page or injected into a
+// child process). Everything that leaves the runner for the agent's context —
+// cliLog and the runner's error printer — is scrubbed of their exact values,
+// so a secret can't ride back in through a page readback (a "show password"
+// toggle flipping the input to type=text, a js() probe, an echoing page).
+const sessionSecrets = new Set()
+
+/** Tiny values are not registered: scrubbing 1–3 chars would shred output. */
+function registerSecret(value) {
+  if (typeof value === 'string' && value.length >= 4) sessionSecrets.add(value)
+}
+
+/** Scrubs every session-handled secret out of text bound for the agent. */
+export function __scrubSessionSecrets(text) {
+  return scrubSecrets(text, sessionSecrets)
+}
+
+/**
+ * Runs a command with vault fields injected as environment variables — the
+ * CLI/API counterpart of fillCredential: secrets go browser → this process →
+ * the child's environment, never through the agent's context. `command` is
+ * an argv array (no shell). `env` maps variable names to credential fields
+ * (`{PGPASSWORD: 'password'}`); `{envAll: true}` injects every present
+ * field as PHI_CRED_<FIELD>. Valid fields: the fixed ones (username,
+ * password, uri, notes, domain, credentialId, type, name) plus the
+ * type-specific fields of cards (cardholderName, brand, number, expMonth,
+ * expYear, code), identities (firstName … licenseNumber), and SSH keys
+ * (privateKey, publicKey, fingerprint) — see CRED_RUN_FIELDS.
+ *
+ * Returns {code, stdout, stderr, timedOut} with secret values scrubbed to
+ * ••• in the captured output. That catches an accidental echo (a connection
+ * string in an error message), NOT a command that transforms a secret
+ * (base64, substrings) — only run commands you'd run with the secret anyway.
+ */
+export async function runWithCredential(query, command,
+                                        { env = {}, envAll = false, cwd,
+                                          timeoutSeconds = 120, input } = {}) {
+  if (!Array.isArray(command) || command.length === 0 ||
+      command.some((a) => typeof a !== 'string')) {
+    throw new Error('runWithCredential: command must be a non-empty array of strings')
+  }
+  const mappings = Object.entries(env)
+  for (const [name, field] of mappings) {
+    if (!name) throw new Error('runWithCredential: empty env variable name')
+    if (!CRED_RUN_FIELDS.includes(field)) {
+      throw new Error(`runWithCredential: unknown field '${field}' in env mapping — ` +
+                      `valid: ${CRED_RUN_FIELDS.join(', ')}`)
+    }
+  }
+  if (!envAll && mappings.length === 0) {
+    throw new Error('runWithCredential: give an env mapping or {envAll: true}')
+  }
+  const q = normalizeCredentialQuery(query)
+  const scope = q.domain || q.id || q.search
+  logAction(`run ${command[0]} with ${scope} credential`,
+            envAll ? 'env: all fields' : `env: ${mappings.map(([n]) => n).join(', ')}`)
+
+  const purpose = `run '${command[0]}' with the credential in its environment`
+  const wantedFields = envAll ? CRED_RUN_FIELDS : [...new Set(mappings.map(([, f]) => f))]
+  let res
+  try {
+    res = await phiSend('credentials.get',
+                        { query: q, fields: wantedFields, purpose, mode: 'run' },
+                        CRED_PROMPT_TIMEOUT_MS)
+  } catch (err) {
+    const ambiguous = ambiguousCredentialMessage('runWithCredential', err)
+    if (ambiguous) throw new Error(ambiguous)
+    throw err
+  }
+  const cred = res.credential || {}
+
+  const vars = {}
+  if (envAll) {
+    for (const f of CRED_RUN_FIELDS) {
+      if (typeof cred[f] === 'string' && cred[f]) {
+        vars['PHI_CRED_' + f.replace(/([A-Z])/g, '_$1').toUpperCase()] = cred[f]
+      }
+    }
+  }
+  for (const [name, field] of mappings) {
+    if (typeof cred[field] === 'string' && cred[field]) vars[name] = cred[field]
+  }
+  const secrets = CRED_SECRET_FIELDS.map((f) => cred[f]).filter(Boolean)
+  secrets.forEach(registerSecret)
+
+  const child = spawn(command[0], command.slice(1), {
+    env: { ...process.env, ...vars },
+    ...(cwd ? { cwd } : {}),
+    stdio: ['pipe', 'pipe', 'pipe'],
   })
-  return { guid, deleted: true }
+  if (input != null) child.stdin.write(String(input))
+  child.stdin.end()
+
+  let stdout = '', stderr = '', timedOut = false
+  child.stdout.setEncoding('utf8').on('data', (d) => { stdout += d })
+  child.stderr.setEncoding('utf8').on('data', (d) => { stderr += d })
+  const timer = setTimeout(() => { timedOut = true; child.kill('SIGKILL') },
+                           timeoutSeconds * 1000)
+  const code = await new Promise((resolve, reject) => {
+    child.on('error', (e) => {
+      clearTimeout(timer)
+      reject(new Error(`runWithCredential: failed to run '${command[0]}': ` +
+                       scrubSecrets(e.message, secrets)))
+    })
+    child.on('close', (c) => { clearTimeout(timer); resolve(c) })
+  })
+  return {
+    code,
+    stdout: scrubSecrets(stdout, secrets),
+    stderr: scrubSecrets(stderr, secrets),
+    timedOut,
+  }
 }
 
 // --- Tab groups & split view -------------------------------------------------
@@ -4101,6 +5153,12 @@ async function targetIdsByTabId() {
  *  when mutating). */
 async function layoutScope(space, { mutating = true } = {}) {
   if (space) return { spaceId: await resolveSpaceId(space) }
+  // User-space mode: the bound Space is the implicit target, same as the
+  // task window is in agent mode.
+  const ctx = currentContext()
+  if (ctx?.kind === 'user') {
+    return { spaceId: ctx.spaceId }
+  }
   if (mutating) await guardAgentControl()
   return { taskId: requireTask().taskId }
 }
@@ -4114,6 +5172,160 @@ export async function listSpaceTabs(space) {
   const { tabs } = await phiSend('agentSpace.spaces.listTabs', { spaceId })
   const byTabId = await targetIdsByTabId()
   return tabs.map((t) => ({ ...t, targetId: byTabId.get(t.tabId) ?? null }))
+}
+
+/** Opens `url` as a new tab in a USER Space's open window — the user-Space
+ *  counterpart of the agent-window openTab. App-level like the rest of
+ *  browser management: no agent Space, no control ownership. `activate`
+ *  (default true) selects the new tab in the user's window. Returns the new
+ *  tab as {tabId, targetId, url, title, active, windowId}, settled by
+ *  diffing the Space's tab strip. Fails with `space_not_open` when the
+ *  Space has no open window. */
+// Tabs already claimed by an openSpaceTab call this round. Concurrent opens
+// (Promise.all over URLs) each diff the same tab strip, so every call must
+// claim its tab synchronously inside the settle check — mirroring openTab's
+// claimedTabs — or two calls could return the same new tab.
+const claimedSpaceTabs = new Set()
+
+export async function openSpaceTab(space, url, { activate = true } = {}) {
+  if (!url || typeof url !== 'string') {
+    throw new Error('openSpaceTab(space, url): url is required')
+  }
+  const spaceId = await resolveSpaceId(space)
+  const before = new Set((await listSpaceTabs(spaceId)).map((t) => t.tabId))
+  const { windowId } = await phiSend('agentSpace.spaces.openTab',
+                                     { spaceId, url, activate })
+  let tab = null
+  await settle(async () => {
+    // Require a live targetId: the tab row can appear in the strip a poll
+    // before its CDP target materializes, and callers need the target. The
+    // find-then-add is synchronous — that's what makes the claim race-free.
+    const fresh = (await listSpaceTabs(spaceId)).find((t) =>
+      !before.has(t.tabId) && !claimedSpaceTabs.has(t.tabId) && t.targetId)
+    if (fresh) { claimedSpaceTabs.add(fresh.tabId); tab = fresh }
+    return !!tab
+  }, { timeout: 10 })
+  if (!tab) throw new Error(`openSpaceTab: no new tab appeared for ${url}`)
+  return { ...tab, windowId }
+}
+
+/** Where the user currently is: {spaceId, spaceName, isAgentSpace,
+ *  isIncognito, windowId?, tab?} — `tab` is the active Space's selected tab
+ *  as {tabId, targetId, url, title}, present only when the Space has an
+ *  open window (and never for Incognito Spaces). */
+export async function userFocus() {
+  const r = await phiSend('agentSpace.spaces.focus')
+  const focus = {
+    spaceId: r.spaceId, spaceName: r.spaceName,
+    isAgentSpace: r.isAgentSpace ?? false,
+    isIncognito: r.isIncognito ?? false,
+  }
+  if (r.windowId !== undefined) focus.windowId = r.windowId
+  if (r.tab) {
+    const byTabId = await targetIdsByTabId()
+    focus.tab = { ...r.tab, targetId: byTabId.get(r.tab.tabId) ?? null }
+  }
+  return focus
+}
+
+/** Surfaces a user Space in the user's focused window, opening its window
+ *  when it has none — the programmatic Space-switcher click. On-screen
+ *  change the user sees immediately: only on their ask. */
+export async function activateSpace(space) {
+  const spaceId = await resolveSpaceId(space)
+  await phiSend('agentSpace.spaces.activate', { spaceId })
+  return { spaceId }
+}
+
+/**
+ * Binds this round to a USER Space so the page helpers (observe, click,
+ * fillInput, goto, openTab, switchTab, …) drive ITS window. The agent Space
+ * stays the DEFAULT working surface — reach for this only when the user
+ * explicitly asks for work in their own Space ("in my space", "go to space
+ * X and …"). What user-space mode does NOT have: no ownership guard or
+ * handoff (the user is inherently in control of their own window — every
+ * action lands in their live view), no keep-alive or complete(), no
+ * overlay/status/transcript surface (setStatus/narrate are no-ops — report
+ * in chat), and no emulated viewport (the window is visible and sized for
+ * real).
+ *
+ * Resolution: an unknown name is created as a new Space when `create` is
+ * true (then activated — a window must exist to drive); an existing Space
+ * with no open window is opened via activation; `{activate: true}` also
+ * surfaces an already-open Space in the user's focused window. Attaches to
+ * the Space's selected tab (falling back to the tab last driven here, then
+ * any live tab) and returns {spaceId, name, windowId, created, tabs}.
+ */
+async function enterUserContext(space, { profile = '', create = true,
+                                         activate = false } = {}) {
+  if (!space || typeof space !== 'string') {
+    throw new Error("enterContext({kind:'user', space}): space (name or spaceId) is required")
+  }
+  let spaceId
+  let created = false
+  try {
+    spaceId = await resolveSpaceId(space)
+  } catch (err) {
+    if (!create || !/unknown space/.test(String(err?.message))) throw err
+    ;({ spaceId } = await createSpace(space, profile ? { profile } : {}))
+    created = true
+  }
+  // A window must exist to drive: activation is the only way to open one.
+  let reply = null
+  if (!created && !activate) {
+    try { reply = await phiSend('agentSpace.spaces.listTabs', { spaceId }) }
+    catch (err) {
+      if (!/space_not_open/.test(String(err?.message))) throw err
+    }
+  }
+  // An open window with an empty tab strip is broken, not usable — send it
+  // through activation too (surfacing a Space seeds a tab).
+  if (reply && reply.tabs.length === 0) reply = null
+  if (!reply) {
+    await phiSend('agentSpace.spaces.activate', { spaceId })
+    await settle(async () => {
+      reply = await phiSend('agentSpace.spaces.listTabs', { spaceId })
+        .catch(() => null)
+      return !!(reply && reply.tabs.length > 0)
+    }, { timeout: 10 })
+    // `reply` is assigned on every poll — a timeout can leave it non-null
+    // but tabless, so the usable-window test is the tab count, not `reply`.
+    if (!reply || reply.tabs.length === 0) {
+      throw new Error(
+        `enterContext(user): space '${space}' did not open a window with tabs`)
+    }
+  }
+  const entry = (await listSpaces()).find((s) => s.spaceId === spaceId)
+  // Rebinding away from a live agent task: release its busy badge and grant
+  // the inter-round grace now — __dispose skips both once task is null, and
+  // without the ping an ephemeral Space would expire ~120s into the gap.
+  if (state.task && state.task.ownership === 'agent') {
+    await reportRunState(false)
+    await phiSend('agentSpace.ping', {
+      taskId: state.task.taskId,
+      ttlSeconds: INTER_ROUND_KEEPALIVE_SECONDS,
+    }).catch(() => {})
+  }
+  state.task = null  // user-space binding supersedes any task binding
+  state.userSpace = { spaceId, name: entry?.name ?? space,
+                      windowId: reply.windowId }
+  state.sessionId = null
+  state.targetId = null
+  const byTabId = await targetIdsByTabId()
+  const tabs = reply.tabs.map((t) => ({
+    ...t, targetId: byTabId.get(t.tabId) ?? null,
+  }))
+  // The user's own selected tab is authoritative — attaching to it changes
+  // nothing on screen. The remembered last-driven tab only matters when the
+  // selected one has no live target (e.g. a discarded tab).
+  const last = readLastTargetId(`space:${spaceId}`)
+  const pick = tabs.find((t) => t.active && t.targetId) ??
+               tabs.find((t) => t.targetId && t.targetId === last) ??
+               tabs.find((t) => t.targetId)
+  if (pick) await attachTab(pick.targetId)
+  return { kind: 'user', spaceId, name: state.userSpace.name, windowId: reply.windowId,
+           created, mode: 'userSpace',  // `mode` kept for back-compat
+           tabs: tabs.map((t) => ({ ...t, current: t.targetId === state.targetId })) }
 }
 
 /** The target window's tab groups, as [{token, title, color, collapsed,
@@ -4141,11 +5353,11 @@ export async function createTabGroup(targets, { title, color, space } = {}) {
   })
   // Group state flows back from the browser asynchronously — settle until
   // the new group is listable so follow-up ops (update, addTabs) can trust it.
-  await settle(async () => {
+  const settled = !!(await settle(async () => {
     const { groups } = await phiSend('agentSpace.tabGroups.list', scope)
     return groups.some((g) => g.token === created.token)
-  })
-  return { token: created.token }
+  }))
+  return { token: created.token, settled }
 }
 
 /** Edits a group's {title, color, collapsed}, each optional. */
@@ -4181,22 +5393,22 @@ export async function removeTabsFromGroup(targets, { space } = {}) {
 export async function ungroupTabGroup(token, { space } = {}) {
   const scope = await layoutScope(space)
   await phiSend('agentSpace.tabGroups.ungroup', { ...scope, token })
-  await settle(async () => {
+  const settled = !!(await settle(async () => {
     const { groups } = await phiSend('agentSpace.tabGroups.list', scope)
     return !groups.some((g) => g.token === token)
-  })
-  return { token, ungrouped: true }
+  }))
+  return { token, ungrouped: settled }
 }
 
 /** Closes a group AND every tab in it. */
 export async function closeTabGroup(token, { space } = {}) {
   const scope = await layoutScope(space)
   await phiSend('agentSpace.tabGroups.close', { ...scope, token })
-  await settle(async () => {
+  const settled = !!(await settle(async () => {
     const { groups } = await phiSend('agentSpace.tabGroups.list', scope)
     return !groups.some((g) => g.token === token)
-  })
-  return { token, closed: true }
+  }))
+  return { token, closed: settled }
 }
 
 /** The target window's splits, as [{splitId, layout, ratio,
@@ -4222,11 +5434,11 @@ export async function createSplitView(primaryTarget, secondaryTarget,
   const created = await phiSend('agentSpace.splitView.create', {
     ...scope, primaryTabId, secondaryTabId, layout,
   })
-  await settle(async () => {
+  const settled = !!(await settle(async () => {
     const { splits } = await phiSend('agentSpace.splitView.list', scope)
     return splits.some((s) => s.splitId === created.splitId)
-  })
-  return { splitId: created.splitId }
+  }))
+  return { splitId: created.splitId, settled }
 }
 
 /** Adjusts a split: {ratio} (0–1, the primary pane's share) and/or {layout}. */
@@ -4251,11 +5463,11 @@ export async function swapSplitView(splitId, { space } = {}) {
 export async function removeSplitView(splitId, { space } = {}) {
   const scope = await layoutScope(space)
   await phiSend('agentSpace.splitView.remove', { ...scope, splitId })
-  await settle(async () => {
+  const settled = !!(await settle(async () => {
     const { splits } = await phiSend('agentSpace.splitView.list', scope)
     return !splits.some((s) => s.splitId === splitId)
-  })
-  return { splitId, removed: true }
+  }))
+  return { splitId, removed: settled }
 }
 
 // ---------------------------------------------------------------------------
@@ -4322,11 +5534,10 @@ export async function removeDownload(guid, { space } = {}) {
 // Misc
 
 export function cliLog(value) {
-  if (typeof value === 'string') {
-    console.log(value)
-  } else {
-    console.log(JSON.stringify(value, null, 2))
-  }
+  const text = typeof value === 'string' ? value : JSON.stringify(value, null, 2)
+  // The one channel into the agent's context — never let a handled secret
+  // ride through it, whatever page readback or probe picked it up.
+  console.log(__scrubSessionSecrets(text))
 }
 
 export function wait(seconds) {

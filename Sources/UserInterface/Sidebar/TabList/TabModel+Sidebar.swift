@@ -74,8 +74,8 @@ extension Tab: ContextMenuRepresentable {
             let pinItem: NSMenuItem
             if let membership = splitMembership, let liveGroup = membership.liveGroup {
                 let title = liveGroup.isPinned
-                    ? NSLocalizedString("Unpin Split", comment: "Tab context menu - Remove the pin from the split that contains this tab")
-                    : NSLocalizedString("Pin Split", comment: "Tab context menu - Pin the split that contains this tab")
+                    ? NSLocalizedString("sidebar.tabContextMenu.unpinLiveSplit", value: "Unpin Split", comment: "Tab context menu - Remove the pin from a live split")
+                    : NSLocalizedString("sidebar.tabContextMenu.pinSplit", value: "Pin Split", comment: "Tab context menu - Pin the split that contains this tab")
                 pinItem = NSMenuItem(title: title,
                                      action: #selector(MainBrowserWindowController.togglePinSplit(_:)),
                                      keyEquivalent: "")
@@ -85,16 +85,16 @@ extension Tab: ContextMenuRepresentable {
                 // splitId. Route through the persistence-aware unpin path that
                 // drops the pairing and reopens both URLs as a fresh non-pinned
                 // split.
-                pinItem = NSMenuItem(title: NSLocalizedString("Unpin Split", comment: "Tab context menu - Remove the pin from the split that contains this tab"),
+                pinItem = NSMenuItem(title: NSLocalizedString("sidebar.tabContextMenu.unpinClosedSplit", value: "Unpin Split", comment: "Tab context menu - Remove the pin from a closed pinned split"),
                                      action: #selector(MainBrowserWindowController.unpinClosedPinnedSplit(_:)),
                                      keyEquivalent: "")
                 pinItem.representedObject = [pair.left, pair.right]
             } else {
-                pinItem = NSMenuItem(title: NSLocalizedString("Pin", comment: "Tab context menu - Menu item to pin the selected tab"),
+                pinItem = NSMenuItem(title: NSLocalizedString("sidebar.tabContextMenu.pinTab", value: "Pin", comment: "Tab context menu - Menu item to pin the selected tab"),
                                      action: #selector(MainBrowserWindowController.togglePin(_:)),
                                      keyEquivalent: "")
                 if isPinned {
-                    pinItem.title = NSLocalizedString("Unpin", comment: "Tab context menu - Menu item to unpin the selected tab")
+                    pinItem.title = NSLocalizedString("sidebar.tabContextMenu.unpinTab", value: "Unpin", comment: "Tab context menu - Menu item to unpin the selected tab")
                 }
             }
             items.append(pinItem)
@@ -119,11 +119,11 @@ extension Tab: ContextMenuRepresentable {
         // (both panes), not just one pane.
         let duplicateItem: NSMenuItem
         if isSplitCell {
-            duplicateItem = NSMenuItem(title: NSLocalizedString("Duplicate Split", comment: "Tab context menu - Duplicate both panes of a split as a new split"),
+            duplicateItem = NSMenuItem(title: NSLocalizedString("sidebar.tabContextMenu.duplicateSplit", value: "Duplicate Split", comment: "Tab context menu - Duplicate both panes of a split as a new split"),
                                        action: #selector(duplicateSplitTab),
                                        keyEquivalent: "")
         } else {
-            duplicateItem = NSMenuItem(title: NSLocalizedString("Duplicate", comment: "Tab context menu - Menu item to duplicate the selected tab"),
+            duplicateItem = NSMenuItem(title: NSLocalizedString("sidebar.tabContextMenu.duplicateTab", value: "Duplicate", comment: "Tab context menu - Menu item to duplicate the selected tab"),
                                        action: #selector(duplicateTab),
                                        keyEquivalent: "")
         }
@@ -146,21 +146,21 @@ extension Tab: ContextMenuRepresentable {
             copyRightURL = nil
         }
         if let leftURL = copyLeftURL, let rightURL = copyRightURL {
-            let copyLeftURLItem = NSMenuItem(title: NSLocalizedString("Copy Left URL", comment: "Tab context menu - Copy the left pane's URL for a split"),
+            let copyLeftURLItem = NSMenuItem(title: NSLocalizedString("sidebar.tabContextMenu.copyLeftPaneURL", value: "Copy Left URL", comment: "Tab context menu - Copy the left pane's URL for a split"),
                                              action: #selector(copySplitPaneURL(_:)),
                                              keyEquivalent: "")
             copyLeftURLItem.target = self
             copyLeftURLItem.representedObject = leftURL
             items.append(copyLeftURLItem)
 
-            let copyRightURLItem = NSMenuItem(title: NSLocalizedString("Copy Right URL", comment: "Tab context menu - Copy the right pane's URL for a split"),
+            let copyRightURLItem = NSMenuItem(title: NSLocalizedString("sidebar.tabContextMenu.copyRightPaneURL", value: "Copy Right URL", comment: "Tab context menu - Copy the right pane's URL for a split"),
                                               action: #selector(copySplitPaneURL(_:)),
                                               keyEquivalent: "")
             copyRightURLItem.target = self
             copyRightURLItem.representedObject = rightURL
             items.append(copyRightURLItem)
         } else {
-            let copyUrlItem = NSMenuItem(title: NSLocalizedString("Copy Link", comment: "Tab context menu - Menu item to copy the tab URL to clipboard"), action: #selector(MainBrowserWindowController.myCopyLink(_:)), keyEquivalent: "")
+            let copyUrlItem = NSMenuItem(title: NSLocalizedString("sidebar.tabContextMenu.copyTabURL", value: "Copy Link", comment: "Tab context menu - Menu item to copy the tab URL to clipboard"), action: #selector(MainBrowserWindowController.myCopyLink(_:)), keyEquivalent: "")
             if browserStateForMenu?.focusingTab?.guid == guid {
                 applyCopyURLShortcut(to: copyUrlItem)
             }
@@ -179,7 +179,7 @@ extension Tab: ContextMenuRepresentable {
                 // it as a normal split and the items reappear.
                 if !existingSplit.isPinned {
                     let reverseSplitItem = NSMenuItem(
-                        title: NSLocalizedString("Reverse Panes", comment: "Tab context menu - Swap the left/right (or top/bottom) panes of the split this tab belongs to"),
+                        title: NSLocalizedString("sidebar.tabContextMenu.reverseSplitPanes", value: "Reverse Panes", comment: "Tab context menu - Swap the left/right (or top/bottom) panes of the split this tab belongs to"),
                         action: #selector(reverseSplitPanes(_:)),
                         keyEquivalent: "")
                     reverseSplitItem.target = self
@@ -187,7 +187,7 @@ extension Tab: ContextMenuRepresentable {
                     items.append(reverseSplitItem)
 
                     let removeSplitItem = NSMenuItem(
-                        title: NSLocalizedString("Remove from Split", comment: "Tab context menu - Dissolve the split that contains this tab"),
+                        title: NSLocalizedString("sidebar.tabContextMenu.removeFromSplit", value: "Remove from Split", comment: "Tab context menu - Dissolve the split that contains this tab"),
                         action: #selector(removeFromSplit(_:)),
                         keyEquivalent: "")
                     removeSplitItem.target = self
@@ -211,12 +211,12 @@ extension Tab: ContextMenuRepresentable {
                    focused.guid != guid,
                    state.splitGroup(forTabId: focused.guid) == nil {
                     splitItem = NSMenuItem(
-                        title: NSLocalizedString("Split with Current", comment: "Tab context menu - Pair this tab with the currently focused tab in a split"),
+                        title: NSLocalizedString("sidebar.tabContextMenu.splitWithCurrent", value: "Split with Current", comment: "Tab context menu - Pair this tab with the currently focused tab in a split"),
                         action: #selector(splitWithCurrent),
                         keyEquivalent: "")
                 } else {
                     splitItem = NSMenuItem(
-                        title: NSLocalizedString("Open as Split", comment: "Tab context menu - Open a new tab as the second pane in a split with this tab"),
+                        title: NSLocalizedString("sidebar.tabContextMenu.openAsSplit", value: "Open as Split", comment: "Tab context menu - Open a new tab as the second pane in a split with this tab"),
                         action: #selector(openAsSplit),
                         keyEquivalent: "")
                 }
@@ -233,7 +233,7 @@ extension Tab: ContextMenuRepresentable {
            !isIncognitoWindow,
            splitMembership != nil {
             let addSplitItem = NSMenuItem(
-                title: NSLocalizedString("Add Split to Bookmark", comment: "Tab context menu - Save both panes of the split as a bookmark folder"),
+                title: NSLocalizedString("sidebar.tabContextMenu.addSplitToBookmarks", value: "Add Split to Bookmark", comment: "Tab context menu - Save both panes of the split as a bookmark folder"),
                 action: #selector(addSplitToBookmarks(_:)),
                 keyEquivalent: "")
             addSplitItem.target = self
@@ -249,7 +249,7 @@ extension Tab: ContextMenuRepresentable {
             // entry presents the modal and creates the split inside the new
             // folder atomically.
             let addSplitToFolder = NSMenuItem(
-                title: NSLocalizedString("Add Split to Folder", comment: "Tab context menu - Save both panes of the split into a chosen bookmark folder"),
+                title: NSLocalizedString("sidebar.tabContextMenu.addSplitToFolder", value: "Add Split to Folder", comment: "Tab context menu - Save both panes of the split into a chosen bookmark folder"),
                 action: nil,
                 keyEquivalent: "")
             let splitFolderSubmenu = NSMenu()
@@ -257,7 +257,7 @@ extension Tab: ContextMenuRepresentable {
 
             let folders = splitState.bookmarkManager.getAllFolderWithHierarchy()
             let newSplitFolderItem = NSMenuItem(
-                title: NSLocalizedString("New Folder", comment: "Sidebar context menu title"),
+                title: NSLocalizedString("sidebar.tabContextMenu.addSplitToFolder.newFolderAction", value: "New Folder", comment: "Sidebar context menu title"),
                 action: #selector(createFolderAndBookmarkSplit),
                 keyEquivalent: "")
             newSplitFolderItem.target = self
@@ -278,19 +278,19 @@ extension Tab: ContextMenuRepresentable {
         // both pinned and non-pinned splits.
         if !isSplitCell && !isIncognitoWindow {
             let isLegacy = MainBrowserWindowControllersManager.shared.activeWindowController?.browserState.layoutMode == .comfortable
-            let title = isLegacy ? NSLocalizedString("Add to Bookmark Bar", comment: "Tab context menu - Add current tab to root bookmark bar") :
-                                   NSLocalizedString("Add to Bookmark", comment: "Tab context menu - Add current tab to root bookmark bar in sidebar")
+            let title = isLegacy ? NSLocalizedString("sidebar.tabContextMenu.addToBookmarkBar", value: "Add to Bookmark Bar", comment: "Tab context menu - Add current tab to root bookmark bar") :
+                                   NSLocalizedString("sidebar.tabContextMenu.addToBookmarks", value: "Add to Bookmark", comment: "Tab context menu - Add current tab to root bookmark bar in sidebar")
             let addToRootItem = NSMenuItem(title: title, action: #selector(addTabToRootBookmarks), keyEquivalent: "")
             addToRootItem.target = self
             items.append(addToRootItem)
 
-            let addToBookmark = NSMenuItem(title: NSLocalizedString("Add to Folder", comment: "Tab context menu - Menu item to add tab to bookmarks"), action: nil, keyEquivalent: "")
+            let addToBookmark = NSMenuItem(title: NSLocalizedString("sidebar.tabContextMenu.addToFolder", value: "Add to Folder", comment: "Tab context menu - Menu item to add tab to bookmarks"), action: nil, keyEquivalent: "")
             let bookmarkSubmenu = NSMenu()
             addToBookmark.submenu = bookmarkSubmenu
 
             let folders = MainBrowserWindowControllersManager.shared.activeWindowController?.browserState.bookmarkManager.getAllFolderWithHierarchy() ?? []
 
-            let addBookmarkItem = NSMenuItem(title: NSLocalizedString("New Folder", comment: "Sidebar context menu title"), action: #selector(createFolderAndBookmarkTab), keyEquivalent: "")
+            let addBookmarkItem = NSMenuItem(title: NSLocalizedString("sidebar.tabContextMenu.addTabToFolder.newFolderAction", value: "New Folder", comment: "Sidebar context menu title"), action: #selector(createFolderAndBookmarkTab), keyEquivalent: "")
             addBookmarkItem.target = self
 
             if folders.isEmpty {
@@ -328,17 +328,17 @@ extension Tab: ContextMenuRepresentable {
         }
 
         if isPinned {
-            let editItem = NSMenuItem(title: NSLocalizedString("Edit...", comment: "Pinned tab context menu - Edit pinned tab menu item"), action: #selector(editPinnedTab), keyEquivalent: "")
+            let editItem = NSMenuItem(title: NSLocalizedString("sidebar.pinnedTabContextMenu.editAction", value: "Edit...", comment: "Pinned tab context menu - Edit pinned tab menu item"), action: #selector(editPinnedTab), keyEquivalent: "")
             editItem.target = self
             items.append(editItem)
         }
         
         if !isPinned || (isPinned && isOpenned) {
-            let closeItem = NSMenuItem(title: NSLocalizedString("Close", comment: "Tab context menu - Menu item to close the selected tab"), action: #selector(MainBrowserWindowController.closeTab(_:)), keyEquivalent: "")
+            let closeItem = NSMenuItem(title: NSLocalizedString("sidebar.tabContextMenu.closeTab", value: "Close", comment: "Tab context menu - Menu item to close the selected tab"), action: #selector(MainBrowserWindowController.closeTab(_:)), keyEquivalent: "")
             items.append(closeItem)
         }
         
-        let closeOther = NSMenuItem(title: NSLocalizedString("Close Other Tabs", comment: "Tab context menu - Menu item to close all tabs except the selected one"), action: #selector(MainBrowserWindowController.closeOther(_:)), keyEquivalent: "")
+        let closeOther = NSMenuItem(title: NSLocalizedString("sidebar.tabContextMenu.closeOtherTabs", value: "Close Other Tabs", comment: "Tab context menu - Menu item to close all tabs except the selected one"), action: #selector(MainBrowserWindowController.closeOther(_:)), keyEquivalent: "")
         items.append(closeOther)
         
         items.forEach { item in
@@ -607,8 +607,7 @@ extension Tab: ContextMenuRepresentable {
         }
         if groupToken == nil {
             let newGroupItem = NSMenuItem(
-                title: NSLocalizedString(
-                    "New Tab Group",
+                title: NSLocalizedString("sidebar.tabContextMenu.newTabGroup", value: "New Tab Group",
                     comment: "Tab context menu - Add this tab to a newly created tab group"),
                 action: #selector(addToNewTabGroup),
                 keyEquivalent: "")
@@ -618,8 +617,7 @@ extension Tab: ContextMenuRepresentable {
             let orderedGroups = orderedGroupsInStripOrder(state: browserState)
             if !orderedGroups.isEmpty, let browserState {
                 let parent = NSMenuItem(
-                    title: NSLocalizedString(
-                        "Add to Group",
+                    title: NSLocalizedString("sidebar.tabContextMenu.addToGroupSubmenu", value: "Add to Group",
                         comment: "Tab context menu - Submenu to add this tab to an existing tab group"),
                     action: nil,
                     keyEquivalent: "")
@@ -649,8 +647,7 @@ extension Tab: ContextMenuRepresentable {
                 .filter { $0.token != currentToken }
             if !otherGroups.isEmpty, let browserState {
                 let parent = NSMenuItem(
-                    title: NSLocalizedString(
-                        "Move to Group",
+                    title: NSLocalizedString("sidebar.tabContextMenu.moveToGroupSubmenu", value: "Move to Group",
                         comment: "Tab context menu - Submenu to move this tab to another tab group"),
                     action: nil,
                     keyEquivalent: "")
@@ -672,8 +669,7 @@ extension Tab: ContextMenuRepresentable {
             }
 
             let moveToNewItem = NSMenuItem(
-                title: NSLocalizedString(
-                    "Move to New Group",
+                title: NSLocalizedString("sidebar.tabContextMenu.moveToNewGroup", value: "Move to New Group",
                     comment: "Tab context menu - Move this tab out of its current group into a newly created group"),
                 action: #selector(moveToNewTabGroup),
                 keyEquivalent: "")
@@ -681,8 +677,7 @@ extension Tab: ContextMenuRepresentable {
             items.append(moveToNewItem)
 
             let removeItem = NSMenuItem(
-                title: NSLocalizedString(
-                    "Remove from Group",
+                title: NSLocalizedString("sidebar.tabContextMenu.removeFromGroup", value: "Remove from Group",
                     comment: "Tab context menu - Remove this tab from its tab group"),
                 action: #selector(removeFromTabGroup),
                 keyEquivalent: "")
@@ -713,8 +708,7 @@ extension Tab: ContextMenuRepresentable {
         guard !targets.isEmpty else { return }
 
         let parent = NSMenuItem(
-            title: NSLocalizedString(
-                "Move to Space",
+            title: NSLocalizedString("sidebar.tabContextMenu.moveToSpaceSubmenu", value: "Move to Space",
                 comment: "Tab context menu - Submenu to move this tab to another Space"),
             action: nil,
             keyEquivalent: "")
@@ -724,9 +718,7 @@ extension Tab: ContextMenuRepresentable {
                                    action: #selector(moveTabToSpace(_:)),
                                    keyEquivalent: "")
             entry.target = self
-            if let icon = NSImage(systemSymbolName: space.iconName, accessibilityDescription: nil) {
-                entry.image = icon
-            }
+            entry.image = SpaceIconView.menuImage(for: space.iconName)
             entry.representedObject = space.spaceId
             submenu.addItem(entry)
         }

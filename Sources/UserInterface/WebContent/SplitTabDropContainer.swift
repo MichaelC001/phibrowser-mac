@@ -68,8 +68,8 @@ final class SplitTabDropContainer: NSView {
 
         var labelText: String {
             switch self {
-            case .left:  return NSLocalizedString("Add Left Split", comment: "Drop-zone hint shown when dragging a tab over the left third of the page")
-            case .right: return NSLocalizedString("Add Right Split", comment: "Drop-zone hint shown when dragging a tab over the right third of the page")
+            case .left:  return NSLocalizedString("browser.splitDropHint.leftThird", value: "Add Left Split", comment: "Drop-zone hint shown when dragging a tab over the left third of the page")
+            case .right: return NSLocalizedString("browser.splitDropHint.rightThird", value: "Add Right Split", comment: "Drop-zone hint shown when dragging a tab over the right third of the page")
             }
         }
     }
@@ -879,10 +879,10 @@ final class SplitTabDropContainer: NSView {
             // to follow the layout.
             let layout = browserState?.splitGroup(forId: splitId)?.layout ?? .vertical
             switch (layout, zone) {
-            case (.vertical, .left):    return NSLocalizedString("Replace Left", comment: "Drop-zone hint shown when dragging a tab over the left/primary pane of a vertical split to replace it")
-            case (.vertical, .right):   return NSLocalizedString("Replace Right", comment: "Drop-zone hint shown when dragging a tab over the right/secondary pane of a vertical split to replace it")
-            case (.horizontal, .left):  return NSLocalizedString("Replace Top", comment: "Drop-zone hint shown when dragging a tab over the top/primary pane of a horizontal split to replace it")
-            case (.horizontal, .right): return NSLocalizedString("Replace Bottom", comment: "Drop-zone hint shown when dragging a tab over the bottom/secondary pane of a horizontal split to replace it")
+            case (.vertical, .left):    return NSLocalizedString("browser.splitDropHint.leftHalf", value: "Replace Left", comment: "Drop-zone hint shown when dragging a tab over the left/primary pane of a vertical split to replace it")
+            case (.vertical, .right):   return NSLocalizedString("browser.splitDropHint.rightHalf", value: "Replace Right", comment: "Drop-zone hint shown when dragging a tab over the right/secondary pane of a vertical split to replace it")
+            case (.horizontal, .left):  return NSLocalizedString("browser.splitDropHint.top", value: "Replace Top", comment: "Drop-zone hint shown when dragging a tab over the top/primary pane of a horizontal split to replace it")
+            case (.horizontal, .right): return NSLocalizedString("browser.splitDropHint.bottom", value: "Replace Bottom", comment: "Drop-zone hint shown when dragging a tab over the bottom/secondary pane of a horizontal split to replace it")
             }
         }
     }

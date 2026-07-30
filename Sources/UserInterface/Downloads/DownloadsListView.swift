@@ -36,7 +36,7 @@ struct DownloadsListView: View {
                 .font(.system(size: 32))
                 .themedTint(.textSecondary)
             
-            Text(NSLocalizedString("No Downloads", comment: "Downloads list - Empty state text when no downloads exist"))
+            Text(NSLocalizedString("downloads.list.emptyMessage", value: "No Downloads", comment: "Downloads list - Empty state text when no downloads exist"))
                 .font(.system(size: 13))
                 .themedForeground(.textSecondary)
         }
@@ -94,7 +94,7 @@ private struct DownloadsBottomBar: View {
                     openAllDownloadsPage()
                 }) {
                     HStack(spacing: 4) {
-                        Text(NSLocalizedString("All Downloads", comment: "Downloads list - Button to open full downloads page"))
+                        Text(NSLocalizedString("downloads.list.openAllDownloadsButton", value: "All Downloads", comment: "Downloads list - Button to open full downloads page"))
                             .font(.system(size: 11))
                             .foregroundColor(Color.phiPrimary.opacity(isHovered ? 1.0 : 0.85))
                         

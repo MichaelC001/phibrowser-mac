@@ -68,6 +68,124 @@ struct SentinelOpenDashboardRequest: Equatable {
     }
 }
 
+/// The Account Deleted Event: a fact broadcast, not a command. Phi announces
+/// that the signed-in account has been deleted and its finalize has begun;
+/// what Sentinel does in response is entirely Sentinel's decision.
+/// Fire-and-forget — no marker, no retry: without a live same-channel
+/// Sentinel observer at post time the event is lost, by design.
+struct SentinelAccountDeletedEvent: Equatable {
+    static let notificationName = Notification.Name("com.phibrowser.sentinel.accountDeleted")
+
+    let signatureVersion: String
+    let requestID: String
+    let sentinelBundleID: String
+    let browserBundleID: String
+    let auth0Sub: String
+    let issuedAt: String
+    let signature: String
+
+    private init(
+        signatureVersion: String,
+        requestID: String,
+        sentinelBundleID: String,
+        browserBundleID: String,
+        auth0Sub: String,
+        issuedAt: String,
+        signature: String
+    ) {
+        self.signatureVersion = signatureVersion
+        self.requestID = requestID
+        self.sentinelBundleID = sentinelBundleID
+        self.browserBundleID = browserBundleID
+        self.auth0Sub = auth0Sub
+        self.issuedAt = issuedAt
+        self.signature = signature
+    }
+
+    var signedContent: AccountDeletedSignedContent {
+        AccountDeletedSignedContent(
+            signatureVersion: signatureVersion,
+            notificationName: Self.notificationName.rawValue,
+            sentinelBundleID: sentinelBundleID,
+            browserBundleID: browserBundleID,
+            requestID: requestID,
+            auth0Sub: auth0Sub,
+            issuedAt: issuedAt
+        )
+    }
+
+    var userInfo: [String: String] {
+        [
+            "signatureVersion": signatureVersion,
+            "requestID": requestID,
+            "browserBundleID": browserBundleID,
+            "auth0Sub": auth0Sub,
+            "issuedAt": issuedAt,
+            "signature": signature
+        ]
+    }
+
+    static func make(
+        sentinelBundleID: String,
+        browserBundleID: String,
+        auth0Sub: String?,
+        signingKey: Data?,
+        requestID: String = UUID().uuidString,
+        issuedAt: String = String(Int64(Date().timeIntervalSince1970))
+    ) throws -> SentinelAccountDeletedEvent {
+        guard !sentinelBundleID.isEmpty else {
+            throw SentinelAccountDeletedEventError.missingField("sentinelBundleID")
+        }
+        guard !browserBundleID.isEmpty else {
+            throw SentinelAccountDeletedEventError.missingField("browserBundleID")
+        }
+        guard !requestID.isEmpty else {
+            throw SentinelAccountDeletedEventError.missingField("requestID")
+        }
+        guard let auth0Sub, !auth0Sub.isEmpty else {
+            throw SentinelAccountDeletedEventError.missingField("auth0Sub")
+        }
+        guard Int64(issuedAt) != nil else {
+            throw SentinelAccountDeletedEventError.invalidIssuedAt
+        }
+        guard let signingKey,
+              signingKey.count == AccountDeletedEventAuthentication.keyByteCount else {
+            throw SentinelAccountDeletedEventError.signingKeyUnavailable
+        }
+
+        let content = AccountDeletedSignedContent(
+            signatureVersion: AccountDeletedEventAuthentication.signatureVersion,
+            notificationName: Self.notificationName.rawValue,
+            sentinelBundleID: sentinelBundleID,
+            browserBundleID: browserBundleID,
+            requestID: requestID,
+            auth0Sub: auth0Sub,
+            issuedAt: issuedAt
+        )
+        let signature: String
+        do {
+            signature = try AccountDeletedEventAuthentication.signature(
+                for: content,
+                key: signingKey
+            )
+        } catch let error as SentinelAccountDeletedEventError {
+            throw error
+        } catch {
+            throw SentinelAccountDeletedEventError.signingFailed
+        }
+
+        return SentinelAccountDeletedEvent(
+            signatureVersion: content.signatureVersion,
+            requestID: content.requestID,
+            sentinelBundleID: content.sentinelBundleID,
+            browserBundleID: content.browserBundleID,
+            auth0Sub: content.auth0Sub,
+            issuedAt: content.issuedAt,
+            signature: signature
+        )
+    }
+}
+
 enum SentinelHelper {
     struct RunningInfo: Equatable {
         let bundleID: String
@@ -217,6 +335,48 @@ enum SentinelHelper {
             userInfo: request.userInfo,
             deliverImmediately: true
         )
+    }
+
+    /// Posts the Account Deleted Event to the same-channel Sentinel, exactly
+    /// once, before Phi's own data wipe begins — the shared token is still
+    /// readable here, so the event can carry the account identifier. No
+    /// launch, no retry: a Sentinel that is not running (typically because
+    /// Phi AI is disabled) never receives the event, and its data for the
+    /// account lingers — accepted residue, logged so the drop is diagnosable.
+    static func postAccountDeletedEvent() {
+        let identifier = loginItemIdentifier()
+        if runningApplication(identifier: identifier) == nil {
+            AppLogWarn("Posting account deleted event while Sentinel is not running; the event will be lost (bundleID \(identifier))")
+        }
+
+        let auth0Sub = SharedAuthTokenStore.shared.read()?.auth0Sub
+        guard let auth0Sub, !auth0Sub.isEmpty else {
+            AppLogError("Skipped account deleted event: missing auth0 subject")
+            return
+        }
+
+        let signingKey = AccountDeletedSigningKeyStore.shared.readOrCreate()
+        let event: SentinelAccountDeletedEvent
+        do {
+            event = try SentinelAccountDeletedEvent.make(
+                sentinelBundleID: identifier,
+                browserBundleID: Bundle.main.bundleIdentifier ?? "",
+                auth0Sub: auth0Sub,
+                signingKey: signingKey
+            )
+        } catch {
+            let category = (error as? SentinelAccountDeletedEventError)?.description ?? "signing failed"
+            AppLogError("Skipped account deleted event: \(category)")
+            return
+        }
+
+        DistributedNotificationCenter.default().postNotificationName(
+            SentinelAccountDeletedEvent.notificationName,
+            object: event.sentinelBundleID,
+            userInfo: event.userInfo,
+            deliverImmediately: true
+        )
+        AppLogInfo("Posted account deleted event (requestID \(event.requestID), bundleID \(identifier))")
     }
 
     static func loginItemIdentifier() -> String {

@@ -16,7 +16,7 @@ class ImportFromOtherBrowserViewController: OnboardingBaseViewController {
     
     enum DisplayMode {
         case login   // 640x800 for onboarding.
-        case normal  // 500x625 for the standalone window.
+        case normal  // 500x700 for the standalone window.
     }
     
     var onCompletion: (() -> Void)?
@@ -35,7 +35,11 @@ class ImportFromOtherBrowserViewController: OnboardingBaseViewController {
     private var targetWindowId: Int?
     
     private var viewWidth: CGFloat { displayMode == .login ? 640 : 500 }
-    private var viewHeight: CGFloat { displayMode == .login ? 800 : 625 }
+    /// Normal (standalone window) height is sized for the worst-case expanded
+    /// accordion row: title chain bottom 136 + 8 + card 440 (4-toggle row) +
+    /// 12 + Next button 40 + bottom margin 56 = 692, rounded up — so an expanded
+    /// card can never overlap (and hitTest-swallow) the Next button.
+    private var viewHeight: CGFloat { displayMode == .login ? 800 : 700 }
     private var titleFontSize: CGFloat { displayMode == .login ? 46 : 32 }
     private var titleTopOffset: CGFloat { displayMode == .login ? 96 : 56 }
     private var optionWidth: CGFloat { displayMode == .login ? 472 : 380 }
@@ -127,8 +131,7 @@ class ImportFromOtherBrowserViewController: OnboardingBaseViewController {
         guard isViewLoaded, displayMode == .normal else { return }
         let space = SpaceManager.shared.spaces.first { $0.spaceId == targetSpaceId }
         let profileName = ProfileManager.shared.profile(for: targetProfileId)?.displayName
-        let spaceName = space?.name ?? NSLocalizedString(
-            "Current Space",
+        let spaceName = space?.name ?? NSLocalizedString("oobe.importBrowserData.target.currentSpaceFallback", value: "Current Space",
             comment: "Fallback label for the import-target Space when it can't be resolved by id"
         )
         targetHostingView.rootView = ImportTargetView(
@@ -168,7 +171,7 @@ class ImportFromOtherBrowserViewController: OnboardingBaseViewController {
     }()
     
     private lazy var desLabel: NSTextField = {
-        let label = NSTextField(labelWithString: NSLocalizedString("Phi needs Full Disk Access to import your data from Safari.", comment: "Import browser data page - Description explaining why Full Disk Access permission is needed"))
+        let label = NSTextField(labelWithString: NSLocalizedString("oobe.importBrowserData.permission.fullDiskAccessDescription", value: "Phi needs Full Disk Access to import your data from Safari.", comment: "Import browser data page - Description explaining why Full Disk Access permission is needed"))
         label.textColor = NSColor.white
         label.font = NSFont.systemFont(ofSize: descriptionFontSize)
         label.isHidden = true
@@ -201,7 +204,7 @@ class ImportFromOtherBrowserViewController: OnboardingBaseViewController {
     private lazy var chromeOptionView: BrowserOptionView = {
         let view = BrowserOptionView(
             icon: .chromeIcon,
-            title: NSLocalizedString("From Chrome", comment: "Import browser data page - Option label to import data from Chrome browser"),
+            title: NSLocalizedString("oobe.importBrowserData.source.chromeOption", value: "From Chrome", comment: "Import browser data page - Option label to import data from Chrome browser"),
             isSelected: false
         )
         view.onTap = { [weak self] in
@@ -225,7 +228,7 @@ class ImportFromOtherBrowserViewController: OnboardingBaseViewController {
     private lazy var safariOptionView: BrowserOptionView = {
         let view = BrowserOptionView(
             icon: .safariIcon,
-            title: NSLocalizedString("From Safari", comment: "Import browser data page - Option label to import data from Safari browser"),
+            title: NSLocalizedString("oobe.importBrowserData.source.safariOption", value: "From Safari", comment: "Import browser data page - Option label to import data from Safari browser"),
             isSelected: false
         )
         
@@ -240,7 +243,7 @@ class ImportFromOtherBrowserViewController: OnboardingBaseViewController {
     private lazy var arcOptionView: BrowserOptionView = {
         let view = BrowserOptionView(
             icon: .arcIcon,
-            title: NSLocalizedString("From Arc", comment: "Import browser data page - Option label to import data from Arc browser"),
+            title: NSLocalizedString("oobe.importBrowserData.source.arcOption", value: "From Arc", comment: "Import browser data page - Option label to import data from Arc browser"),
             isSelected: false
         )
         
@@ -269,7 +272,7 @@ class ImportFromOtherBrowserViewController: OnboardingBaseViewController {
     private lazy var fileOptionView: BrowserOptionView = {
         let view = BrowserOptionView(
             icon: Self.fileRowIcon(),
-            title: NSLocalizedString("From a file", comment: "Import browser data page - Option label to import data from a file"),
+            title: NSLocalizedString("oobe.importBrowserData.source.fileOption", value: "From a file", comment: "Import browser data page - Option label to import data from a file"),
             isSelected: false
         )
         view.wantsLayer = true
@@ -290,7 +293,7 @@ class ImportFromOtherBrowserViewController: OnboardingBaseViewController {
     }()
 
     private static var noFileSelectedText: String {
-        NSLocalizedString("No file selected", comment: "Import browser data page - Placeholder when no file has been chosen for import yet")
+        NSLocalizedString("oobe.importBrowserData.filePicker.emptySelectionPlaceholder", value: "No file selected", comment: "Import browser data page - Placeholder when no file has been chosen for import yet")
     }
 
     /// A colored, app-icon-style tile for the file-import row so it sits next to the
@@ -331,7 +334,7 @@ class ImportFromOtherBrowserViewController: OnboardingBaseViewController {
     
     override func viewDidLoad() {
         super.viewDidLoad()
-        titleLabel.stringValue = NSLocalizedString("Browser data", comment: "Import browser data page - Page title")
+        titleLabel.stringValue = NSLocalizedString("oobe.importBrowserData.initialTitle", value: "Browser data", comment: "Import browser data page - Initial page title")
         applyDisplayModeLayout()
         setupBrowserOptions()
         updateNextButtonState()
@@ -614,8 +617,7 @@ class ImportFromOtherBrowserViewController: OnboardingBaseViewController {
         let horizontalPadding: CGFloat = 18
         let container = NSView()
 
-        let label = NSTextField(wrappingLabelWithString: NSLocalizedString(
-            "Please quit Safari before importing its data.",
+        let label = NSTextField(wrappingLabelWithString: NSLocalizedString("oobe.importBrowserData.safari.quitReminder", value: "Please quit Safari before importing its data.",
             comment: "Import browser data page - Reminder to quit Safari before importing so its data can be read"
         ))
         label.font = NSFont.systemFont(ofSize: hintFontSize)
@@ -641,7 +643,7 @@ class ImportFromOtherBrowserViewController: OnboardingBaseViewController {
         let row = NSView()
 
         let chooseButton = NSButton(
-            title: NSLocalizedString("Choose File…", comment: "Import browser data page - Button to pick a file to import"),
+            title: NSLocalizedString("oobe.importBrowserData.importButton", value: "Choose File…", comment: "Import browser data page - Button to pick a file to import"),
             target: self,
             action: #selector(chooseImportFile(_:))
         )
@@ -865,9 +867,9 @@ class ImportFromOtherBrowserViewController: OnboardingBaseViewController {
         }
         permisionImageView.isHidden = false
         browserOptionsStackView.isHidden = true
-        titleLabel.stringValue = NSLocalizedString("Permissions", comment: "Import browser data page - Page title when showing permission request")
+        titleLabel.stringValue = NSLocalizedString("oobe.importBrowserData.permission.title", value: "Permissions", comment: "Import browser data page - Page title when showing permission request")
         desLabel.isHidden = false
-        nextButton.title = NSLocalizedString("Open Settings", comment: "Import browser data page - Button to open system settings for granting permissions")
+        nextButton.title = NSLocalizedString("oobe.importBrowserData.permission.openSettingsButton", value: "Open Settings", comment: "Import browser data page - Button to open system settings for granting permissions")
         phase = .permision
         nextButton.snp.remakeConstraints { make in
             make.bottom.equalToSuperview().offset(buttonBottomOffset)
@@ -891,8 +893,8 @@ class ImportFromOtherBrowserViewController: OnboardingBaseViewController {
         permisionImageView.isHidden = true
         desLabel.isHidden = true
         importStatusLabel.isHidden = true
-        titleLabel.stringValue = NSLocalizedString("Browser data", comment: "Import browser data page - Page title")
-        nextButton.title = NSLocalizedString("Next", comment: "Onboarding base - Next button to proceed to next step")
+        titleLabel.stringValue = NSLocalizedString("oobe.importBrowserData.resetTitle", value: "Browser data", comment: "Import browser data page - Page title restored after resetting the import state")
+        nextButton.title = NSLocalizedString("oobe.importBrowserData.nextButton", value: "Next", comment: "Import browser data page - Next button after resetting the import state")
         nextButton.snp.remakeConstraints { make in
             make.bottom.equalToSuperview().offset(buttonBottomOffset)
             make.centerX.equalToSuperview()
@@ -1295,7 +1297,7 @@ class OnboardingBaseViewController: NSViewController {
     
     lazy var nextButton: GradientBorderButton = {
         let button = GradientBorderButton()
-        button.title = NSLocalizedString("Next", comment: "Onboarding base - Next button to proceed to next step")
+        button.title = NSLocalizedString("oobe.navigation.continueButton", value: "Next", comment: "OOBE navigation - Button to continue to the next step")
         button.clickAction = { [weak self] in
             self?.nextButtonTapped()
         }
@@ -1305,7 +1307,7 @@ class OnboardingBaseViewController: NSViewController {
     lazy var skipButton: NSButton = {
         let button = NSButton()
         button.isBordered = false
-        button.title = NSLocalizedString("Skip", comment: "Onboarding base - Skip button to bypass current step")
+        button.title = NSLocalizedString("oobe.navigation.skipButton", value: "Skip", comment: "Onboarding base - Skip button to bypass current step")
         button.font = NSFont.systemFont(ofSize: 16, weight: .regular)
         button.contentTintColor = NSColor.gray
         button.target = self
@@ -1337,12 +1339,20 @@ class OnboardingBaseViewController: NSViewController {
             make.height.equalTo(800)
         }
         
-        placeholderView.snp.makeConstraints { make in
-            make.edges.equalToSuperview()
-        }
-        
-        dotView.snp.makeConstraints { make in
-            make.edges.equalToSuperview()
+        // Constraint-built aspect-fill for the two 640×800 (4:5) bitmap layers.
+        // At exactly 4:5 (OOBE's 640×800) this is pixel-identical to edge-pinning;
+        // at any other ratio (the 500×700 standalone import window) the images
+        // cover the view at 4:5 and crop, instead of letterboxing and exposing
+        // bands of the bare video layer beneath.
+        for background in [placeholderView, dotView] {
+            background.imageScaling = .scaleProportionallyUpOrDown
+            background.snp.makeConstraints { make in
+                make.center.equalToSuperview()
+                make.width.equalTo(background.snp.height).multipliedBy(640.0 / 800.0)
+                make.width.greaterThanOrEqualToSuperview()
+                make.height.greaterThanOrEqualToSuperview()
+                make.height.equalToSuperview().priority(.high)
+            }
         }
         
         titleLabel.snp.makeConstraints { make in

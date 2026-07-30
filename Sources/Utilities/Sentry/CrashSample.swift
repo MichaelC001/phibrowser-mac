@@ -80,7 +80,7 @@ struct CrashSampleView: View {
                 .padding(.vertical, 4)
             }
         }
-        .navigationTitle("Crash Samples")
+        .navigationTitle(Text(verbatim: "Crash Samples"))
     }
 }
 

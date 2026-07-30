@@ -5,6 +5,30 @@
 
 import Foundation
 
+/// Pure authorization rule for task-scoped operations. Kept separate from
+/// manager lookup/keep-alive side effects so the cross-agent boundary has
+/// focused unit coverage.
+enum AgentTaskAccessPolicy {
+    static func allows(
+        taskOrigin: AgentTaskOrigin,
+        taskPrincipalId: String?,
+        callerOrigin: AgentTaskOrigin,
+        callerPrincipalId: String?
+    ) -> Bool {
+        guard taskOrigin == callerOrigin else { return false }
+        switch taskOrigin {
+        case .phiAgent:
+            return true
+        case .cdp:
+            guard let taskPrincipalId, !taskPrincipalId.isEmpty,
+                  let callerPrincipalId, !callerPrincipalId.isEmpty else {
+                return false
+            }
+            return taskPrincipalId == callerPrincipalId
+        }
+    }
+}
+
 /// Parses `agentSpace.*` extension messages and drives `AgentSpaceManager`.
 /// Extension messages are delivered on the main thread (same assumption the
 /// `toggleAgentAnimation` handler relies on), so the manager's main-actor state
@@ -26,8 +50,9 @@ enum AgentSpaceRouter {
         context.senderId == "cdp" ? .cdp : .phiAgent
     }
 
-    /// A caller may only operate on tasks of its own origin: the CDP tunnel must
-    /// not drive phi-agent Spaces, and phi-agent must not drive CDP Spaces.
+    /// A caller may only operate on tasks of its own origin and, for external
+    /// CDP tasks, its own app-issued logical driver principal. Thus separate
+    /// approved agents cannot discover a taskId and operate each other's Space.
     /// Unknown tasks (and cross-origin ones) are treated identically — as if the
     /// task doesn't exist — so the boundary reveals nothing about the other
     /// driver's Spaces. Assumes the main actor (all callers are inside one).
@@ -44,7 +69,12 @@ enum AgentSpaceRouter {
         touchKeepAlive: Bool = true
     ) -> Bool {
         MainActor.assumeIsolated {
-            guard AgentSpaceManager.shared.origin(forTaskId: taskId) == origin(for: context) else {
+            guard let task = AgentSpaceManager.shared.task(forTaskId: taskId),
+                  AgentTaskAccessPolicy.allows(
+                    taskOrigin: task.origin,
+                    taskPrincipalId: task.driverPrincipalId,
+                    callerOrigin: origin(for: context),
+                    callerPrincipalId: context.driverPrincipalId) else {
                 return false
             }
             if touchKeepAlive {
@@ -83,6 +113,14 @@ enum AgentSpaceRouter {
                 ExtensionMessaging.shared.sendError("invalid_payload", requestId: requestId)
                 return
             }
+            if taskOrigin == .cdp {
+                guard let principalId = context.driverPrincipalId,
+                      !principalId.isEmpty else {
+                    ExtensionMessaging.shared.sendError(
+                        "missing_driver_principal", requestId: requestId)
+                    return
+                }
+            }
             let profileName =
                 (obj["profileId"] as? String)
                 ?? (obj["profileName"] as? String)
@@ -101,11 +139,19 @@ enum AgentSpaceRouter {
                     profileName: resolvedProfileName,
                     origin: taskOrigin,
                     persistent: persistent,
-                    agentName: agentName
+                    agentName: agentName,
+                    driverPrincipalId: context.driverPrincipalId
                 ) { spaceId, windowId in
                     var replyObject: [String: Any]?
                     if let spaceId, let windowId {
-                        replyObject = ["ok": true, "spaceId": spaceId, "windowId": windowId]
+                        // A create normally yields an agent-owned Space, but a
+                        // restart re-adoption returns the task as it stands —
+                        // possibly mid-handoff with the USER holding control —
+                        // so the reply carries the authoritative owner.
+                        let owner = AgentSpaceManager.shared
+                            .task(forTaskId: taskId)?.ownership == .user ? "user" : "agent"
+                        replyObject = ["ok": true, "spaceId": spaceId,
+                                       "windowId": windowId, "ownership": owner]
                     }
                     if let replyObject,
                        let data = try? JSONSerialization.data(withJSONObject: replyObject),
@@ -181,7 +227,13 @@ enum AgentSpaceRouter {
         let caller = origin(for: context)
         let tasks = MainActor.assumeIsolated {
             AgentSpaceManager.shared.tasksBySpaceId.values
-                .filter { $0.origin == caller }
+                .filter {
+                    AgentTaskAccessPolicy.allows(
+                        taskOrigin: $0.origin,
+                        taskPrincipalId: $0.driverPrincipalId,
+                        callerOrigin: caller,
+                        callerPrincipalId: context.driverPrincipalId)
+                }
                 .map { task -> [String: Any] in
                 let status: String = {
                     switch task.status {

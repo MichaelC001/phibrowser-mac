@@ -41,11 +41,11 @@ struct AgentIdentity: Equatable {
     /// Secondary line for the prompt, e.g. "Team 87DQ3HMK5G · verified".
     var detail: String {
         let trust = verified
-            ? NSLocalizedString("verified", comment: "CDP consent - signature verified")
-            : NSLocalizedString("unsigned", comment: "CDP consent - no valid signature")
+            ? NSLocalizedString("agentControl.connectionApproval.identity.verifiedStatus", value: "verified", comment: "CDP consent - signature verified")
+            : NSLocalizedString("agentControl.connectionApproval.identity.unsignedStatus", value: "unsigned", comment: "CDP consent - no valid signature")
         if let teamId, !teamId.isEmpty {
             return String(
-                format: NSLocalizedString("Team %@ · %@",
+                format: NSLocalizedString("agentControl.connectionApproval.identity.teamSummary", value: "Team %@ · %@",
                                           comment: "CDP consent - team and trust"),
                 teamId, trust)
         }
@@ -326,8 +326,12 @@ enum AgentPeerIdentity {
         return false
     }
 
-    /// argv[0] brands used by the skill's own daemons (see mirror-tailer.mjs).
-    private static let ownBrandNames: Set<String> = ["phi-mirror-tailer"]
+    /// argv[0] brands used by the skill's own daemons (see mirror-tailer.mjs)
+    /// and the phibrowser CLI (a thin command surface over the same helper
+    /// lib — like the heredoc runner, it acts for whoever drives it).
+    private static let ownBrandNames: Set<String> = [
+        "phi-mirror-tailer", "phibrowser-cli",
+    ]
 
     /// The script an interpreter runs: its first existing non-flag argument.
     private static func scriptArgument(in argv: [String]) -> String? {
@@ -463,6 +467,21 @@ enum AgentPeerIdentity {
         return uid == getuid()
     }
 
+    /// Stable for one launch of the resolved driving agent, including when
+    /// several short-lived/sandboxed helper processes connect on its behalf.
+    /// The start timestamp prevents a recycled pid from inheriting the prior
+    /// agent session's task principal.
+    static func processSessionAnchor(for identity: AgentIdentity) -> String? {
+        guard let pid = identity.pid else { return nil }
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.stride)
+        let rc = withUnsafeMutablePointer(to: &info) {
+            proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, $0, size)
+        }
+        guard rc == size else { return nil }
+        return "\(identity.key)|\(pid)|\(info.pbi_start_tvsec)|\(info.pbi_start_tvusec)"
+    }
+
     // MARK: - Peer credentials
 
     private static func peerProcessID(socketFD: Int32) -> pid_t? {
@@ -528,8 +547,20 @@ enum AgentPeerIdentity {
         let rc = withUnsafeMutablePointer(to: &info) {
             proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, $0, size)
         }
-        guard rc == size else { return nil }
-        return pid_t(info.pbi_ppid)
+        if rc == size { return pid_t(info.pbi_ppid) }
+        // proc_pidinfo is denied (EPERM) for another user's process — notably
+        // the setuid-root `login` that sits above every Terminal tab, which
+        // would end the walk before the terminal application is reached and
+        // misresolve a terminal-run CLI. The kernel process table via sysctl
+        // is world-readable (it is what `ps` uses), so fall back to it.
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+        var kp = kinfo_proc()
+        var kpSize = MemoryLayout<kinfo_proc>.stride
+        let ok = withUnsafeMutablePointer(to: &kp) { kpPtr in
+            sysctl(&mib, 4, kpPtr, &kpSize, nil, 0)
+        }
+        guard ok == 0, kpSize > 0 else { return nil }
+        return kp.kp_eproc.e_ppid
     }
 
     /// Effective uid of a process, nil when it can't be read (process gone).

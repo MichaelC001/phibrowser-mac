@@ -147,6 +147,53 @@ extension AppController {
         )
         simulateAgentItem.target = self
         debugMenu.addItem(simulateAgentItem)
+
+        let fakeDeletionItem = NSMenuItem(
+            title: "Account Deletion Fake Responses",
+            action: nil,
+            keyEquivalent: ""
+        )
+        let fakeDeletionMenu = NSMenu(title: "Account Deletion Fake Responses")
+
+        let fakeDeletionOffItem = NSMenuItem(
+            title: "Off (Real Network)",
+            action: #selector(selectAccountDeletionFakeScenario(_:)),
+            keyEquivalent: ""
+        )
+        fakeDeletionOffItem.target = self
+        fakeDeletionOffItem.state = .on
+        fakeDeletionMenu.addItem(fakeDeletionOffItem)
+        fakeDeletionMenu.addItem(.separator())
+
+        for scenario in AccountDeletionFakeScenario.allCases {
+            let item = NSMenuItem(
+                title: scenario.menuTitle,
+                action: #selector(selectAccountDeletionFakeScenario(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = scenario
+            fakeDeletionMenu.addItem(item)
+        }
+
+        fakeDeletionItem.submenu = fakeDeletionMenu
+        debugMenu.addItem(fakeDeletionItem)
+
+        let credentialPromptItem = NSMenuItem(title: "Credential Prompts", action: nil, keyEquivalent: "")
+        let credentialPromptSubmenu = NSMenu(title: "Credential Prompts")
+        for (title, kind) in [("Approval — Fill", "fill"),
+                              ("Approval — Run", "run"),
+                              ("Approval — Reveal", "reveal"),
+                              ("Vault Unlock", "unlock")] {
+            let item = NSMenuItem(title: title,
+                                  action: #selector(debugShowCredentialPrompt(_:)),
+                                  keyEquivalent: "")
+            item.target = self
+            item.representedObject = kind
+            credentialPromptSubmenu.addItem(item)
+        }
+        credentialPromptItem.submenu = credentialPromptSubmenu
+        debugMenu.addItem(credentialPromptItem)
 #endif
         
         let themeMenuItem = NSMenuItem(title: "Debug Theme", action: nil, keyEquivalent: "")
@@ -190,7 +237,7 @@ extension AppController {
         debugMenu.addItem(NSMenuItem.separator())
         
         let openUserDirItem = NSMenuItem(
-            title: NSLocalizedString("Open User Data Directory", comment: "Debug menu item to reveal the current user's data storage directory in Finder"),
+            title: "Open User Data Directory",
             action: #selector(openUserDataDirectory(_:)),
             keyEquivalent: ""
         )
@@ -533,6 +580,21 @@ extension AppController {
     }
 
     #if DEBUG
+    /// Routes the account deletion flow through the selected fake scenario
+    /// (or back to the real network) and moves the checkmark to the pick.
+    /// The selection is in-memory only, so every launch starts on Off.
+    @MainActor
+    @objc func selectAccountDeletionFakeScenario(_ sender: NSMenuItem) {
+        let scenario = sender.representedObject as? AccountDeletionFakeScenario
+        AccountDeletionFakeResponses.scenario = scenario
+        for item in sender.menu?.items ?? [] {
+            item.state = item == sender ? .on : .off
+        }
+        AppLogInfo("🗑️ [AccountDeletion] Fake responses: \(scenario.map { "\($0)" } ?? "off")")
+    }
+    #endif
+
+    #if DEBUG
     /// Test harness: spawns a hidden agent Space for the first available profile
     /// and drives AgentSpaceManager directly (no phi-agent / Kensington backend),
     /// so the hidden-spawn, pip badge, and overlay can be exercised locally.
@@ -547,6 +609,35 @@ extension AppController {
             }
             AppLogInfo("[AgentSpace][debug] simulated agent Space \(spaceId); switch to its pip to watch")
             AgentSpaceManager.shared.setStatusCaption(taskId: taskId, caption: "Reading the page…")
+        }
+    }
+
+    /// Test harness for the credential dialogs: runs the real coordinator flow
+    /// (so a remembered debug grant shows up — and is revocable — in Settings)
+    /// without needing an agent connection or a configured provider.
+    @MainActor
+    @objc func debugShowCredentialPrompt(_ sender: NSMenuItem) {
+        switch sender.representedObject as? String {
+        case "fill":
+            let approved = CredentialAccessCoordinator.shared.requestApproval(
+                agentName: "claude", scope: "github.com", kind: .fill,
+                purpose: "fill the password field on the GitHub sign-in page")
+            AppLogInfo("[Credentials][debug] fill prompt approved=\(approved)")
+        case "run":
+            let approved = CredentialAccessCoordinator.shared.requestApproval(
+                agentName: "deploy-bot", scope: "registry.npmjs.org", kind: .run,
+                purpose: "publish the package with npm publish")
+            AppLogInfo("[Credentials][debug] run prompt approved=\(approved)")
+        case "reveal":
+            let approved = CredentialAccessCoordinator.shared.requestApproval(
+                agentName: "An agent", scope: "github.com", kind: .reveal, purpose: nil)
+            AppLogInfo("[Credentials][debug] reveal prompt approved=\(approved)")
+        case "unlock":
+            let entered = CredentialAccessCoordinator.shared.promptForUnlock(
+                agentName: "claude", scope: "github.com")
+            AppLogInfo("[Credentials][debug] unlock prompt entered=\(entered != nil)")
+        default:
+            break
         }
     }
     #endif

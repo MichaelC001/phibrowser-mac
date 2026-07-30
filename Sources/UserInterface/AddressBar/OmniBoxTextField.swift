@@ -92,7 +92,7 @@ class OmniBoxTextField: NSView {
         textFiled.cell?.wraps = false
         textFiled.delegate = self
 
-        let placeholder = NSMutableAttributedString(string: NSLocalizedString("Search or Enter URL", comment: "Omnibox - Placeholder text prompting user to search or enter URL"))
+        let placeholder = NSMutableAttributedString(string: NSLocalizedString("addressBar.input.placeholder", value: "Search or Enter URL", comment: "Address bar - Text field placeholder prompting the user to search or enter a URL"))
         placeholder.addAttributes([
             .foregroundColor: NSColor.placeholderTextColor,
             .font: NSFont.systemFont(ofSize: 16)

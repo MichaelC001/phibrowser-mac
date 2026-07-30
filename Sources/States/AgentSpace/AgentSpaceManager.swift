@@ -6,6 +6,7 @@
 import AppKit
 import Combine
 import Foundation
+import PostHog
 import SwiftUI
 
 /// Ownership of an agent Space's window at any moment: the agent is driving it,
@@ -43,6 +44,12 @@ struct AgentTask {
     let spaceId: String
     let profileId: String
     let origin: AgentTaskOrigin
+    /// Owning logical external-agent session. Required for `.cdp` tasks and
+    /// nil for the in-app `.phiAgent` backend. This is authorization state;
+    /// `agentName` below is presentation only. Mutable for exactly one flow:
+    /// a restarted agent re-adopting its own task once the original owning
+    /// process is gone (see `createAgentSpace`).
+    var driverPrincipalId: String?
     /// Small, stable ordinal (1, 2, 3…) shown as a corner badge so several live
     /// agent Spaces can be told apart at a glance. Assigned at creation as the
     /// lowest number not currently in use, so it's reused after a Space closes.
@@ -109,7 +116,10 @@ struct AgentDriverBadge {
                                     symbol: "chevron.left.forwardslash.chevron.right",
                                     label: "Claude Code")
         }
-        if lower.contains("codex") || lower.contains("openai") {
+        // "chatgpt": Codex run inside the ChatGPT desktop app resolves to the
+        // bundled binary, whose display name is the OUTER bundle's ("ChatGPT",
+        // not its signing id "codex" — see AgentPeerIdentity.signingIdentity).
+        if lower.contains("codex") || lower.contains("openai") || lower.contains("chatgpt") {
             return AgentDriverBadge(assetName: "agent-openai",
                                     symbol: "chevron.left.forwardslash.chevron.right",
                                     label: "Codex")
@@ -144,6 +154,19 @@ struct AgentDriverBadge {
             assetName: nil,
             symbol: "terminal",
             label: friendly.isEmpty ? "Code agent" : friendly)
+    }
+
+    /// Telemetry-safe agent label: the canonical product name when the
+    /// identity matches a known agent brand, else "other" ("unknown" when
+    /// empty). Never the raw identity string — for unsigned scripts that is
+    /// derived from a local file path (see AgentPeerIdentity.deriveAgentName)
+    /// and must not reach analytics.
+    static func telemetryName(_ agentName: String) -> String {
+        guard !agentName.trimmingCharacters(in: .whitespaces).isEmpty else {
+            return "unknown"
+        }
+        let badge = make(agentName: agentName, origin: .cdp)
+        return badge.assetName != nil ? badge.label : "other"
     }
 
     /// Reduces a signing identifier / bundle id to a readable label —
@@ -286,6 +309,9 @@ final class AgentSpaceManager: ObservableObject {
     /// user to visit — see `presentHandoffPrompt`.
     private var handoffPromptPanel: NSPanel?
     private var handoffPromptSpaceId: String?
+    /// Dock-bounce request shown with the handoff prompt, cancelled with it —
+    /// an auto-dismissed prompt (hand-back, completion) must not keep bouncing.
+    private var handoffPromptAttentionRequest: Int?
 
     private init() {}
 
@@ -362,6 +388,13 @@ final class AgentSpaceManager: ObservableObject {
 
     func task(forSpaceId spaceId: String) -> AgentTask? {
         tasksBySpaceId[spaceId]
+    }
+
+    /// Principals owning a live task — retained by the driver-session
+    /// registry's prune sweep, so a dead owner's session stays resolvable
+    /// (and its task adoptable) until the task itself ends. Main thread.
+    var liveDriverPrincipalIds: Set<String> {
+        Set(tasksBySpaceId.values.compactMap(\.driverPrincipalId))
     }
 
     func task(forTaskId taskId: String) -> AgentTask? {
@@ -454,10 +487,18 @@ final class AgentSpaceManager: ObservableObject {
         origin: AgentTaskOrigin = .phiAgent,
         persistent: Bool = false,
         agentName: String = "",
+        driverPrincipalId: String? = nil,
         completion: @escaping (_ spaceId: String?, _ windowId: Int?) -> Void
     ) {
+        if origin == .cdp {
+            guard let driverPrincipalId, !driverPrincipalId.isEmpty else {
+                AppLogWarn("[AgentSpace] createAgentSpace: CDP task has no driver principal")
+                completion(nil, nil)
+                return
+            }
+        }
         if let existingSpaceId = spaceIdByTaskId[taskId] {
-            guard let existing = tasksBySpaceId[existingSpaceId],
+            guard var existing = tasksBySpaceId[existingSpaceId],
                   existing.origin == origin else {
                 // A different driver owns this taskId. Reveal nothing about its
                 // Space — the same "as if it doesn't exist" boundary the control
@@ -465,6 +506,27 @@ final class AgentSpaceManager: ObservableObject {
                 AppLogWarn("[AgentSpace] createAgentSpace: taskId \(taskId) belongs to another origin")
                 completion(nil, nil)
                 return
+            }
+            if existing.driverPrincipalId != driverPrincipalId {
+                // Restart recovery: a re-launched agent arrives with a fresh
+                // principal but the same consent identity. It may adopt its
+                // own task only once the original owning process is provably
+                // gone — a LIVE owner keeps its task isolated, and the deny
+                // stays indistinguishable from "no such task".
+                guard origin == .cdp,
+                      let taskPrincipal = existing.driverPrincipalId,
+                      let callerPrincipal = driverPrincipalId,
+                      AgentDriverSessionRegistry.shared.canAdopt(
+                        taskPrincipalId: taskPrincipal,
+                        callerPrincipalId: callerPrincipal) else {
+                    AppLogWarn("[AgentSpace] createAgentSpace: taskId \(taskId) belongs to another origin")
+                    completion(nil, nil)
+                    return
+                }
+                AppLogInfo("[AgentSpace] createAgentSpace: task \(taskId) re-adopted "
+                           + "by a restarted \(existing.agentName.isEmpty ? "agent" : existing.agentName)")
+                existing.driverPrincipalId = callerPrincipal
+                tasksBySpaceId[existingSpaceId] = existing
             }
             guard existing.windowId != 0 else {
                 // A concurrent create is still spawning the window. Returning
@@ -497,7 +559,9 @@ final class AgentSpaceManager: ObservableObject {
             }
             rebindPersistentSpace(taskId: taskId, spaceId: survivor.spaceId,
                                   profileId: survivor.profileId, origin: origin,
-                                  agentName: agentName, completion: completion)
+                                  agentName: agentName,
+                                  driverPrincipalId: driverPrincipalId,
+                                  completion: completion)
             return
         }
         // The cached profile list is empty when ProfileManager's init ran
@@ -539,6 +603,7 @@ final class AgentSpaceManager: ObservableObject {
             spaceId: spaceId,
             profileId: profile.profileId,
             origin: origin,
+            driverPrincipalId: driverPrincipalId,
             number: number,
             windowId: 0,
             ownership: .agent,
@@ -556,6 +621,11 @@ final class AgentSpaceManager: ObservableObject {
         spaceIdByTaskId[taskId] = spaceId
         ensureKeepAliveSweep()
         beginTranscript(taskId: taskId, spaceName: Self.agentSpaceName(number))
+        PostHogSDK.shared.capture("agent_task_started", properties: [
+            "origin": origin == .cdp ? "cdp" : "phi_agent",
+            "persistent": persistent,
+            "agent_name": AgentDriverBadge.telemetryName(agentName),
+        ])
 
         guard let slot = SpaceManager.shared.keySlot ?? SpaceManager.shared.slots.first else {
             // No window open at all — the persisted-active Space hasn't been
@@ -608,6 +678,7 @@ final class AgentSpaceManager: ObservableObject {
         profileId: String,
         origin: AgentTaskOrigin,
         agentName: String = "",
+        driverPrincipalId: String? = nil,
         completion: @escaping (_ spaceId: String?, _ windowId: Int?) -> Void
     ) {
         func record(windowId: Int, status: AgentTaskStatus) {
@@ -616,6 +687,7 @@ final class AgentSpaceManager: ObservableObject {
                 spaceId: spaceId,
                 profileId: profileId,
                 origin: origin,
+                driverPrincipalId: driverPrincipalId,
                 number: nextAgentNumber(),
                 windowId: windowId,
                 ownership: .agent,
@@ -631,6 +703,11 @@ final class AgentSpaceManager: ObservableObject {
             spaceIdByTaskId[taskId] = spaceId
             ensureKeepAliveSweep()
             beginTranscript(taskId: taskId, spaceName: taskId)
+            PostHogSDK.shared.capture("agent_task_started", properties: [
+                "origin": origin == .cdp ? "cdp" : "phi_agent",
+                "persistent": true,
+                "agent_name": AgentDriverBadge.telemetryName(agentName),
+            ])
         }
 
         for slot in SpaceManager.shared.slots {
@@ -776,17 +853,13 @@ final class AgentSpaceManager: ObservableObject {
 
         let body = (message?.isEmpty == false)
             ? message!
-            : NSLocalizedString(
-                "The agent handed control back to you to finish a step — for example, signing in.",
+            : NSLocalizedString("agent.handoffPrompt.message", value: "The agent handed control back to you to finish a step — for example, signing in.",
                 comment: "Agent handoff prompt - default body")
         let view = HandoffPromptView(
-            title: NSLocalizedString(
-                "The agent needs you", comment: "Agent handoff prompt - title"),
+            title: NSLocalizedString("agent.handoffPrompt.title", value: "The agent needs you", comment: "Agent handoff prompt - title"),
             message: body,
-            switchTitle: NSLocalizedString(
-                "Switch to Agent Space", comment: "Agent handoff prompt - open the agent Space"),
-            laterTitle: NSLocalizedString(
-                "Later", comment: "Agent handoff prompt - dismiss"),
+            switchTitle: NSLocalizedString("agent.handoffPrompt.switchToAgentSpaceButton", value: "Switch to Agent Space", comment: "Agent handoff prompt - open the agent Space"),
+            laterTitle: NSLocalizedString("agent.handoffPrompt.laterButton", value: "Later", comment: "Agent handoff prompt - dismiss"),
             onSwitch: { [weak self] in
                 AppLogInfo("[AgentSpace] handoff prompt: switch to agent Space")
                 self?.dismissHandoffPrompt()
@@ -824,6 +897,11 @@ final class AgentSpaceManager: ObservableObject {
                                      y: anchor.midY - size.height / 2))
         panel.orderFrontRegardless()
 
+        // The panel is non-activating, so it alone never bounces the Dock
+        // icon; ask for attention explicitly the way a modal prompt would.
+        // No-op while Phi is already the active app.
+        handoffPromptAttentionRequest = NSApp.requestUserAttention(.criticalRequest)
+
         handoffPromptPanel = panel
         handoffPromptSpaceId = spaceId
     }
@@ -833,6 +911,10 @@ final class AgentSpaceManager: ObservableObject {
     /// completion, deletion) must not tear down a newer task's prompt.
     private func dismissHandoffPrompt(forSpaceId spaceId: String? = nil) {
         if let spaceId, handoffPromptSpaceId != spaceId { return }
+        if let request = handoffPromptAttentionRequest {
+            NSApp.cancelUserAttentionRequest(request)
+            handoffPromptAttentionRequest = nil
+        }
         handoffPromptPanel?.close()
         handoffPromptPanel = nil
         handoffPromptSpaceId = nil
@@ -998,7 +1080,11 @@ final class AgentSpaceManager: ObservableObject {
         guard let data = try? JSONSerialization.data(withJSONObject: [
                 "taskId": taskId, "id": message.id.uuidString, "text": capped]),
               let payload = String(data: data, encoding: .utf8) else { return }
-        ExtensionMessaging.shared.broadcast(type: "agentSpace.userMessage", payload: payload)
+        ExtensionMessaging.shared.broadcastToTaskDriver(
+            type: "agentSpace.userMessage",
+            payload: payload,
+            origin: task.origin,
+            driverPrincipalId: task.driverPrincipalId)
     }
 
     /// The between-rounds delivery warning, scoped to Codex: nothing is ever
@@ -1039,9 +1125,8 @@ final class AgentSpaceManager: ObservableObject {
     /// keep-alive reap (a driver whose harness kills rounds, Pi's 10s bash
     /// timeout) must not lose the history the user is reading, so only a
     /// stale buffer is cleared. Recency is judged by APPEND time — mirrored
-    /// lines carry backdated authored timestamps. Auto-opens the console when
-    /// Agent Autoview is on — same preference, same intent: the user wants to
-    /// watch the agent work.
+    /// lines carry backdated authored timestamps. The console is never opened
+    /// here — the user opens it from the pip's context menu.
     private func beginTranscript(taskId: String, spaceName: String) {
         let continuing = AgentTranscriptStore.shared.lastAppend(taskId: taskId)
             .map { Date().timeIntervalSince($0) < Self.transcriptContinuityWindow }
@@ -1051,13 +1136,9 @@ final class AgentSpaceManager: ObservableObject {
         }
         appendTranscript(taskId: taskId, kind: .status,
                          text: "Task started — Space \(spaceName)")
-        if PhiPreferences.AgentSpaces.autoViewEnabled {
-            AgentTranscriptPanelController.shared.show(focusTaskId: taskId)
-        } else {
-            // Panel already open: keep its feed pointed at something real if
-            // its filter was left on a task that has since ended.
-            AgentTranscriptPanelController.shared.refocusIfStale(onto: taskId)
-        }
+        // Panel already open: keep its feed pointed at something real if
+        // its filter was left on a task that has since ended.
+        AgentTranscriptPanelController.shared.refocusIfStale(onto: taskId)
     }
 
     /// Buffer/queue teardown when a task record goes away. Retention: an OPEN
@@ -1155,6 +1236,12 @@ final class AgentSpaceManager: ObservableObject {
         AppLogInfo("[AgentSpace] task \(taskId) completed success=\(success)"
             + " persistent=\(task.persistent)"
             + (message.map { " message=\($0)" } ?? ""))
+        PostHogSDK.shared.capture("agent_task_completed", properties: [
+            "origin": task.origin == .cdp ? "cdp" : "phi_agent",
+            "persistent": task.persistent,
+            "agent_name": AgentDriverBadge.telemetryName(task.agentName),
+            "success": success,
+        ])
         if let masked = task.maskedTabId {
             AgentAnimationManager.shared.setActive(false, for: masked)
         }
@@ -1250,7 +1337,16 @@ final class AgentSpaceManager: ObservableObject {
         guard let data = try? JSONSerialization.data(
                 withJSONObject: ["taskId": taskId, "owner": owner]),
               let payload = String(data: data, encoding: .utf8) else { return }
-        ExtensionMessaging.shared.broadcast(type: "agentSpace.ownershipChanged", payload: payload)
+        // Delivery needs the task's owning principal; once the record is gone
+        // the event is deliberately dropped — drivers learn of an ended task
+        // from its disappearance in agentSpace.list, not from a final
+        // ownership flip.
+        guard let task = task(forTaskId: taskId) else { return }
+        ExtensionMessaging.shared.broadcastToTaskDriver(
+            type: "agentSpace.ownershipChanged",
+            payload: payload,
+            origin: task.origin,
+            driverPrincipalId: task.driverPrincipalId)
     }
 }
 

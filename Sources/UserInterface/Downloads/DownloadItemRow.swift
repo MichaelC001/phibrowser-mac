@@ -71,11 +71,11 @@ struct DownloadItemRow: View {
     private var statusLabel: String? {
         var label: String?
         switch item.state {
-        case .cancelled: label = NSLocalizedString("Canceled", comment: "Download item row - Status label when download was cancelled")
-        case .interrupted: label = NSLocalizedString("Failed", comment: "Download item row - Status label when download failed")
+        case .cancelled: label = NSLocalizedString("downloads.item.status.cancelled", value: "Canceled", comment: "Download item row - Status label when download was cancelled")
+        case .interrupted: label = NSLocalizedString("downloads.item.status.failed", value: "Failed", comment: "Download item row - Status label when download failed")
         case .complete:
             if item.canShowInFolder == false {
-                label = NSLocalizedString("Deleted", comment: "Download item row - Status label when downloaded file was deleted")
+                label = NSLocalizedString("downloads.item.status.deleted", value: "Deleted", comment: "Download item row - Status label when downloaded file was deleted")
             }
         default: break
         }
@@ -92,21 +92,21 @@ struct DownloadItemRow: View {
         let day: TimeInterval = 24 * hour
         
         if interval < minute {
-            return NSLocalizedString("Just now", comment: "Download item row - Relative time when download completed less than a minute ago")
+            return NSLocalizedString("downloads.item.completedTime.justNow", value: "Just now", comment: "Download item row - Relative time when download completed less than a minute ago")
         } else if interval < hour {
             let minutes = Int(interval / minute)
-            return String(format: NSLocalizedString("%d min ago", comment: "Download item row - Relative time showing minutes since download completed"), minutes)
+            return String(format: NSLocalizedString("downloads.item.completedTime.minutesAgo", value: "%d min ago", comment: "Download item row - Relative time showing minutes since download completed"), minutes)
         } else if interval < 12 * hour {
             let hours = Int(interval / hour)
-            return String(format: NSLocalizedString("%d hour ago", comment: "Download item row - Relative time showing hours since download completed"), hours)
+            return String(format: NSLocalizedString("downloads.item.completedTime.hoursAgo", value: "%d hour ago", comment: "Download item row - Relative time showing hours since download completed"), hours)
         } else if interval < 3 * day {
             let days = Int(interval / day)
             if days == 0 {
-                return NSLocalizedString("Today", comment: "Download item row - Relative time when download completed today")
+                return NSLocalizedString("downloads.item.completedTime.today", value: "Today", comment: "Download item row - Relative time when download completed today")
             } else if days == 1 {
-                return NSLocalizedString("Yesterday", comment: "Download item row - Relative time when download completed yesterday")
+                return NSLocalizedString("downloads.item.completedTime.yesterday", value: "Yesterday", comment: "Download item row - Relative time when download completed yesterday")
             } else {
-                return String(format: NSLocalizedString("%d days ago", comment: "Download item row - Relative time showing days since download completed"), days)
+                return String(format: NSLocalizedString("downloads.item.completedTime.daysAgo", value: "%d days ago", comment: "Download item row - Relative time showing days since download completed"), days)
             }
         } else {
             // More than 3 days: show specific date
@@ -122,7 +122,7 @@ struct DownloadItemRow: View {
         if item.state == .complete, let endTime = item.endTime {
             return formatRelativeDate(endTime)
         } else {
-            return String(format: NSLocalizedString("From %@", comment: "Download item row - Source host label showing where the file is downloaded from"), item.sourceHost)
+            return String(format: NSLocalizedString("downloads.item.sourceHostLabel", value: "From %@", comment: "Download item row - Source host label showing where the file is downloaded from"), item.sourceHost)
         }
     }
     
@@ -218,7 +218,7 @@ struct DownloadItemRow: View {
                 }
                 
                 if item.isPaused {
-                    Text(NSLocalizedString("・Paused", comment: "Download item row - Status indicator when download is paused"))
+                    Text(NSLocalizedString("downloads.item.status.pausedIndicator", value: "・Paused", comment: "Download item row - Status indicator when download is paused"))
                         .font(.system(size: 11))
                         .foregroundColor(Color.orange.opacity(0.8))
                 }
@@ -252,24 +252,24 @@ struct DownloadItemRow: View {
             DownloadActionButton(
                 icon: .init(.deleteDownload),
                 action: { onCancel(item) },
-                tooltip: NSLocalizedString("Cancel", comment: "Download item row - Tooltip for cancel button during safety scan")
+                tooltip: NSLocalizedString("downloads.item.safetyScan.cancelButtonTooltip", value: "Cancel", comment: "Download item row - Tooltip for cancel button during safety scan")
             )
         case .warning:
             DownloadActionButton(
                 iconName: "checkmark",
                 action: { onKeep?(item) },
-                tooltip: NSLocalizedString("Keep", comment: "Download item row - Tooltip for keep button on safety warning")
+                tooltip: NSLocalizedString("downloads.item.safetyWarning.keepButtonTooltip", value: "Keep", comment: "Download item row - Tooltip for keep button on safety warning")
             )
             DownloadActionButton(
                 icon: .init(.deleteDownload),
                 action: { onDiscard?(item) },
-                tooltip: NSLocalizedString("Discard", comment: "Download item row - Tooltip for discard button on safety warning")
+                tooltip: NSLocalizedString("downloads.item.safetyWarning.discardButtonTooltip", value: "Discard", comment: "Download item row - Tooltip for discard button on safety warning")
             )
         case .blocked, .policyBlocked:
             DownloadActionButton(
                 icon: .init(.deleteDownload),
                 action: { onDiscard?(item) },
-                tooltip: NSLocalizedString("Discard", comment: "Download item row - Tooltip for discard button on blocked download")
+                tooltip: NSLocalizedString("downloads.item.blocked.discardButtonTooltip", value: "Discard", comment: "Download item row - Tooltip for discard button on blocked download")
             )
         case .normal:
             EmptyView()
@@ -283,27 +283,27 @@ struct DownloadItemRow: View {
                 DownloadActionButton(
                     icon: .init(.copyLink),
                     action: { onCopyLink(item) },
-                    tooltip: NSLocalizedString("Copy Link", comment: "Download item row - Tooltip for copy link button")
+                    tooltip: NSLocalizedString("downloads.item.inProgress.copyLinkButtonTooltip", value: "Copy Link", comment: "Download item - Tooltip for copying the link of an in-progress download")
                 )
                 // Pause/Resume button
                 DownloadActionButton(
                     icon: item.isPaused ? .init(.resumeDownload) : .init(.pauseDownload),
                     action: { item.isPaused ? onResume(item) : onPause(item) },
-                    tooltip: item.isPaused ? NSLocalizedString("Resume", comment: "Download item row - Tooltip for resume download button") : NSLocalizedString("Pause", comment: "Download item row - Tooltip for pause download button")
+                    tooltip: item.isPaused ? NSLocalizedString("downloads.item.resumeButtonTooltip", value: "Resume", comment: "Download item row - Tooltip for resume download button") : NSLocalizedString("downloads.item.pauseButtonTooltip", value: "Pause", comment: "Download item row - Tooltip for pause download button")
                 )
                 
                 // Cancel button
                 DownloadActionButton(
                     icon: .init(.deleteDownload),
                     action: { onCancel(item) },
-                    tooltip: NSLocalizedString("Cancel", comment: "Download item row - Tooltip for cancel download button")
+                    tooltip: NSLocalizedString("downloads.item.cancelButtonTooltip", value: "Cancel", comment: "Download item row - Tooltip for cancel download button")
                 )
                 
             case .complete:
                 DownloadActionButton(
                     icon: .init(.copyLink),
                     action: { onCopyLink(item) },
-                    tooltip: NSLocalizedString("Copy Link", comment: "Download item row - Tooltip for copy link button")
+                    tooltip: NSLocalizedString("downloads.item.completed.copyLinkButtonTooltip", value: "Copy Link", comment: "Download item - Tooltip for copying the link of a completed download")
                 )
                 
                 
@@ -311,7 +311,7 @@ struct DownloadItemRow: View {
                 DownloadActionButton(
                     icon: .init(.showInFinder),
                     action: { onShowInFinder(item) },
-                    tooltip: NSLocalizedString("Show in Finder", comment: "Download item row - Tooltip for show in finder button"),
+                    tooltip: NSLocalizedString("downloads.item.showInFinderButtonTooltip", value: "Show in Finder", comment: "Download item row - Tooltip for show in finder button"),
                     isEnabled: item.canShowInFolder
                 )
                 
@@ -319,7 +319,7 @@ struct DownloadItemRow: View {
                 DownloadActionButton(
                     icon: .init(.deleteDownload),
                     action: { onRemove(item) },
-                    tooltip: NSLocalizedString("Remove", comment: "Download item row - Tooltip for remove download button")
+                    tooltip: NSLocalizedString("downloads.item.completed.removeButtonTooltip", value: "Remove", comment: "Download item - Tooltip for removing a completed download")
                 )
                 
                 // More options menu
@@ -329,7 +329,7 @@ struct DownloadItemRow: View {
                 DownloadActionButton(
                     icon: .init(.copyLink),
                     action: { onCopyLink(item) },
-                    tooltip: NSLocalizedString("Copy Link", comment: "Download item row - Tooltip for copy link button")
+                    tooltip: NSLocalizedString("downloads.item.interrupted.copyLinkButtonTooltip", value: "Copy Link", comment: "Download item - Tooltip for copying the link of an interrupted download")
                 )
                 
                 // Retry button (if can resume)
@@ -337,7 +337,7 @@ struct DownloadItemRow: View {
                     DownloadActionButton(
                         iconName: "arrow.clockwise",
                         action: { onResume(item) },
-                        tooltip: NSLocalizedString("Retry", comment: "Download item row - Tooltip for retry download button")
+                        tooltip: NSLocalizedString("downloads.item.retryButtonTooltip", value: "Retry", comment: "Download item row - Tooltip for retry download button")
                     )
                 }
                 
@@ -345,7 +345,7 @@ struct DownloadItemRow: View {
                 DownloadActionButton(
                     icon: .init(.deleteDownload),
                     action: { onRemove(item) },
-                    tooltip: NSLocalizedString("Remove", comment: "Download item row - Tooltip for remove download button")
+                    tooltip: NSLocalizedString("downloads.item.interrupted.removeButtonTooltip", value: "Remove", comment: "Download item - Tooltip for removing an interrupted download")
                 )
             }
     }
@@ -353,12 +353,12 @@ struct DownloadItemRow: View {
     private var moreOptionsMenu: some View {
         Menu {
             Button(action: { onRemove(item) }) {
-                Label(NSLocalizedString("Remove from list", comment: "Download item row - Menu option to remove download from list"), systemImage: "trash")
+                Label(NSLocalizedString("downloads.item.moreMenu.removeAction", value: "Remove from list", comment: "Download item row - Menu option to remove download from list"), systemImage: "trash")
             }
             
             if item.canShowInFolder {
                 Button(action: { onShowInFinder(item) }) {
-                    Label(NSLocalizedString("Show in Finder", comment: "Download item row - Menu option to reveal file in Finder"), systemImage: "folder")
+                    Label(NSLocalizedString("downloads.item.moreMenu.showInFinderAction", value: "Show in Finder", comment: "Download item row - Menu option to reveal file in Finder"), systemImage: "folder")
                 }
             }
         } label: {

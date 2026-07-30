@@ -134,7 +134,47 @@ class AccountController {
         }
     }
 
+    /// Drops the locally cached account identity: the cached profile and
+    /// name, the avatar (both the bytes served to the Chromium settings
+    /// bridge and the Kingfisher entry they are re-warmed from), and the
+    /// current account reference. Purely local — nothing here talks to the
+    /// network, and the remote session is the caller's business.
+    ///
+    /// The account reference goes last: the cached profile lives in that
+    /// account's defaults store, and the avatar entry is keyed by the URL
+    /// that profile carries.
+    @MainActor
+    func clearCachedAccount() {
+        if let account {
+            let key = AccountUserDefaults.DefaultsKey.cachedProfile.rawValue
+            let cachedProfile: Profile? = account.userDefaults.codableValue(forKey: key)
+            if let picture = cachedProfile?.picture, let url = URL(string: picture) {
+                // Only this account's entries: Kingfisher's shared cache also
+                // holds every favicon. Both variants have to go — the avatar is
+                // fetched unprocessed here and rounded in the settings pane, and
+                // the processor identifier is part of the cache key.
+                let cache = KingfisherManager.shared.cache
+                cache.removeImage(forKey: url.absoluteString)
+                cache.removeImage(
+                    forKey: url.absoluteString,
+                    processorIdentifier: Self.avatarImageProcessor.identifier
+                )
+            }
+            account.userDefaults.set(nil, forKey: .cachedProfile)
+            account.userDefaults.set(nil, forKey: .cachedUserName)
+        }
+        avatarPNG = nil
+        avatarPNGOwnerID = nil
+        account = nil
+    }
+
     // MARK: Avatar bytes for the Chromium settings bridge
+
+    /// The processor the account settings pane renders avatars with. Owned here
+    /// rather than at the view: Kingfisher folds the processor identifier into
+    /// the cache key, so `clearCachedAccount()` can only evict the rounded
+    /// variant if both sides agree on one processor.
+    static let avatarImageProcessor = RoundCornerImageProcessor(radius: .widthFraction(0.5))
 
     /// In-memory PNG bytes of the current account's avatar, answered
     /// synchronously to the Chromium settings bridge. An owned copy by

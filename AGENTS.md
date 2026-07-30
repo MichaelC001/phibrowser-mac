@@ -114,6 +114,13 @@ Never allow documentation to diverge from actual behavior.
 
 ---
 
+# Localization Rules
+
+Before adding or modifying localized strings, read and follow
+[Localization Guidelines](docs/i18n/localization-guidelines.md).
+
+---
+
 # Phi Browser — Project-Specific Architecture
 
 ## System Nature

@@ -24,11 +24,11 @@ enum LayoutMode: String, CaseIterable, Identifiable {
     var displayName: String {
         switch self {
         case .performance:
-            return NSLocalizedString("Performance", comment: "Layout option - Vertical tabs with address bar at side bar")
+            return NSLocalizedString("settings.general.layoutMode.performanceOption", value: "Performance", comment: "Layout option - Vertical tabs with address bar at side bar")
         case .balanced:
-            return NSLocalizedString("Balanced", comment: "Layout option - Vertical tabs with address bar at the top of webcontent")
+            return NSLocalizedString("settings.general.layoutMode.balancedOption", value: "Balanced", comment: "Layout option - Vertical tabs with address bar at the top of webcontent")
         case .comfortable:
-            return NSLocalizedString("Comfortable", comment: "Layout option - Horizontal tabs")
+            return NSLocalizedString("settings.general.layoutMode.comfortableOption", value: "Comfortable", comment: "Layout option - Horizontal tabs")
         }
     }
 
@@ -50,11 +50,11 @@ enum AutoPictureInPictureMode: String, CaseIterable, Identifiable {
     var displayName: String {
         switch self {
         case .off:
-            return NSLocalizedString("Off", comment: "Auto picture-in-picture option - never pop out automatically; manual picture-in-picture is unaffected")
+            return NSLocalizedString("settings.general.pictureInPicture.offOption", value: "Off", comment: "Auto picture-in-picture option - never pop out automatically; manual picture-in-picture is unaffected")
         case .normal:
-            return NSLocalizedString("Normal", comment: "Auto picture-in-picture option - pop out and stay in place")
+            return NSLocalizedString("settings.general.pictureInPicture.normalOption", value: "Normal", comment: "Auto picture-in-picture option - pop out and stay in place")
         case .parked:
-            return NSLocalizedString("Park at edge", comment: "Auto picture-in-picture option - pop out, then park at the screen edge until clicked")
+            return NSLocalizedString("settings.general.pictureInPicture.parkAtEdgeOption", value: "Park at edge", comment: "Auto picture-in-picture option - pop out, then park at the screen edge until clicked")
         }
     }
 }
@@ -235,26 +235,42 @@ extension PhiPreferences {
 
     enum AgentSpaces {
         private static let autoCloseKey = "PhiAgentSpaceAutoCloseOnSuccess"
+        private static let developerModeKey = "PhiDeveloperModeEnabled"
         private static let cdpAgentAccessKey = "PhiCDPAgentAccessEnabled"
         private static let rememberedAgentGrantsKey = "PhiCDPRememberedAgentGrants"
         private static let autoViewKey = "PhiAgentSpaceAutoView"
-        private static let skillFeatureKey = "PhiBrowserSkillFeatureEnabled"
         private static let userSpaceOperationsKey = "PhiAgentUserSpaceOperationsEnabled"
         private static let disallowedAgentProfilesKey = "PhiAgentDisallowedProfileIds"
         private static let agentFallbackProfileKey = "PhiAgentFallbackProfileId"
 
-        /// Master gate for the phi-browser skill's UI surfaces — the Developer
-        /// settings tab and View ▸ Agent Autoview (same pattern as
-        /// `GeneralSettings.spacesFeatureEnabled`). Defaults on, no user-facing
-        /// toggle: flip with `defaults write <bundle id>
-        /// 
-        /// PhiBrowserSkillFeatureEnabled -bool false`. The Settings window
-        /// re-reads it on every open; the menu item applies on relaunch.
-        static var skillFeatureEnabled: Bool {
-            UserDefaults.standard.bool(forKey: skillFeatureKey, default: false)
+        /// Master gate for the developer surfaces — the Developer settings tab
+        /// and the features configured there. Driven by the "Developer mode"
+        /// toggle in Settings ▸ General. Turning it OFF is a kill-switch, not
+        /// just UI hiding: agent CDP access and the agent password manager are
+        /// disabled with it (see `AppController.setDeveloperModeEnabled`).
+        /// Turning it back ON re-enables nothing automatically — each feature
+        /// is re-enabled individually in the Developer tab. Defaults off,
+        /// with a backfill: while the toggle was never touched, a user who
+        /// already enabled agent CDP access or the agent password manager
+        /// (pre-default-off users, or Bitwarden picked during onboarding) has
+        /// opted into the developer surfaces, so `true` is adopted and
+        /// persisted on first read — the features they enabled must not
+        /// vanish behind a hidden tab.
+        static var developerModeEnabled: Bool {
+            get {
+                guard UserDefaults.standard.object(forKey: developerModeKey) == nil else {
+                    return UserDefaults.standard.bool(forKey: developerModeKey)
+                }
+                let alreadyOptedIn = cdpAgentAccessEnabled
+                    || PasswordManagerSettings.bitwardenEnabled.loadValue()
+                guard alreadyOptedIn else { return false }
+                UserDefaults.standard.set(true, forKey: developerModeKey)
+                return true
+            }
+            set { UserDefaults.standard.set(newValue, forKey: developerModeKey) }
         }
 
-        /// Settings ▸ Developer ▸ Agent permissions: whether agent tooling may
+        /// Settings ▸ Developer ▸ Agent control: whether agent tooling may
         /// operate the user's own browsing data and windows over the
         /// management surface — Spaces, profiles, URL rules, pinned tabs,
         /// bookmarks, and the tab layout of user windows. When off, agents can
@@ -265,7 +281,7 @@ extension PhiPreferences {
             set { UserDefaults.standard.set(newValue, forKey: userSpaceOperationsKey) }
         }
 
-        /// Settings ▸ Developer ▸ Agent permissions: profiles the agent may NOT
+        /// Settings ▸ Developer ▸ Agent control: profiles the agent may NOT
         /// create agent Spaces in, by profileId. Stored as a blocklist so the
         /// default (empty) preserves "any profile allowed"; the UI presents it
         /// as a per-profile "allow" toggle. Keyed by profileId (stable across
@@ -336,8 +352,9 @@ extension PhiPreferences {
         /// Settings ▸ Developer ▸ Remote debugging: master switch for agent CDP
         /// access over the app-owned Unix-domain socket (see
         /// `AgentCDPListener`). Read live — flipping it starts or stops the
-        /// listener immediately, no relaunch. Default off: while on, an
-        /// approved agent process can drive the browser.
+        /// listener immediately, no relaunch, and shows or hides the View ▸
+        /// Agent Autoview / Agent Transcript menu items. Default off: while
+        /// on, an approved agent process can drive the browser.
         static var cdpAgentAccessEnabled: Bool {
             get { UserDefaults.standard.bool(forKey: cdpAgentAccessKey) }
             set { UserDefaults.standard.set(newValue, forKey: cdpAgentAccessKey) }
@@ -406,10 +423,17 @@ extension PhiPreferences {
     /// during onboarding; new profiles then auto-install the iCloud extension.
     enum PasswordManagerSettings: String, CaseIterable {
         case autoInstallICloudPasswords
+        /// `true` when the user enabled Bitwarden (onboarding or the Phi & AI
+        /// settings card). Drives the master toggle and, like
+        /// `autoInstallICloudPasswords`, is the OOBE choice that newly created
+        /// profiles mirror to auto-install the Bitwarden extension.
+        case bitwardenEnabled
 
         var defaultValue: Bool {
             switch self {
             case .autoInstallICloudPasswords:
+                return false
+            case .bitwardenEnabled:
                 return false
             }
         }

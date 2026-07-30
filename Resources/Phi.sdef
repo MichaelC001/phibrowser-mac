@@ -1,0 +1,175 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE dictionary SYSTEM "file://localhost/System/Library/DTDs/sdef.dtd">
+<dictionary title="Phi Terminology">
+    <suite name="Phi Suite" code="Phis" description="Commands for safe access to live Phi Spaces and tabs.">
+        <command name="list spaces" code="PhisLSpc" description="Return normal user Spaces as versioned JSON.">
+            <cocoa class="PhiListSpacesScriptCommand"/>
+            <parameter name="client context" code="ClCt" type="text" optional="yes" description="Optional versioned client attribution context.">
+                <cocoa key="clientContext"/>
+            </parameter>
+            <result type="text" description="A JSON response containing Spaces."/>
+        </command>
+        <command name="list tabs" code="PhisLTbs" description="Return live tabs including pin and bookmark as versioned JSON.">
+            <cocoa class="PhiListTabsScriptCommand"/>
+            <parameter name="client context" code="ClCt" type="text" optional="yes" description="Optional versioned client attribution context.">
+                <cocoa key="clientContext"/>
+            </parameter>
+            <parameter name="scope" code="Scop" type="text" optional="yes" description="One of all, current, or space.">
+                <cocoa key="scope"/>
+            </parameter>
+            <parameter name="space id" code="SpID" type="text" optional="yes" description="The opaque Space identifier used with space scope.">
+                <cocoa key="spaceId"/>
+            </parameter>
+            <result type="text" description="A JSON response containing tabs."/>
+        </command>
+        <command name="get active space" code="PhisGAct" description="Return the active normal Space as versioned JSON.">
+            <cocoa class="PhiGetActiveSpaceScriptCommand"/>
+            <parameter name="client context" code="ClCt" type="text" optional="yes" description="Optional versioned client attribution context.">
+                <cocoa key="clientContext"/>
+            </parameter>
+            <result type="text" description="A JSON response containing the active Space."/>
+        </command>
+        <command name="activate space" code="PhisASpc" description="Activate a Space in the focused Phi window.">
+            <cocoa class="PhiActivateSpaceScriptCommand"/>
+            <parameter name="client context" code="ClCt" type="text" optional="yes" description="Optional versioned client attribution context.">
+                <cocoa key="clientContext"/>
+            </parameter>
+            <parameter name="space id" code="SpID" type="text" description="The opaque Space identifier.">
+                <cocoa key="spaceId"/>
+            </parameter>
+            <result type="text" description="A versioned JSON acknowledgement or error."/>
+        </command>
+        <command name="activate tab" code="PhisATab" description="Surface and activate a live tab in its owning window.">
+            <cocoa class="PhiActivateTabScriptCommand"/>
+            <parameter name="client context" code="ClCt" type="text" optional="yes" description="Optional versioned client attribution context.">
+                <cocoa key="clientContext"/>
+            </parameter>
+            <parameter name="window id" code="WiID" type="text" description="The opaque owning window identifier.">
+                <cocoa key="windowId"/>
+            </parameter>
+            <parameter name="tab id" code="TbID" type="text" description="The opaque tab identifier.">
+                <cocoa key="tabId"/>
+            </parameter>
+            <result type="text" description="A versioned JSON acknowledgement or error."/>
+        </command>
+        <command name="close tab" code="PhisCTab" description="Close a live tab in its owning window.">
+            <cocoa class="PhiCloseTabScriptCommand"/>
+            <parameter name="client context" code="ClCt" type="text" optional="yes" description="Optional versioned client attribution context.">
+                <cocoa key="clientContext"/>
+            </parameter>
+            <parameter name="window id" code="WiID" type="text" description="The opaque owning window identifier.">
+                <cocoa key="windowId"/>
+            </parameter>
+            <parameter name="tab id" code="TbID" type="text" description="The opaque tab identifier.">
+                <cocoa key="tabId"/>
+            </parameter>
+            <result type="text" description="A versioned JSON acknowledgement or error."/>
+        </command>
+        <command name="reload tab" code="PhisRTab" description="Reload a live tab in its owning window.">
+            <cocoa class="PhiReloadTabScriptCommand"/>
+            <parameter name="client context" code="ClCt" type="text" optional="yes" description="Optional versioned client attribution context.">
+                <cocoa key="clientContext"/>
+            </parameter>
+            <parameter name="window id" code="WiID" type="text" description="The opaque owning window identifier.">
+                <cocoa key="windowId"/>
+            </parameter>
+            <parameter name="tab id" code="TbID" type="text" description="The opaque tab identifier.">
+                <cocoa key="tabId"/>
+            </parameter>
+            <result type="text" description="A versioned JSON acknowledgement or error."/>
+        </command>
+        <command name="force reload tab" code="PhisFRTb" description="Reload a live tab while bypassing cached resources.">
+            <cocoa class="PhiForceReloadTabScriptCommand"/>
+            <parameter name="client context" code="ClCt" type="text" optional="yes" description="Optional versioned client attribution context.">
+                <cocoa key="clientContext"/>
+            </parameter>
+            <parameter name="window id" code="WiID" type="text" description="The opaque owning window identifier.">
+                <cocoa key="windowId"/>
+            </parameter>
+            <parameter name="tab id" code="TbID" type="text" description="The opaque tab identifier.">
+                <cocoa key="tabId"/>
+            </parameter>
+            <result type="text" description="A versioned JSON acknowledgement or error."/>
+        </command>
+        <command name="add split view" code="PhisASpl" description="Open a new tab as a split beside a live tab.">
+            <cocoa class="PhiAddSplitViewScriptCommand"/>
+            <parameter name="client context" code="ClCt" type="text" optional="yes" description="Optional versioned client attribution context.">
+                <cocoa key="clientContext"/>
+            </parameter>
+            <parameter name="window id" code="WiID" type="text" description="The opaque owning window identifier.">
+                <cocoa key="windowId"/>
+            </parameter>
+            <parameter name="tab id" code="TbID" type="text" description="The opaque tab identifier.">
+                <cocoa key="tabId"/>
+            </parameter>
+            <result type="text" description="A versioned JSON acknowledgement or error."/>
+        </command>
+        <command name="open pinned tab" code="PhisOPin" description="Open or focus a saved pinned tab in a target Space.">
+            <cocoa class="PhiOpenPinnedTabScriptCommand"/>
+            <parameter name="client context" code="ClCt" type="text" optional="yes" description="Optional versioned client attribution context.">
+                <cocoa key="clientContext"/>
+            </parameter>
+            <parameter name="space id" code="SpID" type="text" description="The target Space identifier.">
+                <cocoa key="spaceId"/>
+            </parameter>
+            <parameter name="pinned tab id" code="PnID" type="text" description="The opaque saved pinned-tab identifier.">
+                <cocoa key="pinnedTabId"/>
+            </parameter>
+            <result type="text" description="A versioned JSON acknowledgement or error."/>
+        </command>
+        <command name="open bookmark" code="PhisOBmk" description="Open or focus a saved bookmark in its owning Space.">
+            <cocoa class="PhiOpenBookmarkScriptCommand"/>
+            <parameter name="client context" code="ClCt" type="text" optional="yes" description="Optional versioned client attribution context.">
+                <cocoa key="clientContext"/>
+            </parameter>
+            <parameter name="space id" code="SpID" type="text" description="The owning Space identifier.">
+                <cocoa key="spaceId"/>
+            </parameter>
+            <parameter name="bookmark id" code="BmID" type="text" description="The opaque bookmark identifier.">
+                <cocoa key="bookmarkId"/>
+            </parameter>
+            <result type="text" description="A versioned JSON acknowledgement or error."/>
+        </command>
+        <command name="open tab" code="PhisOTab" description="Open an address or search text in a normal Space.">
+            <cocoa class="PhiOpenTabScriptCommand"/>
+            <parameter name="client context" code="ClCt" type="text" optional="yes" description="Optional versioned client attribution context.">
+                <cocoa key="clientContext"/>
+            </parameter>
+            <parameter name="address" code="Addr" type="text" description="A URL or search text.">
+                <cocoa key="address"/>
+            </parameter>
+            <parameter name="space id" code="SpID" type="text" optional="yes" description="The optional target Space identifier.">
+                <cocoa key="spaceId"/>
+            </parameter>
+            <result type="text" description="A versioned JSON acknowledgement or error."/>
+        </command>
+        <command name="create phi window" code="PhisNWin" description="Open a new normal Phi window.">
+            <cocoa class="PhiNewWindowScriptCommand"/>
+            <parameter name="client context" code="ClCt" type="text" optional="yes" description="Optional versioned client attribution context.">
+                <cocoa key="clientContext"/>
+            </parameter>
+            <result type="text" description="A versioned JSON acknowledgement or error."/>
+        </command>
+        <command name="create phi incognito window" code="PhisNInc" description="Open a new standalone incognito Phi window.">
+            <cocoa class="PhiNewIncognitoWindowScriptCommand"/>
+            <parameter name="client context" code="ClCt" type="text" optional="yes" description="Optional versioned client attribution context.">
+                <cocoa key="clientContext"/>
+            </parameter>
+            <result type="text" description="A versioned JSON acknowledgement or error."/>
+        </command>
+        <command name="get scripting version" code="PhisGVer" description="Return Phi and scripting API versions as versioned JSON.">
+            <cocoa class="PhiGetVersionScriptCommand"/>
+            <parameter name="client context" code="ClCt" type="text" optional="yes" description="Optional versioned client attribution context.">
+                <cocoa key="clientContext"/>
+            </parameter>
+            <result type="text" description="A JSON response containing the Phi and scripting API versions."/>
+        </command>
+        <command name="get chromium data directory" code="PhisGDat" description="Return the current Phi application's Chromium data directory as versioned JSON.">
+            <cocoa class="PhiGetChromiumDataDirectoryScriptCommand"/>
+            <parameter name="client context" code="ClCt" type="text" optional="yes" description="Optional versioned client attribution context.">
+                <cocoa key="clientContext"/>
+            </parameter>
+            <result type="text" description="A JSON response containing the Chromium data directory."/>
+        </command>
+    </suite>
+</dictionary>

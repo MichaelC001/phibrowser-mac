@@ -25,13 +25,13 @@ final class TabAreaContextMenuHelper: NSObject {
             AgentSpaceManager.shared.isAgentOwned(browserState?.spaceId ?? "")
         }
         menu.addItem(NSMenuItem(
-            title: NSLocalizedString("New Tab", comment: "Tab area context menu - Open a new browser tab"),
+            title: NSLocalizedString("common.tabAreaContextMenu.newTabAction", value: "New Tab", comment: "Tab area context menu - Open a new browser tab"),
             action: agentLocked ? nil : #selector(newTab),
             keyEquivalent: "t"
         ).configured { $0.keyEquivalentModifierMask = .command; $0.target = agentLocked ? nil : self })
 
         menu.addItem(NSMenuItem(
-            title: NSLocalizedString("Reopen Closed Tab", comment: "Tab area context menu - Reopen the last closed tab"),
+            title: NSLocalizedString("common.tabAreaContextMenu.reopenClosedTabAction", value: "Reopen Closed Tab", comment: "Tab area context menu - Reopen the last closed tab"),
             action: #selector(reopenClosedTab),
             keyEquivalent: "t"
         ).configured { $0.keyEquivalentModifierMask = [.command, .shift]; $0.target = self })
@@ -42,14 +42,14 @@ final class TabAreaContextMenuHelper: NSObject {
             menu.addItem(.separator())
 
             menu.addItem(NSMenuItem(
-                title: NSLocalizedString("New Folder", comment: "Tab area context menu - Create a new bookmark folder"),
+                title: NSLocalizedString("common.tabAreaContextMenu.newBookmarkFolderAction", value: "New Folder", comment: "Tab area context menu - Create a new bookmark folder"),
                 action: #selector(newFolder),
                 keyEquivalent: ""
             ).configured { $0.target = self })
 
             let hasBookmarkableTabs = browserState?.normalTabs.contains { !$0.isLocalPage } ?? false
             menu.addItem(NSMenuItem(
-                title: NSLocalizedString("Bookmark All Tabs", comment: "Tab area context menu - Bookmark all open tabs"),
+                title: NSLocalizedString("common.tabAreaContextMenu.bookmarkAllTabsAction", value: "Bookmark All Tabs", comment: "Tab area context menu - Bookmark all open tabs"),
                 action: hasBookmarkableTabs ? #selector(bookmarkAllTabs) : nil,
                 keyEquivalent: "d"
             ).configured { $0.keyEquivalentModifierMask = [.command, .shift]; $0.target = self })
@@ -58,7 +58,7 @@ final class TabAreaContextMenuHelper: NSObject {
         menu.addItem(.separator())
 
         let layoutItem = NSMenuItem(
-            title: NSLocalizedString("Layout Mode", comment: "Tab area context menu - Switch layout mode"),
+            title: NSLocalizedString("common.tabAreaContextMenu.layoutModeSubmenu", value: "Layout Mode", comment: "Tab area context menu - Switch layout mode"),
             action: nil,
             keyEquivalent: ""
         )
@@ -99,7 +99,7 @@ final class TabAreaContextMenuHelper: NSObject {
                 state.bookmarkManager.addFolder(title: folderName)
             }
         } else {
-            let untitledName = NSLocalizedString("Untitled", comment: "Default name for new bookmark folder in root")
+            let untitledName = NSLocalizedString("common.bookmarkFolder.defaultName", value: "Untitled", comment: "Default name for new bookmark folder in root")
             state.bookmarkManager.addFolderWithEditing(title: untitledName, to: nil)
         }
     }

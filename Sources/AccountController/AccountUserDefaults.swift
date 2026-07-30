@@ -180,12 +180,17 @@ extension AccountUserDefaults {
         /// global selection. Stored here rather than on `SpaceModel` to
         /// avoid a schema migration for what is purely a UI preference.
         case spaceThemeIds
-        /// Per-Space window-overlay opacity map
-        /// (`[spaceId: [appearanceKey: alpha]]`, appearanceKey "light"/"dark").
-        /// A missing entry means "use the pinned theme's own overlay alpha".
-        /// Lives beside `spaceThemeIds` for the same no-schema-migration
-        /// reason.
+        /// Legacy per-Space window-overlay opacity map. ThemeSnapshot V2 no
+        /// longer reads these values; the key remains only so Space deletion
+        /// can clean records written by older builds.
         case spaceOverlayOpacities
+        /// Per-Space theme saturation map. Overlay entries are keyed by
+        /// appearance; `windowBackgroundDark` carries the matching dark
+        /// window-background saturation.
+        case spaceThemeSaturations
+        /// Per-Space Pure-theme slider value. The shared position maps to
+        /// separate light and dark brightness ranges.
+        case spacePureThemeSliderValues
         /// Snapshot of the slot/window/Space layout written on every
         /// `SpaceWindowSlot.registerWindow`. Read on the next launch by
         /// `SpaceManager` so Chromium-restored windows reattach to the
@@ -246,16 +251,36 @@ extension AccountUserDefaults {
         set(map, forKey: DefaultsKey.spaceThemeIds.rawValue)
     }
 
-    /// Snapshot of the per-Space overlay-opacity map. Returns an empty
-    /// dictionary when no Space has a custom opacity yet.
+    /// Reads legacy per-Space opacity records for cleanup only.
     func spaceOverlayOpacities() -> [String: [String: Double]] {
         (object(forKey: DefaultsKey.spaceOverlayOpacities.rawValue) as? [String: [String: Double]]) ?? [:]
     }
 
-    /// Persists the per-Space overlay-opacity map verbatim. Callers should
-    /// mutate a snapshot from `spaceOverlayOpacities()` and pass it back.
+    /// Updates legacy per-Space opacity records during cleanup.
     func setSpaceOverlayOpacities(_ map: [String: [String: Double]]) {
         set(map, forKey: DefaultsKey.spaceOverlayOpacities.rawValue)
+    }
+
+    /// Snapshot of the per-Space theme-saturation map. Returns an empty
+    /// dictionary when no Space has a custom saturation yet.
+    func spaceThemeSaturations() -> [String: [String: Double]] {
+        (object(forKey: DefaultsKey.spaceThemeSaturations.rawValue) as? [String: [String: Double]]) ?? [:]
+    }
+
+    /// Persists the per-Space theme-saturation map verbatim. Callers should
+    /// mutate a snapshot from `spaceThemeSaturations()` and pass it back.
+    func setSpaceThemeSaturations(_ map: [String: [String: Double]]) {
+        set(map, forKey: DefaultsKey.spaceThemeSaturations.rawValue)
+    }
+
+    /// Snapshot of the per-Space Pure-theme slider-value map.
+    func spacePureThemeSliderValues() -> [String: Double] {
+        (object(forKey: DefaultsKey.spacePureThemeSliderValues.rawValue) as? [String: Double]) ?? [:]
+    }
+
+    /// Persists the per-Space Pure-theme slider-value map verbatim.
+    func setSpacePureThemeSliderValues(_ map: [String: Double]) {
+        set(map, forKey: DefaultsKey.spacePureThemeSliderValues.rawValue)
     }
 }
 

@@ -147,6 +147,7 @@
 		37FA01042FDA000100000004 /* LocalStoreCompatibilityController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37FA01142FDA000100000004 /* LocalStoreCompatibilityController.swift */; };
 		37FC8C922F335942004675B8 /* WebContentProgressBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37FC8C912F335942004675B8 /* WebContentProgressBarView.swift */; };
 		37FC8DAA2F39B2DE004675B8 /* LayoutModeSettingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37FC8DA92F39B2DE004675B8 /* LayoutModeSettingView.swift */; };
+		3AC6117E11925E637EB4711A /* SentinelBackupCoordination.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11E8BEE1510290AB35D5C5AD /* SentinelBackupCoordination.swift */; };
 		3BCDDE6FBABE4BD8A51F0127 /* TabGroupCellView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE7E61A49E8A472DB330779E /* TabGroupCellView.swift */; };
 		4508A9362EEFF2EB007C94E2 /* AccountWebWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4508A9352EEFF2EB007C94E2 /* AccountWebWindowController.swift */; };
 		4D454D4F5259000000000001 /* MemoryUsageModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D454D4F5259000000000002 /* MemoryUsageModels.swift */; };
@@ -180,6 +181,7 @@
 		5ACE0000000000000000000E /* ProfilesSettingViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ACE0000000000000000000B /* ProfilesSettingViewController.swift */; };
 		5ACE0000000000000000000F /* ProfilesSettingHostingViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ACE0000000000000000000C /* ProfilesSettingHostingViewController.swift */; };
 		5ACE00000000000000000010 /* ProfilesSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ACE0000000000000000000D /* ProfilesSettingsView.swift */; };
+		5ACE00000000000000000A22 /* ProfileDetailSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ACE00000000000000000A21 /* ProfileDetailSettingsView.swift */; };
 		5ACE00000000000000000012 /* ThemeOpacitySlider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ACE00000000000000000011 /* ThemeOpacitySlider.swift */; };
 		5EA17ABC0000000000000100 /* SearchTabsModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5EA17ABC0000000000000110 /* SearchTabsModels.swift */; };
 		5EA17ABC0000000000000101 /* SearchTabsQueryMatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5EA17ABC0000000000000111 /* SearchTabsQueryMatcher.swift */; };
@@ -242,8 +244,14 @@
 		8E9E96AF2F0F6E64002D0D21 /* TabStrip.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E9E96AA2F0F6E64002D0D21 /* TabStrip.swift */; };
 		8EA1FD942FEA95140060DCFF /* CrashPageData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EA1FD932FEA95140060DCFF /* CrashPageData.swift */; };
 		8EA1FD962FEB74530060DCFF /* RendererCrashViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EA1FD952FEB74530060DCFF /* RendererCrashViewController.swift */; };
+		8EB01BE13010BCED0043E59D /* AccountDeletionController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EB01BDF3010BCED0043E59D /* AccountDeletionController.swift */; };
+		8EB01BE33010BCED0043E59D /* OblivionDeletionAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EB01BE23010BCED0043E59D /* OblivionDeletionAPI.swift */; };
+		8EB01BE53010BCED0043E59D /* AccountDeletionCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EB01BE43010BCED0043E59D /* AccountDeletionCoordinator.swift */; };
+		8EB01BE73010BCED0043E59D /* AccountDeletionFlowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EB01BE63010BCED0043E59D /* AccountDeletionFlowView.swift */; };
+		8EB01BE93010BCED0043E59D /* AccountDeletionFakeResponses.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EB01BE83010BCED0043E59D /* AccountDeletionFakeResponses.swift */; };
+		8EB01BEB3010BCED0043E59D /* UserDataRemoval.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EB01BEA3010BCED0043E59D /* UserDataRemoval.swift */; };
+		8EB01BED3010BCED0043E59D /* AccountDeletionLocalDataRemoval.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EB01BEC3010BCED0043E59D /* AccountDeletionLocalDataRemoval.swift */; };
 		8EC502132F67AE2300CE7338 /* DownloadSafetyTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EC502122F67AE2300CE7338 /* DownloadSafetyTypes.swift */; };
-		8EC502152F67AF7F00CE7338 /* DownloadSafety.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 8EC502142F67AF7F00CE7338 /* DownloadSafety.xcstrings */; };
 		8EC70DB52F0A5E04009FE2CD /* BookmarkBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EC70DB42F0A5DFD009FE2CD /* BookmarkBar.swift */; };
 		8EC70E162F0BBF3D009FE2CD /* BookmarkItemView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EC70E152F0BBF3D009FE2CD /* BookmarkItemView.swift */; };
 		8EC70E182F0BC77E009FE2CD /* NSImageView+Favicon.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EC70E172F0BC77E009FE2CD /* NSImageView+Favicon.swift */; };
@@ -255,8 +263,13 @@
 		8EF36C032F4E9E7000FCC91E /* TabViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EF36C012F4E9E7000FCC91E /* TabViewModel.swift */; };
 		8EF36C062F4E9EC100FCC91E /* TabContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EF36C052F4E9EC100FCC91E /* TabContentView.swift */; };
 		8EF36C082F4EA95B00FCC91E /* SideTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EF36C072F4EA95B00FCC91E /* SideTabView.swift */; };
+		A11E00000000000000000001 /* PhiScriptingService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11E00000000000000000011 /* PhiScriptingService.swift */; };
+		A11E00000000000000000002 /* PhiScriptCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11E00000000000000000012 /* PhiScriptCommands.swift */; };
+		A11E00000000000000000003 /* Phi.sdef in Resources */ = {isa = PBXBuildFile; fileRef = A11E00000000000000000013 /* Phi.sdef */; };
 		A1B2C3D4E5F60718293A4B56 /* SharedAuthTokenStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60718293A4B55 /* SharedAuthTokenStore.swift */; };
 		A71E00000000000000000002 /* PhiAlert.swift in Sources */ = {isa = PBXBuildFile; fileRef = A71E00000000000000000001 /* PhiAlert.swift */; };
+		A71E00000000000000000004 /* CredentialApprovalAlert.swift in Sources */ = {isa = PBXBuildFile; fileRef = A71E00000000000000000003 /* CredentialApprovalAlert.swift */; };
+		D12800000000000000000001 /* PhiSegmentedPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = D12800000000000000000002 /* PhiSegmentedPicker.swift */; };
 		A7C021022FFD000000000002 /* ContextMenuEvent.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7C021012FFD000000000001 /* ContextMenuEvent.swift */; };
 		AA10000000000000000000B1 /* TabSwitchMetrics.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA10000000000000000000F1 /* TabSwitchMetrics.swift */; };
 		AA10000000000000000000B2 /* TabSwitchItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA10000000000000000000F2 /* TabSwitchItem.swift */; };
@@ -269,6 +282,7 @@
 		ACDC00000000000000000B01 /* AgentCDPListener.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACDC00000000000000000A01 /* AgentCDPListener.swift */; };
 		ACDC00000000000000000B02 /* AgentPeerIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACDC00000000000000000A02 /* AgentPeerIdentity.swift */; };
 		ACDC00000000000000000B03 /* AgentDirectChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACDC00000000000000000A03 /* AgentDirectChannel.swift */; };
+		ACDC00000000000000000B04 /* AppDevToolsPageSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACDC00000000000000000A04 /* AppDevToolsPageSession.swift */; };
 		AE00FFFE0000000000000002 /* PhiAgentEndpointResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE00FFFE0000000000000001 /* PhiAgentEndpointResolver.swift */; };
 		AE5ACE000000000000000011 /* AgentSpaceManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE5ACE000000000000000001 /* AgentSpaceManager.swift */; };
 		AE5ACE000000000000000012 /* AgentSpaceRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE5ACE000000000000000002 /* AgentSpaceRouter.swift */; };
@@ -290,6 +304,19 @@
 		B0F370CB2E43261A000B51F9 /* EventBus.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0F370CA2E43261A000B51F9 /* EventBus.swift */; };
 		B0F370D02E432CB8000B51F9 /* MainBrowserWindowController+Actions.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0F370CF2E432CB8000B51F9 /* MainBrowserWindowController+Actions.swift */; };
 		B0F370DA2E433F0E000B51F9 /* OverlayWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0F370D92E433F0E000B51F9 /* OverlayWindowController.swift */; };
+		B17DE0000000000000000005 /* CredentialProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17DE0000000000000000021 /* CredentialProvider.swift */; };
+		B17DE0000000000000000006 /* BitwardenService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17DE0000000000000000022 /* BitwardenService.swift */; };
+		B17DE0000000000000000008 /* PasswordManagerSectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17DE0000000000000000023 /* PasswordManagerSectionView.swift */; };
+		B17DE0000000000000000009 /* BitwardenLoginSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17DE0000000000000000024 /* BitwardenLoginSheet.swift */; };
+		B17DE000000000000000000B /* AgentSpaceRouter+Credentials.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17DE0000000000000000025 /* AgentSpaceRouter+Credentials.swift */; };
+		B17DE000000000000000000C /* CredentialAccessCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17DE0000000000000000026 /* CredentialAccessCoordinator.swift */; };
+		B17DE000000000000000000D /* CredentialAuditLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17DE0000000000000000027 /* CredentialAuditLog.swift */; };
+		B17DE0000000000000000031 /* BitwardenSessionSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17DE0000000000000000030 /* BitwardenSessionSettings.swift */; };
+		B17DE0000000000000000035 /* BitwardenSessionSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17DE0000000000000000034 /* BitwardenSessionSettingsView.swift */; };
+		B17DE00000000000000000E1 /* Vendor/PhiBitwardenHelper in Copy Bitwarden Helper */ = {isa = PBXBuildFile; fileRef = B17DE00000000000000000E0 /* Vendor/PhiBitwardenHelper */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+		B17DE00000000000000000E3 /* Vendor/PhiBitwardenHelper-LICENSE.txt in Copy Bitwarden GPL Notices */ = {isa = PBXBuildFile; fileRef = B17DE00000000000000000E5 /* Vendor/PhiBitwardenHelper-LICENSE.txt */; };
+		B17DE00000000000000000E4 /* Vendor/PhiBitwardenHelper-SOURCE-OFFER.txt in Copy Bitwarden GPL Notices */ = {isa = PBXBuildFile; fileRef = B17DE00000000000000000E6 /* Vendor/PhiBitwardenHelper-SOURCE-OFFER.txt */; };
+		B17DE0000000000000000B01 /* BitwardenSessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17DE0000000000000000B02 /* BitwardenSessionStore.swift */; };
 		C0D1D0022FEA000000000002 /* SidebarTabListViewController+MultiSelectionDragPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D1D0012FEA000000000001 /* SidebarTabListViewController+MultiSelectionDragPreview.swift */; };
 		C70000000000000000000011 /* CustomTooltipController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C70000000000000000000001 /* CustomTooltipController.swift */; };
 		C70000000000000000000012 /* CustomTooltip+Hosting.swift in Sources */ = {isa = PBXBuildFile; fileRef = C70000000000000000000002 /* CustomTooltip+Hosting.swift */; };
@@ -440,6 +467,7 @@
 		DEBE00000000000000000007 /* DeveloperSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEBE00000000000000000004 /* DeveloperSettingsView.swift */; };
 		F01D3A000000000000000001 /* bookmark-folder-open.svg in Resources */ = {isa = PBXBuildFile; fileRef = F01D3A000000000000000011 /* bookmark-folder-open.svg */; };
 		F01D3A000000000000000002 /* bookmark-folder-closed.svg in Resources */ = {isa = PBXBuildFile; fileRef = F01D3A000000000000000012 /* bookmark-folder-closed.svg */; };
+		F9E478A224C44EA7BC0D85CC /* AccountDeletedEventAuthentication.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19B477B37CF44BC48335A032 /* AccountDeletedEventAuthentication.swift */; };
 		FBD200012FD0000000000001 /* FeedbackOutbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBD200012FD0000000000002 /* FeedbackOutbox.swift */; };
 		FBD200012FD0000000000003 /* FeedbackV2.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBD200012FD0000000000004 /* FeedbackV2.swift */; };
 /* End PBXBuildFile section */
@@ -506,6 +534,29 @@
 			name = "Copy Time Machine Helpers";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		B17DE00000000000000000E2 /* Copy Bitwarden Helper */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = Contents/Helpers;
+			dstSubfolderSpec = 1;
+			files = (
+				B17DE00000000000000000E1 /* Vendor/PhiBitwardenHelper in Copy Bitwarden Helper */,
+			);
+			name = "Copy Bitwarden Helper";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B17DE00000000000000000E7 /* Copy Bitwarden GPL Notices */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 7;
+			files = (
+				B17DE00000000000000000E3 /* Vendor/PhiBitwardenHelper-LICENSE.txt in Copy Bitwarden GPL Notices */,
+				B17DE00000000000000000E4 /* Vendor/PhiBitwardenHelper-SOURCE-OFFER.txt in Copy Bitwarden GPL Notices */,
+			);
+			name = "Copy Bitwarden GPL Notices";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		CCBF0EA72ECD80B2005E729B /* Copy Fonts */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
@@ -525,6 +576,8 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		11E8BEE1510290AB35D5C5AD /* SentinelBackupCoordination.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SentinelBackupCoordination.swift; sourceTree = "<group>"; };
+		19B477B37CF44BC48335A032 /* AccountDeletedEventAuthentication.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountDeletedEventAuthentication.swift; sourceTree = "<group>"; };
 		3703C88B2F68F78500E7CF6D /* AISettingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AISettingView.swift; sourceTree = "<group>"; };
 		3703C9812F69558C00E7CF6D /* BrowserState+ToggleAI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "BrowserState+ToggleAI.swift"; sourceTree = "<group>"; };
 		3703C9832F6956E600E7CF6D /* SentinelHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SentinelHelper.swift; sourceTree = "<group>"; };
@@ -697,6 +750,7 @@
 		5ACE0000000000000000000B /* ProfilesSettingViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfilesSettingViewController.swift; sourceTree = "<group>"; };
 		5ACE0000000000000000000C /* ProfilesSettingHostingViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfilesSettingHostingViewController.swift; sourceTree = "<group>"; };
 		5ACE0000000000000000000D /* ProfilesSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfilesSettingsView.swift; sourceTree = "<group>"; };
+		5ACE00000000000000000A21 /* ProfileDetailSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileDetailSettingsView.swift; sourceTree = "<group>"; };
 		5ACE00000000000000000011 /* ThemeOpacitySlider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThemeOpacitySlider.swift; sourceTree = "<group>"; };
 		5EA17ABC0000000000000110 /* SearchTabsModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchTabsModels.swift; sourceTree = "<group>"; };
 		5EA17ABC0000000000000111 /* SearchTabsQueryMatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchTabsQueryMatcher.swift; sourceTree = "<group>"; };
@@ -760,8 +814,14 @@
 		8E9E96AA2F0F6E64002D0D21 /* TabStrip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabStrip.swift; sourceTree = "<group>"; };
 		8EA1FD932FEA95140060DCFF /* CrashPageData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrashPageData.swift; sourceTree = "<group>"; };
 		8EA1FD952FEB74530060DCFF /* RendererCrashViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RendererCrashViewController.swift; sourceTree = "<group>"; };
+		8EB01BDF3010BCED0043E59D /* AccountDeletionController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountDeletionController.swift; sourceTree = "<group>"; };
+		8EB01BE23010BCED0043E59D /* OblivionDeletionAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OblivionDeletionAPI.swift; sourceTree = "<group>"; };
+		8EB01BE43010BCED0043E59D /* AccountDeletionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountDeletionCoordinator.swift; sourceTree = "<group>"; };
+		8EB01BE63010BCED0043E59D /* AccountDeletionFlowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountDeletionFlowView.swift; sourceTree = "<group>"; };
+		8EB01BE83010BCED0043E59D /* AccountDeletionFakeResponses.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountDeletionFakeResponses.swift; sourceTree = "<group>"; };
+		8EB01BEA3010BCED0043E59D /* UserDataRemoval.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserDataRemoval.swift; sourceTree = "<group>"; };
+		8EB01BEC3010BCED0043E59D /* AccountDeletionLocalDataRemoval.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountDeletionLocalDataRemoval.swift; sourceTree = "<group>"; };
 		8EC502122F67AE2300CE7338 /* DownloadSafetyTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadSafetyTypes.swift; sourceTree = "<group>"; };
-		8EC502142F67AF7F00CE7338 /* DownloadSafety.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = DownloadSafety.xcstrings; sourceTree = "<group>"; };
 		8EC70DB42F0A5DFD009FE2CD /* BookmarkBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookmarkBar.swift; sourceTree = "<group>"; };
 		8EC70E152F0BBF3D009FE2CD /* BookmarkItemView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookmarkItemView.swift; sourceTree = "<group>"; };
 		8EC70E172F0BC77E009FE2CD /* NSImageView+Favicon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "NSImageView+Favicon.swift"; sourceTree = "<group>"; };
@@ -773,8 +833,13 @@
 		8EF36C012F4E9E7000FCC91E /* TabViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabViewModel.swift; sourceTree = "<group>"; };
 		8EF36C052F4E9EC100FCC91E /* TabContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabContentView.swift; sourceTree = "<group>"; };
 		8EF36C072F4EA95B00FCC91E /* SideTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SideTabView.swift; sourceTree = "<group>"; };
+		A11E00000000000000000011 /* PhiScriptingService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhiScriptingService.swift; sourceTree = "<group>"; };
+		A11E00000000000000000012 /* PhiScriptCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhiScriptCommands.swift; sourceTree = "<group>"; };
+		A11E00000000000000000013 /* Phi.sdef */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = Phi.sdef; sourceTree = "<group>"; };
 		A1B2C3D4E5F60718293A4B55 /* SharedAuthTokenStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedAuthTokenStore.swift; sourceTree = "<group>"; };
 		A71E00000000000000000001 /* PhiAlert.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhiAlert.swift; sourceTree = "<group>"; };
+		A71E00000000000000000003 /* CredentialApprovalAlert.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CredentialApprovalAlert.swift; sourceTree = "<group>"; };
+		D12800000000000000000002 /* PhiSegmentedPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhiSegmentedPicker.swift; sourceTree = "<group>"; };
 		A7C021012FFD000000000001 /* ContextMenuEvent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextMenuEvent.swift; sourceTree = "<group>"; };
 		AA10000000000000000000F1 /* TabSwitchMetrics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabSwitchMetrics.swift; sourceTree = "<group>"; };
 		AA10000000000000000000F2 /* TabSwitchItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabSwitchItem.swift; sourceTree = "<group>"; };
@@ -787,6 +852,7 @@
 		ACDC00000000000000000A01 /* AgentCDPListener.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentCDPListener.swift; sourceTree = "<group>"; };
 		ACDC00000000000000000A02 /* AgentPeerIdentity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentPeerIdentity.swift; sourceTree = "<group>"; };
 		ACDC00000000000000000A03 /* AgentDirectChannel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentDirectChannel.swift; sourceTree = "<group>"; };
+		ACDC00000000000000000A04 /* AppDevToolsPageSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDevToolsPageSession.swift; sourceTree = "<group>"; };
 		AE00FFFE0000000000000001 /* PhiAgentEndpointResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhiAgentEndpointResolver.swift; sourceTree = "<group>"; };
 		AE5ACE000000000000000001 /* AgentSpaceManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentSpaceManager.swift; sourceTree = "<group>"; };
 		AE5ACE000000000000000002 /* AgentSpaceRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentSpaceRouter.swift; sourceTree = "<group>"; };
@@ -816,6 +882,19 @@
 		B0F370CA2E43261A000B51F9 /* EventBus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventBus.swift; sourceTree = "<group>"; };
 		B0F370CF2E432CB8000B51F9 /* MainBrowserWindowController+Actions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "MainBrowserWindowController+Actions.swift"; sourceTree = "<group>"; };
 		B0F370D92E433F0E000B51F9 /* OverlayWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayWindowController.swift; sourceTree = "<group>"; };
+		B17DE0000000000000000021 /* CredentialProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CredentialProvider.swift; sourceTree = "<group>"; };
+		B17DE0000000000000000022 /* BitwardenService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BitwardenService.swift; sourceTree = "<group>"; };
+		B17DE0000000000000000023 /* PasswordManagerSectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PasswordManagerSectionView.swift; sourceTree = "<group>"; };
+		B17DE0000000000000000024 /* BitwardenLoginSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BitwardenLoginSheet.swift; sourceTree = "<group>"; };
+		B17DE0000000000000000025 /* AgentSpaceRouter+Credentials.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AgentSpaceRouter+Credentials.swift"; sourceTree = "<group>"; };
+		B17DE0000000000000000026 /* CredentialAccessCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CredentialAccessCoordinator.swift; sourceTree = "<group>"; };
+		B17DE0000000000000000027 /* CredentialAuditLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CredentialAuditLog.swift; sourceTree = "<group>"; };
+		B17DE0000000000000000030 /* BitwardenSessionSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BitwardenSessionSettings.swift; sourceTree = "<group>"; };
+		B17DE0000000000000000034 /* BitwardenSessionSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BitwardenSessionSettingsView.swift; sourceTree = "<group>"; };
+		B17DE00000000000000000E0 /* Vendor/PhiBitwardenHelper */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.executable"; path = Vendor/PhiBitwardenHelper; sourceTree = SOURCE_ROOT; };
+		B17DE00000000000000000E5 /* Vendor/PhiBitwardenHelper-LICENSE.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Vendor/PhiBitwardenHelper-LICENSE.txt"; sourceTree = SOURCE_ROOT; };
+		B17DE00000000000000000E6 /* Vendor/PhiBitwardenHelper-SOURCE-OFFER.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Vendor/PhiBitwardenHelper-SOURCE-OFFER.txt"; sourceTree = SOURCE_ROOT; };
+		B17DE0000000000000000B02 /* BitwardenSessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BitwardenSessionStore.swift; sourceTree = "<group>"; };
 		C0D1D0012FEA000000000001 /* SidebarTabListViewController+MultiSelectionDragPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SidebarTabListViewController+MultiSelectionDragPreview.swift"; sourceTree = "<group>"; };
 		C70000000000000000000001 /* CustomTooltipController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CustomTooltipController.swift; sourceTree = "<group>"; };
 		C70000000000000000000002 /* CustomTooltip+Hosting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "CustomTooltip+Hosting.swift"; sourceTree = "<group>"; };
@@ -982,11 +1061,6 @@
 		37686B012F1103F300DC3990 /* Configs */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = Configs;
-			sourceTree = "<group>";
-		};
-		376CE0A02F2330160093D937 /* build-scripts */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			path = "build-scripts";
 			sourceTree = "<group>";
 		};
 		B0C4695A2E3B10E2007F0C7A /* PhiBrowserTests */ = {
@@ -1159,6 +1233,7 @@
 			children = (
 				376CE40F2F2897D30093D937 /* Models */,
 				376CE4102F2897D30093D937 /* APIClient.swift */,
+				8EB01BE23010BCED0043E59D /* OblivionDeletionAPI.swift */,
 				54A1001B2FE000000000001B /* TimeMachinePackageDownloader.swift */,
 				AE00FFFE0000000000000001 /* PhiAgentEndpointResolver.swift */,
 			);
@@ -1172,6 +1247,15 @@
 				376B66AF3000ABBA004BEA29 /* PhiSparkleUpdateViewController.swift */,
 			);
 			path = Update;
+			sourceTree = "<group>";
+		};
+		37A4A06F30174C5800F7DC2E /* Apple Scripts */ = {
+			isa = PBXGroup;
+			children = (
+				A11E00000000000000000011 /* PhiScriptingService.swift */,
+				A11E00000000000000000012 /* PhiScriptCommands.swift */,
+			);
+			path = "Apple Scripts";
 			sourceTree = "<group>";
 		};
 		37C1B0D62ED6D49D00DD4496 /* CommandDispatcher */ = {
@@ -1415,6 +1499,7 @@
 				5ACE0000000000000000000B /* ProfilesSettingViewController.swift */,
 				5ACE0000000000000000000C /* ProfilesSettingHostingViewController.swift */,
 				5ACE0000000000000000000D /* ProfilesSettingsView.swift */,
+				5ACE00000000000000000A21 /* ProfileDetailSettingsView.swift */,
 			);
 			path = Profiles;
 			sourceTree = "<group>";
@@ -1547,6 +1632,17 @@
 			path = TabStrip;
 			sourceTree = "<group>";
 		};
+		8EB01BE03010BCED0043E59D /* AccountDeletion */ = {
+			isa = PBXGroup;
+			children = (
+				8EB01BDF3010BCED0043E59D /* AccountDeletionController.swift */,
+				8EB01BE43010BCED0043E59D /* AccountDeletionCoordinator.swift */,
+				8EB01BE83010BCED0043E59D /* AccountDeletionFakeResponses.swift */,
+				8EB01BE63010BCED0043E59D /* AccountDeletionFlowView.swift */,
+			);
+			path = AccountDeletion;
+			sourceTree = "<group>";
+		};
 		8EC70DAD2F0A5CFD009FE2CD /* HorizontalBar */ = {
 			isa = PBXGroup;
 			children = (
@@ -1588,6 +1684,7 @@
 				ACDC00000000000000000A01 /* AgentCDPListener.swift */,
 				ACDC00000000000000000A02 /* AgentPeerIdentity.swift */,
 				ACDC00000000000000000A03 /* AgentDirectChannel.swift */,
+				ACDC00000000000000000A04 /* AppDevToolsPageSession.swift */,
 			);
 			path = AgentCDP;
 			sourceTree = "<group>";
@@ -1598,6 +1695,7 @@
 				AE5ACE000000000000000001 /* AgentSpaceManager.swift */,
 				AE5ACE000000000000000002 /* AgentSpaceRouter.swift */,
 				AE5ACE000000000000000004 /* AgentSpaceRouter+Management.swift */,
+				B17DE0000000000000000025 /* AgentSpaceRouter+Credentials.swift */,
 				AE5ACE000000000000000005 /* AgentSpaceRouter+Capture.swift */,
 				AE5ACE000000000000000006 /* AgentTranscriptStore.swift */,
 				AE5ACE000000000000000007 /* AgentTranscriptPanel.swift */,
@@ -1617,6 +1715,9 @@
 				376CE3FF2F2891670093D937 /* Notifications */,
 				CCBF8FA32E69913C00B9A99E /* States */,
 				37C9E6852F3F31E600353A03 /* ThirdParty */,
+				B17DE00000000000000000E0 /* Vendor/PhiBitwardenHelper */,
+				B17DE00000000000000000E5 /* Vendor/PhiBitwardenHelper-LICENSE.txt */,
+				B17DE00000000000000000E6 /* Vendor/PhiBitwardenHelper-SOURCE-OFFER.txt */,
 				54A200202FE1000000000020 /* TimeMachineInstaller */,
 				B0F370CC2E432646000B51F9 /* UserInterface */,
 				B0F370CD2E4326DC000B51F9 /* Utilities */,
@@ -1655,7 +1756,6 @@
 				B02586F42E42FD97001B08FC /* Sources */,
 				B0C469752E3B158D007F0C7A /* Resources */,
 				CDA11ED500000000000000A1 /* phi-browser-skill */,
-				376CE0A02F2330160093D937 /* build-scripts */,
 				B0691CB22E3B639000934AEE /* Frameworks */,
 				B0C4698F2E3B1915007F0C7A /* Tests */,
 				B0C469492E3B10E1007F0C7A /* Products */,
@@ -1676,9 +1776,9 @@
 		B0C469752E3B158D007F0C7A /* Resources */ = {
 			isa = PBXGroup;
 			children = (
+				A11E00000000000000000013 /* Phi.sdef */,
 				F01D3A000000000000000011 /* bookmark-folder-open.svg */,
 				F01D3A000000000000000012 /* bookmark-folder-closed.svg */,
-				8EC502142F67AF7F00CE7338 /* DownloadSafety.xcstrings */,
 				375C66372EFB923C00885D78 /* Fonts */,
 				3765817A2EE9637F00D3E031 /* Localizable.xcstrings */,
 				37C1B2FF2EE672D500DD4496 /* LottieFiles */,
@@ -1710,6 +1810,7 @@
 		B0F370CC2E432646000B51F9 /* UserInterface */ = {
 			isa = PBXGroup;
 			children = (
+				8EB01BE03010BCED0043E59D /* AccountDeletion */,
 				CC6B000D2E77E03000D4F133 /* AboutWindow */,
 				CCB53DC42E6EBF6E004BF233 /* AddressBar */,
 				CCEF2D982E5F1A6E00FDDEB2 /* Chat */,
@@ -1766,6 +1867,7 @@
 		B0F370CE2E4326EB000B51F9 /* Application */ = {
 			isa = PBXGroup;
 			children = (
+				37A4A06F30174C5800F7DC2E /* Apple Scripts */,
 				B02586F22E42FD97001B08FC /* PhiApplication.h */,
 				B02586F32E42FD97001B08FC /* PhiApplication.m */,
 				B02586F02E42FD97001B08FC /* AppController.swift */,
@@ -1776,10 +1878,14 @@
 				CC98F8A12E8BCE0900DAD237 /* AppController+Settings.swift */,
 				CC8B76B02EA8D7B70075F58C /* AppController+Debug.swift */,
 				CC8B76B22EA8D7B70075F58C /* AppController+UserDataBackup.swift */,
+				8EB01BEC3010BCED0043E59D /* AccountDeletionLocalDataRemoval.swift */,
+				8EB01BEA3010BCED0043E59D /* UserDataRemoval.swift */,
 				CC9AF3432EC192BC00C27C98 /* AppControlle+LaunchInfo.swift */,
 				CCBF0F9F2ECEC1AE005E729B /* AppController+Deeplink.swift */,
+				19B477B37CF44BC48335A032 /* AccountDeletedEventAuthentication.swift */,
 				3703C9832F6956E600E7CF6D /* SentinelHelper.swift */,
 				3703C9852F6956E600E7CF6D /* SentinelVersionGuard.swift */,
+				11E8BEE1510290AB35D5C5AD /* SentinelBackupCoordination.swift */,
 				6A44C5FF60DF6F7860A061D4 /* SentinelWatchdog.swift */,
 				37CC00012F9D000100000001 /* SentinelIPCClient.swift */,
 				54A100202FE0000000000020 /* TimeMachine */,
@@ -2083,6 +2189,8 @@
 			children = (
 				A7C021012FFD000000000001 /* ContextMenuEvent.swift */,
 				A71E00000000000000000001 /* PhiAlert.swift */,
+				A71E00000000000000000003 /* CredentialApprovalAlert.swift */,
+				D12800000000000000000002 /* PhiSegmentedPicker.swift */,
 				C70000000000000000000020 /* Tooltip */,
 				CD1100050000000000000001 /* IconPicker */,
 				8EF36C022F4E9E7000FCC91E /* Tabs */,
@@ -2161,6 +2269,12 @@
 				CCAA000E2F00010000000002 /* BrowserState+PinnedTabTransfer.swift */,
 				AB1000000000000000000FA2 /* TabMultiSelection.swift */,
 				CC59CE000003000000000002 /* ProfileManager.swift */,
+				B17DE0000000000000000021 /* CredentialProvider.swift */,
+				B17DE0000000000000000022 /* BitwardenService.swift */,
+				B17DE0000000000000000030 /* BitwardenSessionSettings.swift */,
+				B17DE0000000000000000026 /* CredentialAccessCoordinator.swift */,
+				B17DE0000000000000000027 /* CredentialAuditLog.swift */,
+				B17DE0000000000000000B02 /* BitwardenSessionStore.swift */,
 				376581F62EEA845700D3E031 /* BrowserState+Bookmark.swift */,
 				3703C9812F69558C00E7CF6D /* BrowserState+ToggleAI.swift */,
 				5F1A5A11AC1D000000000002 /* BrowserState+Split.swift */,
@@ -2245,6 +2359,9 @@
 				DEBE00000000000000000002 /* DeveloperSettingViewController.swift */,
 				DEBE00000000000000000003 /* DeveloperSettingHostingViewController.swift */,
 				DEBE00000000000000000004 /* DeveloperSettingsView.swift */,
+				B17DE0000000000000000023 /* PasswordManagerSectionView.swift */,
+				B17DE0000000000000000034 /* BitwardenSessionSettingsView.swift */,
+				B17DE0000000000000000024 /* BitwardenLoginSheet.swift */,
 			);
 			path = Developer;
 			sourceTree = "<group>";
@@ -2279,6 +2396,8 @@
 				37C1B3072EE6739C00DD4496 /* Copy LottieFiles */,
 				37C1B28D2EE0504100DD4496 /* Embed Frameworks */,
 				54A200312FE1000000000031 /* Copy Time Machine Helpers */,
+				B17DE00000000000000000E2 /* Copy Bitwarden Helper */,
+				B17DE00000000000000000E7 /* Copy Bitwarden GPL Notices */,
 			);
 			buildRules = (
 			);
@@ -2397,6 +2516,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A11E00000000000000000003 /* Phi.sdef in Resources */,
 				F01D3A000000000000000001 /* bookmark-folder-open.svg in Resources */,
 				F01D3A000000000000000002 /* bookmark-folder-closed.svg in Resources */,
 				CDA11ED500000000000000B1 /* phi-browser-skill in Resources */,
@@ -2408,7 +2528,6 @@
 				CC5C51F62FB5C5560044D255 /* credits.html in Resources */,
 				3787811F2FE942E40028969F /* TimeMachineRollbackPolicy.json in Resources */,
 				CD11000B0000000000000001 /* Emoji/emoji-catalog.json in Resources */,
-				8EC502152F67AF7F00CE7338 /* DownloadSafety.xcstrings in Resources */,
 				CC4BFB932E97991A00CC6162 /* Auth0.plist in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -2448,7 +2567,15 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A11E00000000000000000001 /* PhiScriptingService.swift in Sources */,
+				A11E00000000000000000002 /* PhiScriptCommands.swift in Sources */,
 				A71E00000000000000000002 /* PhiAlert.swift in Sources */,
+				A71E00000000000000000004 /* CredentialApprovalAlert.swift in Sources */,
+				D12800000000000000000001 /* PhiSegmentedPicker.swift in Sources */,
+				B17DE0000000000000000005 /* CredentialProvider.swift in Sources */,
+				B17DE0000000000000000006 /* BitwardenService.swift in Sources */,
+				B17DE0000000000000000031 /* BitwardenSessionSettings.swift in Sources */,
+				B17DE0000000000000000035 /* BitwardenSessionSettingsView.swift in Sources */,
 				C70000000000000000000011 /* CustomTooltipController.swift in Sources */,
 				C70000000000000000000012 /* CustomTooltip+Hosting.swift in Sources */,
 				C70000000000000000000013 /* CommandShortcutTooltipContent.swift in Sources */,
@@ -2489,8 +2616,10 @@
 				CCB53DCE2E6EC437004BF233 /* OmniBoxModels.swift in Sources */,
 				37C1B28F2EE1364D00DD4496 /* EnvironmentChecker.swift in Sources */,
 				37C1B28A2EE0457F00DD4496 /* LivingDownloadsListView.swift in Sources */,
+				F9E478A224C44EA7BC0D85CC /* AccountDeletedEventAuthentication.swift in Sources */,
 				3703C9842F6956E600E7CF6D /* SentinelHelper.swift in Sources */,
 				3703C9862F6956E600E7CF6D /* SentinelVersionGuard.swift in Sources */,
+				3AC6117E11925E637EB4711A /* SentinelBackupCoordination.swift in Sources */,
 				793C1DDEA1022CC850FEFFF9 /* SentinelWatchdog.swift in Sources */,
 				37CC00022F9D000100000001 /* SentinelIPCClient.swift in Sources */,
 				CCB53DCF2E6EC437004BF233 /* OmniBoxTextField.swift in Sources */,
@@ -2504,6 +2633,7 @@
 				CCB53DD02E6EC437004BF233 /* OmniBoxContainerViewController.swift in Sources */,
 				CC8B76B12EA8D7B70075F58C /* AppController+Debug.swift in Sources */,
 				CC8B76B32EA8D7B70075F58C /* AppController+UserDataBackup.swift in Sources */,
+				8EB01BEB3010BCED0043E59D /* UserDataRemoval.swift in Sources */,
 				CCBF8F352E61AB3A00B9A99E /* SideAddressBar.swift in Sources */,
 				CC24EF082E89251D00CE9DD7 /* AuthManager.swift in Sources */,
 				8EC70E162F0BBF3D009FE2CD /* BookmarkItemView.swift in Sources */,
@@ -2511,6 +2641,7 @@
 				ACDC00000000000000000B01 /* AgentCDPListener.swift in Sources */,
 				ACDC00000000000000000B02 /* AgentPeerIdentity.swift in Sources */,
 				ACDC00000000000000000B03 /* AgentDirectChannel.swift in Sources */,
+				ACDC00000000000000000B04 /* AppDevToolsPageSession.swift in Sources */,
 				CC450AE42EA74AD5004EE144 /* CommandDispatcher.swift in Sources */,
 				CCBF0FA02ECEC1AE005E729B /* AppController+Deeplink.swift in Sources */,
 				CCBF8F442E653F3400B9A99E /* SidebarItem.swift in Sources */,
@@ -2583,6 +2714,7 @@
 				5ACE0000000000000000000E /* ProfilesSettingViewController.swift in Sources */,
 				5ACE0000000000000000000F /* ProfilesSettingHostingViewController.swift in Sources */,
 				5ACE00000000000000000010 /* ProfilesSettingsView.swift in Sources */,
+				5ACE00000000000000000A22 /* ProfileDetailSettingsView.swift in Sources */,
 				8EC70DB52F0A5E04009FE2CD /* BookmarkBar.swift in Sources */,
 				CC5025FC2E702603004223DC /* NSImage+Extension.swift in Sources */,
 				37C9E68C2F3F322D00353A03 /* Shimmer.swift in Sources */,
@@ -2631,6 +2763,11 @@
 				CC4F00010000000000000001 /* LocalStore+SpaceURLRule.swift in Sources */,
 				CC4F00020000000000000001 /* URLRouter.swift in Sources */,
 				CC4F00030000000000000001 /* SpaceURLRulesEditor.swift in Sources */,
+				8EB01BE13010BCED0043E59D /* AccountDeletionController.swift in Sources */,
+				8EB01BE53010BCED0043E59D /* AccountDeletionCoordinator.swift in Sources */,
+				8EB01BE93010BCED0043E59D /* AccountDeletionFakeResponses.swift in Sources */,
+				8EB01BE73010BCED0043E59D /* AccountDeletionFlowView.swift in Sources */,
+				8EB01BED3010BCED0043E59D /* AccountDeletionLocalDataRemoval.swift in Sources */,
 				CC4F00040000000000000001 /* CreateSpacePanel.swift in Sources */,
 				CC4F00050000000000000001 /* SpaceChooserView.swift in Sources */,
 				8E762C1A2F15F5AE00631087 /* TabStripDragController.swift in Sources */,
@@ -2783,12 +2920,18 @@
 				37C1B4F82EE6CE8A00DD4496 /* GeneralSettingViewController.swift in Sources */,
 				8EE5BEEC2F14FF9800698D7D /* TabCloseButton.swift in Sources */,
 				37C1B4F92EE6CE8A00DD4496 /* GeneralSettingView.swift in Sources */,
+				B17DE0000000000000000008 /* PasswordManagerSectionView.swift in Sources */,
+				B17DE0000000000000000009 /* BitwardenLoginSheet.swift in Sources */,
 				37C1B0E72ED851CE00DD4496 /* ShortcutsViewModel.swift in Sources */,
 				3769C6ED2EFA6CBE00A94DE0 /* GaussianEffectView.swift in Sources */,
 				B0F370B92E430CA5000B51F9 /* WebContentViewController.swift in Sources */,
 				AE5ACE000000000000000011 /* AgentSpaceManager.swift in Sources */,
 				AE5ACE000000000000000012 /* AgentSpaceRouter.swift in Sources */,
 				AE5ACE000000000000000014 /* AgentSpaceRouter+Management.swift in Sources */,
+				B17DE000000000000000000B /* AgentSpaceRouter+Credentials.swift in Sources */,
+				B17DE000000000000000000C /* CredentialAccessCoordinator.swift in Sources */,
+				B17DE000000000000000000D /* CredentialAuditLog.swift in Sources */,
+				B17DE0000000000000000B01 /* BitwardenSessionStore.swift in Sources */,
 				AE5ACE000000000000000015 /* AgentSpaceRouter+Capture.swift in Sources */,
 				AE5ACE000000000000000016 /* AgentTranscriptStore.swift in Sources */,
 				AE5ACE000000000000000017 /* AgentTranscriptPanel.swift in Sources */,
@@ -2840,6 +2983,7 @@
 				376CE4162F2897D30093D937 /* Response.swift in Sources */,
 				8EF36C032F4E9E7000FCC91E /* TabViewModel.swift in Sources */,
 				376CE4172F2897D30093D937 /* APIClient.swift in Sources */,
+				8EB01BE33010BCED0043E59D /* OblivionDeletionAPI.swift in Sources */,
 				54A1000B2FE000000000000B /* TimeMachinePackageDownloader.swift in Sources */,
 				FBD200012FD0000000000003 /* FeedbackV2.swift in Sources */,
 				AE00FFFE0000000000000002 /* PhiAgentEndpointResolver.swift in Sources */,

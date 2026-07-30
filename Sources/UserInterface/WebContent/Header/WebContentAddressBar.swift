@@ -259,18 +259,11 @@ struct WebContentAddressBarView: View {
         // the address bar without hovering — it'd otherwise be a blank patch.
         let baseColor = (showBackgroundWhenInactive || viewModel.isInPlaceholderMode)
             ? Color(.sidebarTabHovered)
-            : ThemedColor.contentOverlayBackground.swiftUIColor(theme: theme, appearance: appearance)
+            : ThemedColor.windowBackground.swiftUIColor(theme: theme, appearance: appearance)
         let hoverColor = Color(.sidebarTabHoveredColorEmphasized)
         let shouldHighlight = isHovering || isMenuShown
-        return ZStack {
-            Capsule()
-                .fill(baseColor)
-
-            if shouldHighlight {
-                Capsule()
-                    .fill(hoverColor)
-            }
-        }
+        return Capsule()
+            .fill(shouldHighlight ? hoverColor : baseColor)
     }
 
     /// Progress background rendered in `.background()` so it never changes layout.
@@ -303,7 +296,7 @@ struct WebContentAddressBarView: View {
 
     private var displayText: String {
         if viewModel.isInPlaceholderMode {
-            return NSLocalizedString("Search or Enter URL", comment: "Web content address bar - Placeholder text shown when window has no tab")
+            return NSLocalizedString("browser.webContentAddressBar.emptyWindowPlaceholder", value: "Search or Enter URL", comment: "Web content address bar - Placeholder text shown when window has no tab")
         }
         if viewModel.displayText.isEmpty {
             return ""
@@ -364,7 +357,7 @@ struct WebContentAddressBarView: View {
         )
         .customTooltip {
             CommandShortcutTooltipContent(
-                title: NSLocalizedString("Copy URL", comment: "Copy URL shortcut tooltip title"),
+                title: NSLocalizedString("browser.webContentAddressBar.copyURLTooltip", value: "Copy URL", comment: "Copy URL shortcut tooltip title"),
                 command: .PHI_COPY_URL
             )
         }
@@ -486,7 +479,7 @@ private struct AddressBarProgressBarView: View {
             let clampedProgress = min(max(progress, 0), 1)
             let progressWidth = width * clampedProgress
             let baseColor = ThemedColor.themeColor.swiftUIColor(theme: theme, appearance: appearance)
-            let backgroundColor = ThemedColor.contentOverlayBackground.swiftUIColor(theme: theme, appearance: appearance)
+            let backgroundColor = ThemedColor.windowBackground.swiftUIColor(theme: theme, appearance: appearance)
             let fadeStart: Double = 0.3
             let fadeRange: Double = 0.2
             let gradientOpacity = max(0, min(1, (clampedProgress - fadeStart) / fadeRange))

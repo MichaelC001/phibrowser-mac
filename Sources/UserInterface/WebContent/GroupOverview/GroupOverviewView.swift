@@ -91,7 +91,7 @@ final class GroupOverviewViewModel: ObservableObject {
         guard let browserState else {
             members = []
             items = []
-            title = NSLocalizedString("Tab Group", comment: "Fallback title shown in the group overview header when group metadata is unavailable")
+            title = NSLocalizedString("browser.tabGroupOverview.header.missingBrowserStateTitle", value: "Tab Group", comment: "Tab group overview - Fallback title when browser state is unavailable")
             rawTitle = ""
             color = .grey
             snapshotImages.removeAll()
@@ -107,7 +107,7 @@ final class GroupOverviewViewModel: ObservableObject {
         color = group?.color ?? .grey
         rawTitle = group?.title ?? ""
         title = group?.displayTitle(memberCount: currentMembers.count)
-            ?? NSLocalizedString("Tab Group", comment: "Fallback title shown in the group overview header when group metadata is unavailable")
+            ?? NSLocalizedString("browser.tabGroupOverview.header.missingMetadataTitle", value: "Tab Group", comment: "Tab group overview - Fallback title when group metadata is unavailable")
     }
 
     /// Fold adjacent non-pinned split pairs whose both panes are members
@@ -344,7 +344,7 @@ struct GroupOverviewView: View {
             Spacer()
             GroupOverviewHoverIconButton(
                 systemName: "xmark",
-                accessibilityLabel: NSLocalizedString("Close Group Overview", comment: "Tab group overview - Accessibility label for the button that closes the overview"),
+                accessibilityLabel: NSLocalizedString("browser.tabGroupOverview.closeButton.accessibilityLabel", value: "Close Group Overview", comment: "Tab group overview - Accessibility label for the button that closes the overview"),
                 action: closeOverview
             )
         }
@@ -377,7 +377,7 @@ private struct GroupOverviewTabCard: View {
                     Spacer(minLength: 8)
                     GroupOverviewHoverIconButton(
                         systemName: "xmark",
-                        accessibilityLabel: NSLocalizedString("Close Tab", comment: "Tab group overview - Accessibility label for the button that closes one tab card"),
+                        accessibilityLabel: NSLocalizedString("browser.tabGroupOverview.tabCard.closeButtonAccessibilityLabel", value: "Close Tab", comment: "Tab group overview - Accessibility label for closing a single-tab card"),
                         size: 24,
                         iconSize: 11,
                         action: closeTab
@@ -495,7 +495,7 @@ private struct GroupOverviewSplitPairCard: View {
                 Spacer(minLength: 4)
                 GroupOverviewHoverIconButton(
                     systemName: "xmark",
-                    accessibilityLabel: NSLocalizedString("Close Tab", comment: "Tab group overview - Accessibility label for the button that closes one tab card"),
+                    accessibilityLabel: NSLocalizedString("browser.tabGroupOverview.splitCard.closePaneButtonAccessibilityLabel", value: "Close Tab", comment: "Tab group overview - Accessibility label for closing one pane of a split card"),
                     size: 20,
                     iconSize: 10,
                     action: close
@@ -570,7 +570,7 @@ private struct GroupOverviewNewTabCard: View {
 
                 HStack {
                     Spacer()
-                    Text(NSLocalizedString("New Tab", comment: "Title for the group overview card that creates a new tab in the selected group"))
+                    Text(NSLocalizedString("browser.tabGroupOverview.newTabCardTitle", value: "New Tab", comment: "Title for the group overview card that creates a new tab in the selected group"))
                         .font(.system(size: 13, weight: .medium))
                     Spacer()
                 }
@@ -597,7 +597,7 @@ private struct GroupOverviewGroupEditorPopover: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 15) {
             TextField(
-                NSLocalizedString("Name group", comment: "Tab group overview editor - Placeholder for the editable group title field"),
+                NSLocalizedString("browser.tabGroupOverview.nameField.placeholder", value: "Name group", comment: "Tab group overview editor - Placeholder for the editable group title field"),
                 text: $draftTitle
             )
             .textFieldStyle(.plain)

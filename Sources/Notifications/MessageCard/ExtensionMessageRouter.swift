@@ -4,6 +4,7 @@
 // found in the LICENSE file.
 
 import Foundation
+import PostHog
 
 struct ExtensionMessageContext {
     let type: String
@@ -18,14 +19,20 @@ struct ExtensionMessageContext {
     /// Chromium tunnel and extension senders. Used to badge the Space with who
     /// is driving it (see `agentSpace.create`).
     let agentName: String
+    /// Opaque app-issued identity for one logical external-agent session.
+    /// Shared by that agent's reconnecting/sandboxed helpers, distinct from
+    /// every other approved agent session. Nil for extensions and the legacy
+    /// Chromium message tunnel, which therefore cannot own CDP tasks.
+    let driverPrincipalId: String?
 
     init(type: String, payload: String, requestId: String,
-         senderId: String, agentName: String = "") {
+         senderId: String, agentName: String = "", driverPrincipalId: String? = nil) {
         self.type = type
         self.payload = payload
         self.requestId = requestId
         self.senderId = senderId
         self.agentName = agentName
+        self.driverPrincipalId = driverPrincipalId
     }
 }
 
@@ -49,6 +56,10 @@ final class ExtensionMessageRouter {
             if let denied = AgentSpaceRouter.userSpaceOperationsRefusal() {
                 return denied
             }
+            PostHogSDK.shared.capture("agent_user_space_command", properties: [
+                "command": context.type,
+                "agent_name": AgentDriverBadge.telemetryName(context.agentName),
+            ])
             return handler(context)
         }
     }
@@ -58,11 +69,11 @@ final class ExtensionMessageRouter {
     }
 
     func handle(type: String, payload: String, requestId: String, senderId: String = "",
-                agentName: String = "") -> String? {
+                agentName: String = "", driverPrincipalId: String? = nil) -> String? {
         configureIfNeeded()
         let context = ExtensionMessageContext(
             type: type, payload: payload, requestId: requestId, senderId: senderId,
-            agentName: agentName)
+            agentName: agentName, driverPrincipalId: driverPrincipalId)
         if let handler = handlers[type] {
             return handler(context)
         }
@@ -176,6 +187,15 @@ final class ExtensionMessageRouter {
         registerUserSpaceManaged(type: "agentSpace.spaces.listTabs") { context in
             return AgentSpaceRouter.handleSpacesListTabs(context: context)
         }
+        registerUserSpaceManaged(type: "agentSpace.spaces.openTab") { context in
+            return AgentSpaceRouter.handleSpacesOpenTab(context: context)
+        }
+        registerUserSpaceManaged(type: "agentSpace.spaces.activate") { context in
+            return AgentSpaceRouter.handleSpacesActivate(context: context)
+        }
+        registerUserSpaceManaged(type: "agentSpace.spaces.focus") { context in
+            return AgentSpaceRouter.handleSpacesFocus(context: context)
+        }
         registerUserSpaceManaged(type: "agentSpace.profiles.create") { context in
             AgentSpaceRouter.handleProfilesCreate(context: context)
             return nil  // async reply via ExtensionMessaging
@@ -282,6 +302,25 @@ final class ExtensionMessageRouter {
         }
         registerUserSpaceManaged(type: "agentSpace.bookmarks.remove") { context in
             return AgentSpaceRouter.handleBookmarksRemove(context: context)
+        }
+
+        // Credential surface (AgentSpaceRouter+Credentials.swift): an agent can
+        // check provider readiness and, after an explicit user approval, fetch a
+        // credential or TOTP. User data, so gated by the "Agent permissions"
+        // switch and, inside the handlers, by the Bitwarden enable toggle; each
+        // secret-returning call replies asynchronously after the approval
+        // prompt and provider lookup resolve.
+        registerUserSpaceManaged(type: "credentials.status") { context in
+            return AgentSpaceRouter.handleCredentialsStatus(context: context)
+        }
+        registerUserSpaceManaged(type: "credentials.get") { context in
+            return AgentSpaceRouter.handleCredentialsGet(context: context)
+        }
+        registerUserSpaceManaged(type: "credentials.getTotp") { context in
+            return AgentSpaceRouter.handleCredentialsGetTotp(context: context)
+        }
+        registerUserSpaceManaged(type: "credentials.autofill") { context in
+            return AgentSpaceRouter.handleCredentialsAutofill(context: context)
         }
 
         register(type: "farringdon.organizeDidFinish") { _ in

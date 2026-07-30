@@ -30,6 +30,12 @@ int main(int argc, const char * argv[]) {
         }
 #endif
 
+        // Finish any interrupted user-data removal before Chromium — or the
+        // Time Machine bootstrap below — reads or writes any state: stops a
+        // still-running detached cleaner, clears canonical-path residue, and
+        // sweeps moved-aside leftovers. See UserDataRemoval.
+        [UserDataRemovalBootstrap takeOverPendingRemovalIfNeeded];
+
         if ([TimeMachineBootstrap recoverPendingRestoreIfNeeded]) {
             AppLogInfo(@"Time Machine restore recovery is handling startup; exiting current process.");
             return 0;

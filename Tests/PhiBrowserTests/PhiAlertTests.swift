@@ -376,6 +376,38 @@ final class PhiAlertTests: XCTestCase {
         XCTAssertEqual(response, expectedResponse)
     }
 
+    func testReturnConfirmsNothingWithoutADefaultButton() {
+        // `.cancel` is how the harness ends a sheet nothing dismissed, so it
+        // says Return was ignored rather than answered by some other button.
+        let response = runKeyboardShortcutAlert(
+            characters: "\r",
+            keyCode: 36,
+            runAlert: { sourceWindow in
+                NSApp.runPhiAlert(
+                    self.irreversibleConfirmation,
+                    relativeTo: sourceWindow
+                )
+            }
+        )
+
+        XCTAssertEqual(response, .cancel)
+    }
+
+    func testEscapeStillCancelsWithoutADefaultButton() {
+        let response = runKeyboardShortcutAlert(
+            characters: "\u{1B}",
+            keyCode: 53,
+            runAlert: { sourceWindow in
+                NSApp.runPhiAlert(
+                    self.irreversibleConfirmation,
+                    relativeTo: sourceWindow
+                )
+            }
+        )
+
+        XCTAssertEqual(response, .alertSecondButtonReturn)
+    }
+
     func testCommandQConfirmsQuitAlert() {
         let expectedResponse = NSApplication.ModalResponse.alertFirstButtonReturn
         let response = runKeyboardShortcutAlert(
@@ -464,6 +496,24 @@ final class PhiAlertTests: XCTestCase {
         }
 
         return NSApp.runPhiAlert(configuration, relativeTo: sourceWindow)
+    }
+
+    /// A destructive confirmation that keeps the Return key off every button.
+    private var irreversibleConfirmation: PhiAlertAppKitConfiguration {
+        PhiAlertAppKitConfiguration(
+            title: "Irreversible confirmation",
+            message: "Return must not confirm what cannot be undone.",
+            style: .critical,
+            defaultButton: .noButton,
+            secondaryAction: PhiAlertAppKitAction(
+                "Cancel",
+                response: .alertSecondButtonReturn
+            ),
+            primaryAction: PhiAlertAppKitAction(
+                "Delete",
+                response: .alertFirstButtonReturn
+            )
+        )
     }
 
     private var testIcon: some View {

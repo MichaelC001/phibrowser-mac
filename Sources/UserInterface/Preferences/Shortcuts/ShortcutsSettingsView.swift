@@ -34,7 +34,7 @@ struct ShortcutsSettingsView: View {
         return VStack(spacing: 0) {
             VStack {
                 HStack {
-                    Text(NSLocalizedString("Shortcuts", comment: "Shortcuts settings - Section title for keyboard shortcuts"))
+                    Text(NSLocalizedString("settings.shortcuts.sectionTitle", value: "Shortcuts", comment: "Shortcuts settings - Section title for keyboard shortcuts"))
                         .font(.system(size: 12))
                         .foregroundStyle(Color.secondary)
                     
@@ -46,7 +46,7 @@ struct ShortcutsSettingsView: View {
                         HStack(spacing: 4) {
                             Image(systemName: "arrow.clockwise")
                                 .font(.system(size: 11, weight: .medium))
-                            Text(NSLocalizedString("Restore all shortcuts", comment: "Shortcuts settings - Button to reset all shortcuts to default"))
+                            Text(NSLocalizedString("settings.shortcuts.restoreDefaultsButton", value: "Restore all shortcuts", comment: "Shortcuts settings - Button to reset all shortcuts to default"))
                                 .font(.system(size: 13))
                         }
                     }
@@ -65,7 +65,7 @@ struct ShortcutsSettingsView: View {
                                 .padding(.top, 12)
                                 .padding(.bottom, 12)
                             
-                            TextField(NSLocalizedString("Find shortcut keys", comment: "Shortcuts settings - Search field placeholder to find shortcuts"), text: $searchText)
+                            TextField(NSLocalizedString("settings.shortcuts.searchField.placeholder", value: "Find shortcut keys", comment: "Shortcuts settings - Search field placeholder to find shortcuts"), text: $searchText)
                                 .textFieldStyle(.plain)
                                 .padding(.vertical, 6)
                                 .focused($isSearchFieldFocused)
@@ -128,7 +128,7 @@ struct ShortcutsSettingsView: View {
                         .opacity(sections.isEmpty ? 0 : 1)
                         
                         if sections.isEmpty {
-                            Text(NSLocalizedString("No Results", comment: "Shortcuts settings - Empty state text when no shortcuts match search"))
+                            Text(NSLocalizedString("settings.shortcuts.searchResults.emptyMessage", value: "No Results", comment: "Shortcuts settings - Empty state text when no shortcuts match search"))
                                 .font(.system(size: 13, weight: .medium))
                                 .foregroundColor(.secondary)
                         }
@@ -227,7 +227,7 @@ struct ShortcutRowView: View {
                     .frame(height: 16)
                 
                 if item.hasConflict {
-                    Text(String(format: NSLocalizedString("Conflicts with: %@", comment: "Shortcuts settings - Warning text showing conflicting shortcuts"), item.conflictingCommandNames.joined(separator: ", ")))
+                    Text(String(format: NSLocalizedString("settings.shortcuts.conflictMessage", value: "Conflicts with: %@", comment: "Shortcuts settings - Warning text showing conflicting shortcuts"), item.conflictingCommandNames.joined(separator: ", ")))
                         .font(.system(size: 11))
                         .foregroundColor(.yellow)
                 }
@@ -238,7 +238,7 @@ struct ShortcutRowView: View {
             Spacer()
             
             if item.isOverridden {
-                Button(NSLocalizedString("Restore", comment: "Shortcuts settings - Button to restore single shortcut to default")) {
+                Button(NSLocalizedString("settings.shortcuts.restoreShortcutButton", value: "Restore", comment: "Shortcuts settings - Button to restore single shortcut to default")) {
                     handler(.restoreTapped)
                 }
                 .buttonStyle(.bordered)
@@ -246,7 +246,7 @@ struct ShortcutRowView: View {
             }
             
             Button(action: { handler(.editTapped) }) {
-                Text(isEditing ? NSLocalizedString("Press shortcut…", comment: "Shortcuts settings - Prompt text when recording new shortcut") : item.shortcutDisplay)
+                Text(isEditing ? NSLocalizedString("settings.shortcuts.recordingPrompt", value: "Press shortcut…", comment: "Shortcuts settings - Prompt text when recording new shortcut") : item.shortcutDisplay)
                     .font(.system(size: 13, weight: .regular))
                     .foregroundColor(isEditing ? .primary : .secondary)
                     .padding(.horizontal, 12)

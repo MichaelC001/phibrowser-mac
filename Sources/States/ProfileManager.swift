@@ -6,6 +6,7 @@
 import Cocoa
 import Combine
 import Foundation
+import PostHog
 
 /// One row from the Chromium-side profile attributes store, projected to
 /// Swift. `profileId` is the on-disk basename and the wire identifier used
@@ -29,6 +30,18 @@ struct SearchEngineInfo: Identifiable, Hashable {
     let name: String
     let keyword: String
     let isDefault: Bool
+}
+
+/// One installed extension in a profile, projected from Chromium's
+/// ExtensionRegistry. `id` is the Chrome Web Store id — enough identity to
+/// recognize well-known extensions (password managers) without a window-bound
+/// `ExtensionManager`. `icon` is the extension's own icon, nil when Chromium
+/// couldn't read one.
+struct ProfileExtensionInfo: Identifiable, Hashable {
+    let id: String
+    let name: String
+    let enabled: Bool
+    let icon: NSImage?
 }
 
 /// App-scoped owner of the Chromium profile list. The actual profile data
@@ -133,6 +146,15 @@ final class ProfileManager: ObservableObject {
         bridge.createProfile(withDisplayName: trimmed) { [weak self] newId in
             DispatchQueue.main.async {
                 self?.refresh()
+                // The agent's auto-created fallback profile is not a user
+                // action — keep it out of the usage metric.
+                if let self, let newId,
+                   !PhiPreferences.AgentSpaces.isAgentFallbackProfile(
+                       profileId: newId, displayName: trimmed) {
+                    PostHogSDK.shared.capture("profile_created", properties: [
+                        "total_profiles": self.userAssignableProfiles.count,
+                    ])
+                }
                 completion(newId)
             }
         }
@@ -288,6 +310,36 @@ final class ProfileManager: ObservableObject {
         }
     }
 
+    /// Lists a profile's installed extensions. Completion fires on the main
+    /// queue; empty on failure. May load the profile first, so the callback
+    /// can be delayed for an off profile.
+    func extensions(forProfile profileId: String,
+                    completion: @escaping ([ProfileExtensionInfo]) -> Void) {
+        guard let bridge = ChromiumLauncher.sharedInstance().bridge else {
+            completion([])
+            return
+        }
+        bridge.listProfileExtensions(profileId) { raw in
+            DispatchQueue.main.async {
+                completion((raw ?? []).compactMap(Self.decodeExtension(_:)))
+            }
+        }
+    }
+
+    /// Installs Chrome Web Store extensions into a profile, loading the
+    /// profile first — the bridge's profile-scoped install requires it in
+    /// memory. Fire-and-forget: install progress surfaces through the
+    /// profile's extension registry, so callers observe completion by
+    /// re-querying `extensions(forProfile:)`.
+    func installExtensions(_ extensionIds: [String],
+                           forProfile profileId: String) {
+        guard let bridge = ChromiumLauncher.sharedInstance().bridge else { return }
+        bridge.ensureProfileLoaded(profileId) { success in
+            guard success else { return }
+            bridge.installExtensions(withIds: extensionIds, profileId: profileId)
+        }
+    }
+
     // MARK: - Wire decoding
 
     private static func decode(_ dict: [String: Any]) -> PhiBrowserProfile? {
@@ -313,5 +365,17 @@ final class ProfileManager: ObservableObject {
         let keyword = dict["keyword"] as? String ?? ""
         let isDefault = (dict["isDefault"] as? NSNumber)?.boolValue ?? false
         return SearchEngineInfo(id: id, name: name, keyword: keyword, isDefault: isDefault)
+    }
+
+    private static func decodeExtension(_ dict: [String: Any]) -> ProfileExtensionInfo? {
+        guard let id = dict["id"] as? String,
+              let name = dict["name"] as? String else {
+            return nil
+        }
+        let enabled = (dict["enabled"] as? NSNumber)?.boolValue ?? false
+        // Same data-URL wire format as the window-scoped extension list, so
+        // reuse its decoder (pre-baked reps up to 32 pt cover this row's 20 pt).
+        let icon = (dict["icon"] as? String).flatMap(Extension.imageFromBase64(_:))
+        return ProfileExtensionInfo(id: id, name: name, enabled: enabled, icon: icon)
     }
 }

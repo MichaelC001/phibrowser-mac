@@ -17,7 +17,7 @@ struct BookmarkMenuContentBuilder {
                          bookmarkAllTabsAction: Selector,
                          exportBookmarksAction: Selector,
                          openBookmarkAction: Selector) -> NSMenu {
-        let menu = NSMenu(title: NSLocalizedString("Bookmarks", comment: "Main menu - Top-level Bookmarks menu title in the application menu bar"))
+        let menu = NSMenu(title: NSLocalizedString("app.bookmarksMenu.title", value: "Bookmarks", comment: "Bookmarks menu - Menu title"))
         populate(menu: menu,
                  bookmarks: bookmarks,
                  canBookmarkCurrentTab: canBookmarkCurrentTab,
@@ -44,7 +44,7 @@ struct BookmarkMenuContentBuilder {
         menu.removeAllItems()
 
         let bookmarkThisTabItem = NSMenuItem(
-            title: NSLocalizedString("Bookmark This Tab...", comment: "Bookmarks menu - Menu item to add or edit a bookmark for the currently focused tab"),
+            title: NSLocalizedString("app.bookmarksMenu.addOrEditCurrentTab", value: "Bookmark This Tab...", comment: "Bookmarks menu - Menu item to add or edit a bookmark for the currently focused tab"),
             action: bookmarkThisTabAction,
             keyEquivalent: "d"
         )
@@ -56,7 +56,7 @@ struct BookmarkMenuContentBuilder {
         menu.addItem(bookmarkThisTabItem)
 
         let bookmarkAllTabsItem = NSMenuItem(
-            title: NSLocalizedString("Bookmark All Tabs...", comment: "Bookmarks menu - Menu item to add bookmarks for all currently open tabs in the active window"),
+            title: NSLocalizedString("app.bookmarksMenu.addAllOpenTabs", value: "Bookmark All Tabs...", comment: "Bookmarks menu - Menu item to add bookmarks for all currently open tabs in the active window"),
             action: bookmarkAllTabsAction,
             keyEquivalent: "d"
         )
@@ -69,7 +69,7 @@ struct BookmarkMenuContentBuilder {
 
         menu.addItem(.separator())
         let exportBookmarksItem = NSMenuItem(
-            title: NSLocalizedString("Export Bookmarks...", comment: "Bookmarks menu - Menu item to export the current Space's bookmarks to an HTML file"),
+            title: NSLocalizedString("app.bookmarksMenu.exportCurrentSpace", value: "Export Bookmarks...", comment: "Bookmarks menu - Menu item to export the current Space's bookmarks to an HTML file"),
             action: exportBookmarksAction,
             keyEquivalent: ""
         )
@@ -114,7 +114,7 @@ struct BookmarkMenuContentBuilder {
         let menu = NSMenu(title: folder.title)
         guard !folder.children.isEmpty else {
             let emptyItem = NSMenuItem(
-                title: NSLocalizedString("Empty", comment: "Bookmarks menu - Disabled placeholder item shown when a bookmark folder has no child bookmarks"),
+                title: NSLocalizedString("app.bookmarksMenu.emptyFolderPlaceholder", value: "Empty", comment: "Bookmarks menu - Disabled placeholder item shown when a bookmark folder has no child bookmarks"),
                 action: nil,
                 keyEquivalent: ""
             )

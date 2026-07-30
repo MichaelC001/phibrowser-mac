@@ -403,13 +403,13 @@ private final class SearchTabsSectionHeaderView: NSTableCellView {
     private static func title(for kind: SearchTabsSectionKind) -> String {
         switch kind {
         case .openTabs:
-            return NSLocalizedString("Open Tabs", comment: "Search Tabs - Open tabs section title")
+            return NSLocalizedString("searchTabs.section.openTabs", value: "Open Tabs", comment: "Search Tabs - Open tabs section title")
         case .pinnedTabs:
-            return NSLocalizedString("Pinned Tabs", comment: "Search Tabs - Pinned tabs section title")
+            return NSLocalizedString("searchTabs.section.pinnedTabs", value: "Pinned Tabs", comment: "Search Tabs - Pinned tabs section title")
         case .bookmarks:
-            return NSLocalizedString("Bookmarks", comment: "Search Tabs - Bookmarks section title")
+            return NSLocalizedString("searchTabs.section.bookmarks", value: "Bookmarks", comment: "Search Tabs - Bookmarks section title")
         case .recentlyClosed:
-            return NSLocalizedString("Recently Closed", comment: "Search Tabs - Recently closed section title")
+            return NSLocalizedString("searchTabs.section.recentlyClosed", value: "Recently Closed", comment: "Search Tabs - Recently closed section title")
         }
     }
 }

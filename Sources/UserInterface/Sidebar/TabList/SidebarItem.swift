@@ -139,7 +139,7 @@ class NewTabButtonItem: SidebarItem {
     var isBookmark: Bool { false }
     
     let id: AnyHashable = "new-tab-button"
-    var title: String = NSLocalizedString("New Tab", comment: "Sidebar tab list - Button title to create a new browser tab")
+    var title: String = NSLocalizedString("sidebar.tabList.newTabButton", value: "New Tab", comment: "Sidebar tab list - Button title to create a new browser tab")
     var url: String? = nil
     var iconName: String? = "plus"
     var faviconUrl: String? = nil

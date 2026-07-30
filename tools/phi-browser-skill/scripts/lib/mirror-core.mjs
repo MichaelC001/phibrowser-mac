@@ -23,7 +23,7 @@ import {
 import { execFileSync, spawn } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join, basename } from 'node:path'
-import { discoverEndpoint, DirectPhiChannel } from './cdp.mjs'
+import { discoverEndpoints, isDeadSocketError, DirectPhiChannel } from './cdp.mjs'
 
 // Same directory as helpers.mjs's task files — path derived identically on
 // both sides so writer (heredoc) and reader (daemon) always agree.
@@ -64,6 +64,35 @@ export function agentRootPid() {
     }
   } catch {}
   return null
+}
+
+/**
+ * Every live ancestor pid of this process, nearest first (from the parent up
+ * to just below launchd). Empty when ps is unavailable. Used to judge
+ * whether a pid the app resolved for a connection is genuinely above us —
+ * the app's ancestry walk may stop on a different ancestor than
+ * agentRootPid() does (wrapper binaries, helper bundles), and any ancestor
+ * is proof the round is parented to what the app bound, not orphaned.
+ */
+export function ancestorPids() {
+  try {
+    const out = execFileSync('/bin/ps', ['-axo', 'pid=,ppid='],
+                             { encoding: 'utf8' })
+    const ppidOf = new Map()
+    for (const line of out.split('\n')) {
+      const m = /^\s*(\d+)\s+(\d+)/.exec(line)
+      if (m) ppidOf.set(Number(m[1]), Number(m[2]))
+    }
+    const ancestors = []
+    let pid = process.ppid
+    for (let hops = 0; hops < 64 && pid > 1; hops++) {
+      ancestors.push(pid)
+      const next = ppidOf.get(pid)
+      if (!next || next === pid) break
+      pid = next
+    }
+    return ancestors
+  } catch { return [] }
 }
 
 // Shell and wrapper processes skipped when walking ancestry for the agent
@@ -180,14 +209,30 @@ function sanitizeKey(id) {
  * A direct app-socket channel (throws if Phi or the socket is down). The
  * daemon holds one persistently — it also carries the agentSpace.userMessage
  * broadcasts that wake the console-command bridge — and reconnects by simply
- * calling this again after a send failure. `agentPid` names the driving
- * agent session for the app's consent identity — pass it from any process
- * (the detached daemon) that no longer shares the agent's ancestry.
+ * calling this again after a send failure. `agentCapability` is what joins
+ * the driving agent's session (identity, grant, and task principal) from a
+ * process that no longer shares the agent's ancestry; `agentPid` merely
+ * names the agent in the app's logs.
  */
-export async function openPhiChannel({ agentPid = null } = {}) {
-  const endpoint = discoverEndpoint()
-  if (endpoint.kind !== 'uds') throw new Error('no app socket endpoint')
-  return new DirectPhiChannel({ socketPath: endpoint.socketPath, agentPid }).connect()
+export async function openPhiChannel({ agentPid = null, agentCapability = null } = {}) {
+  const uds = discoverEndpoints().filter((c) => c.kind === 'uds')
+  if (uds.length === 0) throw new Error('no app socket endpoint')
+  let lastErr = null
+  for (const endpoint of uds) {
+    try {
+      return await new DirectPhiChannel({
+        socketPath: endpoint.socketPath,
+        agentPid,
+        agentCapability,
+      }).connect()
+    } catch (err) {
+      // Crash-orphaned socket file — walk on to the next candidate. (Never
+      // probe with a naked connect: see isDeadSocketError in cdp.mjs.)
+      if (isDeadSocketError(err)) { lastErr = err; continue }
+      throw err
+    }
+  }
+  throw lastErr
 }
 
 /**

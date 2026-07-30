@@ -562,6 +562,16 @@ class WebContentViewController: NSViewController {
         // layer-backed descendants. Re-clear (sync + post-commit) to keep
         // webContentView / devToolsView free of the vibrancy tint.
         hostView.scheduleVibrancyClear()
+        applyAgentSpaceOverlayTheme()
+    }
+
+    /// The agent cursor is tinted from the window's theme (which carries any
+    /// Space-pinned theme); keep it in sync on theme and appearance changes.
+    private func applyAgentSpaceOverlayTheme() {
+        guard agentSpaceOverlay.superview != nil,
+              let themeContext = browserState?.themeContext else { return }
+        agentSpaceOverlay.applyTheme(
+            themeContext.currentTheme, appearance: themeContext.currentAppearance)
     }
     
     // MARK: - AI Chat Observer
@@ -2514,6 +2524,9 @@ class WebContentViewController: NSViewController {
         agentSpaceOverlay.snp.makeConstraints { make in
             make.edges.equalToSuperview()
         }
+        // The cursor renders nothing until its theme colors are applied —
+        // updateTheme() only fires on changes, so seed them at mount.
+        applyAgentSpaceOverlayTheme()
     }
 
     private func hideAgentSpaceOverlay() {

@@ -44,18 +44,18 @@ extension BrowserState {
     @MainActor
     func displayNewFolderDialog(_ name: String? = nil, placeholder: String? = nil, isFolder: Bool) async -> String? {
         let alert = NSAlert()
-        alert.messageText = (name?.isEmpty == true || isFolder) ? NSLocalizedString("New Folder", comment: "New folder dialog title")
-        : NSLocalizedString("Rename", comment: "Rename folder or bookmark dialog title")
+        alert.messageText = (name?.isEmpty == true || isFolder) ? NSLocalizedString("app.bookmarkFolderDialog.createTitle", value: "New Folder", comment: "New folder dialog title")
+        : NSLocalizedString("app.bookmarkFolderDialog.renameTitle", value: "Rename", comment: "Rename folder or bookmark dialog title")
         alert.alertStyle = .informational
 
 
         let inputField = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
-        inputField.placeholderString = placeholder ?? NSLocalizedString("Folder Name", comment: "New folder dialog input placeholder")
+        inputField.placeholderString = placeholder ?? NSLocalizedString("app.bookmarkFolderDialog.nameField.placeholder", value: "Folder Name", comment: "New folder dialog input placeholder")
         inputField.stringValue = name ?? ""
         alert.accessoryView = inputField
 
-        alert.addButton(withTitle: NSLocalizedString("Confirm", comment: "New folder dialog confirm button title"))
-        alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "New folder dialog cancel button title"))
+        alert.addButton(withTitle: NSLocalizedString("app.newBookmarkFolderDialog.confirmButton", value: "Confirm", comment: "New folder dialog confirm button title"))
+        alert.addButton(withTitle: NSLocalizedString("app.newBookmarkFolderDialog.cancelButton", value: "Cancel", comment: "New folder dialog cancel button title"))
 
         let response: NSApplication.ModalResponse
         if let window = self.windowController?.window  {

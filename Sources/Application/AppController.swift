@@ -19,7 +19,12 @@ import PostHog
     @objc static private(set)var shared: AppController!
     
     var settingsWindowController: SettingsWindowController?
-    
+    /// Whether `settingsWindowController` was built with the Developer pane.
+    /// The pane list is fixed at window creation, so this goes stale when the
+    /// General-tab "Developer mode" toggle changes while the window is open;
+    /// `developerModeDidChange()` consults it to rebuild the window.
+    var settingsPanesIncludeDeveloper = false
+
     var container: ModelContainer?
     var updater: SPUUpdater?
     var sparkleUserDriver: PhiSparkleUserDriver?
@@ -139,6 +144,9 @@ import PostHog
         AppLogInfo("------------------------------  Starting: \(Self.makeClientString())  ------------------------------")
         recordLaunchVersion()
 
+        // The startup takeover for the user-data removal mechanism runs in
+        // main() (UserDataRemovalBootstrap), before Chromium reads any state.
+
         // Set up PostHog before `didFinishLaunchingNotification` fires so the
         // SDK can observe the app-opened lifecycle event. If either value is
         // missing the app runs without analytics.
@@ -150,7 +158,7 @@ import PostHog
             postHogConfig.debug = true
             #endif
             postHogConfig.setBeforeSend { event in
-                guard event.event == "$app_opened" else { return event }
+                guard event.event == "Application Opened" else { return event }
                 event.properties["layout_mode"] = PhiPreferences.GeneralSettings.loadLayoutMode().rawValue
                 event.properties["ai_enabled"] = PhiPreferences.AISettings.phiAIEnabled.loadValue()
                 return event

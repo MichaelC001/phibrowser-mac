@@ -89,7 +89,7 @@ class SetNameViewController: OnboardingBaseViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         skipButton.isHidden = true
-        titleLabel.stringValue = NSLocalizedString("What should I call you?", comment: "Set name page - Title asking user for their preferred name")
+        titleLabel.stringValue = NSLocalizedString("oobe.setName.title", value: "What should I call you?", comment: "Set name page - Title asking user for their preferred name")
         view.addSubview(titleView)
         titleView.snp.makeConstraints { make in
             make.centerX.equalToSuperview()
@@ -174,11 +174,11 @@ class SetNameViewController: OnboardingBaseViewController {
         let trimmedName = name.trimmingCharacters(in: .whitespaces)
         
         if trimmedName.isEmpty {
-            return NSLocalizedString("Name cannot be empty", comment: "Set name page - Error message when user name is empty or contains only spaces")
+            return NSLocalizedString("oobe.setName.promptForEmpty", value: "Name cannot be empty", comment: "Set name page - Error message when user name is empty or contains only spaces")
         }
         
         if name.count > 100 {
-            return NSLocalizedString("Name is too long (maximum 100 characters)", comment: "Set name page - Error message when user name exceeds 100 characters")
+            return NSLocalizedString("oobe.setName.promptForTooLong", value: "Name is too long (maximum 100 characters)", comment: "Set name page - Error message when user name exceeds 100 characters")
         }
         
         return nil

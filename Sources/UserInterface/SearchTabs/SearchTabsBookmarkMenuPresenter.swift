@@ -21,13 +21,13 @@ final class SearchTabsBookmarkMenuPresenter: NSObject {
             return
         }
 
-        let menu = NSMenu(title: NSLocalizedString("Bookmarks", comment: "Search Tabs - Bookmark root menu title"))
+        let menu = NSMenu(title: NSLocalizedString("searchTabs.bookmarkMenu.title", value: "Bookmarks", comment: "Search Tabs - Bookmark root menu title"))
         menu.autoenablesItems = true
         menu.delegate = self
 
         if state.bookmarkManager.rootFolder.children.isEmpty {
             let emptyItem = NSMenuItem(
-                title: NSLocalizedString("Empty", comment: "Search Tabs - Empty bookmark menu placeholder"),
+                title: NSLocalizedString("searchTabs.bookmarkMenu.emptyRootPlaceholder", value: "Empty", comment: "Search Tabs - Empty bookmark menu placeholder"),
                 action: nil,
                 keyEquivalent: ""
             )
@@ -67,7 +67,7 @@ final class SearchTabsBookmarkMenuPresenter: NSObject {
         let menu = NSMenu(title: folder.title)
         guard !folder.children.isEmpty else {
             let emptyItem = NSMenuItem(
-                title: NSLocalizedString("Empty", comment: "Search Tabs - Empty bookmark folder placeholder"),
+                title: NSLocalizedString("searchTabs.bookmarkMenu.emptyFolderPlaceholder", value: "Empty", comment: "Search Tabs - Empty bookmark folder placeholder"),
                 action: nil,
                 keyEquivalent: ""
             )

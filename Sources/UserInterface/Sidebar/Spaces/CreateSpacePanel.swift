@@ -4,6 +4,7 @@
 // found in the LICENSE file.
 
 import AppKit
+import PostHog
 import SwiftUI
 
 /// Rich "Create a Space" panel. Replaces the bare name-only NSAlert that used
@@ -29,13 +30,20 @@ struct CreateSpacePanel: View {
     /// Profile the picker opens on — the active Space's profile when reached
     /// from the sidebar, or the menu's active-window profile.
     let initialProfileId: String?
-    let onClose: () -> Void
-    /// Live theme preview while the form is up: called with the resolved theme
-    /// whenever the selection changes — including the initial random pick —
-    /// so the sidebar overlay hosting the form can re-tint to the new Space's
-    /// look. Nil for the window style, which has no hosting surface to
-    /// preview on.
+    /// Theme selected when the panel opens. Sidebar hosts pass their active
+    /// Space's theme id so the swatch selection matches the inherited surface.
+    let initialThemeId: String
+    /// Whether the host should restore the theme that preceded its live
+    /// preview. Successful creation keeps the selected preview in place until
+    /// the new Space is activated, avoiding a flash of the previous theme.
+    let onClose: (_ restorePreviewTheme: Bool) -> Void
+    /// Live preview for sidebar hosts. Initial setup does not call this because
+    /// the host already inherits the active Space theme; subsequent user theme
+    /// selections and slider adjustments do.
     var onThemeSelectionChange: ((Theme) -> Void)? = nil
+    /// Lets sidebar hosts restore the source Space's real theme only after the
+    /// target Space has surfaced, or immediately when activation fails.
+    var onCreatedSpaceActivationFinished: (() -> Void)? = nil
 
     @State private var name: String = ""
     /// Icon/emoji pinned to the new Space, chosen from the same picker the
@@ -43,38 +51,29 @@ struct CreateSpacePanel: View {
     @State private var selectedIcon: IconPickerSelection = .defaultSelection
     @State private var selectedProfileId: String = ""
     /// Theme pinned to the new Space. Every Space owns a theme — there is no
-    /// "follow global" anymore. `onAppear` pre-selects a random built-in.
-    @State private var selectedThemeId: String = Theme.default.id
-    /// Overlay-opacity slider position. Follows the selected theme's own
-    /// alpha until the user drags it; from then on it's a deliberate choice
-    /// that survives theme switches and is persisted on the new Space.
-    @State private var opacitySliderValue: Double = 50
-    @State private var userAdjustedOpacity = false
+    /// "follow global" anymore. Nil means the user has not changed the
+    /// initial active-Space selection yet.
+    @State private var selectedThemeId: String?
+    /// Theme-component slider position. Follows the selected theme's
+    /// saturation (or Pure brightness) until the user drags it; from then on
+    /// it's a deliberate choice that survives theme switches and is persisted
+    /// on the new Space.
+    @State private var themeSliderValue: Double = 50
+    @State private var userAdjustedThemeComponent = false
     @FocusState private var nameFocused: Bool
 
     @Environment(\.phiAppearance) private var appearance
-
-    private static let accentColor = Color(hexString: "#3AA4D5")
 
     var body: some View {
         styledContent
             .onAppear {
                 selectedProfileId = resolvedInitialProfileId
                 // Give every new Space a fresh random look out of the box — a
-                // random Phi icon and a random built-in theme — so Spaces are
-                // visually distinct instead of all defaulting to the same first
-                // icon and theme. The user can still override both before
-                // creating.
+                // random Phi icon so Spaces remain visually distinct. The theme
+                // starts from the active Space to match the inherited panel.
                 selectedIcon = .phiIcon(id: PhiIconCatalog.allIds.randomElement() ?? PhiIconCatalog.allIds[0])
-                selectedThemeId = Theme.builtInThemes.randomElement()?.id ?? Theme.default.id
-                syncOpacityToSelectedTheme()
+                syncThemeSliderToSelectedTheme()
                 DispatchQueue.main.async { nameFocused = true }
-            }
-            .onChange(of: selectedThemeId) { _ in
-                if !userAdjustedOpacity {
-                    syncOpacityToSelectedTheme()
-                }
-                onThemeSelectionChange?(effectiveTheme())
             }
     }
 
@@ -144,11 +143,11 @@ struct CreateSpacePanel: View {
 
     private var header: some View {
         VStack(spacing: 12) {
-            Text(NSLocalizedString("Create a Space",
+            Text(NSLocalizedString("sidebar.createSpace.title", value: "Create a Space",
                 comment: "Title of the create-Space panel"))
                 .font(.system(size: 18, weight: .medium))
                 .foregroundStyle(Color.primary.opacity(0.85))
-            Text(NSLocalizedString("Each space has its own independent bookmarks",
+            Text(NSLocalizedString("sidebar.createSpace.subtitle", value: "Each space has its own independent bookmarks",
                 comment: "Subtitle of the create-Space panel"))
                 .font(.system(size: 14))
                 .foregroundStyle(Color.primary.opacity(0.5))
@@ -188,7 +187,7 @@ struct CreateSpacePanel: View {
 
     private var nameField: some View {
         TextField(
-            NSLocalizedString("Space name", comment: "Placeholder for the Space-name field"),
+            NSLocalizedString("sidebar.createSpace.nameField.placeholder", value: "Space name", comment: "Placeholder for the Space-name field"),
             text: $name
         )
             .textFieldStyle(.plain)
@@ -203,7 +202,7 @@ struct CreateSpacePanel: View {
 
     private var profileRow: some View {
         HStack(spacing: 8) {
-            Text(NSLocalizedString("Profile",
+            Text(NSLocalizedString("sidebar.createSpace.profilePicker.label", value: "Profile",
                 comment: "Label for the profile picker in the create-Space panel"))
                 .font(.system(size: 13))
                 .foregroundStyle(Color.primary.opacity(0.85))
@@ -226,7 +225,7 @@ struct CreateSpacePanel: View {
             Button {
                 promptCreateProfile()
             } label: {
-                Label(NSLocalizedString("New Profile\u{2026}",
+                Label(NSLocalizedString("sidebar.createSpace.profilePicker.newProfileAction", value: "New Profile\u{2026}",
                     comment: "Profile picker item to create a new profile"),
                     systemImage: "plus")
             }
@@ -251,10 +250,10 @@ struct CreateSpacePanel: View {
         .fixedSize()
     }
 
-    /// Color + opacity chooser matching the Spaces settings card: one row of
-    /// theme dots (selected one ringed), a divider, then the overlay-opacity
-    /// slider. Dots spread evenly across the bounded column and shrink with
-    /// the sidebar.
+    /// Color + theme-component chooser matching the Spaces settings card: one
+    /// row of theme dots (selected one ringed), a divider, then the saturation
+    /// or Pure-brightness slider. Dots spread evenly across the bounded column
+    /// and shrink with the sidebar.
     private var colorBlock: some View {
         VStack(spacing: 12) {
             HStack(spacing: 0) {
@@ -264,12 +263,12 @@ struct CreateSpacePanel: View {
                             ? .white
                             : Color(theme.color(for: .themeColor, appearance: appearance)),
                         ringColor: Color(theme.color(for: .themeColor, appearance: appearance)),
-                        selected: selectedThemeId == theme.id,
+                        selected: effectiveThemeId == theme.id,
                         title: nil,
                         showsContrastBorder: theme == .pure,
                         dotDiameter: 16,
                         ringDiameter: 20,
-                        action: { selectedThemeId = theme.id }
+                        action: { selectTheme(theme.id) }
                     )
                     .help(theme.name)
                     .frame(maxWidth: .infinity)
@@ -283,9 +282,12 @@ struct CreateSpacePanel: View {
             // rather than fixing a width.
             GeometryReader { geo in
                 ThemeOpacitySliderView(
-                    value: opacityBinding,
+                    value: themeSliderBinding,
                     trackColor: effectiveTheme().color(for: .windowOverlayBackground, appearance: appearance),
                     borderColor: ThemedColor.border.resolve(theme: effectiveTheme(), appearance: appearance),
+                    trackStyle: effectiveThemeId == Theme.pure.id
+                        ? .pureBrightness(appearance)
+                        : .saturation,
                     width: geo.size.width
                 )
             }
@@ -297,47 +299,66 @@ struct CreateSpacePanel: View {
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
-    private var opacityBinding: Binding<Double> {
+    private var themeSliderBinding: Binding<Double> {
         Binding(
-            get: { opacitySliderValue },
+            get: { themeSliderValue },
             set: { newValue in
-                opacitySliderValue = newValue
-                userAdjustedOpacity = true
+                themeSliderValue = newValue
+                userAdjustedThemeComponent = true
                 onThemeSelectionChange?(effectiveTheme())
             }
         )
     }
 
-    /// Snaps the slider to the selected theme's own overlay alpha — the
-    /// value the new Space inherits unless the user drags the slider.
-    private func syncOpacityToSelectedTheme() {
-        let alpha = effectiveTheme().windowOverlayOpacity(for: appearance)
-        opacitySliderValue = OverlayOpacityScale.sliderValue(forOpacityPercent: Double(alpha) * 100)
+    private func selectTheme(_ themeId: String) {
+        guard effectiveThemeId != themeId else { return }
+        selectedThemeId = themeId
+        if !userAdjustedThemeComponent {
+            syncThemeSliderToSelectedTheme()
+        }
+        onThemeSelectionChange?(effectiveTheme())
     }
 
-    /// The overlay alpha the slider currently encodes.
-    private var selectedOverlayAlpha: CGFloat {
-        CGFloat(OverlayOpacityScale.opacityPercent(forSlider: opacitySliderValue) / 100)
+    /// Snaps the slider to the selected theme's own saturation or Pure
+    /// brightness — the value the new Space inherits unless the user drags.
+    private func syncThemeSliderToSelectedTheme() {
+        let theme = selectedBaseTheme()
+        if theme.id == Theme.pure.id {
+            let brightness = theme
+                .color(for: .windowOverlayBackground, appearance: appearance)
+                .hsbBrightnessComponent
+            themeSliderValue = PureThemeBrightnessScale.sliderValue(
+                forBrightness: Double(brightness),
+                appearance: appearance
+            )
+        } else {
+            let saturation = theme
+                .color(for: .windowOverlayBackground, appearance: appearance)
+                .hsbSaturationComponent
+            themeSliderValue = OverlaySaturationScale.sliderValue(
+                forSaturation: Double(saturation)
+            )
+        }
     }
 
     private var actions: some View {
         VStack(spacing: 12) {
             Button(action: create) {
-                Text(NSLocalizedString("Create Space",
+                Text(NSLocalizedString("sidebar.createSpace.createButton", value: "Create Space",
                     comment: "Confirm button in the create-Space panel"))
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(Color.white.opacity(0.95))
                     .padding(.horizontal, 16)
                     .padding(.vertical, 6)
-                    // System accent, matching the selection chrome elsewhere,
-                    // rather than the panel's fixed brand blue.
-                    .background(Color.accentColor)
+                    .background(selectedThemeColor)
                     .clipShape(Capsule())
             }
             .buttonStyle(.plain)
 
-            Button(action: onClose) {
-                Text(NSLocalizedString("Cancel", comment: "Cancel button"))
+            Button {
+                onClose(true)
+            } label: {
+                Text(NSLocalizedString("sidebar.createSpace.cancelButton", value: "Cancel", comment: "Cancel button"))
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(Color.primary.opacity(0.85))
             }
@@ -351,7 +372,18 @@ struct CreateSpacePanel: View {
     /// The theme id used to resolve the swatch fill, caption, and derived
     /// `colorHex`.
     private var effectiveThemeId: String {
-        selectedThemeId
+        selectedThemeId ?? resolvedInitialThemeId
+    }
+
+    private var resolvedInitialThemeId: String {
+        ThemeManager.shared.registeredThemes[initialThemeId]?.id
+            ?? Theme.builtInThemes.first(where: { $0.id == initialThemeId })?.id
+            ?? ThemeManager.shared.currentTheme.id
+    }
+
+    /// The create action follows the theme currently selected for the new Space.
+    private var selectedThemeColor: Color {
+        Color(effectiveTheme().color(for: .themeColor, appearance: appearance))
     }
 
     /// The Space's stored `colorHex` (which drives the sidebar tint) is derived
@@ -361,18 +393,34 @@ struct CreateSpacePanel: View {
         effectiveTheme().color(for: .windowOverlayBackground, appearance: appearance).hexRGBString
     }
 
-    /// The theme backing the new Space: the selected theme, with the
-    /// user's custom overlay opacity applied on a palette copy once the
-    /// slider has been touched — so the live sidebar preview shows the
-    /// exact look the Space will have.
-    private func effectiveTheme() -> Theme {
-        let base = ThemeManager.shared.registeredThemes[effectiveThemeId]
+    private func selectedBaseTheme() -> Theme {
+        ThemeManager.shared.registeredThemes[effectiveThemeId]
             ?? Theme.builtInThemes.first(where: { $0.id == effectiveThemeId })
             ?? ThemeManager.shared.currentTheme
-        guard userAdjustedOpacity else { return base }
-        let derived = base.duplicating()
-        derived.setWindowOverlayOpacity(selectedOverlayAlpha, for: appearance)
-        return derived
+    }
+
+    /// The theme backing the new Space: the selected theme, with the user's
+    /// custom saturation or Pure brightness applied on a palette copy once
+    /// the slider has been touched, matching the theme that will be persisted.
+    private func effectiveTheme() -> Theme {
+        let base = selectedBaseTheme()
+        guard userAdjustedThemeComponent else { return base }
+        if base.id == Theme.pure.id {
+            return ThemeColorAdjustment.applyingPureBrightness(
+                sliderValue: themeSliderValue,
+                to: base
+            )
+        }
+
+        let saturation = CGFloat(
+            OverlaySaturationScale.saturation(forSlider: themeSliderValue)
+        )
+        return ThemeColorAdjustment.applyingSaturation(
+            light: appearance.isLight ? saturation : nil,
+            dark: appearance.isDark ? saturation : nil,
+            darkWindowBackground: appearance.isDark ? saturation : nil,
+            to: base
+        )
     }
 
     // MARK: - Profiles
@@ -404,7 +452,7 @@ struct CreateSpacePanel: View {
     private func create() {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let finalName = trimmed.isEmpty
-            ? String(format: NSLocalizedString("Space %d",
+            ? String(format: NSLocalizedString("sidebar.createSpace.defaultName", value: "Space %d",
                 comment: "Default name for a newly created Space"),
                 manager.spaces.count + 1)
             : trimmed
@@ -415,18 +463,40 @@ struct CreateSpacePanel: View {
             iconName: selectedIcon.storageValue,
             profileId: profileId
         )
-        // Pin the chosen theme (and, when the user touched the slider, the
-        // custom overlay opacity) to the new Space. Persisted now; applied
-        // when its window spawns in activateInFocusedWindow.
+        if newSpaceId != nil {
+            PostHogSDK.shared.capture("space_created", properties: [
+                "total_spaces": manager.spaces.count,
+                "non_default_profile": profileId != LocalStore.defaultProfileId,
+            ])
+        }
+        // Pin the chosen theme (and, when the user touched the slider, its
+        // custom saturation or Pure brightness) to the new Space. Persisted
+        // now; applied when its window spawns in activateInFocusedWindow.
         if let newSpaceId {
-            manager.setTheme(forSpaceId: newSpaceId, themeId: selectedThemeId)
-            if userAdjustedOpacity {
-                manager.setOverlayOpacity(selectedOverlayAlpha,
-                                          forSpaceId: newSpaceId,
-                                          appearance: appearance)
+            manager.setTheme(forSpaceId: newSpaceId, themeId: effectiveThemeId)
+            if userAdjustedThemeComponent {
+                if effectiveThemeId == Theme.pure.id {
+                    manager.setPureThemeSliderValue(
+                        themeSliderValue,
+                        forSpaceId: newSpaceId
+                    )
+                } else {
+                    manager.setOverlaySaturation(
+                        CGFloat(
+                            OverlaySaturationScale.saturation(
+                                forSlider: themeSliderValue
+                            )
+                        ),
+                        forSpaceId: newSpaceId,
+                        appearance: appearance
+                    )
+                }
             }
         }
-        onClose()
+        // A successful create keeps the selected live preview visible while
+        // the new Space activates. Failure follows the ordinary close path and
+        // restores the theme from before the panel opened.
+        onClose(newSpaceId == nil)
         // Bring the freshly created Space to the front of the active window.
         // `createSpace` only records it as the persisted default, so without
         // this the current window would stay on the Space we created from — in
@@ -434,7 +504,11 @@ struct CreateSpacePanel: View {
         // Runs after `onClose` so the overlay / panel is torn down first and the
         // switch animation plays over the revealed sidebar rather than under it.
         if let newSpaceId {
-            manager.activateInFocusedWindow(spaceId: newSpaceId)
+            manager.activateInFocusedWindow(
+                spaceId: newSpaceId,
+                onActivationFailed: onCreatedSpaceActivationFinished,
+                onSwapSettled: onCreatedSpaceActivationFinished
+            )
         }
     }
 }
@@ -512,8 +586,11 @@ extension CreateSpacePanel {
         let panel = CreateSpacePanel(
             manager: manager,
             profileManager: profileManager,
-            initialProfileId: initialProfileId
-        ) { [weak window] in
+            initialProfileId: initialProfileId,
+            initialThemeId: manager.activeSpaceId.map {
+                manager.resolvedThemeId(forSpaceId: $0)
+            } ?? ThemeManager.shared.currentTheme.id
+        ) { [weak window] _ in
             window?.close()
         }
         let hosting = ThemedHostingController(rootView: panel)

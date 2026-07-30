@@ -212,6 +212,7 @@ class SidebarViewController: NSViewController {
     private var contentCancellables = Set<AnyCancellable>()
     private var headerHeightConstraint: Constraint?
     private var pinnedTabsHeightConstraint: Constraint?
+    private var pinSpacerHeightConstraint: Constraint?
     private var bottomBarHeightConstraint: Constraint?
     private var messageCardHeightConstraint: Constraint?
     private var hasSetupObservers = false
@@ -352,10 +353,15 @@ class SidebarViewController: NSViewController {
             && state.participatesInSpaces
             && (SpaceManager.shared.spaces.count > 1 || headerView.forcesSpaceSwitchVisible)
         // Base = nav row (+ address bar in sidebar layouts). The Spaces switch
-        // row adds 32 (24 row + 8 gap) only when the row is shown, so the header
-        // reclaims the row's height when the row is hidden.
-        let base: CGFloat = addressInSidebar ? 80 : 42
-        let headerHeight = base + (spacesEnabled ? 32 : 0)
+        // adds its row height plus the 8pt gap below the nav row only while it
+        // is shown, so the header reclaims the full band when it is hidden.
+        // In top-navigation layouts, 42.5pt leaves the Space strip exactly
+        // 8pt above the next sidebar band once the 5pt header spacer below is
+        // included. The half point follows the legacy header controls' 15.5pt
+        // top alignment.
+        let base: CGFloat = addressInSidebar ? 80 : 42.5
+        let spacesBandHeight = SpacesStripView.sidebarHeight + 8
+        let headerHeight = base + (spacesEnabled ? spacesBandHeight : 0)
         headerHeightConstraint?.update(offset: headerHeight)
     }
 
@@ -424,13 +430,17 @@ class SidebarViewController: NSViewController {
         // are suppressed for incognito).
         if !state.isIncognito {
             setupFavoriteContainer()
+            let initialPinnedHeight = loadCachedFavoriteHeight()
             mainStackView.addArrangedSubview(pinnedTabContainerView)
             pinnedTabContainerView.snp.makeConstraints { make in
                 make.leading.trailing.equalToSuperview()
-                pinnedTabsHeightConstraint = make.height.equalTo(loadCachedFavoriteHeight()).constraint
+                pinnedTabsHeightConstraint = make.height.equalTo(initialPinnedHeight).constraint
             }
 
-            let pinSpacer = createSpacer(height: 3)
+            let pinSpacer = NSView()
+            pinSpacer.snp.makeConstraints { make in
+                pinSpacerHeightConstraint = make.height.equalTo(initialPinnedHeight > 0 ? 3 : 0).constraint
+            }
             mainStackView.addArrangedSubview(pinSpacer)
         }
 
@@ -800,8 +810,9 @@ class SidebarViewController: NSViewController {
         } else {
             clampedHeight = newHeight
         }
-        
+
         pinnedTabsHeightConstraint?.update(offset: clampedHeight)
+        pinSpacerHeightConstraint?.update(offset: clampedHeight > 0 ? 3 : 0)
         view.layoutSubtreeIfNeeded()
         persistFavoriteHeightIfNeeded(clampedHeight, isDragging: isDragging)
     }
@@ -957,34 +968,40 @@ class SidebarViewController: NSViewController {
     private var createSpaceOverlayBackdrop: ColoredVisualEffectView?
 
     func showCreateSpaceOverlay(initialProfileId: String?) {
-        guard createSpaceOverlay == nil else { return }
+        // A successful create retains the source theme until activation
+        // finishes. Do not start another preview session during that handoff.
+        guard createSpaceOverlay == nil,
+              themeBeforeCreateSpacePreview == nil else { return }
         let panel = CreateSpacePanel(
             style: .sidebar,
             manager: .shared,
             profileManager: .shared,
-            initialProfileId: initialProfileId
-        ) { [weak self] in
-            self?.dismissCreateSpaceOverlay()
+            initialProfileId: initialProfileId,
+            initialThemeId: state.themeContext.currentTheme.id
+        ) { [weak self] restorePreviewTheme in
+            self?.dismissCreateSpaceOverlay(
+                restorePreviewTheme: restorePreviewTheme
+            )
         } onThemeSelectionChange: { [weak self] theme in
             self?.previewCreateSpaceOverlayTheme(theme)
+        } onCreatedSpaceActivationFinished: { [weak self] in
+            self?.restoreCreateSpacePreviewTheme()
         }
         // Keep the Spaces icon row visible above the form while creating. Force
-        // it on so it shows even with a single Space (normally hidden — nothing
-        // to switch to) and reserve its header height BEFORE the overlay anchors,
-        // so the strip's frame is settled when the overlay pins beneath it.
+        // it on even with a single Space and reserve its header height before
+        // the overlay anchors so the strip's frame is settled.
         headerView.forcesSpaceSwitchVisible = true
         updateHeaderHeight()
         view.layoutSubtreeIfNeeded()
-        // Pin the overlay's top just under the icon row so the nav row and strip
-        // stay uncovered; the form fills the rest of the sidebar below. Fall back
-        // to the full sidebar if the row is somehow absent (incognito never
-        // mounts it — but incognito has no Spaces to create).
+        // Pin the overlay below the visible strip. Keep a full-sidebar fallback
+        // for hosts that do not participate in Spaces and never mounted it.
         let stripRow = spacesStripRowView
         let anchorsBelowStrip = stripRow?.isHidden == false
 
         // Match the current Space's sidebar background (color + opacity) by
         // reusing the sidebar root's visual-effect recipe; the form hosting
-        // view above is transparent so this shows through.
+        // view above is transparent so this shows through. User theme changes
+        // preview through the same window-scoped context.
         let backdrop = ColoredVisualEffectView()
         backdrop.themedBackgroundColor = .windowOverlayBackground
         backdrop.material = .fullScreenUI
@@ -1022,10 +1039,8 @@ class SidebarViewController: NSViewController {
         createSpaceOverlay = host
         createSpaceOverlayBackdrop = backdrop
         themeBeforeCreateSpacePreview = state.themeContext.currentTheme
-        // Mark the create flow active: the strip stays visible above the form
-        // for reference, so its pip clicks are disabled (a switch would swap the
-        // form's window away) while hover info keeps working — see
-        // `SpacesStripView.spacePip` / `isHoverCardPresented`.
+        // Keep the visible strip read-only while creating so a pip click cannot
+        // switch the form's window away.
         spacesStripSlot.isCreatingSpace = true
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.18
@@ -1035,36 +1050,26 @@ class SidebarViewController: NSViewController {
         }
     }
 
-    /// The window theme in effect when the create-Space form opened, restored
-    /// on dismiss so cancelling drops the preview. Creating restores it too,
-    /// then immediately activates the new Space, which re-applies its real
-    /// theme in the same runloop turn — no visible flash of the old theme.
+    /// The active Space theme inherited when the form opened. Theme selection
+    /// previews are restored on cancel, after the new target fronts, or when
+    /// activation fails.
     private var themeBeforeCreateSpacePreview: Theme?
 
-    /// Previews the theme picked in the create-Space form across the whole
-    /// window — applied to the same window-scoped context a Space switch
-    /// re-themes, so the titlebar, strip, and overlay backdrop all show
-    /// exactly what the new Space will look like.
     private func previewCreateSpaceOverlayTheme(_ theme: Theme) {
         guard createSpaceOverlay != nil else { return }
         state.themeContext.setTheme(theme)
     }
 
-    func dismissCreateSpaceOverlay() {
+    func dismissCreateSpaceOverlay(restorePreviewTheme: Bool = true) {
         guard let host = createSpaceOverlay else { return }
         let backdrop = createSpaceOverlayBackdrop
         createSpaceOverlay = nil
         createSpaceOverlayBackdrop = nil
-        // Drop the theme preview. On create, `CreateSpacePanel.create` activates
-        // the new Space right after this call, re-theming the window to the
-        // Space's real theme within the same runloop turn.
-        if let saved = themeBeforeCreateSpacePreview {
-            themeBeforeCreateSpacePreview = nil
-            state.themeContext.setTheme(saved)
+        if restorePreviewTheme {
+            restoreCreateSpacePreviewTheme()
         }
         spacesStripSlot.isCreatingSpace = false
-        // Release the forced strip visibility. A Space just created leaves the
-        // count > 1, so the row stays; a cancel from a single Space re-hides it.
+        // Release forced visibility. Normal Space-count rules take over again.
         headerView.forcesSpaceSwitchVisible = false
         updateHeaderHeight()
         NSAnimationContext.runAnimationGroup({ context in
@@ -1077,6 +1082,15 @@ class SidebarViewController: NSViewController {
             host.removeFromParent()
             backdrop?.removeFromSuperview()
         }
+    }
+
+    /// Restores the source Space only after it is hidden behind the activated
+    /// target. Activation failures call the same path while the source remains
+    /// visible, so the preview can never become its lasting theme.
+    private func restoreCreateSpacePreviewTheme() {
+        guard let savedTheme = themeBeforeCreateSpacePreview else { return }
+        themeBeforeCreateSpacePreview = nil
+        state.themeContext.setTheme(savedTheme)
     }
 }
 

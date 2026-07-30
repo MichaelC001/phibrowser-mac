@@ -11,8 +11,8 @@ public extension Notification.Name {
     static let themeDidChange = Notification.Name("PhiThemeDidChangeNotification")
     static let appearanceDidChange = Notification.Name("PhiAppearanceDidChangeNotification")
     /// Posted by `SpaceManager` when a Space's pinned theme or custom
-    /// overlay opacity changes (`userInfo["spaceId"]`), so the settings
-    /// panes can resync values edited from another surface.
+    /// overlay color adjustment changes (`userInfo["spaceId"]`), so the
+    /// settings panes can resync values edited from another surface.
     static let spaceThemeDidChange = Notification.Name("PhiSpaceThemeDidChangeNotification")
 }
 
@@ -25,11 +25,11 @@ public enum UserAppearanceChoice: Int, CaseIterable, Codable {
     public var localizedName: String {
         switch self {
         case .system:
-            return NSLocalizedString("System", comment: "Appearance choice: follow system setting")
+            return NSLocalizedString("themes.appearance.systemOption", value: "System", comment: "Appearance choice: follow system setting")
         case .light:
-            return NSLocalizedString("Light", comment: "Appearance choice: always light mode")
+            return NSLocalizedString("themes.appearance.lightOption", value: "Light", comment: "Appearance choice: always light mode")
         case .dark:
-            return NSLocalizedString("Dark", comment: "Appearance choice: always dark mode")
+            return NSLocalizedString("themes.appearance.darkOption", value: "Dark", comment: "Appearance choice: always dark mode")
         }
     }
 }
@@ -40,6 +40,20 @@ public final class ThemeManager: NSObject, ThemeSource {
     // MARK: - Singleton
     @MainActor
     public static let shared = ThemeManager()
+
+    /// Immutable-at-runtime source copies for matching persisted IDs. Every
+    /// restore starts from one of these copies rather than from the mutable
+    /// registry or the public built-in singleton instances.
+    private static let canonicalBuiltInThemesByID: [String: Theme] = Dictionary(
+        uniqueKeysWithValues: Theme.builtInThemes.map {
+            ($0.id, $0.duplicating())
+        }
+    )
+
+    private static func canonicalBuiltInTheme(matching persistedID: String) -> Theme? {
+        let canonicalID = persistedID == "default" ? Theme.default.id : persistedID
+        return canonicalBuiltInThemesByID[canonicalID]?.duplicating()
+    }
     
     // MARK: - Properties
     
@@ -98,6 +112,10 @@ public final class ThemeManager: NSObject, ThemeSource {
 
     /// Theme identifiers that should be archived and restored from local storage.
     private var persistedThemeIDs = Set<String>()
+
+    /// A newer snapshot version makes this store read-only for the current
+    /// build so unknown fields cannot be lost by decoding and re-encoding.
+    private var hasUnsupportedThemeSnapshots = false
     
     /// Observation token for system appearance changes.
     private var appearanceObservation: NSKeyValueObservation?
@@ -116,10 +134,16 @@ public final class ThemeManager: NSObject, ThemeSource {
     // MARK: - Initialization
     
     private override init() {
-        self.currentTheme = Theme.default
+        let builtInThemes = Theme.builtInThemes.compactMap { theme in
+            ThemeManager.canonicalBuiltInTheme(matching: theme.id).map {
+                ThemeColorAdjustment.applyingDefaultColorComponent(to: $0)
+            }
+        }
+        self.currentTheme = builtInThemes.first(where: { $0.id == Theme.default.id })
+            ?? Theme.default.duplicating()
         super.init()
         
-        Theme.builtInThemes.forEach(registerTheme)
+        builtInThemes.forEach(registerTheme)
         restorePersistedThemes()
         
         restoreUserPreferences()
@@ -144,6 +168,8 @@ public final class ThemeManager: NSObject, ThemeSource {
             } else {
                 pendingThemeId = themeId
             }
+        } else if let theme = registeredThemes[currentTheme.id] {
+            currentTheme = theme
         }
     }
 
@@ -157,17 +183,63 @@ public final class ThemeManager: NSObject, ThemeSource {
             return
         }
 
+        var snapshotsToPersist: [ThemeSnapshot] = []
+        var persistedIndexByThemeID: [String: Int] = [:]
+        var needsRewrite = false
+
         for snapshot in snapshots {
-            persistedThemeIDs.insert(snapshot.id)
-            registeredThemes[snapshot.id] = snapshot.makeTheme()
+            let canonicalTheme = Self.canonicalBuiltInTheme(matching: snapshot.id)
+            guard let migratedSnapshot = snapshot.migratedToCurrentVersion(
+                matching: canonicalTheme
+            ) else {
+                hasUnsupportedThemeSnapshots = true
+                snapshotsToPersist.append(snapshot)
+                continue
+            }
+
+            let theme = migratedSnapshot.makeTheme(matching: canonicalTheme)
+            let normalizedSnapshot: ThemeSnapshot
+            if snapshot.version == ThemeSnapshot.currentVersion,
+               snapshot.id == theme.id {
+                normalizedSnapshot = migratedSnapshot
+                if normalizedSnapshot != snapshot {
+                    needsRewrite = true
+                }
+            } else {
+                normalizedSnapshot = theme.makeSnapshot()
+                needsRewrite = true
+            }
+
+            persistedThemeIDs.insert(theme.id)
+            registeredThemes[theme.id] = theme
+
+            if let existingIndex = persistedIndexByThemeID[theme.id] {
+                snapshotsToPersist[existingIndex] = normalizedSnapshot
+                needsRewrite = true
+            } else {
+                persistedIndexByThemeID[theme.id] = snapshotsToPersist.count
+                snapshotsToPersist.append(normalizedSnapshot)
+            }
+        }
+
+        if needsRewrite, !hasUnsupportedThemeSnapshots {
+            writeThemeSnapshots(snapshotsToPersist)
         }
     }
 
     private func persistThemeSnapshots() {
-        let snapshots = persistedThemeIDs
+        guard !hasUnsupportedThemeSnapshots else {
+            AppLogWarn("[ThemeSnapshot] Keeping newer snapshot data unchanged")
+            return
+        }
+        let currentSnapshots = persistedThemeIDs
             .sorted()
             .compactMap { registeredThemes[$0]?.makeSnapshot() }
 
+        writeThemeSnapshots(currentSnapshots)
+    }
+
+    private func writeThemeSnapshots(_ snapshots: [ThemeSnapshot]) {
         let encoder = JSONEncoder()
         guard let data = try? encoder.encode(snapshots) else { return }
         UserDefaults.standard.set(data, forKey: PhiPreferences.ThemeSettings.themeSnapshots.rawValue)
@@ -192,10 +264,11 @@ public final class ThemeManager: NSObject, ThemeSource {
     
     /// Registers a theme.
     public func registerTheme(_ theme: Theme) {
-        registeredThemes[theme.id] = theme
+        let standardizedTheme = ThemeColorAdjustment.applyingStandardAlpha(to: theme)
+        registeredThemes[standardizedTheme.id] = standardizedTheme
         
-        if let pending = pendingThemeId, pending == theme.id {
-            currentTheme = theme
+        if let pending = pendingThemeId, pending == standardizedTheme.id {
+            currentTheme = standardizedTheme
             pendingThemeId = nil
         }
     }
@@ -214,8 +287,15 @@ public final class ThemeManager: NSObject, ThemeSource {
 
     @MainActor
     func applyThemeSnapshot(_ snapshot: ThemeSnapshot) {
-        let theme = snapshot.makeTheme()
-        AppLogDebug("[OverlayOpacity] applyThemeSnapshot id=\(theme.id) lightAlpha=\(theme.windowOverlayOpacity(for: .light)) darkAlpha=\(theme.windowOverlayOpacity(for: .dark))")
+        let canonicalTheme = Self.canonicalBuiltInTheme(matching: snapshot.id)
+        guard let migratedSnapshot = snapshot.migratedToCurrentVersion(
+            matching: canonicalTheme
+        ) else {
+            AppLogWarn("[ThemeSnapshot] Ignoring unsupported version \(snapshot.version) for \(snapshot.id)")
+            return
+        }
+        let theme = migratedSnapshot.makeTheme(matching: canonicalTheme)
+        AppLogDebug("[ThemeAlpha] applyThemeSnapshot id=\(theme.id) lightAlpha=\(theme.windowOverlayOpacity(for: .light)) darkAlpha=\(theme.windowOverlayOpacity(for: .dark))")
         registeredThemes[theme.id] = theme
         persistedThemeIDs.insert(theme.id)
         persistThemeSnapshots()
@@ -223,19 +303,14 @@ public final class ThemeManager: NSObject, ThemeSource {
     }
 
     @MainActor
+    @available(*, deprecated, message: "Theme overlay alpha is fixed at 0.8 in ThemeSnapshot V2.")
     public func updateCurrentThemeOverlayOpacity(_ opacity: CGFloat, for appearance: Appearance? = nil) {
-        let targetAppearance = appearance ?? currentAppearance
-        // Opacity is a single global control: applying it only to the active
-        // theme would leave Spaces pinned to a different theme unchanged
-        // (their `BrowserThemeContext.mirrorsSharedTheme` is false, so they
-        // never see the active theme's snapshot update). Update every
-        // registered theme so every Space picks up the new opacity.
+        // Retain the old entry point for source compatibility, but V2 no longer
+        // accepts user-defined alpha. Normalize every registered theme instead
+        // of applying the requested value or appearance.
         var refreshedCurrent: Theme?
         for (themeId, theme) in registeredThemes {
-            let updatedSnapshot = theme
-                .makeSnapshot()
-                .updatingOverlayOpacity(opacity, for: targetAppearance)
-            let updatedTheme = updatedSnapshot.makeTheme()
+            let updatedTheme = ThemeColorAdjustment.applyingStandardAlpha(to: theme)
             registeredThemes[themeId] = updatedTheme
             persistedThemeIDs.insert(themeId)
             if themeId == currentTheme.id {
@@ -243,11 +318,8 @@ public final class ThemeManager: NSObject, ThemeSource {
             }
         }
         persistThemeSnapshots()
-        AppLogDebug("[OverlayOpacity] updateCurrentThemeOverlayOpacity opacity=\(opacity) target=\(targetAppearance) themes=\(registeredThemes.count)")
+        AppLogDebug("[ThemeAlpha] ignored legacy opacity=\(opacity) appearance=\(String(describing: appearance)) themes=\(registeredThemes.count)")
         if let refreshedCurrent {
-            // Assigning a fresh instance fires the publisher so mirroring
-            // windows refresh; pinned windows re-resolve their own theme id
-            // from the registry inside `BrowserThemeContext.bindSharedTheme`.
             currentTheme = refreshedCurrent
         }
     }

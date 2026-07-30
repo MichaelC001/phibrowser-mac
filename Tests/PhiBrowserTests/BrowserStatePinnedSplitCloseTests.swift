@@ -195,4 +195,82 @@ final class BrowserStatePinnedSplitCloseTests: XCTestCase {
         XCTAssertEqual(fromLinked?.0, "db-unlinked")
         XCTAssertEqual(fromLinked?.1, "db-linked")
     }
+
+    /// During restore, one pinned-split pane can be live and focused before
+    /// Chromium reports the recreated `SplitGroup`. Option-clicking another
+    /// tab in that window must not treat the focused pane as a plain tab and
+    /// dismantle its persisted pinned pair.
+    func testOptionSplitRejectsFocusedPaneFromPersistedPinnedSplitDuringRestore() throws {
+        let state = try makeState()
+        let leftPinned = Tab(guid: 400, url: "https://left.example",
+                             isActive: true, index: 0, customGuid: "db-left")
+        let rightPinned = Tab(guid: 401, url: "https://right.example",
+                              isActive: false, index: 1, customGuid: "db-right")
+        leftPinned.splitPartnerGuid = "db-right"
+        rightPinned.splitPartnerGuid = "db-left"
+        state.pinnedTabs = [leftPinned, rightPinned]
+
+        let focusedLive = Tab(guid: 400, url: "https://left.example",
+                              isActive: true, index: 0, customGuid: "db-left")
+        let selectedTab = Tab(guid: 402, url: "https://selected.example",
+                              isActive: false, index: 1)
+        state.tabs = [focusedLive, selectedTab]
+        state.splits = []
+        state.updateNormalTabs()
+        state.focusingTab = focusedLive
+
+        XCTAssertFalse(selectedTab.performSplitAction(in: state))
+        XCTAssertEqual(leftPinned.splitPartnerGuid, "db-right")
+        XCTAssertEqual(rightPinned.splitPartnerGuid, "db-left")
+        XCTAssertEqual(state.pinnedSplitDBPair(forPinnedTab: leftPinned)?.0, "db-left")
+        XCTAssertEqual(state.pinnedSplitDBPair(forPinnedTab: leftPinned)?.1, "db-right")
+        XCTAssertEqual(focusedLive.guidInLocalDB, "db-left")
+    }
+
+    /// Keep the direct live-group guard as well: while Chromium is reporting
+    /// a split, its partner can be absent from `tabs` briefly, which prevents
+    /// `splitMembership` from constructing a complete pane pair.
+    func testOptionSplitRejectsFocusedIncompleteLiveGroup() throws {
+        let state = try makeState()
+        let focusedTab = Tab(guid: 500, url: "https://focused.example",
+                             isActive: true, index: 0)
+        let selectedTab = Tab(guid: 502, url: "https://selected.example",
+                              isActive: false, index: 1, customGuid: "bookmark-selected")
+        state.tabs = [focusedTab, selectedTab]
+        state.splits = [
+            SplitGroup(id: "split-500-501",
+                       primaryTabId: 500,
+                       secondaryTabId: 501,
+                       layout: .vertical,
+                       ratio: 0.5)
+        ]
+        state.updateNormalTabs()
+        state.focusingTab = focusedTab
+
+        XCTAssertFalse(selectedTab.performSplitAction(in: state))
+        XCTAssertEqual(selectedTab.guidInLocalDB, "bookmark-selected")
+    }
+
+    /// The clicked tab needs the same fail-closed behavior when its live
+    /// group's partner has not reached `tabs` yet.
+    func testOptionSplitRejectsSelectedIncompleteLiveGroup() throws {
+        let state = try makeState()
+        let selectedTab = Tab(guid: 600, url: "https://selected.example",
+                              isActive: false, index: 0, customGuid: "bookmark-selected")
+        let focusedTab = Tab(guid: 602, url: "https://focused.example",
+                             isActive: true, index: 1)
+        state.tabs = [selectedTab, focusedTab]
+        state.splits = [
+            SplitGroup(id: "split-600-601",
+                       primaryTabId: 600,
+                       secondaryTabId: 601,
+                       layout: .vertical,
+                       ratio: 0.5)
+        ]
+        state.updateNormalTabs()
+        state.focusingTab = focusedTab
+
+        XCTAssertFalse(selectedTab.performSplitAction(in: state))
+        XCTAssertEqual(selectedTab.guidInLocalDB, "bookmark-selected")
+    }
 }

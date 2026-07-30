@@ -15,9 +15,9 @@ enum NewTabBehaviour: String, CaseIterable, Identifiable {
     var displayName: String {
         switch self {
         case .newTabPage:
-            return NSLocalizedString("New Tab Page", comment: "General settings - Option to open New Tab Page when pressing ⌘+T")
+            return NSLocalizedString("settings.general.newTabShortcut.newTabPageOption", value: "New Tab Page", comment: "General settings - Option to open New Tab Page when pressing ⌘+T")
         case .omnibox:
-            return NSLocalizedString("Omnibox", comment: "General settings - Option to open Omnibox search when pressing ⌘+T")
+            return NSLocalizedString("settings.general.newTabShortcut.addressBarOption", value: "Omnibox", comment: "General settings - Option to open Omnibox search when pressing ⌘+T")
         }
     }
 }
@@ -33,6 +33,8 @@ struct GeneralSettingView: View {
                 }
                 AppearanceSectionView()
                 BrowsingSectionView()
+                ProfileSectionView()
+                DeveloperModeSectionView()
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, 36)
@@ -47,9 +49,22 @@ private struct ThemeSectionView: View {
     @ObservedObject private var spaceManager = SpaceManager.shared
 
     @State private var selectedThemeId: String = ThemeManager.shared.currentTheme.id
-    @State private var sliderValue: Double = OverlayOpacityScale.sliderValue(
-        forOpacityPercent: ThemeManager.shared.currentTheme.windowOverlayOpacity(for: ThemeManager.shared.currentAppearance) * 100
-    )
+    @State private var sliderValue: Double = {
+        let manager = ThemeManager.shared
+        let overlayColor = manager.currentTheme.color(
+            for: .windowOverlayBackground,
+            appearance: manager.currentAppearance
+        )
+        if manager.currentTheme.id == Theme.pure.id {
+            return PureThemeBrightnessScale.sliderValue(
+                forBrightness: Double(overlayColor.hsbBrightnessComponent),
+                appearance: manager.currentAppearance
+            )
+        }
+        return OverlaySaturationScale.sliderValue(
+            forSaturation: Double(overlayColor.hsbSaturationComponent)
+        )
+    }()
 
     @AppStorage(PhiPreferences.ThemeSettings.selectionTintEnabled.rawValue)
     private var selectionTintEnabled: Bool = true
@@ -72,20 +87,28 @@ private struct ThemeSectionView: View {
         ThemedColor.border.resolve(theme: selectedTheme, appearance: appearance)
     }
 
+    private var usesBrightnessControl: Bool {
+        selectedThemeId == Theme.pure.id
+    }
+
+    private var sliderTrackStyle: ThemeSliderTrackStyle {
+        usesBrightnessControl ? .pureBrightness(appearance) : .saturation
+    }
+
     /// These controls edit the DEFAULT Space. With a single Space that is
     /// the whole browser; once more Spaces exist, each one carries its own
-    /// color and opacity, so the rows lock and defer to the Spaces pane.
+    /// color adjustment, so the rows lock and defer to the Spaces pane.
     private var themeEditingLocked: Bool {
         spaceManager.userSpaces.count > 1
     }
 
     var body: some View {
-        GeneralSectionView(title: NSLocalizedString("Theme", comment: "General settings - Theme section title")) {
+        GeneralSectionView(title: NSLocalizedString("settings.general.theme.sectionTitle", value: "Theme", comment: "General settings - Theme section title")) {
             GeneralContainerView {
                 VStack(spacing: 0) {
                     Group {
                         HStack(alignment: .top, spacing: 12) {
-                            Text(NSLocalizedString("Color", comment: "General settings - Theme color row title"))
+                            Text(NSLocalizedString("settings.general.theme.colorTitle", value: "Color", comment: "General settings - Theme color row title"))
                                 .font(.system(size: 13))
                                 .themedForeground(.textPrimary)
 
@@ -105,8 +128,8 @@ private struct ThemeSectionView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
 
                         Divider()
-
-                        GeneralRowView(title: NSLocalizedString("Opacity", comment: "General settings - Theme opacity row title for adjusting the selected theme overlay transparency")) {
+                        
+                        GeneralRowView(title: NSLocalizedString("settings.general.theme.opacityTitle", value: "Saturation", comment: "General settings - Theme saturation row title for adjusting the selected theme overlay color")) {
                             ThemeOpacitySliderView(
                                 value: Binding(
                                     get: { sliderValue },
@@ -116,7 +139,8 @@ private struct ThemeSectionView: View {
                                     }
                                 ),
                                 trackColor: sliderTrackColor,
-                                borderColor: sliderBorderColor
+                                borderColor: sliderBorderColor,
+                                trackStyle: sliderTrackStyle
                             )
                             .frame(width: 324, height: 20)
                         }
@@ -131,7 +155,7 @@ private struct ThemeSectionView: View {
 
                     Divider()
 
-                    GeneralRowView(title: NSLocalizedString("Apply theme to text selection on web pages", comment: "General settings - Toggle title for tinting ::selection on third-party pages with the window theme accent")) {
+                    GeneralRowView(title: NSLocalizedString("settings.general.theme.webSelectionTintToggle", value: "Apply theme to text selection on web pages", comment: "General settings - Toggle title for tinting ::selection on third-party pages with the window theme accent")) {
                         Toggle("", isOn: $selectionTintEnabled)
                             .labelsHidden()
                             .toggleStyle(.switch)
@@ -155,11 +179,11 @@ private struct ThemeSectionView: View {
         }
     }
 
-    /// Shown while the color/opacity rows are locked: says why and jumps
+    /// Shown while the theme rows are locked: says why and jumps
     /// to the pane where per-Space themes are edited.
     private var editInSpacesHintRow: some View {
         HStack(alignment: .center, spacing: 12) {
-            Text(NSLocalizedString("You have more than one Space, so each Space sets its own color and opacity.", comment: "General settings - Hint shown when the theme color/opacity rows are locked because multiple Spaces exist"))
+            Text(NSLocalizedString("settings.general.theme.perSpaceCustomizationHint", value: "You have more than one Space, so each Space sets its own color and opacity.", comment: "General settings - Hint shown when the theme color/opacity rows are locked because multiple Spaces exist"))
                 .font(.system(size: 11))
                 .themedForeground(.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -167,7 +191,7 @@ private struct ThemeSectionView: View {
             Button {
                 AppController.shared?.showSettings(pane: .spaces)
             } label: {
-                Text(NSLocalizedString("Edit in Spaces settings\u{2026}", comment: "General settings - Link that jumps to the Spaces settings pane"))
+                Text(NSLocalizedString("settings.general.pinnedTabScope.openSpacesSettingsLink", value: "Edit in Spaces settings\u{2026}", comment: "General settings - Link that jumps to the Spaces settings pane"))
                     .font(.system(size: 12))
                     .foregroundStyle(Color.accentColor)
                     .contentShape(Rectangle())
@@ -190,25 +214,23 @@ private struct ThemeSectionView: View {
     }
 
     private func handleSliderValueChanged(_ newSliderValue: Double) {
-        // Always resolve the appearance through the manager. The Binding stored in
-        // ThemeOpacitySliderView.Coordinator is created once and captures a stale
-        // `self`, so reading the View's @Environment here would target the wrong
-        // appearance after a light/dark switch.
-        let opacityPercent = OverlayOpacityScale.opacityPercent(forSlider: newSliderValue)
-        let alpha = CGFloat(opacityPercent / 100)
-        AppLogDebug("[OverlayOpacity] slider→opacity slider=\(newSliderValue) percent=\(opacityPercent) alpha=\(alpha) appearance=\(ThemeManager.shared.currentAppearance) theme=\(ThemeManager.shared.currentTheme.id)")
-        // Persist on the default Space first so its window's resolver reads
-        // the new value when the registry rewrite below publishes.
-        SpaceManager.shared.setOverlayOpacity(
-            alpha,
-            forSpaceId: LocalStore.defaultSpaceId,
-            appearance: ThemeManager.shared.currentAppearance
-        )
-        // Keep the registry rewrite: it is what future Spaces (and the
-        // create panel's previews) inherit as their default alpha. Only
-        // reachable with a single user Space, so it can't bleed across
-        // other Spaces' custom opacities.
-        ThemeManager.shared.updateCurrentThemeOverlayOpacity(alpha)
+        let appearance = ThemeManager.shared.currentAppearance
+        let themeId = SpaceManager.shared.resolvedThemeId(forSpaceId: LocalStore.defaultSpaceId)
+        if themeId == Theme.pure.id {
+            SpaceManager.shared.setPureThemeSliderValue(
+                newSliderValue,
+                forSpaceId: LocalStore.defaultSpaceId
+            )
+        } else {
+            let saturation = CGFloat(
+                OverlaySaturationScale.saturation(forSlider: newSliderValue)
+            )
+            SpaceManager.shared.setOverlaySaturation(
+                saturation,
+                forSpaceId: LocalStore.defaultSpaceId,
+                appearance: appearance
+            )
+        }
     }
 
     private func syncThemeControls() {
@@ -218,10 +240,22 @@ private struct ThemeSectionView: View {
 
     private func syncSliderValue() {
         let appearance = ThemeManager.shared.currentAppearance
-        let alpha = SpaceManager.shared.effectiveOverlayOpacity(forSpaceId: LocalStore.defaultSpaceId, appearance: appearance)
-        let opacityPercent = alpha * 100
-        let newSliderValue = OverlayOpacityScale.sliderValue(forOpacityPercent: opacityPercent)
-        AppLogDebug("[OverlayOpacity] sync appearance=\(appearance) theme=\(ThemeManager.shared.currentTheme.id) alpha=\(alpha) percent=\(opacityPercent) slider=\(newSliderValue) (was=\(sliderValue))")
+        let themeId = SpaceManager.shared.resolvedThemeId(forSpaceId: LocalStore.defaultSpaceId)
+        let newSliderValue: Double
+        if themeId == Theme.pure.id {
+            newSliderValue = SpaceManager.shared.effectivePureThemeSliderValue(
+                forSpaceId: LocalStore.defaultSpaceId,
+                appearance: appearance
+            )
+        } else {
+            let saturation = SpaceManager.shared.effectiveOverlaySaturation(
+                forSpaceId: LocalStore.defaultSpaceId,
+                appearance: appearance
+            )
+            newSliderValue = OverlaySaturationScale.sliderValue(
+                forSaturation: Double(saturation)
+            )
+        }
         sliderValue = newSliderValue
     }
 }
@@ -243,9 +277,9 @@ private struct AppearanceSectionView: View {
     }
 
     var body: some View {
-        GeneralSectionView(title: NSLocalizedString("Appearance", comment: "General settings - Appearance section title")) {
+        GeneralSectionView(title: NSLocalizedString("settings.general.appearance.sectionTitle", value: "Appearance", comment: "General settings - Appearance section title")) {
             GeneralContainerView {
-                GeneralRowView(title: NSLocalizedString("Layout mode", comment: "General settings - Layout mode row title"), alignment: .top) {
+                GeneralRowView(title: NSLocalizedString("settings.general.layoutMode.title", value: "Layout mode", comment: "General settings - Layout mode row title"), alignment: .top) {
                     HStack(spacing: 16) {
                         ForEach(LayoutMode.allCases) { mode in
                             GeneralSttingCardView(
@@ -260,7 +294,7 @@ private struct AppearanceSectionView: View {
 
                 Divider()
 
-                GeneralRowView(title: NSLocalizedString("Color appearance", comment: "General settings - Color appearance row title"), alignment: .top) {
+                GeneralRowView(title: NSLocalizedString("settings.general.appearance.title", value: "Color appearance", comment: "General settings - Color appearance row title"), alignment: .top) {
                     HStack(spacing: 16) {
                         ForEach(UserAppearanceChoice.allCases, id: \.self) { choice in
                             GeneralSttingCardView(
@@ -336,16 +370,16 @@ private struct BrowsingSectionView: View {
     }
 
     var body: some View {
-        GeneralSectionView(title: NSLocalizedString("Browsing", comment: "General settings - Browsing section title")) {
+        GeneralSectionView(title: NSLocalizedString("settings.general.browsing.sectionTitle", value: "Browsing", comment: "General settings - Browsing section title")) {
             VStack(alignment: .leading, spacing: 8) {
                 GeneralContainerView {
                     HStack(alignment: .top, spacing: 12) {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text(NSLocalizedString("New tab behavior", comment: "General settings - Row title for configuring new tab behavior"))
+                            Text(NSLocalizedString("settings.general.newTabShortcut.title", value: "New tab behavior", comment: "General settings - Row title for configuring new tab behavior"))
                                 .font(.system(size: 13))
                                 .themedForeground(.textPrimary)
                             if !phiAIEnabled {
-                                Text(NSLocalizedString("New Tab Page requires Phi AI to be enabled", comment: "General settings - Hint shown when Phi AI is disabled explaining New Tab Page requires it"))
+                                Text(NSLocalizedString("settings.general.newTabPage.aiRequiredHint", value: "New Tab Page requires Phi AI to be enabled", comment: "General settings - Hint shown when Phi AI is disabled explaining New Tab Page requires it"))
                                     .font(.system(size: 11))
                                     .themedForeground(.textTertiary)
                             }
@@ -371,7 +405,7 @@ private struct BrowsingSectionView: View {
 
                     Divider()
 
-                    GeneralRowView(title: NSLocalizedString("Always show full URL", comment: "General settings - Toggle title for always showing full URL in address bar")) {
+                    GeneralRowView(title: NSLocalizedString("settings.general.addressBar.showFullURLToggle", value: "Always show full URL", comment: "General settings - Toggle title for always showing full URL in address bar")) {
                         Toggle("", isOn: $alwaysShowURLPath)
                             .labelsHidden()
                             .toggleStyle(.switch)
@@ -383,7 +417,7 @@ private struct BrowsingSectionView: View {
 
                     HStack(alignment: .center, spacing: 12) {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text(NSLocalizedString("Auto picture-in-picture", comment: "General settings - Row title for the three-state auto picture-in-picture mode"))
+                            Text(NSLocalizedString("settings.general.pictureInPicture.title", value: "Auto picture-in-picture", comment: "General settings - Row title for the three-state auto picture-in-picture mode"))
                                 .font(.system(size: 13))
                                 .themedForeground(.textPrimary)
                             Text(autoPipModeHint(for: selectedAutoPipMode.wrappedValue))
@@ -406,7 +440,7 @@ private struct BrowsingSectionView: View {
                     Divider()
                     
                     Button(action: handleAdditionalBrowserSettingsTap) {
-                        GeneralRowView(title: NSLocalizedString("Additional browser settings", comment: "General settings - Title for always more settings")) {
+                        GeneralRowView(title: NSLocalizedString("settings.general.additionalBrowserSettings.title", value: "Additional browser settings", comment: "General settings - Title for always more settings")) {
                             Image(systemName: "chevron.right")
                                 .font(.system(size: 12, weight: .semibold))
                                 .themedForeground(.textSecondary)
@@ -432,11 +466,11 @@ private struct BrowsingSectionView: View {
     private func autoPipModeHint(for mode: AutoPictureInPictureMode) -> String {
         switch mode {
         case .off:
-            return NSLocalizedString("Never pop out automatically; manual picture-in-picture still works", comment: "General settings - Hint for the Off auto picture-in-picture mode")
+            return NSLocalizedString("settings.general.pictureInPicture.offDescription", value: "Never pop out automatically; manual picture-in-picture still works", comment: "General settings - Hint for the Off auto picture-in-picture mode")
         case .normal:
-            return NSLocalizedString("Pop out playing video when you switch tabs or apps", comment: "General settings - Hint for the Normal auto picture-in-picture mode")
+            return NSLocalizedString("settings.general.pictureInPicture.normalDescription", value: "Pop out playing video when you switch tabs or apps", comment: "General settings - Hint for the Normal auto picture-in-picture mode")
         case .parked:
-            return NSLocalizedString("Pop out playing video, parked at the screen edge until you click it", comment: "General settings - Hint for the Park at edge auto picture-in-picture mode")
+            return NSLocalizedString("settings.general.pictureInPicture.parkAtEdgeDescription", value: "Pop out playing video, parked at the screen edge until you click it", comment: "General settings - Hint for the Park at edge auto picture-in-picture mode")
         }
     }
 
@@ -446,6 +480,108 @@ private struct BrowsingSectionView: View {
             .activeWindowController?
             .browserState
             .createTab("chrome://settings")
+    }
+}
+
+/// The sole profile's browser settings, inlined so a single-profile user never
+/// needs the Profiles pane. Mirrors the Theme section's per-Space behavior:
+/// once more profiles exist each one carries its own settings, so the section
+/// collapses to a hint that jumps to the Profiles pane.
+private struct ProfileSectionView: View {
+    @ObservedObject private var profileManager = ProfileManager.shared
+
+    /// Counts only user-assignable profiles: the agent's auto-created fallback
+    /// profile belongs to the agent and must not push a single-profile user
+    /// into the "more than one profile" hint.
+    private var hasMultipleProfiles: Bool {
+        profileManager.userAssignableProfiles.count > 1
+    }
+
+    private var soleProfileId: String {
+        profileManager.userAssignableProfiles.first?.profileId ?? LocalStore.defaultProfileId
+    }
+
+    var body: some View {
+        GeneralSectionView(title: NSLocalizedString("settings.general.profile.sectionTitle", value: "Profile", comment: "General settings - Profile section title")) {
+            if hasMultipleProfiles {
+                GeneralContainerView {
+                    editInProfilesHintRow
+                }
+            } else {
+                ProfileDetailSettingsView(profileId: soleProfileId)
+            }
+        }
+        .onAppear {
+            profileManager.refresh()
+        }
+    }
+
+    /// Shown instead of the inline settings once several profiles exist: says
+    /// why and jumps to the pane where each profile is edited on its own.
+    private var editInProfilesHintRow: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Text(NSLocalizedString("settings.general.profile.multipleProfilesHint", value: "You have more than one profile, so each profile manages its own settings.", comment: "General settings - Hint shown in place of the inline profile settings because multiple profiles exist"))
+                .font(.system(size: 11))
+                .themedForeground(.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 12)
+            Button {
+                AppController.shared?.showSettings(pane: .profiles)
+            } label: {
+                Text(NSLocalizedString("settings.general.profile.openProfilesSettingsLink", value: "Edit in Profiles settings\u{2026}", comment: "General settings - Link that jumps to the Profiles settings pane"))
+                    .font(.system(size: 12))
+                    .foregroundStyle(Color.accentColor)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// The "Developer mode" master toggle. Turning it OFF is a kill-switch, not
+/// just UI hiding: the Developer settings tab disappears and the features it
+/// governs shut off with it — agent CDP access and the agent password manager
+/// (see `AppController.setDeveloperModeEnabled`). Turning it back on reveals
+/// the tab again but re-enables nothing automatically.
+private struct DeveloperModeSectionView: View {
+    @State private var developerModeEnabled = PhiPreferences.AgentSpaces.developerModeEnabled
+
+    var body: some View {
+        GeneralSectionView(title: NSLocalizedString("settings.general.developerMode.sectionTitle", value: "Developer", comment: "General settings - Developer section title")) {
+            GeneralContainerView {
+                GeneralRowView(title: NSLocalizedString("settings.general.developerMode.enableToggle", value: "Developer mode", comment: "General settings - Toggle title for developer mode; turning it off also disables agent access and the agent password manager")) {
+                    Toggle("", isOn: $developerModeEnabled)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .controlSize(.mini)
+                        .themedTint(.themeColor)
+                }
+
+                Divider()
+                hintRow
+            }
+        }
+        .onChange(of: developerModeEnabled) { _, newValue in
+            // Deferred: applying the change rebuilds the settings window,
+            // which closes the window hosting this very view — that must not
+            // happen mid view-update.
+            DispatchQueue.main.async {
+                AppController.shared?.setDeveloperModeEnabled(newValue)
+            }
+        }
+    }
+
+    private var hintRow: some View {
+        Text(developerModeEnabled
+            ? NSLocalizedString("settings.general.developerMode.enabledHint", value: "Agent access, permissions, and the password manager live in the Developer tab.", comment: "General settings - Hint under the developer mode toggle pointing at the Developer settings pane")
+            : NSLocalizedString("settings.general.developerMode.disabledHint", value: "Turning developer mode off also turns off agent access and the agent password manager.", comment: "General settings - Hint under the developer mode toggle explaining the kill-switch behavior"))
+            .font(.system(size: 11))
+            .themedForeground(.textTertiary)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.vertical, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

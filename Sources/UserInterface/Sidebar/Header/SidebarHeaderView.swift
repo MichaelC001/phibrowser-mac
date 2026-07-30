@@ -68,7 +68,7 @@ class SidebarHeaderView: NSView, TitlebarAwareHitTestable {
     }()
 
     private lazy var searchTabsButton: HoverableButtonNSView = {
-        let label = NSLocalizedString("Search Tabs", comment: "Search Tabs - Button tooltip and accessibility label")
+        let label = NSLocalizedString("sidebar.searchTabsButton.accessibilityLabel", value: "Search Tabs", comment: "Search Tabs - Button tooltip and accessibility label")
         let config = HoverableButtonConfig(image: .leftSidebarSearchTab,
                                            imageSize: .init(width: 16, height: 16),
                                            displayMode: .imageOnly,
@@ -84,7 +84,7 @@ class SidebarHeaderView: NSView, TitlebarAwareHitTestable {
 
     private lazy var upgradeButton: HoverableButtonNSView = {
         let config = HoverableButtonConfig(
-            title: NSLocalizedString("Update", comment: "Sidebar header upgrade button title"),
+            title: NSLocalizedString("sidebar.updateReminder.updateButton", value: "Update", comment: "Sidebar header upgrade button title"),
             displayMode: .titleOnly,
             backgroundColor: .themeColor,
             hoverBackgroundColor: .themeColorOnHover,

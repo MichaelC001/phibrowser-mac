@@ -8,7 +8,7 @@ import Settings
 import SnapKit
 class ShortcutsSettingViewController: NSViewController, SettingsPane{
     var paneIdentifier: Settings.PaneIdentifier = .shortcuts
-    var paneTitle: String = NSLocalizedString("Shortcuts", comment: "Settings - Tab title for keyboard shortcuts settings")
+    var paneTitle: String = NSLocalizedString("settings.navigation.shortcutsTitle", value: "Shortcuts", comment: "Settings - Tab title for keyboard shortcuts settings")
     var toolbarItemIcon: NSImage = NSImage(resource: .settingShortcutsIcon)
     let hostingController = ShortcutsSettingHostingViewController()
     

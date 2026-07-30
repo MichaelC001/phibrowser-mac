@@ -20,6 +20,8 @@ extension AppController {
                 showSettings(pane: .imchannels)
             case .shortcus:
                 showSettings(pane: .shortcuts)
+            case .profiles:
+                showSettings(pane: .profiles)
             }
         }
     }

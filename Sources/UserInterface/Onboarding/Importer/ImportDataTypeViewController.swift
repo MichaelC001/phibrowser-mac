@@ -18,13 +18,13 @@ enum ImportDataType: String, CaseIterable {
     var displayName: String {
         switch self {
         case .bookmarks:
-            return NSLocalizedString("Bookmarks", comment: "Import data type - Bookmarks toggle label")
+            return NSLocalizedString("oobe.importDataType.bookmarksToggle", value: "Bookmarks", comment: "Import data type - Bookmarks toggle label")
         case .history:
-            return NSLocalizedString("Browsing history", comment: "Import data type - Browsing history toggle label")
+            return NSLocalizedString("oobe.importDataType.browsingHistoryToggle", value: "Browsing history", comment: "Import data type - Browsing history toggle label")
         case .cookies:
-            return NSLocalizedString("Cookies", comment: "Import data type - Cookies toggle label")
+            return NSLocalizedString("oobe.importDataType.cookiesToggle", value: "Cookies", comment: "Import data type - Cookies toggle label")
         case .extensions:
-            return NSLocalizedString("Extensions", comment: "Import data type - Extensions toggle label")
+            return NSLocalizedString("oobe.importDataType.extensionsToggle", value: "Extensions", comment: "Import data type - Extensions toggle label")
         }
     }
 

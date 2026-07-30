@@ -70,9 +70,9 @@ class PinnedTabViewController: NSViewController {
                     with: tab,
                     themeProvider: browserState?.themeContext ?? ThemeManager.shared
                 )
-                tabItem.itemClicked = { [weak self] tab in
+                tabItem.itemClicked = { [weak self] tab, modifierFlags in
                     guard let tab else { return }
-                    self?.handleTabClicked(tab)
+                    self?.handleTabClicked(tab, modifierFlags: modifierFlags)
                 }
                 tabItem.itemDoubleClicked = { [weak self] tab, modifierFlags in
                     guard let tab else { return }
@@ -228,7 +228,7 @@ class PinnedTabViewController: NSViewController {
         iconImageView.contentTintColor = .tertiaryLabelColor
 
         let sublabel = NSTextField()
-        sublabel.stringValue = NSLocalizedString("Drag tabs here or pin them from the tab list", comment: "Drag tabs here or pin them from the tab list")
+        sublabel.stringValue = NSLocalizedString("sidebar.pinnedTabs.emptyHint", value: "Drag tabs here or pin them from the tab list", comment: "Drag tabs here or pin them from the tab list")
         sublabel.font = NSFont.systemFont(ofSize: 11)
         sublabel.textColor = .secondaryLabelColor
         sublabel.alignment = .center
@@ -905,9 +905,22 @@ class PinnedTabViewController: NSViewController {
         updateLayout()
     }
 
-    private func handleTabClicked(_ tab: Tab) {
-        browserState?.clearGroupOverview()
-        browserState?.openOrFocusPinnedTab(tab)
+    private func handleTabClicked(
+        _ tab: Tab,
+        modifierFlags: NSEvent.ModifierFlags
+    ) {
+        guard let browserState else { return }
+        browserState.clearGroupOverview()
+        if modifierFlags.isPureOptionClick,
+           MainActor.assumeIsolated({
+               tab.performSplitAction(in: browserState)
+           }) {
+            if browserState.multiSelection.isActive {
+                browserState.clearMultiSelection()
+            }
+            return
+        }
+        browserState.openOrFocusPinnedTab(tab)
     }
 
     /// Click handler for a merged pinned-split cell. Opens whichever pane is

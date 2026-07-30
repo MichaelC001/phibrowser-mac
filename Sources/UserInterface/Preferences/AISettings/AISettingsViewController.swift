@@ -9,7 +9,7 @@ import Settings
 
 class AISettingsViewController: NSViewController, SettingsPane {
     var paneIdentifier = Settings.PaneIdentifier.aisettings
-    var paneTitle: String = NSLocalizedString("Phi & AI", comment: "Settings - Tab title for AI and Phi assistant settings")
+    var paneTitle: String = NSLocalizedString("settings.navigation.aiTitle", value: "Phi & AI", comment: "Settings - Tab title for AI and Phi assistant settings")
     var toolbarItemIcon: NSImage = NSImage(resource: .settingPhiIcon)
 
     let hostingController = AISettingHostingViewController()

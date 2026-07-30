@@ -14,7 +14,7 @@ import SnapKit
 /// `DeveloperSettingHostingViewController`.
 class DeveloperSettingViewController: NSViewController, SettingsPane {
     var paneIdentifier: Settings.PaneIdentifier = .developer
-    var paneTitle: String = NSLocalizedString("Developer", comment: "Settings - Tab title for developer tooling")
+    var paneTitle: String = NSLocalizedString("settings.navigation.developerTitle", value: "Developer", comment: "Settings - Tab title for developer tooling")
     // The sibling tabs use 32×32 template PDF assets whose drawn glyphs
     // occupy only 14–18pt of that canvas. A symbol's pointSize is a FONT
     // size, not a glyph size — the hammer's ink comes out ~25% larger than

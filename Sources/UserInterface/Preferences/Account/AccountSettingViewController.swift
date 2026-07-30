@@ -23,7 +23,7 @@ class AccountSettingViewController: NSViewController, SettingsPane {
                   cachedUserName.isEmpty == false {
             fullName = cachedUserName
         } else {
-            return NSLocalizedString("You", comment: "Account settings - Default display name when user name is not available")
+            return NSLocalizedString("settings.account.displayName.fallback", value: "You", comment: "Account settings - Default display name when user name is not available")
         }
 
         // Truncate if exceeds max length
@@ -296,7 +296,7 @@ class AccountSettingViewController: NSViewController, SettingsPane {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor [weak self] in
-                self?.accountViewModel.cancelOngoingLogoutSession(reason: "settings_window_closed")
+                self?.accountViewModel.cancelOngoingLogoutSession(reason: .settingsWindowClosed)
             }
         }
     }
@@ -307,7 +307,7 @@ class AccountSettingViewController: NSViewController, SettingsPane {
 
 class DefaultBrowserViewModel: ObservableObject {
     @Published var isDefaultBrowser: Bool = false
-    @Published var statusText: String = NSLocalizedString("Phi is not your default browser", comment: "Account settings - Status text when Phi is not the default browser")
+    @Published var statusText: String = NSLocalizedString("settings.account.defaultBrowser.initialNotDefaultStatus", value: "Phi is not your default browser", comment: "Account settings - Initial status text before the current default-browser state is refreshed")
     @Published var isLoading: Bool = true
 
     init() {
@@ -362,12 +362,22 @@ class DefaultBrowserViewModel: ObservableObject {
     }
 
     private func updateStatusText() {
-        statusText = isDefaultBrowser ? NSLocalizedString("Phi is your default browser", comment: "Account settings - Status text when Phi is the default browser") : NSLocalizedString("Phi is not your default browser", comment: "Account settings - Status text when Phi is not the default browser")
+        statusText = isDefaultBrowser ? NSLocalizedString("settings.account.defaultBrowser.defaultStatus", value: "Phi is your default browser", comment: "Account settings - Status text when Phi is the default browser") : NSLocalizedString("settings.account.defaultBrowser.notDefaultStatus", value: "Phi is not your default browser", comment: "Account settings - Status text when Phi is not the default browser")
     }
 }
 
 class AccountViewModel: ObservableObject {
     private static let logoutTimeoutSeconds = 90
+
+    /// Why an in-flight logout attempt was cancelled. The two carry opposite
+    /// intents: a closed settings window abandons the logout, while the
+    /// timeout only gives up on the remote callback — the logout itself must
+    /// still complete locally, because with the external-browser flow an
+    /// unreachable Auth0 never errors out, it simply never calls back.
+    enum LogoutCancelReason: String {
+        case timeout
+        case settingsWindowClosed = "settings_window_closed"
+    }
 
     @Published var userName: String = ""
     @Published var userEmail: String = ""
@@ -379,7 +389,7 @@ class AccountViewModel: ObservableObject {
     var cancellables = Set<AnyCancellable>()
     private var activeLogoutAttemptID: UUID?
     private var logoutTimeoutWorkItem: DispatchWorkItem?
-    private var cancelledLogoutAttemptIDs = Set<UUID>()
+    private var cancelledLogoutAttempts: [UUID: LogoutCancelReason] = [:]
     
     /// Loads the cached profile from user defaults.
     private func loadCachedProfile() -> Profile? {
@@ -458,10 +468,10 @@ class AccountViewModel: ObservableObject {
     @MainActor
     private func showLogoutConfirmation() -> Bool {
         let alert = NSAlert()
-        alert.messageText = NSLocalizedString("Confirm Logout", comment: "Account settings - Logout confirmation dialog title")
-        alert.informativeText = NSLocalizedString("You will be logged out and returned to the login screen. Are you sure?", comment: "Account settings - Logout confirmation dialog message")
-        alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Account settings - Cancel button in logout confirmation dialog"))
-        alert.addButton(withTitle: NSLocalizedString("Logout", comment: "Account settings - Logout button in logout confirmation dialog"))
+        alert.messageText = NSLocalizedString("settings.account.logoutConfirmation.title", value: "Confirm Logout", comment: "Account settings - Logout confirmation dialog title")
+        alert.informativeText = NSLocalizedString("settings.account.logoutConfirmation.message", value: "You will be logged out and returned to the login screen. Are you sure?", comment: "Account settings - Logout confirmation dialog message")
+        alert.addButton(withTitle: NSLocalizedString("settings.account.logoutConfirmation.cancelButton", value: "Cancel", comment: "Account settings - Cancel button in logout confirmation dialog"))
+        alert.addButton(withTitle: NSLocalizedString("settings.account.logoutConfirmation.logoutButton", value: "Logout", comment: "Account settings - Logout button in logout confirmation dialog"))
         alert.alertStyle = .warning
         return alert.runModal() == .alertSecondButtonReturn
     }
@@ -469,10 +479,10 @@ class AccountViewModel: ObservableObject {
     @MainActor
     private func showLogoutFailedAlert() {
         let alert = NSAlert()
-        alert.messageText = NSLocalizedString("Logout Failed", comment: "Account settings - Alert title when logout fails")
-        alert.informativeText = NSLocalizedString("Something went wrong when logging out", comment: "Account settings - Alert message when logout fails")
+        alert.messageText = NSLocalizedString("settings.account.logoutFailure.title", value: "Logout Failed", comment: "Account settings - Alert title when logout fails")
+        alert.informativeText = NSLocalizedString("settings.account.logoutFailure.message", value: "Something went wrong when logging out", comment: "Account settings - Alert message when logout fails")
         alert.alertStyle = .warning
-        alert.addButton(withTitle: NSLocalizedString("OK", comment: "Account settings - OK button to dismiss logout failed alert"))
+        alert.addButton(withTitle: NSLocalizedString("settings.account.logoutFailure.dismissButton", value: "OK", comment: "Account settings - OK button to dismiss logout failed alert"))
         alert.runModal()
     }
 
@@ -501,27 +511,41 @@ class AccountViewModel: ObservableObject {
         // Step 3: clear the Auth0 session and credentials.
         AppLogDebug("🚪 [Logout] Step 3: Clearing Auth0 session and credentials")
         let success = await AuthManager.shared.logOut()
-        let wasCancelled = finishLogoutAttempt(logoutAttemptID)
-        guard success else {
-            if wasCancelled {
+        let cancelReason = finishLogoutAttempt(logoutAttemptID)
+        if !success {
+            switch cancelReason {
+            case .timeout:
+                // Our own timeout gave up waiting for the Auth0 callback,
+                // which is how an unreachable Auth0 presents itself here.
+                // Giving up on the network must not leave the user logged
+                // in: run the local half and carry on with the teardown.
+                AppLogWarn("🚪 [Logout] Timed out waiting for Auth0, continuing with local logout")
+                await AuthManager.shared.completeLogoutLocally()
+            case .settingsWindowClosed:
                 AppLogWarn("🚪 [Logout] Auth0 logout was cancelled")
                 return
+            case nil:
+                // Not cancelled by us: the external browser could not be
+                // launched, or another web auth transaction holds Auth0's
+                // barrier. Nothing was cleared; report and abandon.
+                AppLogError("🚪 [Logout] Auth0 logout failed")
+                showLogoutFailedAlert()
+                return
             }
-            AppLogError("🚪 [Logout] Auth0 logout failed")
-            showLogoutFailedAlert()
-            return
+        } else if cancelReason != nil {
+            // The cancel landed after the logout had already gone through. Local
+            // credentials and the account reference are gone by now, so bailing
+            // out here would leave the browser running account-less with its
+            // Space slots torn down; carry on to the login window instead.
+            AppLogWarn("🚪 [Logout] Cancellation arrived after logout completed, continuing teardown")
         }
-        guard !wasCancelled else {
-            AppLogWarn("🚪 [Logout] Ignoring logout completion after cancellation")
-            return
-        }
-        AppLogDebug("🚪 [Logout] Auth0 session cleared")
+        // Not "Auth0 session cleared": the remote teardown is best effort, so
+        // this point is reached even when it failed.
+        AppLogDebug("🚪 [Logout] Auth0 logout returned")
         
-        // Step 4: clear local account state.
-        AppLogDebug("🚪 [Logout] Step 4: Clearing account controller state")
-        let previousAccount = AccountController.shared.account?.userID
-        AccountController.shared.account = nil
-        AppLogDebug("🚪 [Logout] Account state cleared (was: \(previousAccount ?? "nil"))")
+        // Step 4: local account state — credentials, cached profile and avatar,
+        // and the account reference — was cleared by `AuthManager.logOut()`.
+        AppLogDebug("🚪 [Logout] Step 4: Local account state cleared")
         
         // Step 5: close the settings window.
         AppLogDebug("🚪 [Logout] Step 5: Closing settings window")
@@ -549,20 +573,20 @@ class AccountViewModel: ObservableObject {
         let timeoutWorkItem = DispatchWorkItem { [weak self] in
             guard let self, self.activeLogoutAttemptID == attemptID else { return }
             AppLogWarn("🚪 [Logout] Auth0 logout timed out after \(Self.logoutTimeoutSeconds)s")
-            self.cancelOngoingLogoutSession(reason: "timeout")
+            self.cancelOngoingLogoutSession(reason: .timeout)
         }
         logoutTimeoutWorkItem = timeoutWorkItem
         DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(Self.logoutTimeoutSeconds), execute: timeoutWorkItem)
     }
 
     @MainActor
-    func cancelOngoingLogoutSession(reason: String) {
+    func cancelOngoingLogoutSession(reason: LogoutCancelReason) {
         guard let attemptID = activeLogoutAttemptID else {
             return
         }
 
-        AppLogDebug("🚪 [Logout] Cancelling pending logout session reason=\(reason)")
-        cancelledLogoutAttemptIDs.insert(attemptID)
+        AppLogDebug("🚪 [Logout] Cancelling pending logout session reason=\(reason.rawValue)")
+        cancelledLogoutAttempts[attemptID] = reason
         logoutTimeoutWorkItem?.cancel()
         logoutTimeoutWorkItem = nil
         activeLogoutAttemptID = nil
@@ -570,17 +594,19 @@ class AccountViewModel: ObservableObject {
         AuthManager.shared.cancelOngoingWebAuthentication()
     }
 
+    /// Ends the bookkeeping for `attemptID` and answers why it was cancelled,
+    /// nil meaning it was not.
     @MainActor
-    private func finishLogoutAttempt(_ attemptID: UUID) -> Bool {
-        let wasCancelled = cancelledLogoutAttemptIDs.remove(attemptID) != nil
+    private func finishLogoutAttempt(_ attemptID: UUID) -> LogoutCancelReason? {
+        let cancelReason = cancelledLogoutAttempts.removeValue(forKey: attemptID)
         guard activeLogoutAttemptID == attemptID else {
-            return wasCancelled
+            return cancelReason
         }
         logoutTimeoutWorkItem?.cancel()
         logoutTimeoutWorkItem = nil
         activeLogoutAttemptID = nil
         isLogoutInProgress = false
-        return wasCancelled
+        return cancelReason
     }
 
     func updateUserName(_ newName: String) async {
@@ -715,7 +741,7 @@ class ProfileCardView: NSView {
             make.edges.equalToSuperview()
         }
 
-        downloadButton.title = NSLocalizedString("Download image", comment: "Account settings - Button to download profile card as image")
+        downloadButton.title = NSLocalizedString("settings.account.sharing.downloadImageButton", value: "Download image", comment: "Account settings - Button to download profile card as image")
         downloadButton.bezelStyle = .rounded
         downloadButton.image = NSImage(systemSymbolName: "arrow.down.circle", accessibilityDescription: nil)
         downloadButton.imagePosition = .imageLeading
@@ -790,7 +816,7 @@ class DefaultBrowserSectionView: SettingItemBackgroundView {
             make.width.height.equalTo(16)
         }
 
-        setDefaultButton.title = NSLocalizedString("Set as default", comment: "Account settings - Button to set Phi as default browser")
+        setDefaultButton.title = NSLocalizedString("settings.account.defaultBrowser.setDefaultButton", value: "Set as default", comment: "Account settings - Button to set Phi as default browser")
         setDefaultButton.bezelStyle = .rounded
         setDefaultButton.image = NSImage(systemSymbolName: "heart.fill", accessibilityDescription: nil)
         setDefaultButton.imagePosition = .imageLeading
@@ -916,8 +942,7 @@ class AccountCardView: SettingItemBackgroundView {
     }()
 
     private let reauthenticationWarningLabel: NSTextField = {
-        let tf = NSTextField(labelWithString: NSLocalizedString(
-            "Reauthentication needed.",
+        let tf = NSTextField(labelWithString: NSLocalizedString("settings.account.reauthentication.warning", value: "Reauthentication needed.",
             comment: "Account settings - Warning shown when account tokens require reauthentication"
         ))
         tf.font = .systemFont(ofSize: 11, weight: .medium)
@@ -928,16 +953,14 @@ class AccountCardView: SettingItemBackgroundView {
         tf.isBordered = false
         tf.drawsBackground = false
         tf.isHidden = true
-        tf.toolTip = NSLocalizedString(
-            "Please reauthenticate to restore account features.",
+        tf.toolTip = NSLocalizedString("settings.account.reauthentication.tooltip", value: "Please reauthenticate to restore account features.",
             comment: "Account settings - Tooltip explaining why reauthentication is needed"
         )
         return tf
     }()
 
     private let logoutStatusLabel: NSTextField = {
-        let tf = NSTextField(labelWithString: NSLocalizedString(
-            "Confirm logout in the opened browser.",
+        let tf = NSTextField(labelWithString: NSLocalizedString("settings.account.logoutProgress.browserConfirmationStatus", value: "Confirm logout in the opened browser.",
             comment: "Account settings - Status shown while waiting for logout to finish"
         ))
         tf.font = .systemFont(ofSize: 11, weight: .medium)
@@ -953,7 +976,7 @@ class AccountCardView: SettingItemBackgroundView {
 
     private let logoutButton: NSButton = {
         let btn = NSButton()
-        btn.title = NSLocalizedString("Logout", comment: "Account settings - Logout button")
+        btn.title = NSLocalizedString("settings.account.logoutButton", value: "Logout", comment: "Account settings - Logout button")
         btn.bezelStyle = .rounded
         btn.image = NSImage(systemSymbolName: "rectangle.portrait.and.arrow.right", accessibilityDescription: nil)
         btn.imagePosition = .imageLeading
@@ -1158,7 +1181,7 @@ class AccountCardView: SettingItemBackgroundView {
                 let placeholder = self.avatarImageView.image
                     ?? NSImage(systemSymbolName: "person.crop.circle.fill", accessibilityDescription: "Avatar")?
                         .withSymbolConfiguration(.init(pointSize: 28, weight: .regular))
-                let processor = RoundCornerImageProcessor(radius: .widthFraction(0.5))
+                let processor = AccountController.avatarImageProcessor
 
                 // Show cached version immediately (or keep current image if no cache)
                 self.avatarImageView.kf.setImage(
@@ -1239,7 +1262,7 @@ class AccountCardView: SettingItemBackgroundView {
 
         avatarRevalidateTask?.cancel()
 
-        let processor = RoundCornerImageProcessor(radius: .widthFraction(0.5))
+        let processor = AccountController.avatarImageProcessor
         avatarRevalidateTask = KingfisherManager.shared.retrieveImage(
             with: url,
             options: [
@@ -1340,9 +1363,9 @@ class AccountCardView: SettingItemBackgroundView {
 
     private func showRenameDialog() {
         let alert = NSAlert()
-        alert.messageText = NSLocalizedString("Change Name", comment: "Account settings - Dialog title for changing user name")
-        alert.addButton(withTitle: NSLocalizedString("Save", comment: "Account settings - Save button in rename dialog"))
-        alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Account settings - Cancel button in rename dialog"))
+        alert.messageText = NSLocalizedString("settings.account.renameDialog.title", value: "Change Name", comment: "Account settings - Dialog title for changing user name")
+        alert.addButton(withTitle: NSLocalizedString("settings.account.renameDialog.saveButton", value: "Save", comment: "Account settings - Save button in rename dialog"))
+        alert.addButton(withTitle: NSLocalizedString("settings.account.renameDialog.cancelButton", value: "Cancel", comment: "Account settings - Cancel button in rename dialog"))
 
         let textField = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
         textField.stringValue = viewModel.userName
@@ -1355,20 +1378,20 @@ class AccountCardView: SettingItemBackgroundView {
 
         if newValue.isEmpty {
             let errorAlert = NSAlert()
-            errorAlert.messageText = NSLocalizedString("Invalid Input", comment: "Account settings - Alert title for invalid input")
-            errorAlert.informativeText = NSLocalizedString("Name cannot be empty", comment: "Account settings - Error message when user name is empty")
+            errorAlert.messageText = NSLocalizedString("settings.account.renameDialog.emptyNameError.title", value: "Invalid Input", comment: "Account settings - Alert title for invalid input")
+            errorAlert.informativeText = NSLocalizedString("settings.account.renameDialog.emptyNameError.message", value: "Name cannot be empty", comment: "Account settings - Error message when user name is empty")
             errorAlert.alertStyle = .warning
-            errorAlert.addButton(withTitle: NSLocalizedString("OK", comment: "Account settings - OK button"))
+            errorAlert.addButton(withTitle: NSLocalizedString("settings.account.renameDialog.emptyNameError.dismissButton", value: "OK", comment: "Account settings - OK button"))
             errorAlert.runModal()
             return
         }
 
         if newValue.count > Self.maxUserNameLength {
             let errorAlert = NSAlert()
-            errorAlert.messageText = NSLocalizedString("Invalid Input", comment: "Account settings - Alert title for invalid input")
-            errorAlert.informativeText = String(format: NSLocalizedString("Name cannot exceed %d characters", comment: "Account settings - Error message when user name is too long"), Self.maxUserNameLength)
+            errorAlert.messageText = NSLocalizedString("settings.account.renameDialog.nameTooLongError.title", value: "Invalid Input", comment: "Account settings - Alert title for invalid input")
+            errorAlert.informativeText = String(format: NSLocalizedString("settings.account.renameDialog.nameTooLongError.message", value: "Name cannot exceed %d characters", comment: "Account settings - Error message when user name is too long"), Self.maxUserNameLength)
             errorAlert.alertStyle = .warning
-            errorAlert.addButton(withTitle: NSLocalizedString("OK", comment: "Account settings - OK button"))
+            errorAlert.addButton(withTitle: NSLocalizedString("settings.account.renameDialog.nameTooLongError.dismissButton", value: "OK", comment: "Account settings - OK button"))
             errorAlert.runModal()
             return
         }
@@ -1392,7 +1415,7 @@ class AccountCardView: SettingItemBackgroundView {
 // MARK: - Share Section View
 
 class ShareSectionView: NSView {
-    private let titleLabel = NSTextField(labelWithString: NSLocalizedString("Share", comment: "Account settings - Section title for sharing"))
+    private let titleLabel = NSTextField(labelWithString: NSLocalizedString("settings.account.sharing.sectionTitle", value: "Share", comment: "Account settings - Section title for sharing"))
     private let containerView = SettingItemBackgroundView()
 
     private let invitationCodeRowView = InvitationCodeRowView()
@@ -1448,7 +1471,7 @@ class ShareSectionView: NSView {
 // MARK: - Invitation Code Row View
 
 class InvitationCodeRowView: NSView {
-    private let titleLabel = NSTextField(labelWithString: NSLocalizedString("Invitation Code", comment: "Account settings - Label for invitation code field"))
+    private let titleLabel = NSTextField(labelWithString: NSLocalizedString("settings.account.invitationCode.fieldLabel", value: "Invitation Code", comment: "Account settings - Label for invitation code field"))
     private let viewDetailsButton = NSButton()
 
     var onViewDetails: (() -> Void)?
@@ -1475,7 +1498,7 @@ class InvitationCodeRowView: NSView {
         }
 
         // View Details button
-        viewDetailsButton.title = NSLocalizedString("View Details", comment: "Account settings - Button to view invitation code details")
+        viewDetailsButton.title = NSLocalizedString("settings.account.invitationCode.viewDetailsButton", value: "View Details", comment: "Account settings - Button to view invitation code details")
         viewDetailsButton.bezelStyle = .rounded
         viewDetailsButton.image = NSImage(systemSymbolName: "list.bullet.rectangle", accessibilityDescription: nil)
         viewDetailsButton.imagePosition = .imageLeading

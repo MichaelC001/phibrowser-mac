@@ -12,8 +12,7 @@ extension LocalStore {
     private static let folderPlaceholderURL: URL = {
         URL(string: "https://bookmark.phi/folder")!
     }()
-    private static let importedFromArcFolderTitle = NSLocalizedString(
-        "Imported From Arc",
+    private static let importedFromArcFolderTitle = NSLocalizedString("localData.bookmarks.importedFromArcFolderTitle", value: "Imported From Arc",
         comment: "Arc bookmarks import folder title"
     )
     
@@ -281,7 +280,7 @@ extension LocalStore {
                     // localized "Untitled Space"), so this only matters if a nil-title
                     // root ever reaches here — share the SAME localized fallback the
                     // picker shows, not the legacy generic "Imported From Arc" name.
-                    title: spaceRoot.title ?? NSLocalizedString("Untitled Space", comment: "Arc import - fallback name for an Arc Space with no title"),
+                    title: spaceRoot.title ?? NSLocalizedString("localData.arcImport.untitledSpaceName", value: "Untitled Space", comment: "Arc import - fallback name for an Arc Space with no title"),
                     guid: UUID().uuidString, index: 0, url: Self.folderPlaceholderURL,
                     favicon: nil, createdDate: now, updatedDate: now)
                 importRoot.dataType = .bookmarkFolder
@@ -846,6 +845,37 @@ extension LocalStore {
             return []
         }
     }
+
+    @MainActor
+    /// Returns only bookmark rows for the requested Spaces, ordered by most
+    /// recently opened first. The scripting API consumes a flat list, so this
+    /// intentionally avoids reconstructing the bookmark folder tree.
+    func fetchBookmarkTabs(in spaces: [SpaceModel]) -> [TabDataModel] {
+        guard !spaces.isEmpty, let context = mainContext else { return [] }
+
+        let profileIdBySpaceId = Dictionary(
+            uniqueKeysWithValues: spaces.map { ($0.spaceId, $0.profileId) }
+        )
+        let bookmarkRaw = TabDataType.bookmark.rawValue
+        let descriptor = FetchDescriptor<TabDataModel>(
+            predicate: #Predicate<TabDataModel> { $0.type == bookmarkRaw },
+            sortBy: [SortDescriptor(\.lastSeen, order: .reverse)]
+        )
+
+        do {
+            return try context.fetch(descriptor).filter { bookmark in
+                guard let spaceId = bookmark.spaceId,
+                      let expectedProfileId = profileIdBySpaceId[spaceId] else {
+                    return false
+                }
+                return bookmark.profileId == expectedProfileId
+                    || bookmark.profile?.profileId == expectedProfileId
+            }
+        } catch {
+            AppLogError("Failed to fetch bookmark tabs: \(error)")
+            return []
+        }
+    }
     
     @MainActor
     /// Returns a single bookmark node for editing or navigation.
@@ -1015,7 +1045,7 @@ extension LocalStore {
         }
         guard createIfNeeded else { return nil }
         let now = Date()
-        let root = TabDataModel(title: NSLocalizedString("Bookmarks", comment: "Default root bookmarks folder title"),
+        let root = TabDataModel(title: NSLocalizedString("localData.bookmarks.rootFolderTitle", value: "Bookmarks", comment: "Default root bookmarks folder title"),
                                 guid: UUID().uuidString,
                                 index: 0,
                                 url: Self.folderPlaceholderURL,

@@ -38,7 +38,7 @@
 // Everything is best-effort and silent: the daemon must never outlive its
 // usefulness, and a premature exit only costs a respawn on the next round.
 
-import { openSync, readSync, closeSync, statSync } from 'node:fs'
+import { openSync, readSync, closeSync, statSync, readFileSync } from 'node:fs'
 import {
   readDaemonControl, writeDaemonControl, clearDaemonControl, readCursor,
   writeCursor, forwardEntries, openPhiChannel, pidAlive, BACKFILL_GRACE_MS,
@@ -89,6 +89,19 @@ const COMPLETE_MAX_WAIT_MS = 90 * 1000
 const sessionKey = process.argv[2]
 process.title = 'phi-mirror-tailer'
 if (!sessionKey) process.exit(0)
+
+// The spawning round delegates its app-issued logical-driver capability over
+// stdin, an inherited one-shot pipe. Keep it only in memory: argv, env, and
+// the shared mirror control file remain free of authorization material.
+// Skipped on a TTY — a manual `node mirror-tailer.mjs <key>` run would
+// otherwise block on readFileSync(0) until Ctrl-D.
+let delegatedAgentCapability = null
+try {
+  if (!process.stdin.isTTY) {
+    const value = readFileSync(0, 'utf8').trim()
+    if (/^[A-Za-z0-9_-]{32,128}$/.test(value)) delegatedAgentCapability = value
+  }
+} catch {}
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
@@ -148,11 +161,15 @@ async function main() {
 
   const ensureChannel = async () => {
     if (channel) return channel
-    // Name the driving agent session on the connection: this daemon is
-    // detached (reparented to launchd once its spawning round exits), so the
-    // app's ancestry walk can't reach the agent — the claimed pid keeps the
-    // consent identity on the agent instead of this daemon.
-    channel = await openPhiChannel({ agentPid: Number(ctl.agentPid) || null })
+    // This daemon is detached (reparented to launchd once its spawning round
+    // exits), so the app's ancestry walk can't reach the agent: the
+    // stdin-delegated capability is what joins the agent's session — and its
+    // consent identity — on this connection. The claimed pid merely names
+    // the agent in the app's logs.
+    channel = await openPhiChannel({
+      agentPid: Number(ctl.agentPid) || null,
+      agentCapability: delegatedAgentCapability,
+    })
     channel.onEvent('agentSpace.userMessage', ({ taskId }) => {
       const cur = readDaemonControl(sessionKey)
       if (cur && cur.taskId === taskId) bridgeWake = true

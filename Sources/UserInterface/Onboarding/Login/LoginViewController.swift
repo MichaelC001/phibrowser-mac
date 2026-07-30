@@ -63,7 +63,7 @@ class LoginViewController: NSViewController {
     
     private lazy var loginButton: GradientBorderButton = {
         let button = GradientBorderButton()
-        button.title = NSLocalizedString("Log in", comment: "Onboarding Login button title")
+        button.title = NSLocalizedString("oobe.login.loginButton", value: "Log in", comment: "Onboarding Login button title")
         button.clickAction = { [weak self] in
             self?.loginAction()
         }
@@ -95,7 +95,7 @@ class LoginViewController: NSViewController {
     }()
     
     private lazy var waitingTitleLabel: NSTextField = {
-        let label = NSTextField(labelWithString: NSLocalizedString("Go to the browser to complete log in", comment: "Waiting view title shown during login process in onboarding"))
+        let label = NSTextField(labelWithString: NSLocalizedString("oobe.login.progressTitle", value: "Go to the browser to complete log in", comment: "Waiting view title shown during login process in onboarding"))
         label.font = NSFont(name: "IvyPresto Display", size: 40)
         label.textColor = .white
         label.alignment = .center
@@ -126,13 +126,13 @@ class LoginViewController: NSViewController {
         stackView.spacing = 0
         stackView.alignment = .centerY
         
-        let hintLabel = NSTextField(labelWithString: NSLocalizedString("Something went wrong? ", comment: "Retry hint prefix text shown when login fails in onboarding"))
+        let hintLabel = NSTextField(labelWithString: NSLocalizedString("oobe.login.failureHintPrefix", value: "Something went wrong? ", comment: "Retry hint prefix text shown when login fails in onboarding"))
         hintLabel.font = NSFont.systemFont(ofSize: 15)
         hintLabel.textColor = NSColor.white.withAlphaComponent(0.5)
         hintLabel.alignment = .center
         
         let retryLink = GradientColorLabel(
-            text: NSLocalizedString("Go back and try again", comment: "Retry link text shown when login fails in onboarding"),
+            text: NSLocalizedString("oobe.login.failureLink", value: "Go back and try again", comment: "Retry link text shown when login fails in onboarding"),
             gradientColors: [
                 Color(hexString: "#9452F9"),
                 Color(hexString: "#E8C0FF")

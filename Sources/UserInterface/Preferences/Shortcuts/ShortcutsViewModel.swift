@@ -37,7 +37,7 @@ class ShortcutsViewModel: ObservableObject {
                         command: command,
                         name: displayName(for: command),
                         shortcutKey: key,
-                        shortcutDisplay: key?.displayString ?? NSLocalizedString("Add New", comment: "Shortcuts settings - Placeholder text when no shortcut is assigned"),
+                        shortcutDisplay: key?.displayString ?? NSLocalizedString("settings.shortcuts.unassignedPlaceholder", value: "Add New", comment: "Shortcuts settings - Placeholder text when no shortcut is assigned"),
                         isOverridden: Shortcuts.isOverridden(command),
                         conflictingCommandNames: conflictingCommands.map { displayName(for: $0) },
                         searchKeywords: searchKeywords(for: command)
@@ -80,7 +80,7 @@ class ShortcutsViewModel: ObservableObject {
             let spaces = SpaceManager.shared.spaces
             if spaces.indices.contains(index) {
                 return String(
-                    format: NSLocalizedString("Go to Space \"%@\"", comment: "Shortcuts settings - Command title to activate the Space at this position"),
+                    format: NSLocalizedString("settings.shortcuts.activateSpaceCommandTitle", value: "Go to Space \"%@\"", comment: "Shortcuts settings - Command title to activate the Space at this position"),
                     spaces[index].name
                 )
             }

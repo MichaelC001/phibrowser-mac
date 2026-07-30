@@ -6,6 +6,7 @@
 import Cocoa
 import Combine
 import Foundation
+import PostHog
 
 private enum NativeWindowTabBarSuppressor {
     private static let slotTabbingIdentifierPrefix = "phi.space.slot."
@@ -252,11 +253,11 @@ final class SpaceManager: ObservableObject {
         let name: String
         if incognitoSpaces.count > 1 {
             name = String(
-                format: NSLocalizedString("Incognito %d", comment: "Incognito Space name when several are open; %d is its number"),
+                format: NSLocalizedString("spaces.builtIn.incognito.numberedName", value: "Incognito %d", comment: "Incognito Space name when several are open; %d is its number"),
                 descriptor.ordinal
             )
         } else {
-            name = NSLocalizedString("Incognito", comment: "Built-in Incognito Space name")
+            name = NSLocalizedString("spaces.builtIn.incognito.singleSpaceName", value: "Incognito", comment: "Built-in Incognito Space name when only one is open")
         }
         return SpaceModel(
             spaceId: descriptor.spaceId,
@@ -291,7 +292,7 @@ final class SpaceManager: ObservableObject {
         SpaceModel(
             spaceId: Self.incognitoRuleTargetId,
             profileId: Self.incognitoProfileId,
-            name: NSLocalizedString("Incognito", comment: "Built-in Incognito Space name"),
+            name: NSLocalizedString("spaces.builtIn.incognito.routingTargetName", value: "Incognito", comment: "Built-in Incognito target name used by URL routing"),
             colorHex: "#5F6368",
             iconName: Self.incognitoSpaceDefaultIcon,
             sortOrder: spaces.count
@@ -939,9 +940,9 @@ final class SpaceManager: ObservableObject {
     /// one-click "+" path, or the user's explicit choice from the picker.
     ///
     /// The new Space inherits the currently-active Space's pinned theme, which
-    /// is what decides the sidebar's overlay background color and opacity, so
-    /// it opens looking like the Space it was created from rather than snapping
-    /// to the global default theme. A nil pin means "follow the global theme" —
+    /// decides the sidebar's overlay background color, so it opens looking like
+    /// the Space it was created from rather than snapping to the global default
+    /// theme. A nil pin means "follow the global theme" —
     /// the new Space already does, so we only copy an explicit override.
     @discardableResult
     func createSpace(name: String,
@@ -1009,16 +1010,25 @@ final class SpaceManager: ObservableObject {
     /// correct per-layout switch animation (vertical push-in / horizontal
     /// slide). No-op when no window is open — the persisted default then seeds
     /// the next window to launch.
-    func activateInFocusedWindow(spaceId: String) {
+    func activateInFocusedWindow(
+        spaceId: String,
+        onActivationFailed: (() -> Void)? = nil,
+        onSwapSettled: (() -> Void)? = nil
+    ) {
         // `keySlot` is weak and can be nil in edge states (e.g. right after a
         // sheet held key, or mid slot-teardown); falling back to the first
         // live slot beats silently dropping the switch — the agent-handoff
         // prompt's "Switch to Agent Space" button lands here.
         guard let slot = keySlot ?? slots.first else {
             AppLogWarn("[SpaceManager] activateInFocusedWindow(\(spaceId)): no live slot")
+            onActivationFailed?()
             return
         }
-        slot.activate(spaceId: spaceId)
+        slot.activate(
+            spaceId: spaceId,
+            onActivationFailed: onActivationFailed,
+            onSwapSettled: onSwapSettled
+        )
     }
 
     /// Moves `tab` out of its current Space and into the Space identified by
@@ -1362,15 +1372,13 @@ final class SpaceManager: ObservableObject {
         guard !ImportTargetLock.shared.isImporting(into: spaceId) else {
             AppLogWarn("[SpaceManager] refusing to delete space \(spaceId): import in progress")
             let alert = NSAlert()
-            alert.messageText = NSLocalizedString(
-                "Can’t delete this Space yet",
+            alert.messageText = NSLocalizedString("spaces.importProgress.deleteSpaceBlocked.title", value: "Can’t delete this Space yet",
                 comment: "Title shown when deleting a Space is blocked by an in-progress import"
             )
-            alert.informativeText = NSLocalizedString(
-                "An import is still adding bookmarks to this Space. Wait for it to finish, then try again.",
+            alert.informativeText = NSLocalizedString("spaces.importProgress.deleteSpaceBlocked.message", value: "An import is still adding bookmarks to this Space. Wait for it to finish, then try again.",
                 comment: "Body shown when deleting a Space is blocked by an in-progress import"
             )
-            alert.addButton(withTitle: NSLocalizedString("OK", comment: "Dismiss button"))
+            alert.addButton(withTitle: NSLocalizedString("spaces.importProgress.deleteSpaceBlocked.dismissButton", value: "OK", comment: "Dismiss button"))
             alert.runModal()
             return
         }
@@ -1533,15 +1541,13 @@ final class SpaceManager: ObservableObject {
         guard !ImportTargetLock.shared.isImporting(into: spaceId) else {
             AppLogWarn("[SpaceManager] refusing to change profile of space \(spaceId): import in progress")
             let alert = NSAlert()
-            alert.messageText = NSLocalizedString(
-                "Can’t change this Space’s profile yet",
+            alert.messageText = NSLocalizedString("spaces.importProgress.changeProfileBlocked.title", value: "Can’t change this Space’s profile yet",
                 comment: "Title shown when changing a Space's profile is blocked by an in-progress import"
             )
-            alert.informativeText = NSLocalizedString(
-                "An import is still adding bookmarks to this Space. Wait for it to finish, then try again.",
+            alert.informativeText = NSLocalizedString("spaces.importProgress.changeProfileBlocked.message", value: "An import is still adding bookmarks to this Space. Wait for it to finish, then try again.",
                 comment: "Body shown when a Space action is blocked by an in-progress import"
             )
-            alert.addButton(withTitle: NSLocalizedString("OK", comment: "Dismiss button"))
+            alert.addButton(withTitle: NSLocalizedString("spaces.importProgress.changeProfileBlocked.dismissButton", value: "OK", comment: "Dismiss button"))
             alert.runModal()
             return
         }
@@ -1558,6 +1564,9 @@ final class SpaceManager: ObservableObject {
             return
         }
         AppLogInfo("[SpaceManager] changeProfile: \(spaceId) \(space.profileId) → \(newProfileId)")
+        PostHogSDK.shared.capture("space_profile_changed", properties: [
+            "total_profiles": ProfileManager.shared.userAssignableProfiles.count,
+        ])
         // Capture before closing anything. Pinned tabs are excluded because
         // they are restored from their configured Space/Profile/App scope;
         // new-tab pages are excluded as well. keySlot first so the focused
@@ -1679,61 +1688,161 @@ final class SpaceManager: ObservableObject {
             map.removeValue(forKey: spaceId)
         }
         account.userDefaults.setSpaceThemeIds(map)
-        if let themeId {
+        if themeId != nil {
             syncColorHexWithTheme(forSpaceId: spaceId)
-            if spaceId == LocalStore.defaultSpaceId {
-                // The default Space's theme doubles as the global theme so
-                // non-browser chrome and pre-Space fallbacks stay in step,
-                // whichever surface the edit came from (settings panes,
-                // strip picker, Spaces menu).
-                MainActor.assumeIsolated {
-                    ThemeManager.shared.switchTheme(to: themeId)
-                }
-            }
         }
+        publishResolvedDefaultSpaceThemeIfNeeded(spaceId: spaceId)
         reapplyResolvedTheme(forSpaceId: spaceId)
         postSpaceThemeDidChange(spaceId: spaceId)
     }
 
-    /// The Space's custom overlay opacity for `appearance`, or nil when it
-    /// uses its theme's own overlay alpha.
-    func overlayOpacity(forSpaceId spaceId: String, appearance: Appearance) -> CGFloat? {
+    /// The Space's custom overlay saturation for `appearance`, or nil when
+    /// it uses its theme's own saturation.
+    func overlaySaturation(forSpaceId spaceId: String, appearance: Appearance) -> CGFloat? {
         guard let value = boundAccount?.userDefaults
-            .spaceOverlayOpacities()[spaceId]?[Self.overlayOpacityKey(for: appearance)] else {
+            .spaceThemeSaturations()[spaceId]?[Self.overlaySaturationKey(for: appearance)] else {
             return nil
         }
         return CGFloat(value)
     }
 
-    /// The overlay opacity the Space's slider should display: the custom
-    /// value when one is stored, else the resolved theme's own alpha.
-    func effectiveOverlayOpacity(forSpaceId spaceId: String, appearance: Appearance) -> CGFloat {
-        if let custom = overlayOpacity(forSpaceId: spaceId, appearance: appearance) {
+    /// The overlay saturation the Space's slider should display: the custom
+    /// value when one is stored, else the resolved registry theme's value.
+    func effectiveOverlaySaturation(forSpaceId spaceId: String, appearance: Appearance) -> CGFloat {
+        if let custom = overlaySaturation(forSpaceId: spaceId, appearance: appearance) {
             return custom
         }
         return MainActor.assumeIsolated {
             let manager = ThemeManager.shared
             let base = manager.registeredThemes[resolvedThemeId(forSpaceId: spaceId)]
                 ?? manager.currentTheme
-            return base.windowOverlayOpacity(for: appearance)
+            return base
+                .color(for: .windowOverlayBackground, appearance: appearance)
+                .hsbSaturationComponent
         }
     }
 
-    /// Persists a custom overlay opacity for `spaceId` and applies it to
-    /// the Space's live windows.
-    func setOverlayOpacity(_ opacity: CGFloat, forSpaceId spaceId: String, appearance: Appearance) {
+    /// Persists the current appearance's overlay saturation and, in dark mode,
+    /// the matching dark window-background saturation, then applies the
+    /// resolved theme to live windows.
+    func setOverlaySaturation(_ saturation: CGFloat, forSpaceId spaceId: String, appearance: Appearance) {
         guard let account = boundAccount else { return }
-        var map = account.userDefaults.spaceOverlayOpacities()
+        let clampedSaturation = min(max(saturation, 0.1), 0.9)
+        var map = account.userDefaults.spaceThemeSaturations()
         var entry = map[spaceId] ?? [:]
-        entry[Self.overlayOpacityKey(for: appearance)] = Double(min(max(opacity, 0), 1))
+        entry[Self.overlaySaturationKey(for: appearance)] = Double(clampedSaturation)
+        if appearance.isDark {
+            entry[Self.windowBackgroundDarkSaturationKey] = Double(clampedSaturation)
+        }
         map[spaceId] = entry
-        account.userDefaults.setSpaceOverlayOpacities(map)
+        account.userDefaults.setSpaceThemeSaturations(map)
+        publishResolvedDefaultSpaceThemeIfNeeded(spaceId: spaceId)
         reapplyResolvedTheme(forSpaceId: spaceId)
         postSpaceThemeDidChange(spaceId: spaceId)
+
+        let appliedTheme = resolvedTheme(forSpaceId: spaceId)
+        Self.logAppliedThemeComponent(
+            appliedTheme.color(for: .windowOverlayBackground, appearance: appearance),
+            category: "OverlaySaturation",
+            role: "windowOverlayBackground",
+            spaceId: spaceId,
+            appearance: appearance
+        )
+        Self.logAppliedThemeComponent(
+            appliedTheme.color(for: .windowBackground, appearance: .dark),
+            category: "WindowBackgroundSaturation",
+            role: "windowBackground",
+            spaceId: spaceId,
+            appearance: .dark
+        )
     }
 
-    private static func overlayOpacityKey(for appearance: Appearance) -> String {
-        appearance.isDark ? "dark" : "light"
+    private static func overlaySaturationKey(for appearance: Appearance) -> String {
+        appearance.isDark ? "overlayDark" : "overlayLight"
+    }
+
+    private static let windowBackgroundDarkSaturationKey = "windowBackgroundDark"
+
+    /// The Pure theme's custom slider position for the Space, or nil when
+    /// the built-in theme value should be used.
+    func pureThemeSliderValue(forSpaceId spaceId: String) -> Double? {
+        boundAccount?.userDefaults.spacePureThemeSliderValues()[spaceId]
+    }
+
+    /// The position the Pure-theme slider should display.
+    func effectivePureThemeSliderValue(forSpaceId spaceId: String, appearance: Appearance) -> Double {
+        if let custom = pureThemeSliderValue(forSpaceId: spaceId) {
+            return custom
+        }
+        return MainActor.assumeIsolated {
+            let manager = ThemeManager.shared
+            let base = manager.registeredThemes[resolvedThemeId(forSpaceId: spaceId)]
+                ?? manager.currentTheme
+            let brightness = base
+                .color(for: .windowOverlayBackground, appearance: appearance)
+                .hsbBrightnessComponent
+            return PureThemeBrightnessScale.sliderValue(
+                forBrightness: Double(brightness),
+                appearance: appearance
+            )
+        }
+    }
+
+    /// Persists one Pure-theme slider position and maps it to the separate
+    /// light and dark brightness ranges.
+    func setPureThemeSliderValue(_ sliderValue: Double, forSpaceId spaceId: String) {
+        guard let account = boundAccount else { return }
+        let clampedSliderValue = min(max(sliderValue, 0), 100)
+        var map = account.userDefaults.spacePureThemeSliderValues()
+        map[spaceId] = clampedSliderValue
+        account.userDefaults.setSpacePureThemeSliderValues(map)
+        publishResolvedDefaultSpaceThemeIfNeeded(spaceId: spaceId)
+        reapplyResolvedTheme(forSpaceId: spaceId)
+        postSpaceThemeDidChange(spaceId: spaceId)
+
+        let appliedTheme = resolvedTheme(forSpaceId: spaceId)
+        Self.logAppliedThemeComponent(
+            appliedTheme.color(for: .windowOverlayBackground, appearance: .light),
+            category: "PureThemeBrightness",
+            role: "windowOverlayBackground",
+            spaceId: spaceId,
+            appearance: .light
+        )
+        Self.logAppliedThemeComponent(
+            appliedTheme.color(for: .windowOverlayBackground, appearance: .dark),
+            category: "PureThemeBrightness",
+            role: "windowOverlayBackground",
+            spaceId: spaceId,
+            appearance: .dark
+        )
+        Self.logAppliedThemeComponent(
+            appliedTheme.color(for: .windowBackground, appearance: .dark),
+            category: "PureThemeBrightness",
+            role: "windowBackground",
+            spaceId: spaceId,
+            appearance: .dark
+        )
+    }
+
+    private static func logAppliedThemeComponent(
+        _ color: NSColor,
+        category: String,
+        role: String,
+        spaceId: String,
+        appearance: Appearance
+    ) {
+        let resolvedColor = color.usingColorSpace(.extendedSRGB) ?? color
+        var hue: CGFloat = 0
+        var saturation: CGFloat = 0
+        var brightness: CGFloat = 0
+        var alpha: CGFloat = 0
+        resolvedColor.getHue(
+            &hue,
+            saturation: &saturation,
+            brightness: &brightness,
+            alpha: &alpha
+        )
+        AppLogDebug("[\(category)] applied \(role) space=\(spaceId) appearance=\(appearance) alpha=\(alpha) hsb=(h:\(hue), s:\(saturation), b:\(brightness))")
     }
 
     private func postSpaceThemeDidChange(spaceId: String) {
@@ -1744,17 +1853,30 @@ final class SpaceManager: ObservableObject {
         )
     }
 
-    /// Whether the Space has anything persisted that its windows must pin
-    /// (a theme id or a custom overlay opacity). Spaces with neither keep
-    /// mirroring the global theme, which is what they resolve to anyway.
+    /// The default Space also supplies application-scoped chrome. Publish its
+    /// resolved copy without writing the per-Space adjustment into the shared
+    /// registry or the canonical built-in themes.
+    private func publishResolvedDefaultSpaceThemeIfNeeded(spaceId: String) {
+        guard spaceId == LocalStore.defaultSpaceId else { return }
+        MainActor.assumeIsolated {
+            ThemeManager.shared.currentTheme = resolvedTheme(forSpaceId: spaceId)
+        }
+    }
+
+    /// Whether the Space has a theme id, saturation, or Pure brightness that
+    /// its windows must pin. Legacy opacity records are deliberately ignored
+    /// because ThemeSnapshot V2 fixes overlay alpha at 0.8.
     fileprivate func hasThemeCustomization(forSpaceId spaceId: String) -> Bool {
         if themeId(forSpaceId: spaceId) != nil {
             return true
         }
-        return !(boundAccount?.userDefaults.spaceOverlayOpacities()[spaceId] ?? [:]).isEmpty
+        if !(boundAccount?.userDefaults.spaceThemeSaturations()[spaceId] ?? [:]).isEmpty {
+            return true
+        }
+        return boundAccount?.userDefaults.spacePureThemeSliderValues()[spaceId] != nil
     }
 
-    /// Removes both per-Space theme maps' entries for a Space id that is
+    /// Removes all per-Space theme maps' entries for a Space id that is
     /// going away for good; nothing else prunes them and the id never
     /// comes back.
     fileprivate func clearThemeRecords(forSpaceId spaceId: String) {
@@ -1766,6 +1888,14 @@ final class SpaceManager: ObservableObject {
         var opacities = account.userDefaults.spaceOverlayOpacities()
         if opacities.removeValue(forKey: spaceId) != nil {
             account.userDefaults.setSpaceOverlayOpacities(opacities)
+        }
+        var saturations = account.userDefaults.spaceThemeSaturations()
+        if saturations.removeValue(forKey: spaceId) != nil {
+            account.userDefaults.setSpaceThemeSaturations(saturations)
+        }
+        var pureSliderValues = account.userDefaults.spacePureThemeSliderValues()
+        if pureSliderValues.removeValue(forKey: spaceId) != nil {
+            account.userDefaults.setSpacePureThemeSliderValues(pureSliderValues)
         }
     }
 
@@ -2203,33 +2333,48 @@ final class SpaceManager: ObservableObject {
         applyResolvedTheme(forSpaceId: spaceId, to: controller)
     }
 
-    /// The Theme instance `spaceId`'s windows display: its resolved
-    /// registry theme, copied with the Space's custom overlay opacity when
-    /// one is stored. The copy keeps the registry id so a pinned
+    /// The Theme instance `spaceId`'s windows display: its resolved registry
+    /// theme with fixed V2 alpha, then the Space's saturation or Pure
+    /// brightness when stored. The copy keeps the registry id so a pinned
     /// `BrowserThemeContext` can re-resolve it after registry-wide edits.
     func resolvedTheme(forSpaceId spaceId: String) -> Theme {
         MainActor.assumeIsolated {
             let manager = ThemeManager.shared
-            let base = manager.registeredThemes[resolvedThemeId(forSpaceId: spaceId)]
+            let registeredBase = manager.registeredThemes[resolvedThemeId(forSpaceId: spaceId)]
                 ?? manager.currentTheme
-            return applyingOverlayOpacity(forSpaceId: spaceId, to: base)
+            let base = ThemeColorAdjustment.applyingStandardAlpha(to: registeredBase)
+            if base.id == Theme.pure.id {
+                return applyingPureThemeBrightness(forSpaceId: spaceId, to: base)
+            }
+            return applyingSaturation(forSpaceId: spaceId, to: base)
         }
     }
 
-    /// `base` copied with the Space's stored overlay opacity applied, or
-    /// `base` itself when the Space has none.
-    fileprivate func applyingOverlayOpacity(forSpaceId spaceId: String, to base: Theme) -> Theme {
-        let light = overlayOpacity(forSpaceId: spaceId, appearance: .light)
-        let dark = overlayOpacity(forSpaceId: spaceId, appearance: .dark)
-        guard light != nil || dark != nil else { return base }
-        let derived = base.duplicating()
-        if let light {
-            derived.setWindowOverlayOpacity(light, for: .light)
+    /// `base` copied with the Space's stored overlay and dark-window
+    /// saturation applied under the fixed V2 alpha contract.
+    fileprivate func applyingSaturation(forSpaceId spaceId: String, to base: Theme) -> Theme {
+        let entry = boundAccount?.userDefaults.spaceThemeSaturations()[spaceId] ?? [:]
+        let overlayLight = entry[Self.overlaySaturationKey(for: .light)].map { CGFloat($0) }
+        let overlayDark = entry[Self.overlaySaturationKey(for: .dark)].map { CGFloat($0) }
+        let windowBackgroundDark = entry[Self.windowBackgroundDarkSaturationKey].map { CGFloat($0) }
+        return ThemeColorAdjustment.applyingSaturation(
+            light: overlayLight,
+            dark: overlayDark,
+            darkWindowBackground: windowBackgroundDark,
+            to: base
+        )
+    }
+
+    /// `base` copied with the Space's Pure-theme brightness applied to both
+    /// overlay appearances and the dark window background.
+    fileprivate func applyingPureThemeBrightness(forSpaceId spaceId: String, to base: Theme) -> Theme {
+        guard let sliderValue = pureThemeSliderValue(forSpaceId: spaceId) else {
+            return base
         }
-        if let dark {
-            derived.setWindowOverlayOpacity(dark, for: .dark)
-        }
-        return derived
+        return ThemeColorAdjustment.applyingPureBrightness(
+            sliderValue: sliderValue,
+            to: base
+        )
     }
 
     /// Applies `spaceId`'s resolved theme to `controller`'s theme context.
@@ -2245,10 +2390,8 @@ final class SpaceManager: ObservableObject {
             let context = controller.browserState.themeContext
             if hasThemeCustomization(forSpaceId: spaceId) {
                 context.mirrorsSharedTheme = false
-                // Registry-wide edits (e.g. the General opacity slider
-                // rewriting every theme's alpha) reach pinned windows by
-                // recomputing from this Space's persisted state, which also
-                // re-applies its own overlay opacity on top.
+                // Registry-wide edits reach pinned windows by recomputing
+                // from this Space's persisted color-component adjustments.
                 context.spaceThemeResolver = { [weak self] in
                     self?.resolvedTheme(forSpaceId: spaceId)
                 }
@@ -2446,16 +2589,14 @@ final class SpaceManager: ObservableObject {
         guard incognitoSpaces.contains(where: { $0.spaceId == spaceId }) else { return false }
         if !PhiPreferences.GeneralSettings.suppressCloseIncognitoSpaceWarning.loadValue() {
             let alert = NSAlert()
-            alert.messageText = NSLocalizedString(
-                "This will also close this Incognito Space, are you sure?",
+            alert.messageText = NSLocalizedString("spaces.closeIncognitoConfirmation.title", value: "This will also close this Incognito Space, are you sure?",
                 comment: "Title of the confirmation shown when a close would tear down an Incognito Space")
             alert.alertStyle = .warning
             alert.showsSuppressionButton = true
-            alert.suppressionButton?.title = NSLocalizedString(
-                "Do not ask again",
+            alert.suppressionButton?.title = NSLocalizedString("spaces.closeIncognitoConfirmation.doNotAskAgainCheckbox", value: "Do not ask again",
                 comment: "Suppression checkbox of the close-Incognito-Space confirmation")
-            alert.addButton(withTitle: NSLocalizedString("Close", comment: "Confirm closing an Incognito Space"))
-            alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Cancel button"))
+            alert.addButton(withTitle: NSLocalizedString("spaces.closeIncognitoConfirmation.closeButton", value: "Close", comment: "Confirm closing an Incognito Space"))
+            alert.addButton(withTitle: NSLocalizedString("spaces.closeIncognitoConfirmation.cancelButton", value: "Cancel", comment: "Cancel button"))
             guard alert.runModal() == .alertFirstButtonReturn else { return false }
             if alert.suppressionButton?.state == .on {
                 UserDefaults.standard.set(
@@ -2593,6 +2734,9 @@ final class SpaceManager: ObservableObject {
             updated.insert(makeIncognitoSpace(descriptor: descriptor, sortOrder: index), at: index)
         }
         spaces = updated
+        if updated.contains(where: { $0.spaceId == LocalStore.defaultSpaceId }) {
+            publishResolvedDefaultSpaceThemeIfNeeded(spaceId: LocalStore.defaultSpaceId)
+        }
         let validIds = Set(updated.map(\.spaceId))
 
         // Reconcile each slot: if its active Space has been deleted out
@@ -3215,7 +3359,14 @@ final class SpaceWindowSlot: ObservableObject {
     /// usable snapshot — the override holds the composite captured at
     /// `markTabDrivenClose` time. Per-style animation functions consult
     /// it as a fallback after their own snapshot attempt fails.
-    func activate(spaceId: String, leavingSnapshotOverride: NSImage? = nil, animated: Bool = true, userInitiated: Bool = false, onSwapSettled: (() -> Void)? = nil) {
+    func activate(
+        spaceId: String,
+        leavingSnapshotOverride: NSImage? = nil,
+        animated: Bool = true,
+        userInitiated: Bool = false,
+        onActivationFailed: (() -> Void)? = nil,
+        onSwapSettled: (() -> Void)? = nil
+    ) {
         // A Space-switch animation is treated as atomic: once it starts, further
         // user-initiated switches (pip/icon click, keyboard shortcut, swipe,
         // menu selection) are dropped until it settles, so a second trigger
@@ -3227,6 +3378,7 @@ final class SpaceWindowSlot: ObservableObject {
         AppLogInfo("[SpaceWindowSlot] activate(\(spaceId)) from=\(activeSpaceId ?? "nil") userInitiated=\(userInitiated) animated=\(animated)")
         if userInitiated, spaceId != activeSpaceId, isSwitchAnimationInFlight {
             AppLogInfo("[SpaceWindowSlot] activate(\(spaceId)) dropped: switch animation in flight")
+            onActivationFailed?()
             return
         }
         isPerformingActivate = true
@@ -3234,6 +3386,7 @@ final class SpaceWindowSlot: ObservableObject {
         guard let manager,
               manager.spaces.contains(where: { $0.spaceId == spaceId }) else {
             AppLogWarn("[SpaceWindowSlot] activate ignored: unknown spaceId \(spaceId)")
+            onActivationFailed?()
             return
         }
 
@@ -3290,6 +3443,11 @@ final class SpaceWindowSlot: ObservableObject {
             // so the next cold launch surfaces this Space — not whatever
             // was registered last.
             manager.persistSlotsSnapshot()
+            if userInitiated {
+                PostHogSDK.shared.capture("space_switched", properties: [
+                    "total_spaces": manager.spaces.count,
+                ])
+            }
         }
         recordRegularSpace(spaceId)
 
@@ -3409,6 +3567,8 @@ final class SpaceWindowSlot: ObservableObject {
                     visibleController = target
                     onSwapSettled?()
                 }
+            } else {
+                onSwapSettled?()
             }
             return
         }
@@ -3427,10 +3587,12 @@ final class SpaceWindowSlot: ObservableObject {
         // hide or close. Bail here; the in-flight spawn will surface the Space.
         if pendingSpawnSpaceIds.contains(spaceId) {
             AppLogInfo("[SpaceWindowSlot] activate(\(spaceId)): spawn already in flight, ignoring repeat")
+            onActivationFailed?()
             return
         }
         guard let bridge = ChromiumLauncher.sharedInstance().bridge else {
             AppLogWarn("[SpaceWindowSlot] activate cannot spawn: bridge unavailable")
+            onActivationFailed?()
             return
         }
         // Settle any in-flight swap before spawning, exactly as the swap
@@ -3480,12 +3642,17 @@ final class SpaceWindowSlot: ObservableObject {
                 direction: direction,
                 sourceColorHex: sourceColorHex,
                 targetColorHex: targetColorHex,
+                onActivationFailed: onActivationFailed,
                 onSwapSettled: onSwapSettled
             )
             : nil
         let spawn: () -> Void = { [weak self, weak previous, weak manager] in
             guard let self = self else {
-                spawnSwitch?.settle()
+                if let spawnSwitch {
+                    spawnSwitch.settle()
+                } else {
+                    onActivationFailed?()
+                }
                 return
             }
             // Record the spawn intent *before* createBrowser. Chromium's
@@ -3526,13 +3693,21 @@ final class SpaceWindowSlot: ObservableObject {
             guard let dict else {
                 AppLogWarn("[SpaceWindowSlot] createBrowserWithWindowType returned nil")
                 self.pendingSpawnSpaceIds.remove(spaceId)
-                spawnSwitch?.spawnFailed()
+                if let spawnSwitch {
+                    spawnSwitch.spawnFailed()
+                } else {
+                    onActivationFailed?()
+                }
                 return
             }
             guard let windowIdNumber = dict["windowId"] as? NSNumber else {
                 AppLogWarn("[SpaceWindowSlot] createBrowserWithWindowType returned no windowId")
                 self.pendingSpawnSpaceIds.remove(spaceId)
-                spawnSwitch?.spawnFailed()
+                if let spawnSwitch {
+                    spawnSwitch.spawnFailed()
+                } else {
+                    onActivationFailed?()
+                }
                 return
             }
             let id = windowIdNumber.intValue
@@ -3625,7 +3800,11 @@ final class SpaceWindowSlot: ObservableObject {
                 // the animation back onto the leaving window instead of
                 // leaving it armed forever.
                 AppLogWarn("[SpaceWindowSlot] spawn(\(spaceId)): window \(id) not registered synchronously, skipping reveal")
-                spawnSwitch?.settle()
+                if let spawnSwitch {
+                    spawnSwitch.settle()
+                } else {
+                    onActivationFailed?()
+                }
                 return
             }
             if let spawnSwitch, spawnSwitch.spawnCompleted(registered) {
@@ -3636,7 +3815,10 @@ final class SpaceWindowSlot: ObservableObject {
             // entirely if the user switched elsewhere mid-spawn: the window
             // stays registered and hidden, and a later switch back surfaces
             // it through the normal swap path.
-            guard self.activeSpaceId == spaceId else { return }
+            guard self.activeSpaceId == spaceId else {
+                onActivationFailed?()
+                return
+            }
             self.makeKeyAndOrderFrontHidingSlotTabBar(registered.window)
             self.orderOutIfNotTabbedWithTarget(previous?.window, targetWindow: registered.window)
             // The spawned target is up and the leaving window is hidden — let
@@ -3665,7 +3847,11 @@ final class SpaceWindowSlot: ObservableObject {
                     guard success else {
                         AppLogWarn("[SpaceWindowSlot] ensureIncognitoSpaceProfileLoaded failed; not spawning")
                         self?.pendingSpawnSpaceIds.remove(spaceId)
-                        spawnSwitch?.spawnFailed()
+                        if let spawnSwitch {
+                            spawnSwitch.spawnFailed()
+                        } else {
+                            onActivationFailed?()
+                        }
                         return
                     }
                     spawn()
@@ -3680,7 +3866,11 @@ final class SpaceWindowSlot: ObservableObject {
                         // here so the previous window simply stays on screen.
                         AppLogWarn("[SpaceWindowSlot] ensureProfileLoaded failed for \(pid); not spawning")
                         self?.pendingSpawnSpaceIds.remove(spaceId)
-                        spawnSwitch?.spawnFailed()
+                        if let spawnSwitch {
+                            spawnSwitch.spawnFailed()
+                        } else {
+                            onActivationFailed?()
+                        }
                         return
                     }
                     spawn()
@@ -4225,6 +4415,7 @@ final class SpaceWindowSlot: ObservableObject {
         direction: SwapDirection,
         sourceColorHex: String?,
         targetColorHex: String?,
+        onActivationFailed: (() -> Void)?,
         onSwapSettled: (() -> Void)?
     ) -> SpawnSwitchAnimation? {
         let duration = Self.swapAnimationDuration
@@ -4241,9 +4432,8 @@ final class SpaceWindowSlot: ObservableObject {
         // Same theme choreography as the clicked push-in, except the target
         // theme is resolved from the Space's persisted state — the target
         // window doesn't exist yet. Mirrors what `applyPersistedTheme` sets on
-        // the spawned controller at registration (including the Space's
-        // custom overlay opacity, so the ramp lands on the exact alpha the
-        // registered window will show — no pop at settle).
+        // the spawned controller at registration, including the Space's
+        // color-component adjustment.
         let prevThemeContext = previous.browserState.themeContext
         let sourceTheme = prevThemeContext.currentTheme
         let sourceMirrors = prevThemeContext.mirrorsSharedTheme
@@ -4319,6 +4509,7 @@ final class SpaceWindowSlot: ObservableObject {
         handle.restore = { [weak self] in
             restoreLeaving()
             self?.verticalSwapCancel = nil
+            onActivationFailed?()
         }
 
         handle.armSpawnDeadline = { [weak self, weak handle] in

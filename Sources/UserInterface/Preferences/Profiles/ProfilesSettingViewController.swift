@@ -12,7 +12,7 @@ import SnapKit
 /// SwiftUI `ProfilesSettingsView`.
 class ProfilesSettingViewController: NSViewController, SettingsPane {
     var paneIdentifier: Settings.PaneIdentifier = .profiles
-    var paneTitle: String = NSLocalizedString("Profiles", comment: "Settings - Tab title for profiles management")
+    var paneTitle: String = NSLocalizedString("settings.navigation.profilesTitle", value: "Profiles", comment: "Settings - Tab title for profiles management")
     var toolbarItemIcon: NSImage = NSImage(resource: .settingProfileIcon)
     let hostingController = ProfilesSettingHostingViewController()
 

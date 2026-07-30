@@ -273,11 +273,22 @@ struct PhiAlertAppKitConfiguration {
         }
     }
 
+    /// Which button the Return key activates, matching AppKit's notion of a
+    /// default button.
+    enum DefaultButton: Equatable {
+        /// The confirmation button, as in a standard alert.
+        case confirmation
+        /// No button at all. Irreversible confirmations use this so a
+        /// reflexive Return cannot destroy anything; Escape still cancels.
+        case noButton
+    }
+
     let title: String
     let message: String
     let icon: NSImage
     let maximumHeight: CGFloat
     let style: Style
+    let defaultButton: DefaultButton
     let actions: [PhiAlertAppKitAction]
 
     init(
@@ -286,6 +297,7 @@ struct PhiAlertAppKitConfiguration {
         icon: NSImage,
         maximumHeight: CGFloat = PhiAlertLayout.defaultMaximumHeight,
         style: Style = .normal,
+        defaultButton: DefaultButton = .confirmation,
         primaryAction: PhiAlertAppKitAction
     ) {
         self.init(
@@ -294,6 +306,7 @@ struct PhiAlertAppKitConfiguration {
             icon: icon,
             maximumHeight: maximumHeight,
             style: style,
+            defaultButton: defaultButton,
             actions: [primaryAction]
         )
     }
@@ -304,6 +317,7 @@ struct PhiAlertAppKitConfiguration {
         icon: NSImage = .phiAlertIcon,
         maximumHeight: CGFloat = PhiAlertLayout.defaultMaximumHeight,
         style: Style = .normal,
+        defaultButton: DefaultButton = .confirmation,
         secondaryAction: PhiAlertAppKitAction,
         primaryAction: PhiAlertAppKitAction
     ) {
@@ -313,6 +327,7 @@ struct PhiAlertAppKitConfiguration {
             icon: icon,
             maximumHeight: maximumHeight,
             style: style,
+            defaultButton: defaultButton,
             actions: [secondaryAction, primaryAction]
         )
     }
@@ -323,6 +338,7 @@ struct PhiAlertAppKitConfiguration {
         icon: NSImage,
         maximumHeight: CGFloat = PhiAlertLayout.defaultMaximumHeight,
         style: Style = .normal,
+        defaultButton: DefaultButton = .confirmation,
         leadingAction: PhiAlertAppKitAction,
         secondaryAction: PhiAlertAppKitAction,
         primaryAction: PhiAlertAppKitAction
@@ -333,6 +349,7 @@ struct PhiAlertAppKitConfiguration {
             icon: icon,
             maximumHeight: maximumHeight,
             style: style,
+            defaultButton: defaultButton,
             actions: [leadingAction, secondaryAction, primaryAction]
         )
     }
@@ -343,6 +360,7 @@ struct PhiAlertAppKitConfiguration {
         icon: NSImage,
         maximumHeight: CGFloat,
         style: Style,
+        defaultButton: DefaultButton,
         actions: [PhiAlertAppKitAction]
     ) {
         self.title = title
@@ -350,6 +368,7 @@ struct PhiAlertAppKitConfiguration {
         self.icon = icon
         self.maximumHeight = maximumHeight
         self.style = style
+        self.defaultButton = defaultButton
         self.actions = actions
     }
 }
@@ -495,6 +514,7 @@ private struct PhiAlertAppKitContent: View {
             PhiAlertAppKitActions(
                 actions: configuration.actions,
                 confirmationButtonRole: configuration.style.confirmationButtonRole,
+                defaultButton: configuration.defaultButton,
                 dismiss: dismiss
             )
         }
@@ -504,7 +524,14 @@ private struct PhiAlertAppKitContent: View {
 private struct PhiAlertAppKitActions: View {
     let actions: [PhiAlertAppKitAction]
     let confirmationButtonRole: PhiAlertButtonRole
+    let defaultButton: PhiAlertAppKitConfiguration.DefaultButton
     let dismiss: PhiAlertDismissAction
+
+    /// Nil leaves the confirmation button off the Return key, which is what
+    /// `DefaultButton.noButton` asks for.
+    private var confirmationShortcut: KeyboardShortcut? {
+        defaultButton == .confirmation ? .defaultAction : nil
+    }
 
     @ViewBuilder
     var body: some View {
@@ -512,7 +539,7 @@ private struct PhiAlertAppKitActions: View {
         case 1:
             PhiAlertActions {
                 button(for: actions[0], role: confirmationButtonRole)
-                    .keyboardShortcut(.defaultAction)
+                    .keyboardShortcut(confirmationShortcut)
             }
         case 2:
             PhiAlertActions(
@@ -522,7 +549,7 @@ private struct PhiAlertAppKitActions: View {
                 },
                 primaryAction: {
                     button(for: actions[1], role: confirmationButtonRole)
-                        .keyboardShortcut(.defaultAction)
+                        .keyboardShortcut(confirmationShortcut)
                 }
             )
         case 3:
@@ -536,7 +563,7 @@ private struct PhiAlertAppKitActions: View {
                 },
                 primaryAction: {
                     button(for: actions[2], role: confirmationButtonRole)
-                        .keyboardShortcut(.defaultAction)
+                        .keyboardShortcut(confirmationShortcut)
                 }
             )
         default:
@@ -590,6 +617,7 @@ final class PhiAlertPresenter {
     private enum PresentationStyle {
         case none
         case sheet
+        case standalone
     }
 
     private weak var sourceWindow: NSWindow?
@@ -639,6 +667,23 @@ final class PhiAlertPresenter {
         return presenter.runSheetSynchronously(content: content(dismiss))
     }
 
+    /// Synchronous presentation for callers with no visible window to host a
+    /// sheet (e.g. an agent request arriving while every browser window is
+    /// closed): the alert floats as its own centered panel, themed from the
+    /// shared fallback source.
+    static func runStandaloneSynchronously<Content: View>(
+        @ViewBuilder content: (PhiAlertDismissAction) -> Content
+    ) -> NSApplication.ModalResponse {
+        let presenter = PhiAlertPresenter(
+            sourceWindow: nil,
+            onDismiss: nil
+        )
+        let dismiss = PhiAlertDismissAction { [weak presenter] response in
+            presenter?.dismiss(response)
+        }
+        return presenter.runStandaloneSynchronously(content: content(dismiss))
+    }
+
     func dismiss(_ response: NSApplication.ModalResponse = .cancel) {
         guard let alertWindow else { return }
 
@@ -650,7 +695,7 @@ final class PhiAlertPresenter {
                 alertWindow.close()
                 completeDismissal(response)
             }
-        case .none:
+        case .none, .standalone:
             alertWindow.close()
             completeDismissal(response)
         }
@@ -670,19 +715,46 @@ final class PhiAlertPresenter {
         }
     }
 
+    private func presentStandalone<Content: View>(content: Content) {
+        let alertWindow = makeAlertWindow(
+            content: content,
+            themeProvider: ThemeManager.shared
+        )
+        presentationStyle = .standalone
+        isPresented = true
+        alertWindow.level = .modalPanel
+        alertWindow.center()
+        NSApp.activate(ignoringOtherApps: false)
+        alertWindow.makeKeyAndOrderFront(nil)
+    }
+
     private func runSheetSynchronously<Content: View>(
         content: Content
     ) -> NSApplication.ModalResponse {
         var response: NSApplication.ModalResponse?
         onDismiss = { response = $0 }
         presentSheet(content: content)
+        pumpEvents(while: { response == nil && isPresented })
+        return response ?? .cancel
+    }
 
-        // Chromium owns the outer NSApplication event loop. A nested RunLoop
-        // alone does not dequeue NSEvents, so explicitly pump and dispatch them
-        // while preserving the synchronous API for the attached sheet.
-        while response == nil, isPresented {
+    private func runStandaloneSynchronously<Content: View>(
+        content: Content
+    ) -> NSApplication.ModalResponse {
+        var response: NSApplication.ModalResponse?
+        onDismiss = { response = $0 }
+        presentStandalone(content: content)
+        pumpEvents(while: { response == nil && isPresented })
+        return response ?? .cancel
+    }
+
+    // Chromium owns the outer NSApplication event loop. A nested RunLoop
+    // alone does not dequeue NSEvents, so explicitly pump and dispatch them
+    // while preserving the synchronous API for the presented alert.
+    private func pumpEvents(while shouldContinue: () -> Bool) {
+        while shouldContinue() {
             for mode in Self.synchronousEventPumpModes {
-                guard response == nil, isPresented else { break }
+                guard shouldContinue() else { break }
                 autoreleasepool {
                     let waitUntil = Date(
                         timeIntervalSinceNow: Self.synchronousEventPumpSliceDuration
@@ -698,8 +770,6 @@ final class PhiAlertPresenter {
                 }
             }
         }
-
-        return response ?? .cancel
     }
 
     private func makeAlertWindow<Content: View>(
@@ -806,8 +876,12 @@ extension NSApplication {
         relativeTo sourceWindow: NSWindow? = nil,
         @ViewBuilder content: (PhiAlertDismissAction) -> Content
     ) -> NSApplication.ModalResponse {
-        guard let sourceWindow = resolvedPhiAlertSourceWindow(sourceWindow) else {
-            return .cancel
+        // Without a visible host window the alert floats standalone instead of
+        // silently resolving to .cancel — an agent-initiated prompt must reach
+        // the user even when every browser window is closed.
+        guard let sourceWindow = resolvedPhiAlertSourceWindow(sourceWindow),
+              sourceWindow.isVisible else {
+            return PhiAlertPresenter.runStandaloneSynchronously(content: content)
         }
 
         return PhiAlertPresenter.runSheetSynchronously(
@@ -832,20 +906,18 @@ extension PhiAlert where Icon == EmptyView, AlertContent == EmptyView, Actions =
     /// user confirmed termination.
     static func runQuitAlert(relativeTo sourceWindow: NSWindow? = nil) -> Bool {
         let configuration = PhiAlertAppKitConfiguration(
-            title:  NSLocalizedString(
-                "Are you sure you want to quit Phi?",
+            title:  NSLocalizedString("common.quitConfirmation.title", value: "Are you sure you want to quit Phi?",
                 comment: "Quit confirmation title"
             ),
-            message: NSLocalizedString(
-                "Any unsaved changes may be lost.",
+            message: NSLocalizedString("common.quitConfirmation.message", value: "Any unsaved changes may be lost.",
                 comment: "Quit confirmation message"
             ),
             secondaryAction: PhiAlertAppKitAction(
-                NSLocalizedString("Cancel", comment: "Cancel"),
+                NSLocalizedString("common.quitConfirmation.cancelButton", value: "Cancel", comment: "Cancel"),
                 response: .alertSecondButtonReturn
             ),
             primaryAction: PhiAlertAppKitAction(
-                NSLocalizedString("Quit", comment: "Quit"),
+                NSLocalizedString("common.quitConfirmation.quitButton", value: "Quit", comment: "Quit"),
                 role: .primary,
                 response: .alertFirstButtonReturn
             )

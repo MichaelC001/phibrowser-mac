@@ -8,6 +8,54 @@ import Auth0
 import WebKit
 import JWTDecode
 import PostHog
+import Security
+
+struct AccountDeletionCredentialFence {
+    private static let markerSuffix = ".phi-account-deletion-credentials.pending"
+
+    let markerURL: URL
+
+    static var currentProduct: AccountDeletionCredentialFence {
+        let dataRoot = URL(
+            fileURLWithPath: FileSystemUtils.applicationSupportDirctory(),
+            isDirectory: true
+        )
+        return AccountDeletionCredentialFence(
+            markerURL: dataRoot.deletingLastPathComponent().appendingPathComponent(
+                dataRoot.lastPathComponent + markerSuffix,
+                isDirectory: false
+            )
+        )
+    }
+
+    var isActive: Bool {
+        FileManager.default.fileExists(atPath: markerURL.path)
+    }
+
+    func activate() -> Bool {
+        do {
+            try FileManager.default.createDirectory(
+                at: markerURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try Data("account-deletion-v1".utf8).write(to: markerURL, options: .atomic)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    func deactivate() -> Bool {
+        do {
+            if isActive {
+                try FileManager.default.removeItem(at: markerURL)
+            }
+            return !isActive
+        } catch {
+            return false
+        }
+    }
+}
 
 final class AuthFailureTraceBuffer {
     private struct Entry {
@@ -104,10 +152,24 @@ final class AuthFailureTraceBuffer {
 class AuthManager {
     static let shared = AuthManager()
     private(set) var currentCredentials: Credentials?
+
+    private let accountDeletionStateLock = NSLock()
+    private var accountDeletionInProgress = false
+    private var accountDeletionReplacementLoginToken: UUID?
+    private var accountDeletionHoldsSharedTokenLock = false
+    private let accountDeletionCredentialFence = AccountDeletionCredentialFence.currentProduct
+    private var accountDeletionFenceAwaitingExplicitLogin = false
+
+    var isAccountDeletionInProgress: Bool {
+        accountDeletionStateLock.lock()
+        defer { accountDeletionStateLock.unlock() }
+        return accountDeletionInProgress
+    }
     
     let browserAuthCallbackQueue = DispatchQueue(label: "com.phi.auth.browser-callback")
     var pendingBrowserAuthCallback: ((URL) -> Void)?
     var pendingBrowserAuthCallbackToken: UUID?
+    var pendingBrowserAuthCallbackReplacementLoginToken: UUID?
 
     private lazy var authURLSession: URLSession = {
         let configuration = URLSessionConfiguration.default
@@ -115,7 +177,7 @@ class AuthManager {
         return URLSession(configuration: configuration)
     }()
     
-    private lazy var credentialManager: CredentialsManager =  {
+    private var credentialStoreKey: String {
         let storeKey: String
         #if DEBUG
         if Self.useStagingAuth0 {
@@ -129,12 +191,16 @@ class AuthManager {
         // Keep the release key stable so existing users do not lose cached credentials.
         storeKey = "credentials"
         #endif
+        return storeKey
+    }
+
+    private lazy var credentialManager: CredentialsManager =  {
         // Keep Auth0's automatic retry window short. With rotating refresh tokens, a
         // missed successful response leaves the client holding the previous RT; delayed
         // retries can then exceed Auth0's overlap period and destroy the token family.
         return CredentialsManager(
             authentication: Auth0.authentication(clientId: clicentId, domain: domain, session: authURLSession),
-            storeKey: storeKey,
+            storeKey: credentialStoreKey,
             maxRetries: 1
         )
     }()
@@ -218,8 +284,39 @@ class AuthManager {
         #endif
     }()
 
+    init() {
+        guard accountDeletionCredentialFence.isActive else {
+            return
+        }
+
+        setAccountDeletionInProgress(true)
+        accountDeletionFenceAwaitingExplicitLogin = true
+        let storesCleared = clearCredentialStores(postSharedTokenChange: true)
+        if storesCleared {
+            AppLogInfo(
+                "[AccountDeletion] Cleared fenced credentials; automatic session recovery remains blocked until explicit login"
+            )
+        } else {
+            AppLogError("[AccountDeletion] Startup credential recovery failed; login remains fenced")
+        }
+    }
+
     @MainActor
     func login() async -> Result<Credentials, Error> {
+        let isReplacingDeletedAccount = isAccountDeletionInProgress
+            && accountDeletionFenceAwaitingExplicitLogin
+        guard !isAccountDeletionInProgress || isReplacingDeletedAccount else {
+            return .failure(CancellationError())
+        }
+        let replacementLoginToken = isReplacingDeletedAccount ? UUID() : nil
+        if let replacementLoginToken {
+            setAccountDeletionReplacementLoginToken(replacementLoginToken)
+        }
+        defer {
+            if let replacementLoginToken {
+                clearAccountDeletionReplacementLoginToken(replacementLoginToken)
+            }
+        }
         recordTrace("login-started")
         do {
             // Browser URL scheme handling conflicts with AuthenticationServices, so login runs
@@ -227,9 +324,53 @@ class AuthManager {
             let results = try await Auth0.webAuth(clientId: clicentId, domain: domain)
                 .audience(audience)
                 .scope("openid profile email offline_access")
-                .provider(makeExternalBrowserAuthProvider())
+                .provider(
+                    makeExternalBrowserAuthProvider(
+                        accountDeletionReplacementLoginToken: replacementLoginToken
+                    )
+                )
                 .start()
-            _ = credentialManager.store(credentials: results)
+
+            let holdsDeletionRecoveryLock: Bool
+            if isReplacingDeletedAccount {
+                // Sentinel can have one pre-deletion renewal still waiting on
+                // Auth0. Serialize the replacement login behind that writer,
+                // clear its result, then install the new account while still
+                // holding the cross-process lock.
+                holdsDeletionRecoveryLock = await acquireSharedLock(timeout: 50)
+                guard holdsDeletionRecoveryLock else {
+                    recordTrace("login-blocked-account-deletion-lock-timeout")
+                    return .failure(CancellationError())
+                }
+            } else {
+                holdsDeletionRecoveryLock = false
+            }
+            defer {
+                if holdsDeletionRecoveryLock {
+                    SharedTokenLock.shared.unlock()
+                }
+            }
+
+            if isReplacingDeletedAccount {
+                guard clearLocalAccountData(postSharedTokenChange: false),
+                      accountDeletionCredentialFence.deactivate() else {
+                    AppLogError(
+                        "[AccountDeletion] Could not release the credential fence for explicit login"
+                    )
+                    return .failure(CancellationError())
+                }
+                accountDeletionFenceAwaitingExplicitLogin = false
+                setAccountDeletionInProgress(false)
+            }
+
+            guard !isAccountDeletionInProgress else {
+                _ = clearCredentialStores(postSharedTokenChange: false)
+                return .failure(CancellationError())
+            }
+            guard storeCredentialsIfAllowed(results) else {
+                _ = clearCredentialStores(postSharedTokenChange: false)
+                return .failure(CancellationError())
+            }
             self.currentCredentials = results
             self.lastRenewAttemptAt = Date()
             self.reauthenticationState = .normal
@@ -253,7 +394,39 @@ class AuthManager {
         }
     }
     
-    func logOut() async -> Bool {
+    /// Outcome of the network half of a logout.
+    enum RemoteWebSessionClearOutcome {
+        case cleared
+        /// The logout page never ran at all; whether that abandons the logout
+        /// is the caller's decision. Three ways to get here: the settings pane
+        /// cancelled the transaction (its window was closed — an abandonment —
+        /// or its wait timed out, which the pane compensates by finishing the
+        /// logout locally: with the external-browser flow an unreachable Auth0
+        /// never surfaces as an error here, it simply never calls back), the
+        /// external browser could not be launched, or another Web Auth
+        /// transaction holds Auth0's process-wide barrier.
+        ///
+        /// A failure to launch the browser is a genuine failure rather than an
+        /// abandoned attempt, and it is deliberately treated the same: nothing
+        /// was cleared remotely and nothing is in flight, so the honest answer
+        /// is to abort and let the settings pane report it.
+        ///
+        /// The barrier case is why this is not merely "no worse than doing
+        /// nothing": the transaction still holding the barrier is a login or a
+        /// reauthentication, and its callback stores credentials and rebuilds
+        /// the account. Clearing local state underneath it would be undone the
+        /// moment the user finishes in the browser.
+        case notPerformed
+        /// The call failed. No local state was touched.
+        case failed
+    }
+
+    /// Tears down the Auth0 web session. This is the only network-dependent
+    /// half of a logout: it opens the logout URL in the external browser and
+    /// waits for the callback, so it can fail, stall, or be cancelled. It
+    /// touches no local state, which is cleared separately by
+    /// `clearLocalAccountData()`.
+    func clearRemoteWebSession() async -> RemoteWebSessionClearOutcome {
         do {
             // Google does not support the federated logout flow we want here, so keep it disabled
             // and clear local web state instead.
@@ -261,29 +434,217 @@ class AuthManager {
                 .webAuth(clientId: clicentId, domain: domain)
                 .provider(makeExternalBrowserAuthProvider())
                 .clearSession(federated: false)
-            recordTrace("user-logout-started")
-            _ = credentialManager.clear()
-            lastRenewAttemptAt = nil
-            lastSuccessfulSyncAt = nil
-            reauthenticationState = .normal
-            clearPersistedReauthenticationState()
-            currentCredentials = nil
-            SharedAuthTokenStore.shared.clear()
-            await stopRenewTimer()
-            stopHeartbeat()
-            recordTrace("user-logout-succeeded")
-            // PostHog: Capture logout event and reset analytics identity
-            PostHogSDK.shared.capture("user_logged_out")
-            PostHogSDK.shared.reset()
-            return true
+            return .cleared
+        } catch WebAuthError.userCancelled {
+            recordTrace("remote-web-session-clear-cancelled")
+            return .notPerformed
+        } catch WebAuthError.transactionActiveAlready {
+            recordTrace("remote-web-session-clear-blocked-by-active-transaction")
+            AppLogWarn("clearing the auth0 web session was blocked by an active web auth transaction")
+            return .notPerformed
         } catch {
-            recordTrace("user-logout-failed", details: ["error": error.localizedDescription])
-            AppLogError("logout with auth0 failed: \(error.localizedDescription)")
+            recordTrace("remote-web-session-clear-failed", details: ["error": error.localizedDescription])
+            AppLogError("clearing the auth0 web session failed: \(error.localizedDescription)")
+            return .failed
         }
-        return false
+    }
+
+    /// Starts the irreversible local-auth half of account deletion by
+    /// freezing credential writers and persisting the durable fence. The
+    /// caller posts the signed event synchronously after this returns, while
+    /// the account identity is still present, then performs the silent clear.
+    @MainActor
+    func beginAccountDeletionFinalization() -> Bool {
+        setAccountDeletionInProgress(true)
+        clearAccountDeletionReplacementLoginToken()
+        guard SharedTokenLock.shared.lockWithTimeout(5) else {
+            // Roll back the in-progress flag: the preflight aborts before any
+            // durable fence is written, and the coordinator restores its state
+            // for a retry, so leaving the flag set would fence every credential
+            // path (login/renew/token access) for the rest of the session.
+            setAccountDeletionInProgress(false)
+            AppLogError("[AccountDeletion] Failed to acquire the shared-token lock")
+            return false
+        }
+        let fenceActivated = accountDeletionCredentialFence.activate()
+        guard fenceActivated else {
+            SharedTokenLock.shared.unlock()
+            setAccountDeletionInProgress(false)
+            AppLogError("[AccountDeletion] Failed to persist the credential fence")
+            return false
+        }
+        accountDeletionHoldsSharedTokenLock = true
+        return true
+    }
+
+    /// Cancels in-process writers and performs the first credential clear
+    /// immediately after the signed deletion event has been posted.
+    @MainActor
+    func clearInitialAccountDeletionCredentials() async {
+        cancelOngoingWebAuthentication()
+        if isRenewing {
+            authURLSession.invalidateAndCancel()
+        }
+
+        let holdsSharedLock: Bool
+        if accountDeletionHoldsSharedTokenLock {
+            holdsSharedLock = true
+        } else {
+            // Defense in depth for direct callers that did not run the
+            // coordinator's fenced preflight.
+            holdsSharedLock = await acquireSharedLock(timeout: 5)
+        }
+        defer {
+            if holdsSharedLock {
+                SharedTokenLock.shared.unlock()
+            }
+            accountDeletionHoldsSharedTokenLock = false
+        }
+        let storesCleared = clearLocalAccountData(postSharedTokenChange: false)
+        if !storesCleared {
+            AppLogError("[AccountDeletion] Initial credential clear failed")
+        }
+    }
+
+    /// Clears every piece of local account state: the stored credentials, the
+    /// cross-process token store, the cached account identity (profile, avatar
+    /// bytes, current account reference) and the timers that assume a live
+    /// session.
+    ///
+    /// Nothing here depends on the network, so it cannot fail for connectivity
+    /// reasons and callers can run it on its own, without
+    /// `clearRemoteWebSession()`. Order matters at the end: the persisted
+    /// reauthentication state lives in the account's defaults, so it has to be
+    /// dropped while the account reference is still around.
+    @MainActor
+    @discardableResult
+    func clearLocalAccountData(postSharedTokenChange: Bool = true) -> Bool {
+        currentCredentials = nil
+        lastRenewAttemptAt = nil
+        lastSuccessfulSyncAt = nil
+        reauthenticationState = .normal
+        clearPersistedReauthenticationState()
+        stopRenewTimer()
+        stopHeartbeat()
+        AccountController.shared.clearCachedAccount()
+        return clearCredentialStores(postSharedTokenChange: postSharedTokenChange)
+    }
+
+    func setAccountDeletionInProgress(_ value: Bool) {
+        accountDeletionStateLock.lock()
+        accountDeletionInProgress = value
+        accountDeletionStateLock.unlock()
+    }
+
+    func permitsExternalBrowserAuthentication(
+        accountDeletionReplacementLoginToken token: UUID?
+    ) -> Bool {
+        accountDeletionStateLock.lock()
+        defer { accountDeletionStateLock.unlock() }
+        guard accountDeletionInProgress else {
+            return true
+        }
+        guard let token else {
+            return false
+        }
+        return token == accountDeletionReplacementLoginToken
+    }
+
+    func setAccountDeletionReplacementLoginToken(_ token: UUID) {
+        accountDeletionStateLock.lock()
+        accountDeletionReplacementLoginToken = token
+        accountDeletionStateLock.unlock()
+    }
+
+    func clearAccountDeletionReplacementLoginToken(_ token: UUID? = nil) {
+        accountDeletionStateLock.lock()
+        defer { accountDeletionStateLock.unlock() }
+        guard token == nil || token == accountDeletionReplacementLoginToken else {
+            return
+        }
+        accountDeletionReplacementLoginToken = nil
+    }
+
+    private func clearCredentialStores(postSharedTokenChange: Bool) -> Bool {
+        _ = credentialManager.clear()
+        var localStatus = storedAuth0CredentialStatus()
+        if localStatus == errSecSuccess {
+            _ = credentialManager.clear()
+            localStatus = storedAuth0CredentialStatus()
+        }
+        let localCleared = localStatus == errSecItemNotFound
+        if !localCleared {
+            AppLogError(
+                "[Auth] Local Auth0 credential verification failed with OSStatus \(localStatus)"
+            )
+        }
+
+        let sharedCleared = SharedAuthTokenStore.shared.clear(
+            postChangeNotification: postSharedTokenChange
+        )
+        return localCleared && sharedCleared
+    }
+
+    private func storeCredentialsIfAllowed(_ credentials: Credentials) -> Bool {
+        guard !isAccountDeletionInProgress else {
+            return false
+        }
+        return credentialManager.store(credentials: credentials)
+    }
+
+    private func storedAuth0CredentialStatus() -> OSStatus {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: Bundle.main.bundleIdentifier ?? FileSystemUtils.bundleId,
+            kSecAttrAccount as String: credentialStoreKey,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        return SecItemCopyMatching(query as CFDictionary, nil)
+    }
+
+    /// User-initiated logout: best-effort remote session teardown followed by
+    /// the local clear.
+    ///
+    /// Every remote failure past a started attempt is logged and ignored,
+    /// because the local clear is what actually ends the session and it must
+    /// not depend on the network. (It used to: the remote step shared a `do`
+    /// block with the local clear, so any remote failure skipped the clear and
+    /// left the user logged in.)
+    ///
+    /// Returns false when the remote step never ran. Whether that abandons the
+    /// logout is the settings pane's decision: window-close cancellation and
+    /// launch/barrier failures abandon it, while the pane's own timeout gives
+    /// up on the network only and continues via `completeLogoutLocally()`.
+    func logOut() async -> Bool {
+        if case .notPerformed = await clearRemoteWebSession() {
+            return false
+        }
+        await completeLogoutLocally()
+        return true
+    }
+
+    /// The local half of a user-initiated logout: the analytics capture, the
+    /// local clear, and the logout traces. Called by `logOut()` after the
+    /// remote attempt, and directly by the settings pane when its timeout
+    /// gives up waiting for the Auth0 callback — an unreachable Auth0 must
+    /// not leave the user logged in.
+    @MainActor
+    func completeLogoutLocally() {
+        recordTrace("user-logout-started")
+        // PostHog: capture the logout event before the clear, which drops the
+        // account reference and with it the analytics identity.
+        PostHogSDK.shared.capture("user_logged_out")
+        clearLocalAccountData()
+        recordTrace("user-logout-succeeded")
+        PostHogSDK.shared.reset()
     }
     
     func refreshAuthStatus() async {
+        guard !isAccountDeletionInProgress else {
+            currentCredentials = nil
+            recordTrace("refresh-auth-status-skipped-account-deletion")
+            return
+        }
         recordTrace("refresh-auth-status-started")
         await MainActor.run {
             hydrateAccountForReauthenticationIfNeeded()
@@ -312,6 +673,9 @@ class AuthManager {
 
     /// Alwayws used to determin wheather the use has logged in
     func hasRecoverableLoginSession() -> Bool {
+        guard !isAccountDeletionInProgress else {
+            return false
+        }
 #if DEBUG
         if EnvironmentChecker.isRunningPreview {
             return false
@@ -325,6 +689,9 @@ class AuthManager {
     }
     
     func getActiveCredentials() async -> Credentials? {
+        guard !isAccountDeletionInProgress else {
+            return nil
+        }
 #if DEBUG
         if EnvironmentChecker.isRunningPreview {
             return nil
@@ -370,6 +737,10 @@ class AuthManager {
         if hasLocallyValidCredentials {
             do {
                 let credential = try await credentialManager.credentials()
+                guard !isAccountDeletionInProgress else {
+                    _ = clearCredentialStores(postSharedTokenChange: false)
+                    return nil
+                }
                 self.currentCredentials = credential
                 recordTrace(
                     "active-credentials-restored-from-local-store",
@@ -396,10 +767,16 @@ class AuthManager {
     }
     
     func storedUserInfo() -> UserInfo? {
-        credentialManager.user
+        guard !isAccountDeletionInProgress else {
+            return nil
+        }
+        return credentialManager.user
     }
 
     func checkLoginStatusOnChromiumLaunch() -> Bool {
+        guard !isAccountDeletionInProgress else {
+            return false
+        }
         // Hot path: Chromium polls this on every page load / tab change. Once
         // login has finished and we have credentials in memory, the answer is
         // already settled — `transitionToLoggedOutState` clears
@@ -436,6 +813,9 @@ class AuthManager {
     }
     
     func getAccessTokenSyncly() -> String? {
+        guard !isAccountDeletionInProgress else {
+            return nil
+        }
         if hasReauthenticationGraceSession() {
             return nil
         }
@@ -503,6 +883,7 @@ class AuthManager {
     /// fast-path optimization to avoid spawning a Task that the preflight
     /// would immediately skip; the preflight still does its own check.
     func shouldRenewOnReopen() -> Bool {
+        if isAccountDeletionInProgress { return false }
         if isRenewing { return false }
         return shouldRenewNow()
     }
@@ -520,6 +901,10 @@ class AuthManager {
         }
 
         let preflight = await MainActor.run { () -> RenewPreflightDecision in
+            if isAccountDeletionInProgress {
+                recordTrace("renew-skipped", details: ["reason": "account_deletion"])
+                return .skip
+            }
             if hasReauthenticationGraceSession() {
                 recordTrace("renew-skipped", details: ["reason": "reauthentication_required"])
                 AppLogInfo("[TokenRenew] skip renew: reauthentication is required")
@@ -638,7 +1023,7 @@ class AuthManager {
             refreshToken: refreshToken,
             expiresIn: sharedExpiresAt
         )
-        if credentialManager.store(credentials: imported) {
+        if storeCredentialsIfAllowed(imported) {
             self.currentCredentials = imported
             self.lastSuccessfulSyncAt = sharedToken.updatedAt
             recordTrace("renew-imported-shared-token", details: sharedTokenDetails(sharedToken))
@@ -732,6 +1117,15 @@ class AuthManager {
                 }()
 
                 Task { @MainActor in
+                    if self.isAccountDeletionInProgress {
+                        _ = self.clearCredentialStores(postSharedTokenChange: false)
+                        self.currentCredentials = nil
+                        self.isRenewing = false
+                        self.recordTrace("renew-result-discarded-account-deletion")
+                        continuation.resume(returning: nil)
+                        return
+                    }
+
                     switch result {
                     case .success(let credentials):
                         self.lastRenewAttemptAt = Date()
@@ -838,18 +1232,14 @@ class AuthManager {
     func transitionToLoggedOutState() {
         Task { @MainActor [weak self] in
             guard let self else { return }
+            if self.isAccountDeletionInProgress {
+                self.recordTrace("forced-logout-absorbed-account-deletion")
+                _ = self.clearLocalAccountData(postSharedTokenChange: false)
+                return
+            }
             AppLogInfo("transition auth state to login: clearing local credentials after unrecoverable session loss")
-            _ = self.credentialManager.clear()
-            SharedAuthTokenStore.shared.clear()
-            self.currentCredentials = nil
-            self.lastRenewAttemptAt = nil
-            self.lastSuccessfulSyncAt = nil
-            self.reauthenticationState = .normal
-            self.clearPersistedReauthenticationState()
-            self.stopRenewTimer()
-            self.stopHeartbeat()
+            self.clearLocalAccountData()
             LoginController.shared.phase = .login
-            AccountController.shared.account = nil
             MainBrowserWindowControllersManager.shared.closeAllWindows()
             LoginController.shared.showLoginWindow()
         }
@@ -938,12 +1328,17 @@ class AuthManager {
 
     @MainActor
     func storeReauthenticatedCredentials(_ credentials: Credentials) -> Bool {
+        guard !isAccountDeletionInProgress else {
+            return false
+        }
         guard reauthenticatedCredentialsMatchCurrentAccount(credentials) else {
             recordTrace("reauthentication-user-mismatch")
             return false
         }
 
-        _ = credentialManager.store(credentials: credentials)
+        guard storeCredentialsIfAllowed(credentials) else {
+            return false
+        }
         currentCredentials = credentials
         lastRenewAttemptAt = Date()
         if syncSharedTokens(credentials, renewedBy: "phi-reauthentication") {
@@ -957,7 +1352,8 @@ class AuthManager {
 
     @MainActor
     func hydrateAccountForReauthenticationIfNeeded() {
-        guard AccountController.shared.account == nil,
+        guard !isAccountDeletionInProgress,
+              AccountController.shared.account == nil,
               let storedUserInfo = credentialManager.user else {
             return
         }
@@ -985,6 +1381,9 @@ class AuthManager {
     }
 
     func recoverFromSharedStoreIfNeeded(reason: String) async {
+        guard !isAccountDeletionInProgress else {
+            return
+        }
         // Read the snapshot we need for the comparison on the main actor first to avoid
         // racing with renew callbacks and timer-driven mutations of `lastSuccessfulSyncAt`.
         let lastSyncedAt = await MainActor.run { lastSuccessfulSyncAt }
@@ -1018,6 +1417,9 @@ class AuthManager {
     /// shared token and leave the SDK with a rotated refresh token.
     @MainActor
     private func applySharedStoreRecoveryLocked(reason: String, lastSyncedAt: Date?) {
+        guard !isAccountDeletionInProgress else {
+            return
+        }
         guard let sharedToken = SharedAuthTokenStore.shared.read() else {
             recordTrace("shared-store-recovery-skipped", details: ["reason": "\(reason):no_shared_token"])
             return
@@ -1077,7 +1479,7 @@ class AuthManager {
             expiresIn: sharedExpiresAt
         )
 
-        if credentialManager.store(credentials: credentials) {
+        if storeCredentialsIfAllowed(credentials) {
             self.currentCredentials = credentials
             self.lastSuccessfulSyncAt = sharedToken.updatedAt
             recordTrace("shared-store-recovery-imported-token", details: sharedTokenDetails(sharedToken))
@@ -1197,6 +1599,9 @@ class AuthManager {
     /// pattern in Sentry if it actually happens.
     @discardableResult
     private func syncSharedTokens(_ credentials: Credentials, renewedBy: String = "phi") -> Bool {
+        guard !isAccountDeletionInProgress else {
+            return false
+        }
         let auth0Sub = User(from: credentials.idToken).sub
         let ok = SharedAuthTokenStore.shared.upsert(
             accessToken: credentials.accessToken,

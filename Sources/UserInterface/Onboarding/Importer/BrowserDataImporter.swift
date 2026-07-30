@@ -279,16 +279,16 @@ class BrowserDataImporter {
         switch option {
         case .arc:
             phase = .importingArcData
-            status = NSLocalizedString("Importing Arc data...", comment: "Browser data importer - Status message while importing Arc browser data")
+            status = NSLocalizedString("oobe.importBrowserData.progress.importingArc", value: "Importing Arc data...", comment: "Browser data importer - Status message while importing Arc browser data")
         case .chrome:
             phase = .importingChromeData
-            status = NSLocalizedString("Importing Chrome data...", comment: "Browser data importer - Status message while importing Chrome browser data")
+            status = NSLocalizedString("oobe.importBrowserData.progress.importingChrome", value: "Importing Chrome data...", comment: "Browser data importer - Status message while importing Chrome browser data")
         case .safari:
             phase = .importingSafariData
-            status = NSLocalizedString("Importing Safari data...", comment: "Browser data importer - Status message while importing Safari browser data")
+            status = NSLocalizedString("oobe.importBrowserData.progress.importingSafari", value: "Importing Safari data...", comment: "Browser data importer - Status message while importing Safari browser data")
         case .file:
             phase = .importingFile
-            status = NSLocalizedString("Importing data from file...", comment: "Browser data importer - Status message while importing data from a file")
+            status = NSLocalizedString("oobe.importBrowserData.progress.importingFile", value: "Importing data from file...", comment: "Browser data importer - Status message while importing data from a file")
         @unknown default:
             phase = .waiting
             status = ""
@@ -298,10 +298,10 @@ class BrowserDataImporter {
     private func updateCompletionStatus() {
         phase = .done
         if failedImports.isEmpty {
-            status = NSLocalizedString("Import completed successfully", comment: "Browser data importer - Status message when all imports completed successfully")
+            status = NSLocalizedString("oobe.importBrowserData.progress.completed", value: "Import completed successfully", comment: "Browser data importer - Status message when all imports completed successfully")
         } else {
             let failedBrowserNames = failedImports.map { browserName(for: $0) }.joined(separator: ", ")
-            let format = NSLocalizedString("Import completed with errors. Failed to import from: %@", comment: "Browser data importer - Status message when some imports failed, shows list of failed browsers")
+            let format = NSLocalizedString("oobe.importBrowserData.progress.completedWithErrors", value: "Import completed with errors. Failed to import from: %@", comment: "Browser data importer - Status message when some imports failed, shows list of failed browsers")
             status = String(format: format, failedBrowserNames)
         }
     }

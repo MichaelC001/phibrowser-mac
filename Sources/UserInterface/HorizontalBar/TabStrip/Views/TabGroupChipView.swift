@@ -202,8 +202,7 @@ final class TabGroupChipView: NSView {
         addSubview(collapseImageView)
         mosaicView.isHidden = true
 
-        toolTip = NSLocalizedString(
-            "Click the title for overview. Click the arrow to expand or collapse.",
+        toolTip = NSLocalizedString("toolbar.tabGroupChip.interactionTooltip", value: "Click the title for overview. Click the arrow to expand or collapse.",
             comment: "Tab Groups - tooltip for horizontal-strip group chip interactions")
     }
 
@@ -561,11 +560,9 @@ final class TabGroupChipView: NSView {
 
     override func accessibilityLabel() -> String? {
         let format = isCollapsed
-            ? NSLocalizedString(
-                "%@ tab group, %d tabs, collapsed",
+            ? NSLocalizedString("toolbar.tabGroupChip.collapsedAccessibilityLabel", value: "%@ tab group, %d tabs, collapsed",
                 comment: "Tab Groups - VoiceOver label for collapsed horizontal-strip group chip")
-            : NSLocalizedString(
-                "%@ tab group, %d tabs, expanded",
+            : NSLocalizedString("toolbar.tabGroupChip.expandedAccessibilityLabel", value: "%@ tab group, %d tabs, expanded",
                 comment: "Tab Groups - VoiceOver label for expanded horizontal-strip group chip")
         return String(format: format, color.localizedName, memberCount)
     }

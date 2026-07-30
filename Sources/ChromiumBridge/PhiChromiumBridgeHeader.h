@@ -425,6 +425,14 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
 /// to the local Chromium profile display. Called synchronously on the UI
 /// thread per settings page load — must not block (answer from cache).
 - (NSDictionary<NSString *, id> * _Nullable)getPhiAccountInfo;
+
+/// The user pressed "delete account and data" on the Phi account subpage in
+/// chrome://settings. Mac owns everything from here: the warning dialog that
+/// names the account, the deletion request, clearing the local credentials
+/// and data, and quitting. Chromium keeps no state of its own about the flow
+/// and does not wait for a result. Called on the UI thread — return promptly
+/// and present asynchronously, never from inside this call.
+- (void)startPhiAccountDeletion;
 @end
 
 @protocol PhiChromiumBridgeProtocol <NSObject>
@@ -1097,6 +1105,16 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
 - (void)openProfileDataPage:(NSString *)profileId
                        page:(NSString *)page
                  completion:(void (^)(BOOL success, NSString * _Nullable error))completion;
+
+/// Lists `profileId`'s installed extensions (enabled and disabled, excluding
+/// built-in component entries, apps, and themes). `completion` fires on the UI
+/// thread with one dict per extension — keys @"id" (Chrome Web Store id),
+/// @"name", @"enabled", @"icon" (a `data:image/png;base64,...` URL, empty when
+/// unavailable) — or nil on failure. Loads the profile and waits for its
+/// extension system first if needed, so it may be async for a profile that
+/// isn't currently in memory.
+- (void)listProfileExtensions:(NSString *)profileId
+                   completion:(void (^)(NSArray<NSDictionary<NSString *, id> *> * _Nullable extensions))completion;
 
 // ==========================================================================
 // DevTools agent transport (Mac → Chromium)

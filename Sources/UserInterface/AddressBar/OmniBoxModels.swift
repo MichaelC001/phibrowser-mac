@@ -326,7 +326,7 @@ struct OmniBoxConfiguration {
         showBookmarks: true,
         showHistory: true,
         showTopSites: true,
-        placeholder: NSLocalizedString("Search or Enter URL", comment: "Omnibox suggestion - Placeholder text for search or URL entry")
+        placeholder: NSLocalizedString("addressBar.configuration.defaultPlaceholder", value: "Search or Enter URL", comment: "Address bar - Default placeholder supplied by its configuration")
     )
 }
 

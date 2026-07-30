@@ -144,7 +144,7 @@ struct NotificationMessageCardContent: View {
         if let buttonTitle = card.buttonTitle, !buttonTitle.isEmpty {
             return buttonTitle
         }
-        return NSLocalizedString("Run", comment: "Notification card run button - Executes the suggested action")
+        return NSLocalizedString("notifications.card.runButton", value: "Run", comment: "Notification card run button - Executes the suggested action")
     }
 
     var body: some View {
@@ -294,7 +294,7 @@ struct NotificationMessageCardContent: View {
             let menu = NSMenu()
             
             let popupItem = NSMenuItem(
-                title: NSLocalizedString("Pop up", comment: "Notification menu option - Enable auto popup for notification cards"),
+                title: NSLocalizedString("notifications.contextMenu.enablePopupAction", value: "Pop up", comment: "Notification menu option - Enable auto popup for notification cards"),
                 action: #selector(NotificationCardMenuHelper.setPopupMode),
                 keyEquivalent: ""
             )
@@ -303,7 +303,7 @@ struct NotificationMessageCardContent: View {
             menu.addItem(popupItem)
             
             let muteItem = NSMenuItem(
-                title: NSLocalizedString("Mute", comment: "Notification menu option - Disable auto popup for notification cards"),
+                title: NSLocalizedString("notifications.contextMenu.disablePopupAction", value: "Mute", comment: "Notification menu option - Disable auto popup for notification cards"),
                 action: #selector(NotificationCardMenuHelper.setMuteMode),
                 keyEquivalent: ""
             )

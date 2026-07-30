@@ -27,6 +27,149 @@ import Foundation
 ///   response ← {"id": N, "responseJson": "…"}  or  {"id": N, "error": "…"}
 ///   event    ← {"event": "agentSpace.…", "payloadJson": "…"}
 
+/// One app-issued logical driver session. `capability` is a bearer secret
+/// returned on the first `/phi-agent` upgrade and presented by sandboxed or
+/// detached helpers on later connections. It keeps process churn from
+/// collapsing authorization back to a caller-supplied pid or display name.
+struct AgentDriverSession {
+    let principalId: String
+    let capability: String
+    let identity: AgentIdentity
+    /// The owning process's session anchor at issuance (see
+    /// `AgentPeerIdentity.processSessionAnchor`), nil when the identity had
+    /// no resolvable process. Re-resolving it answers "is the owner still
+    /// that same process launch?" for adoption and pruning.
+    let processAnchor: String?
+    /// Issuance time — the prune sweep's grace reference, so a session can't
+    /// be dropped between being minted on the auth queue and its connection
+    /// or task becoming visible.
+    let createdAt: Date
+}
+
+/// App-session registry for logical driver principals. A live agent process
+/// gets one principal across its short-lived helper connections; a detached
+/// helper must prove delegation by presenting the issued capability.
+final class AgentDriverSessionRegistry {
+    static let shared = AgentDriverSessionRegistry()
+
+    private let lock = NSLock()
+    private var sessionsByCapability: [String: AgentDriverSession] = [:]
+    private var capabilityByProcessAnchor: [String: String] = [:]
+    private var sweepTimer: DispatchSourceTimer?
+
+    private static let sweepInterval: TimeInterval = 60
+    /// A session younger than this is never pruned, covering the gap between
+    /// issuance on the auth queue and its connection/task becoming visible to
+    /// the sweep's retention query.
+    static let pruneGraceSeconds: TimeInterval = 120
+
+    private init() {}
+
+    func session(forCapability capability: String) -> AgentDriverSession? {
+        lock.lock(); defer { lock.unlock() }
+        return sessionsByCapability[capability]
+    }
+
+    func session(for identity: AgentIdentity) -> AgentDriverSession {
+        lock.lock(); defer { lock.unlock() }
+        ensureSweepScheduledLocked()
+        let anchor = AgentPeerIdentity.processSessionAnchor(for: identity)
+        if let anchor,
+           let capability = capabilityByProcessAnchor[anchor],
+           let existing = sessionsByCapability[capability] {
+            return existing
+        }
+
+        let session = AgentDriverSession(
+            principalId: UUID().uuidString,
+            capability: Self.makeCapability(),
+            identity: identity,
+            processAnchor: anchor,
+            createdAt: Date())
+        sessionsByCapability[session.capability] = session
+        if let anchor {
+            capabilityByProcessAnchor[anchor] = session.capability
+        }
+        return session
+    }
+
+    /// Bounds capability lifetime and registry growth: drops every session
+    /// whose owning process launch is gone — invalidating its capability —
+    /// EXCEPT principals named in `retaining` (live task owners and live
+    /// connections), so a mirror daemon can finish its deferred completion
+    /// after its agent exits and a dead owner's task stays adoptable until
+    /// the task itself ends. `now` is injectable for tests.
+    func prune(retaining retainedPrincipals: Set<String>, now: Date = Date()) {
+        lock.lock(); defer { lock.unlock() }
+        for (capability, session) in sessionsByCapability {
+            guard now.timeIntervalSince(session.createdAt) > Self.pruneGraceSeconds,
+                  !retainedPrincipals.contains(session.principalId),
+                  !Self.ownerProcessAlive(session) else { continue }
+            sessionsByCapability[capability] = nil
+            if let anchor = session.processAnchor,
+               capabilityByProcessAnchor[anchor] == capability {
+                capabilityByProcessAnchor[anchor] = nil
+            }
+        }
+    }
+
+    /// Lazy periodic sweep, armed once the first session exists. Retention
+    /// state lives on the main thread (task records) and behind the channel
+    /// registry's own lock, so the gather hops to main before pruning.
+    private func ensureSweepScheduledLocked() {
+        guard sweepTimer == nil else { return }
+        let timer = DispatchSource.makeTimerSource(queue: .global(qos: .utility))
+        timer.schedule(deadline: .now() + Self.sweepInterval,
+                       repeating: Self.sweepInterval)
+        timer.setEventHandler {
+            DispatchQueue.main.async {
+                let retained = AgentSpaceManager.shared.liveDriverPrincipalIds
+                    .union(AgentDirectChannelRegistry.shared.livePrincipalIds)
+                AgentDriverSessionRegistry.shared.prune(retaining: retained)
+            }
+        }
+        timer.resume()
+        sweepTimer = timer
+    }
+
+    /// The restart-recovery rule: `callerPrincipalId` may adopt a task owned
+    /// by `taskPrincipalId` only when the owning session's process is GONE
+    /// (its anchor no longer resolves to the same launch) and the caller is
+    /// the same consent identity that owned it. Never true while the owner
+    /// still runs — a live task stays isolated to its own principal — and
+    /// never true for the unresolvable "unknown" identity, which would make
+    /// every unidentified peer interchangeable.
+    func canAdopt(taskPrincipalId: String, callerPrincipalId: String) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard taskPrincipalId != callerPrincipalId,
+              let owner = sessionsByCapability.values
+                .first(where: { $0.principalId == taskPrincipalId }),
+              let caller = sessionsByCapability.values
+                .first(where: { $0.principalId == callerPrincipalId }),
+              owner.identity.key == caller.identity.key,
+              owner.identity.key != "unknown" else {
+            return false
+        }
+        return !Self.ownerProcessAlive(owner)
+    }
+
+    /// True while the session's owning process is still the launch the
+    /// session was issued to. A nil anchor (identity with no resolvable
+    /// process) can never be revalidated and counts as gone.
+    private static func ownerProcessAlive(_ session: AgentDriverSession) -> Bool {
+        guard let anchor = session.processAnchor else { return false }
+        return AgentPeerIdentity.processSessionAnchor(for: session.identity) == anchor
+    }
+
+    private static func makeCapability() -> String {
+        let bytes = SymmetricKey(size: .bits256).withUnsafeBytes { Data($0) }
+        return bytes.base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+    }
+}
+
 /// Tracks live `/phi-agent` connections and routes app responses/broadcasts to
 /// them. `ExtensionMessaging` consults this before falling back to the Chromium
 /// bridge, so a response for a direct-channel request never leaves the app.
@@ -52,6 +195,13 @@ final class AgentDirectChannelRegistry {
         return !connections.isEmpty
     }
 
+    /// Principals with at least one live `/phi-agent` connection — retained
+    /// by the driver-session registry's prune sweep.
+    var livePrincipalIds: Set<String> {
+        lock.lock(); defer { lock.unlock() }
+        return Set(connections.values.map(\.driverPrincipalId))
+    }
+
     func add(_ connection: AgentDirectConnection) {
         lock.lock(); connections[connection.id] = connection; lock.unlock()
     }
@@ -75,7 +225,8 @@ final class AgentDirectChannelRegistry {
 
     /// Registers a request awaiting an async app reply, arming a timeout that
     /// fails it if the handler never responds.
-    func registerPending(requestId: String, connectionId: String, clientId: Int) {
+    func registerPending(requestId: String, connectionId: String, clientId: Int,
+                         timeoutSeconds: TimeInterval = 60) {
         let timeout = DispatchWorkItem { [weak self] in
             _ = self?.deliverError(requestId: requestId, error: "timed out")
         }
@@ -83,7 +234,7 @@ final class AgentDirectChannelRegistry {
         pending[requestId] = Pending(connectionId: connectionId, clientId: clientId,
                                      timeout: timeout)
         lock.unlock()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 60, execute: timeout)
+        DispatchQueue.main.asyncAfter(deadline: .now() + timeoutSeconds, execute: timeout)
     }
 
     /// Delivers an app response to the originating direct connection. Returns
@@ -117,7 +268,17 @@ final class AgentDirectChannelRegistry {
         return true
     }
 
-    /// Pushes an `agentSpace.*` broadcast to every live direct connection.
+    /// Pushes a task event only to connections authorized as its owning
+    /// logical driver. Several round/helper connections may share a principal.
+    func broadcast(type: String, payloadJson: String, principalId: String) {
+        lock.lock()
+        let conns = connections.values.filter { $0.driverPrincipalId == principalId }
+        lock.unlock()
+        for c in conns { c.sendEvent(type: type, payloadJson: payloadJson) }
+    }
+
+    /// App-global, non-task event fan-out retained for existing extension-style
+    /// broadcasts. Task/user-content events must use the principal overload.
     func broadcast(type: String, payloadJson: String) {
         lock.lock(); let conns = Array(connections.values); lock.unlock()
         for c in conns { c.sendEvent(type: type, payloadJson: payloadJson) }
@@ -129,11 +290,15 @@ final class AgentDirectChannelRegistry {
 /// requests and encodes responses/events. Owns its fd for its whole lifetime.
 final class AgentDirectConnection {
     let id = UUID().uuidString
+    let driverPrincipalId: String
 
     private let fd: Int32
     /// The authenticated identity of the connecting code agent, forwarded to
     /// `agentSpace.create` so the Space it opens is badged with who drives it.
     private let agentName: String
+    /// Bearer capability for this logical driver session. Echoed on the 101
+    /// response so the skill can delegate it to its sandboxed/detached helpers.
+    private let agentCapability: String
     /// Pid of the resolved agent process, echoed back on the 101 upgrade
     /// (X-Phi-Agent-Pid) — the authoritative ancestry answer for a skill
     /// round that cannot walk its own (Codex's seatbelt denies the sysctls
@@ -151,10 +316,13 @@ final class AgentDirectConnection {
     private static let wsGUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
     private static let maxFrameBytes = 8 * 1024 * 1024
 
-    init(fd: Int32, agentName: String = "", agentPid: pid_t? = nil) {
+    init(fd: Int32, agentName: String = "", agentPid: pid_t? = nil,
+         driverPrincipalId: String, agentCapability: String) {
         self.fd = fd
         self.agentName = agentName
         self.agentPid = agentPid
+        self.driverPrincipalId = driverPrincipalId
+        self.agentCapability = agentCapability
         self.queue = DispatchQueue(label: "com.phibrowser.cdp.direct.\(fd)")
     }
 
@@ -216,10 +384,12 @@ final class AgentDirectConnection {
         }
         let accept = Self.acceptKey(for: key)
         let claim = agentPid.map { "X-Phi-Agent-Pid: \($0)\r\n" } ?? ""
+        let capability = "X-Phi-Agent-Capability: \(agentCapability)\r\n"
         writeRaw(
             "HTTP/1.1 101 Switching Protocols\r\n" +
             "Upgrade: websocket\r\nConnection: Upgrade\r\n" +
             claim +
+            capability +
             "Sec-WebSocket-Accept: \(accept)\r\n\r\n")
         handshakeDone = true
         return true
@@ -300,11 +470,16 @@ final class AgentDirectConnection {
     /// then reply synchronously or await the async app response.
     private func route(clientId: Int, type: String, payloadJson: String) {
         let requestId = "agentdirect:\(id):\(clientId)"
+        // Credential requests can legitimately sit behind the 60s approval
+        // prompt AND a 60s in-flow unlock prompt; don't let the transport kill
+        // them under the user's nose. Everything else keeps the tight timeout.
+        let timeout: TimeInterval = type.hasPrefix("credentials.") ? 180 : 60
         AgentDirectChannelRegistry.shared.registerPending(
-            requestId: requestId, connectionId: id, clientId: clientId)
+            requestId: requestId, connectionId: id, clientId: clientId,
+            timeoutSeconds: timeout)
         let sync = ExtensionMessageRouter.shared.handle(
             type: type, payload: payloadJson, requestId: requestId, senderId: "cdp",
-            agentName: agentName)
+            agentName: agentName, driverPrincipalId: driverPrincipalId)
         if let sync {
             AgentDirectChannelRegistry.shared.deliverResponse(
                 requestId: requestId, response: sync)

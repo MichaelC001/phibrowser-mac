@@ -11,6 +11,7 @@ final class SentinelVersionGuardTests: XCTestCase {
     private var defaultsSuiteName: String!
     private var now: Date!
     private var postedSnapshots: [SentinelVersionGuardSnapshot]!
+    private var reportedWarnings: [SentinelVersionGuardWarning]!
     private var launchCount: Int!
 
     override func setUp() {
@@ -19,6 +20,7 @@ final class SentinelVersionGuardTests: XCTestCase {
         defaults = UserDefaults(suiteName: defaultsSuiteName)!
         now = Date(timeIntervalSince1970: 1_778_620_000)
         postedSnapshots = []
+        reportedWarnings = []
         launchCount = 0
     }
 
@@ -28,6 +30,7 @@ final class SentinelVersionGuardTests: XCTestCase {
         defaults = nil
         now = nil
         postedSnapshots = nil
+        reportedWarnings = nil
         launchCount = nil
         super.tearDown()
     }
@@ -43,6 +46,7 @@ final class SentinelVersionGuardTests: XCTestCase {
         guarder.apply(decision)
 
         XCTAssertEqual(postedSnapshots.count, 0)
+        XCTAssertEqual(reportedWarnings.count, 0)
         XCTAssertEqual(launchCount, 0)
     }
 
@@ -59,6 +63,7 @@ final class SentinelVersionGuardTests: XCTestCase {
         XCTAssertEqual(postedSnapshots.count, 1)
         XCTAssertEqual(postedSnapshots.first?.browserVersion, "1.2.1")
         XCTAssertEqual(postedSnapshots.first?.sentinelVersion, "1.2.0")
+        XCTAssertEqual(reportedWarnings.count, 0)
         XCTAssertEqual(launchCount, 0)
     }
 
@@ -128,7 +133,23 @@ final class SentinelVersionGuardTests: XCTestCase {
         guarder.apply(guarder.evaluateCurrentState())
 
         XCTAssertEqual(postedSnapshots.count, 0)
+        XCTAssertEqual(reportedWarnings.count, 0)
         XCTAssertEqual(launchCount, 1)
+    }
+
+    func testDisabledPhiAISkipsSentinelLaunchAndWarning() async {
+        let guarder = makeGuard(
+            browserBundleID: "com.phibrowser.Mac",
+            browserVersion: "1.2.1",
+            sentinelVersion: nil,
+            shouldRunSentinel: { false }
+        )
+
+        await guarder.runStartupCheck(delaySeconds: 0)
+
+        XCTAssertEqual(postedSnapshots.count, 0)
+        XCTAssertEqual(reportedWarnings.count, 0)
+        XCTAssertEqual(launchCount, 0)
     }
 
     /// What the sentinelInfoProvider reports on one sampling call. Index 0 is consumed
@@ -154,11 +175,13 @@ final class SentinelVersionGuardTests: XCTestCase {
         await guarder.runStartupCheck(delaySeconds: 0)
 
         XCTAssertEqual(postedSnapshots.count, 1)
+        XCTAssertEqual(reportedWarnings.count, 0)
         XCTAssertEqual(launchCount, 0)
     }
 
     func testConvergenceRepostsUntilRetriesExhausted() async {
-        // Sentinel never adopts the expected version: initial post + one re-post per retry.
+        // Sentinel never adopts the expected version: the final check reports the
+        // mismatch instead of posting another restart that cannot be confirmed.
         let guarder = makeConvergenceGuard(
             browserVersion: "1.2.1",
             samples: [.version("1.2.0")],
@@ -167,7 +190,20 @@ final class SentinelVersionGuardTests: XCTestCase {
 
         await guarder.runStartupCheck(delaySeconds: 0)
 
-        XCTAssertEqual(postedSnapshots.count, 3)
+        XCTAssertEqual(postedSnapshots.count, 2)
+        XCTAssertEqual(
+            reportedWarnings,
+            [
+                .versionMismatch(
+                    SentinelVersionGuardSnapshot(
+                        browserBundleID: "com.phibrowser.Mac",
+                        browserVersion: "1.2.1",
+                        sentinelBundleID: "com.phibrowser.Sentinel",
+                        sentinelVersion: "1.2.0"
+                    )
+                )
+            ]
+        )
         XCTAssertEqual(launchCount, 0)
     }
 
@@ -218,15 +254,108 @@ final class SentinelVersionGuardTests: XCTestCase {
         XCTAssertEqual(launchCount, 0)
     }
 
+    func testStartupReportsWarningWhenSentinelFailsToLaunch() async {
+        let guarder = makeConvergenceGuard(
+            browserVersion: "1.2.1",
+            samples: [.gone],
+            maxRetries: 2
+        )
+
+        await guarder.runStartupCheck(delaySeconds: 0)
+
+        XCTAssertEqual(launchCount, 1)
+        XCTAssertEqual(
+            reportedWarnings,
+            [
+                .notRunning(
+                    browserBundleID: "com.phibrowser.Mac",
+                    browserVersion: "1.2.1",
+                    sentinelBundleID: "com.phibrowser.Sentinel"
+                )
+            ]
+        )
+    }
+
+    func testStartupDoesNotReportMissingSentinelAfterPhiAIIsDisabled() async {
+        var phiAIEnabled = true
+        let guarder = makeConvergenceGuard(
+            browserVersion: "1.2.1",
+            samples: [.gone],
+            maxRetries: 2,
+            shouldRunSentinel: {
+                defer { phiAIEnabled = false }
+                return phiAIEnabled
+            }
+        )
+
+        await guarder.runStartupCheck(delaySeconds: 0)
+
+        XCTAssertEqual(launchCount, 1)
+        XCTAssertEqual(reportedWarnings.count, 0)
+    }
+
+    func testStartupReportsVersionMismatchAfterSentinelLaunches() async {
+        let guarder = makeConvergenceGuard(
+            browserVersion: "1.2.1",
+            samples: [.gone, .noVersion, .version("1.2.0")],
+            maxRetries: 2
+        )
+
+        await guarder.runStartupCheck(delaySeconds: 0)
+
+        XCTAssertEqual(launchCount, 1)
+        XCTAssertEqual(
+            reportedWarnings,
+            [
+                .versionMismatch(
+                    SentinelVersionGuardSnapshot(
+                        browserBundleID: "com.phibrowser.Mac",
+                        browserVersion: "1.2.1",
+                        sentinelBundleID: "com.phibrowser.Sentinel",
+                        sentinelVersion: "1.2.0"
+                    )
+                )
+            ]
+        )
+    }
+
+    func testStartupDoesNotReportWarningAfterMatchingSentinelLaunches() async {
+        let guarder = makeConvergenceGuard(
+            browserVersion: "1.2.1",
+            samples: [.gone, .noVersion, .version("1.2.1")],
+            maxRetries: 2
+        )
+
+        await guarder.runStartupCheck(delaySeconds: 0)
+
+        XCTAssertEqual(launchCount, 1)
+        XCTAssertEqual(reportedWarnings.count, 0)
+    }
+
+    func testStartupDoesNotReportLaunchFailureWhileSentinelVersionIsUnavailable() async {
+        let guarder = makeConvergenceGuard(
+            browserVersion: "1.2.1",
+            samples: [.gone, .noVersion],
+            maxRetries: 2
+        )
+
+        await guarder.runStartupCheck(delaySeconds: 0)
+
+        XCTAssertEqual(launchCount, 1)
+        XCTAssertEqual(reportedWarnings.count, 0)
+    }
+
     private func makeConvergenceGuard(
         browserVersion: String,
         samples: [SentinelSample],
-        maxRetries: Int
+        maxRetries: Int,
+        shouldRunSentinel: @escaping () -> Bool = { true }
     ) -> SentinelVersionGuard {
         var callIndex = 0
         return SentinelVersionGuard(
             userDefaults: defaults,
             now: { self.now },
+            shouldRunSentinelProvider: shouldRunSentinel,
             browserBundleIDProvider: { "com.phibrowser.Mac" },
             browserVersionProvider: { browserVersion },
             sentinelInfoProvider: { sentinelBundleID in
@@ -253,8 +382,13 @@ final class SentinelVersionGuardTests: XCTestCase {
             sentinelLauncher: {
                 self.launchCount += 1
             },
+            warningReporter: {
+                self.reportedWarnings.append($0)
+            },
             logger: { _ in },
             sleep: { _ in },
+            launchConfirmationInterval: 0,
+            maxLaunchConfirmationChecks: maxRetries,
             confirmInterval: 0,
             maxConfirmationRetries: maxRetries
         )
@@ -263,11 +397,13 @@ final class SentinelVersionGuardTests: XCTestCase {
     private func makeGuard(
         browserBundleID: String,
         browserVersion: String,
-        sentinelVersion: String?
+        sentinelVersion: String?,
+        shouldRunSentinel: @escaping () -> Bool = { true }
     ) -> SentinelVersionGuard {
         SentinelVersionGuard(
             userDefaults: defaults,
             now: { self.now },
+            shouldRunSentinelProvider: shouldRunSentinel,
             browserBundleIDProvider: { browserBundleID },
             browserVersionProvider: { browserVersion },
             sentinelInfoProvider: { sentinelBundleID in
@@ -282,6 +418,9 @@ final class SentinelVersionGuardTests: XCTestCase {
             },
             sentinelLauncher: {
                 self.launchCount += 1
+            },
+            warningReporter: {
+                self.reportedWarnings.append($0)
             },
             logger: { _ in }
         )

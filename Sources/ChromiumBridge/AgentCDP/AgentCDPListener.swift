@@ -51,13 +51,23 @@ final class AgentCDPListener {
     }
 
     /// Flips the preference and applies it live: starts or stops the listener
-    /// now, with no relaunch. Call from the Settings toggle.
+    /// now, with no relaunch. Call from the Settings toggle. Also refreshes
+    /// the main menu, whose View ▸ Agent Autoview / Agent Transcript items
+    /// are gated on this switch.
     func setEnabled(_ enabled: Bool) {
         PhiPreferences.AgentSpaces.cdpAgentAccessEnabled = enabled
         if enabled {
             start()
         } else {
             stop()
+        }
+        DispatchQueue.main.async {
+            AppController.shared?.refreshPrefGatedMenuItems()
+            // No agent can drive with the switch off, so an open transcript
+            // panel is a dead surface — take it down with the menu items.
+            if !enabled {
+                AgentTranscriptPanelController.shared.dismiss()
+            }
         }
     }
 
@@ -111,6 +121,8 @@ final class AgentCDPListener {
             return
         }
 
+        Self.sweepOrphanedSocketDirs(
+            keeping: (paths.socket as NSString).deletingLastPathComponent)
         guard Self.prepareSocketDirectory(for: paths.socket) else { return }
         unlink(paths.socket)  // clear a stale socket from a previous run
 
@@ -205,36 +217,51 @@ final class AgentCDPListener {
         // Peek (never consume) the request head up front: the first line
         // routes the connection, and any request may carry the agent-session
         // pid claim used for the consent identity below.
-        let requestHead = Self.peekRequestHead(fd)
+        // A connection that never sent a request — a port probe, a liveness
+        // check, a peer that hung up immediately — must not reach consent
+        // evaluation: an unidentifiable zero-byte peer would pop an "Unknown
+        // process" prompt and, on this serial queue, wedge every legitimate
+        // connection behind it. Close it quietly.
+        guard let requestHead = Self.peekRequestHead(fd) else {
+            close(fd)
+            return
+        }
         let requestLine = requestHead
-            .flatMap { $0.split(separator: "\r\n", maxSplits: 1).first }
+            .split(separator: "\r\n", maxSplits: 1).first
             .map(String.init)
         let isPhiAgent = requestLine?.hasPrefix("GET /phi-agent") ?? false
 
-        // The consent identity: normally the peer's process ancestry. A peer
-        // whose ancestry no longer reaches the agent it acts for — the
-        // skill's detached mirror daemon, or a hand-back watcher orphaned by
-        // a backgrounding shell (`… &` under Codex) — names its driving
-        // agent's pid in the request instead (an `agentPid` query or
-        // `X-Phi-Agent-Pid` header, on any route: Chromium ignores unknown
-        // headers), resolving to the same identity (and grant) the agent's
-        // own connections use.
-        var identity = AgentPeerIdentity.resolve(socketFD: fd)
+        // Resolve the actual peer ancestry first. Any connection may present
+        // an app-issued capability from an earlier `/phi-agent` upgrade; that
+        // is the proof that a detached/sandboxed helper was delegated the
+        // logical agent session, and it binds this connection — task channel
+        // or stock CDP alike — to that session's identity and grant. The
+        // caller-supplied pid is a log-only identification aid: it neither
+        // joins a Swift task principal nor substitutes the consent identity.
+        let peerIdentity = AgentPeerIdentity.resolve(socketFD: fd)
             ?? AgentIdentity(key: "unknown", displayName: "Unknown process",
                              teamId: nil, verified: false, executablePath: "",
                              pid: nil)
-        if let requestHead,
-           let claimedPid = Self.claimedAgentPid(inRequestHead: requestHead),
-           let claimed = AgentPeerIdentity.resolveClaimed(pid: claimedPid) {
-            AppLogInfo("[AgentCDP] peer \(identity.displayName) acts for agent pid "
-                       + "\(claimedPid) (\(claimed.displayName))")
-            identity = claimed
-        }
 
-        guard evaluate(identity) else {
-            AppLogInfo("[AgentCDP] denied access to \(identity.displayName)")
+        let delegatedSession: AgentDriverSession?
+        switch Self.capabilityClaim(inRequestHead: requestHead) {
+        case .absent:
+            delegatedSession = nil
+        case .invalid:
+            // Presenting a capability at all commits the connection to
+            // capability auth — a malformed one never falls back to peer
+            // identity, on any route.
+            AppLogWarn("[AgentCDP] rejected malformed agent-session capability")
             Self.denyAndClose(fd)
             return
+        case .valid(let capability):
+            guard let session = AgentDriverSessionRegistry.shared
+                    .session(forCapability: capability) else {
+                AppLogWarn("[AgentCDP] rejected unknown agent-session capability")
+                Self.denyAndClose(fd)
+                return
+            }
+            delegatedSession = session
         }
 
         // Route by the request line: a `/phi-agent` upgrade is an agentSpace.*
@@ -242,8 +269,47 @@ final class AgentCDPListener {
         // stock CDP handed to Chromium with the fd intact (the peek never
         // consumed it).
         if isPhiAgent {
-            AgentDirectConnection(fd: fd, agentName: identity.displayName,
-                                  agentPid: identity.pid).start()
+            let session: AgentDriverSession
+            if let delegatedSession {
+                session = delegatedSession
+                guard evaluate(session.identity) else {
+                    AppLogInfo("[AgentCDP] denied delegated access to \(session.identity.displayName)")
+                    Self.denyAndClose(fd)
+                    return
+                }
+            } else {
+                guard evaluate(peerIdentity) else {
+                    AppLogInfo("[AgentCDP] denied access to \(peerIdentity.displayName)")
+                    Self.denyAndClose(fd)
+                    return
+                }
+                session = AgentDriverSessionRegistry.shared.session(for: peerIdentity)
+            }
+            AgentDirectConnection(
+                fd: fd,
+                agentName: session.identity.displayName,
+                agentPid: session.identity.pid,
+                driverPrincipalId: session.principalId,
+                agentCapability: session.capability
+            ).start()
+            return
+        }
+
+        // Stock CDP consent follows the same session rules: a delegated
+        // helper is evaluated as its session's identity; otherwise the peer's
+        // OWN resolved ancestry decides. Naming another agent's pid therefore
+        // cannot piggyback that agent's remembered grant onto raw CDP.
+        let identity = delegatedSession?.identity ?? peerIdentity
+        if delegatedSession == nil,
+           let claimedPid = Self.claimedAgentPid(inRequestHead: requestHead),
+           let claimed = AgentPeerIdentity.resolveClaimed(pid: claimedPid) {
+            AppLogInfo("[AgentCDP] peer \(identity.displayName) claims agent pid "
+                       + "\(claimedPid) (\(claimed.displayName)) — identification only")
+        }
+
+        guard evaluate(identity) else {
+            AppLogInfo("[AgentCDP] denied access to \(identity.displayName)")
+            Self.denyAndClose(fd)
             return
         }
 
@@ -299,6 +365,40 @@ final class AgentCDPListener {
         return nil
     }
 
+    /// App-issued bearer capability proving that this connection belongs to
+    /// an already-established logical driver session. Kept in a dedicated
+    /// header so stock Chromium simply ignores it on its own connections.
+    /// One parser answers both "is one present?" and "what is it?", so the
+    /// routing decision and the value can never disagree.
+    enum CapabilityClaim: Equatable {
+        case absent
+        case invalid
+        case valid(String)
+    }
+
+    /// Scanning stops at the head/body boundary (a stray match in peeked body
+    /// bytes is not a claim), and a malformed or duplicated header is
+    /// `.invalid` — never silently ignored. Internal for unit coverage.
+    static func capabilityClaim(inRequestHead head: String) -> CapabilityClaim {
+        var found: String?
+        for header in head.components(separatedBy: "\r\n").dropFirst() {
+            if header.isEmpty { break }  // end of headers
+            guard let colon = header.firstIndex(of: ":"),
+                  header[..<colon].lowercased() == "x-phi-agent-capability" else {
+                continue
+            }
+            if found != nil { return .invalid }  // duplicate header
+            let value = header[header.index(after: colon)...]
+                .trimmingCharacters(in: .whitespaces)
+            guard value.count >= 32, value.count <= 128,
+                  value.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") }) else {
+                return .invalid
+            }
+            found = value
+        }
+        return found.map(CapabilityClaim.valid) ?? .absent
+    }
+
     /// Returns true when `identity` may connect: a cached session grant, a
     /// remembered grant, or a fresh Allow from the consent prompt.
     private func evaluate(_ identity: AgentIdentity) -> Bool {
@@ -336,19 +436,15 @@ final class AgentCDPListener {
         DispatchQueue.main.sync {
             let alert = NSAlert()
             alert.messageText = String(
-                format: NSLocalizedString("“%@” wants to control Phi Browser",
+                format: NSLocalizedString("agentControl.connectionApproval.title", value: "“%@” wants to control Phi Browser",
                                           comment: "CDP consent - title"),
                 identity.displayName)
-            alert.informativeText = NSLocalizedString(
-                "An agent is asking to drive Phi Browser over the DevTools Protocol — opening pages, reading content, and acting on your behalf. Only allow agents you trust.",
+            alert.informativeText = NSLocalizedString("agentControl.connectionApproval.message", value: "An agent is asking to drive Phi Browser over the DevTools Protocol — opening pages, reading content, and acting on your behalf. Only allow agents you trust.",
                 comment: "CDP consent - body")
                 + "\n\n" + identity.detail
-            alert.addButton(withTitle: NSLocalizedString(
-                "Allow Once", comment: "CDP consent - allow for this session"))
-            alert.addButton(withTitle: NSLocalizedString(
-                "Always Allow", comment: "CDP consent - allow and remember"))
-            alert.addButton(withTitle: NSLocalizedString(
-                "Deny", comment: "CDP consent - deny"))
+            alert.addButton(withTitle: NSLocalizedString("agentControl.connectionApproval.allowOnceButton", value: "Allow Once", comment: "CDP consent - allow for this session"))
+            alert.addButton(withTitle: NSLocalizedString("agentControl.connectionApproval.alwaysAllowButton", value: "Always Allow", comment: "CDP consent - allow and remember"))
+            alert.addButton(withTitle: NSLocalizedString("agentControl.connectionApproval.denyButton", value: "Deny", comment: "CDP consent - deny"))
             switch alert.runModal() {
             case .alertFirstButtonReturn: decision = .allowOnce
             case .alertSecondButtonReturn: decision = .allowRemember
@@ -365,13 +461,23 @@ final class AgentCDPListener {
         let pointer: String
     }
 
+    /// Stable per-bundle suffix (FNV-1a of the bundle id). `String.hashValue`
+    /// is seeded per process, which moved the socket directory on every
+    /// launch: the stale-socket unlink at start could never fire across
+    /// launches, and crash-orphaned dirs accumulated in /tmp until reboot.
+    private static func stableSuffix(_ s: String) -> String {
+        var hash: UInt32 = 0x811C_9DC5
+        for byte in s.utf8 { hash = (hash ^ UInt32(byte)) &* 0x0100_0193 }
+        return String(format: "%08x", hash)
+    }
+
     /// The bound socket lives at a short `/tmp` path (bind() caps sun_path at
     /// ~104 bytes, mirroring SentinelIPCClient); the pointer file, which has no
     /// length limit, sits in the app-support dir where the skill looks for it.
     private static func resolveSocketPaths() -> SocketPaths? {
         let uid = getuid()
         let bundleId = FileSystemUtils.bundleId
-        let hash = String(format: "%08x", bundleId.hashValue & 0xFFFF_FFFF)
+        let hash = stableSuffix(bundleId)
         let dir = "/tmp/phi-cdp-\(uid).\(hash)"
         let socket = (dir as NSString).appendingPathComponent("agent.sock")
         guard socket.utf8.count < 104 else {
@@ -408,8 +514,42 @@ final class AgentCDPListener {
         }
     }
 
-    private static func bind(fd: Int32, to path: String) -> Bool {
+    /// Best-effort sweep of crash-orphaned socket dirs — including the
+    /// per-launch-suffixed ones older builds left behind, which a crash
+    /// stranded in /tmp until reboot. A sibling dir whose socket no longer
+    /// accepts is dead weight; a live one (the other Phi flavor's channel)
+    /// is left alone.
+    private static func sweepOrphanedSocketDirs(keeping ownDir: String) {
+        let prefix = "phi-cdp-\(getuid())."
+        let fm = FileManager.default
+        guard let entries = try? fm.contentsOfDirectory(atPath: "/tmp") else { return }
+        for entry in entries where entry.hasPrefix(prefix) {
+            let dir = "/tmp/" + entry
+            guard dir != ownDir else { continue }
+            let sock = (dir as NSString).appendingPathComponent("agent.sock")
+            guard !socketAccepts(sock) else { continue }
+            try? fm.removeItem(atPath: dir)
+        }
+    }
+
+    /// connect(2) probe: a live listener accepts immediately; a
+    /// crash-orphaned socket file refuses in ~0 ms.
+    private static func socketAccepts(_ path: String) -> Bool {
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard fd >= 0 else { return false }
+        defer { close(fd) }
         var addr = sockaddr_un()
+        guard fillSunPath(&addr, with: path) else { return false }
+        let len = socklen_t(MemoryLayout<sockaddr_un>.size)
+        let rc = withUnsafePointer(to: &addr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.connect(fd, $0, len)
+            }
+        }
+        return rc == 0
+    }
+
+    private static func fillSunPath(_ addr: inout sockaddr_un, with path: String) -> Bool {
         addr.sun_family = sa_family_t(AF_UNIX)
         let pathBytes = path.utf8CString
         let capacity = MemoryLayout.size(ofValue: addr.sun_path)
@@ -421,6 +561,12 @@ final class AgentCDPListener {
                 }
             }
         }
+        return true
+    }
+
+    private static func bind(fd: Int32, to path: String) -> Bool {
+        var addr = sockaddr_un()
+        guard fillSunPath(&addr, with: path) else { return false }
         let len = socklen_t(MemoryLayout<sockaddr_un>.size)
         let rc = withUnsafePointer(to: &addr) {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {

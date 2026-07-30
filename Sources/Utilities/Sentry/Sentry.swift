@@ -411,6 +411,51 @@ struct TimeMachineSentryTraceStore {
         }
     }
 
+    static func captureSentinelVersionGuardWarning(_ warning: SentinelVersionGuardWarning) {
+        let message: String
+        let diagnostic: String
+        let runningStatus: String
+        let versionMatch: String
+        let context: [String: Any]
+
+        switch warning {
+        case .notRunning(let browserBundleID, let browserVersion, let sentinelBundleID):
+            message = "Sentinel is not running after startup recovery"
+            diagnostic = "not_running"
+            runningStatus = "false"
+            versionMatch = "unknown"
+            context = [
+                "browser_bundle_id": browserBundleID,
+                "browser_version": browserVersion,
+                "sentinel_bundle_id": sentinelBundleID,
+                "is_running": false,
+                "version_match": versionMatch
+            ]
+        case .versionMismatch(let snapshot):
+            message = "Phi and Sentinel versions do not match"
+            diagnostic = "version_mismatch"
+            runningStatus = "true"
+            versionMatch = "false"
+            context = [
+                "browser_bundle_id": snapshot.browserBundleID,
+                "browser_version": snapshot.browserVersion,
+                "sentinel_bundle_id": snapshot.sentinelBundleID,
+                "sentinel_version": snapshot.sentinelVersion,
+                "is_running": true,
+                "version_match": versionMatch
+            ]
+        }
+
+        SentrySDK.capture(message: message) { scope in
+            scope.setLevel(.warning)
+            scope.setTag(value: "sentinel", key: "area")
+            scope.setTag(value: diagnostic, key: "sentinel.diagnostic")
+            scope.setTag(value: runningStatus, key: "sentinel.running")
+            scope.setTag(value: versionMatch, key: "sentinel.version_match")
+            scope.setContext(value: context, key: "sentinel")
+        }
+    }
+
     private static func bufferPendingTimeMachineTrace(_ trace: TimeMachineSentryTrace) -> Bool {
         pendingTimeMachineTraceLock.lock()
         defer {

@@ -52,7 +52,7 @@ struct ChatButton: View {
                     .frame(width: Constants.iconSize, height: Constants.iconSize)
                     .foregroundColor(.white)
                 
-                Text(NSLocalizedString("Chat", comment: "Sidebar bottom chat button title"))
+                Text(NSLocalizedString("sidebar.chatButton.title", value: "Chat", comment: "Sidebar bottom chat button title"))
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(.white)
             }

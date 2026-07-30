@@ -508,6 +508,9 @@ class SidebarSplitPairCellView: SidebarCellView {
         outerBackground.layer?.cornerRadius = 8
         outerBackground.layer?.cornerCurve = .continuous
         addSubview(outerBackground)
+        _ = outerBackground.phi.subscribe { [weak self] _, _ in
+            self?.updateSelected()
+        }
         outerBackground.snp.makeConstraints { make in
             make.edges.equalToSuperview().inset(NSEdgeInsets(
                 top: 2, left: WebContentConstant.edgesSpacing, bottom: 2, right: WebContentConstant.edgesSpacing))
@@ -999,9 +1002,9 @@ class SidebarSplitPairCellView: SidebarCellView {
             state?.multiSelection.contains(pair.rightTab.guid) == true ||
             isBookmarkSelected
         let isActive = pair.leftTab.isActive || pair.rightTab.isActive
-        outerBackground.selectedColor = NSColor(
-            resource: isActive ? .sidebarTabSelected : .sidebarTabSubSelected
-        )
+        outerBackground.selectedColor = isActive
+            ? NSColor(resource: .sidebarTabSelected)
+            : ThemedColor.tabSubSelectionBackground.resolve(in: outerBackground)
         outerBackground.isSelected = isActive || isMultiSelected
     }
 
@@ -1187,8 +1190,7 @@ final class BroomButton: NSButton {
         animationView.snp.makeConstraints { make in
             make.edges.equalToSuperview()
         }
-        toolTip = NSLocalizedString(
-            "Organize tabs with AI",
+        toolTip = NSLocalizedString("sidebar.newTabRow.aiOrganizeTooltip", value: "Organize tabs with AI",
             comment: "side bar new tab row - organize tabs button tooltip")
         updateAppearance()
         NotificationCenter.default.addObserver(
@@ -1338,7 +1340,7 @@ class NewTabButtonCellView: SidebarCellView {
     }()
     
     private var titleLabel: NSTextField = {
-        let titleLabel = NSTextField(labelWithString: NSLocalizedString("New Tab", comment: "side bar new tab button text"))
+        let titleLabel = NSTextField(labelWithString: NSLocalizedString("sidebar.newTabRow.title", value: "New Tab", comment: "side bar new tab button text"))
         titleLabel.font = NSFont.systemFont(ofSize: 13)
         titleLabel.phi.setTextColor(.textTertiary)
         return titleLabel

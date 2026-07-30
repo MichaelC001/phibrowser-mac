@@ -34,12 +34,10 @@ struct MemoryButton: View {
                 isHovering = hovering
             }
         }
-        .help(NSLocalizedString(
-            "Browser Memory",
+        .help(NSLocalizedString("sidebar.memoryButton.helpText", value: "Browser Memory",
             comment: "Memory button - Tooltip & Accessibility label for the AI memory entry button shown in the sidebar bottom bar and the web content header trailing area"
         ))
-        .accessibilityLabel(NSLocalizedString(
-            "Browser Memory",
+        .accessibilityLabel(NSLocalizedString("sidebar.memoryButton.accessibilityLabel", value: "Browser Memory",
             comment: "Memory button - Tooltip & Accessibility label for the AI memory entry button shown in the sidebar bottom bar and the web content header trailing area"
         ))
     }

@@ -62,21 +62,21 @@ extension Bookmark: ContextMenuRepresentable {
             // case needs a dedicated handler routed via the menu item's tag.
             let hasSecondary = !(secondaryUrl ?? "").isEmpty
             if hasSecondary {
-                let copyPrimary = NSMenuItem(title: NSLocalizedString("Copy Left URL", comment: "Bookmark context menu - Copy the left (primary) URL of a split-view bookmark"),
+                let copyPrimary = NSMenuItem(title: NSLocalizedString("sidebar.bookmarkContextMenu.copyLeftPrimaryUrl", value: "Copy Left URL", comment: "Bookmark context menu - Copy the left (primary) URL of a split-view bookmark"),
                                              action: #selector(copySplitLink(_:)),
                                              keyEquivalent: "")
                 copyPrimary.target = self
                 copyPrimary.tag = 0
                 menu.addItem(copyPrimary)
 
-                let copySecondary = NSMenuItem(title: NSLocalizedString("Copy Right URL", comment: "Bookmark context menu - Copy the right (secondary) URL of a split-view bookmark"),
+                let copySecondary = NSMenuItem(title: NSLocalizedString("sidebar.bookmarkContextMenu.copyRightSecondaryUrl", value: "Copy Right URL", comment: "Bookmark context menu - Copy the right (secondary) URL of a split-view bookmark"),
                                                action: #selector(copySplitLink(_:)),
                                                keyEquivalent: "")
                 copySecondary.target = self
                 copySecondary.tag = 1
                 menu.addItem(copySecondary)
             } else {
-                let copyUrlItem = NSMenuItem(title: NSLocalizedString("Copy Link", comment: "Bookmark Copy Link menu item"),
+                let copyUrlItem = NSMenuItem(title: NSLocalizedString("sidebar.bookmarkContextMenu.copyLinkAction", value: "Copy Link", comment: "Bookmark Copy Link menu item"),
                                              action: #selector(MainBrowserWindowController.myCopyLink(_:)),
                                              keyEquivalent: "")
                 copyUrlItem.representedObject = self
@@ -90,7 +90,7 @@ extension Bookmark: ContextMenuRepresentable {
             // rename can't express — route those through Edit... only.
             let isSplit = !(secondaryUrl ?? "").isEmpty
             if !isSplit {
-                let rename = NSMenuItem(title: NSLocalizedString("Rename...", comment: "Bookmark Rename menu item"),
+                let rename = NSMenuItem(title: NSLocalizedString("sidebar.bookmarkContextMenu.renameAction", value: "Rename...", comment: "Bookmark Rename menu item"),
                                         action: #selector(renameBookmark),
                                         keyEquivalent: "")
                 rename.target = self
@@ -98,7 +98,7 @@ extension Bookmark: ContextMenuRepresentable {
             }
         case .bookmarkBar:
             if isFolder {
-                let rename = NSMenuItem(title: NSLocalizedString("Rename...", comment: "Bookmark Rename menu item"),
+                let rename = NSMenuItem(title: NSLocalizedString("bookmarkBar.folderContextMenu.renameAction", value: "Rename...", comment: "Bookmark Rename menu item"),
                                         action: #selector(renameBookmarkFolderModal),
                                         keyEquivalent: "")
                 rename.target = self
@@ -107,11 +107,11 @@ extension Bookmark: ContextMenuRepresentable {
         }
         
         if isFolder {
-            let newFolder = NSMenuItem(title: NSLocalizedString("New Nested Folder...", comment: "Bookmark New Folder menu item"), action: #selector(newFolder), keyEquivalent: "")
+            let newFolder = NSMenuItem(title: NSLocalizedString("sidebar.bookmarkContextMenu.newNestedFolderAction", value: "New Nested Folder...", comment: "Bookmark New Folder menu item"), action: #selector(newFolder), keyEquivalent: "")
             newFolder.target = self
             menu.addItem(newFolder)
         } else {
-            let editURL =  NSMenuItem(title: NSLocalizedString("Edit...", comment: "Edit bookmark url menu item title"), action: #selector(edit), keyEquivalent: "")
+            let editURL =  NSMenuItem(title: NSLocalizedString("sidebar.bookmarkContextMenu.editAction", value: "Edit...", comment: "Edit bookmark url menu item title"), action: #selector(edit), keyEquivalent: "")
             editURL.target = self
             menu.addItem(editURL)
             
@@ -120,7 +120,7 @@ extension Bookmark: ContextMenuRepresentable {
             // bookmark→split binding. The menu title stays "Open in New Tab"
             // for consistency with normal bookmarks.
             let isSplit = !(secondaryUrl ?? "").isEmpty
-            let openInNewTab = NSMenuItem(title: NSLocalizedString("Open in New Tab", comment: "Open in New Tab menu item"),
+            let openInNewTab = NSMenuItem(title: NSLocalizedString("sidebar.bookmarkContextMenu.openInNewTabAction", value: "Open in New Tab", comment: "Open in New Tab menu item"),
                                           action: isSplit ? #selector(openSplitInNewTab) : #selector(openInNewTab),
                                           keyEquivalent: "")
             openInNewTab.target = self
@@ -129,7 +129,7 @@ extension Bookmark: ContextMenuRepresentable {
             // A split-view bookmark already opens as a split on click, so the
             // explicit "Open as Split" entry would just duplicate the click.
             if !isSplit {
-                let openInSplit = NSMenuItem(title: NSLocalizedString("Open as Split", comment: "Bookmark context menu - Open this bookmark as a new tab paired with the current tab in a split"),
+                let openInSplit = NSMenuItem(title: NSLocalizedString("sidebar.bookmarkContextMenu.openAsSplitAction", value: "Open as Split", comment: "Bookmark context menu - Open this bookmark as a new tab paired with the current tab in a split"),
                                              action: #selector(openInSplitView),
                                              keyEquivalent: "")
                 openInSplit.target = self
@@ -144,7 +144,7 @@ extension Bookmark: ContextMenuRepresentable {
             menu.addItem(.separator())
         }
         
-        let delete = NSMenuItem(title: NSLocalizedString("Delete", comment: "Delete bookmark menu item"), action: #selector(myDelete(_:)), keyEquivalent: "")
+        let delete = NSMenuItem(title: NSLocalizedString("sidebar.bookmarkContextMenu.deleteAction", value: "Delete", comment: "Delete bookmark menu item"), action: #selector(myDelete(_:)), keyEquivalent: "")
         delete.target = self
         menu.addItem(delete)
         
@@ -165,8 +165,7 @@ extension Bookmark: ContextMenuRepresentable {
 
         if !moveTargets.isEmpty {
             let parent = NSMenuItem(
-                title: NSLocalizedString(
-                    "Move to Space",
+                title: NSLocalizedString("sidebar.bookmarkContextMenu.moveToSpaceSubmenu", value: "Move to Space",
                     comment: "Bookmark context menu - Submenu to move this bookmark or folder to another Space"),
                 action: nil,
                 keyEquivalent: "")
@@ -176,9 +175,7 @@ extension Bookmark: ContextMenuRepresentable {
                                        action: #selector(moveToSpace(_:)),
                                        keyEquivalent: "")
                 entry.target = self
-                if let icon = NSImage(systemSymbolName: space.iconName, accessibilityDescription: nil) {
-                    entry.image = icon
-                }
+                entry.image = SpaceIconView.menuImage(for: space.iconName)
                 entry.representedObject = space.spaceId
                 submenu.addItem(entry)
             }
@@ -188,8 +185,7 @@ extension Bookmark: ContextMenuRepresentable {
 
         if !cloneTargets.isEmpty {
             let parent = NSMenuItem(
-                title: NSLocalizedString(
-                    "Clone to Space",
+                title: NSLocalizedString("sidebar.bookmarkContextMenu.cloneToSpaceSubmenu", value: "Clone to Space",
                     comment: "Bookmark context menu - Submenu to clone this bookmark or folder to another Space"),
                 action: nil,
                 keyEquivalent: "")
@@ -199,9 +195,7 @@ extension Bookmark: ContextMenuRepresentable {
                                        action: #selector(cloneToSpace(_:)),
                                        keyEquivalent: "")
                 entry.target = self
-                if let icon = NSImage(systemSymbolName: space.iconName, accessibilityDescription: nil) {
-                    entry.image = icon
-                }
+                entry.image = SpaceIconView.menuImage(for: space.iconName)
                 entry.representedObject = space.spaceId
                 submenu.addItem(entry)
             }
@@ -323,7 +317,7 @@ extension Bookmark: ContextMenuRepresentable {
         let state = windowController.browserState
         if state.layoutMode != .comfortable {
             // Create an untitled folder and immediately enter inline edit mode.
-            let untitledName = NSLocalizedString("Untitled", comment: "Default name for new bookmark folder")
+            let untitledName = NSLocalizedString("sidebar.bookmarkFolder.defaultName", value: "Untitled", comment: "Default name for new bookmark folder")
             state.bookmarkManager.addFolderWithEditing(title: untitledName, to: self)
         } else {
             EditPinnedTabPresenter.presentModal(

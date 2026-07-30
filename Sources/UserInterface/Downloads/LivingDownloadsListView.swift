@@ -451,24 +451,24 @@ struct LivingDownloadItemView: View {
                 DownloadActionButton(
                     icon: .init(.deleteDownload),
                     action: { onCancel(item) },
-                    tooltip: NSLocalizedString("Cancel", comment: "Tooltip for cancel button during safety scan in living downloads toast")
+                    tooltip: NSLocalizedString("downloads.livingItem.safetyScan.cancelButtonTooltip", value: "Cancel", comment: "Tooltip for cancel button during safety scan in living downloads toast")
                 )
             case .warning:
                 DownloadActionButton(
                     iconName: "checkmark",
                     action: { onKeep?(item) },
-                    tooltip: NSLocalizedString("Keep", comment: "Tooltip for keep button on safety warning in living downloads toast")
+                    tooltip: NSLocalizedString("downloads.livingItem.safetyWarning.keepButtonTooltip", value: "Keep", comment: "Tooltip for keep button on safety warning in living downloads toast")
                 )
                 DownloadActionButton(
                     icon: .init(.deleteDownload),
                     action: { onDiscard?(item) },
-                    tooltip: NSLocalizedString("Discard", comment: "Tooltip for discard button on safety warning in living downloads toast")
+                    tooltip: NSLocalizedString("downloads.livingItem.safetyWarning.discardButtonTooltip", value: "Discard", comment: "Tooltip for discard button on safety warning in living downloads toast")
                 )
             case .blocked, .policyBlocked:
                 DownloadActionButton(
                     icon: .init(.deleteDownload),
                     action: { onDiscard?(item) },
-                    tooltip: NSLocalizedString("Discard", comment: "Tooltip for discard button on blocked download in living downloads toast")
+                    tooltip: NSLocalizedString("downloads.livingItem.blocked.discardButtonTooltip", value: "Discard", comment: "Tooltip for discard button on blocked download in living downloads toast")
                 )
             case .normal:
                 EmptyView()
@@ -492,19 +492,19 @@ struct LivingDownloadItemView: View {
                 DownloadActionButton(
                     icon: .init(.copyLink),
                     action: { onCopyLink(item) },
-                    tooltip: NSLocalizedString("Copy Link", comment: "Tooltip for button to copy download URL in living downloads toast")
+                    tooltip: NSLocalizedString("downloads.livingItem.copyLinkButtonTooltip", value: "Copy Link", comment: "Tooltip for button to copy download URL in living downloads toast")
                 )
 
                 DownloadActionButton(
                     icon: .init(.showInFinder),
                     action: { onShowInFinder(item) },
-                    tooltip: NSLocalizedString("Show in Finder", comment: "Tooltip for button to reveal downloaded file in Finder in living downloads toast")
+                    tooltip: NSLocalizedString("downloads.livingItem.showInFinderButtonTooltip", value: "Show in Finder", comment: "Tooltip for button to reveal downloaded file in Finder in living downloads toast")
                 )
 
                 DownloadActionButton(
                     icon: .init(.deleteDownload),
                     action: onDismiss,
-                    tooltip: NSLocalizedString("Dismiss", comment: "Tooltip for button to dismiss living download item")
+                    tooltip: NSLocalizedString("downloads.livingItem.completed.dismissButtonTooltip", value: "Dismiss", comment: "Living downloads - Tooltip for dismissing a completed download")
                 )
             }
 
@@ -514,14 +514,14 @@ struct LivingDownloadItemView: View {
                     DownloadActionButton(
                         iconName: "arrow.clockwise",
                         action: { onResume(item) },
-                        tooltip: NSLocalizedString("Retry", comment: "Tooltip for button to retry interrupted download in living downloads toast")
+                        tooltip: NSLocalizedString("downloads.livingItem.retryButtonTooltip", value: "Retry", comment: "Tooltip for button to retry interrupted download in living downloads toast")
                     )
                 }
 
                 DownloadActionButton(
                     icon: .init(.deleteDownload),
                     action: onDismiss,
-                    tooltip: NSLocalizedString("Dismiss", comment: "Tooltip for button to dismiss living download item")
+                    tooltip: NSLocalizedString("downloads.livingItem.interrupted.dismissButtonTooltip", value: "Dismiss", comment: "Living downloads - Tooltip for dismissing an interrupted download")
                 )
             }
 
@@ -529,7 +529,7 @@ struct LivingDownloadItemView: View {
             DownloadActionButton(
                 icon: .init(.deleteDownload),
                 action: onDismiss,
-                tooltip: NSLocalizedString("Dismiss", comment: "Tooltip for button to dismiss living download item")
+                tooltip: NSLocalizedString("downloads.livingItem.cancelled.dismissButtonTooltip", value: "Dismiss", comment: "Living downloads - Tooltip for dismissing a cancelled download")
             )
         }
     }

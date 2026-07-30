@@ -18,16 +18,14 @@ enum TabMultiSelectionMenu {
         var items: [NSMenuItem] = []
 
         let duplicateItem = NSMenuItem(
-            title: NSLocalizedString(
-                "Duplicate Tabs",
+            title: NSLocalizedString("common.tabMultiSelectionContextMenu.duplicateTabsAction", value: "Duplicate Tabs",
                 comment: "Tab multi-selection context menu - duplicate all selected tabs"),
             action: #selector(TabMultiSelectionMenuController.duplicateSelected),
             keyEquivalent: "")
         items.append(duplicateItem)
 
         let copyLinksItem = NSMenuItem(
-            title: NSLocalizedString(
-                "Copy Links",
+            title: NSLocalizedString("common.tabMultiSelectionContextMenu.copyLinksAction", value: "Copy Links",
                 comment: "Tab multi-selection context menu - copy links of all selected tabs"),
             action: #selector(TabMultiSelectionMenuController.copyLinks),
             keyEquivalent: "")
@@ -35,8 +33,7 @@ enum TabMultiSelectionMenu {
 
         if context.canOpenAsSplit {
             let openAsSplitItem = NSMenuItem(
-                title: NSLocalizedString(
-                    "Open as Split",
+                title: NSLocalizedString("common.tabMultiSelectionContextMenu.openAsSplitAction", value: "Open as Split",
                     comment: "Tab multi-selection context menu - split exactly two selected tabs into paired panes"),
                 action: #selector(TabMultiSelectionMenuController.openSelectedAsSplit),
                 keyEquivalent: "")
@@ -49,8 +46,7 @@ enum TabMultiSelectionMenu {
         // windows drop the whole bookmark block instead of disabling it.
         if !browserState.isIncognito {
             let addToBookmarkItem = NSMenuItem(
-                title: NSLocalizedString(
-                    "Add to Bookmark",
+                title: NSLocalizedString("common.tabMultiSelectionContextMenu.addToBookmarksAction", value: "Add to Bookmark",
                     comment: "Tab multi-selection context menu - add selected tabs to the root bookmark location"),
                 action: #selector(TabMultiSelectionMenuController.addToBookmarkBar),
                 keyEquivalent: "")
@@ -58,8 +54,7 @@ enum TabMultiSelectionMenu {
             items.append(addToBookmarkItem)
 
             let addToFolderItem = NSMenuItem(
-                title: NSLocalizedString(
-                    "Add to Folder",
+                title: NSLocalizedString("common.tabMultiSelectionContextMenu.addToFolderSubmenu", value: "Add to Folder",
                     comment: "Tab multi-selection context menu - submenu to add selected tabs to a bookmark folder"),
                 action: nil,
                 keyEquivalent: "")
@@ -75,8 +70,7 @@ enum TabMultiSelectionMenu {
             }
 
             let newFolderItem = NSMenuItem(
-                title: NSLocalizedString(
-                    "New Folder",
+                title: NSLocalizedString("common.tabMultiSelectionContextMenu.newFolderAction", value: "New Folder",
                     comment: "Tab multi-selection context menu - bookmark selected tabs into a newly created folder"),
                 action: #selector(TabMultiSelectionMenuController.createNewFolder),
                 keyEquivalent: "")
@@ -93,8 +87,7 @@ enum TabMultiSelectionMenu {
 
         if !context.containsBookmarkFolder {
             let createGroupItem = NSMenuItem(
-                title: NSLocalizedString(
-                    "Add Tabs to New Group",
+                title: NSLocalizedString("common.tabMultiSelectionContextMenu.addToNewGroupAction", value: "Add Tabs to New Group",
                     comment: "Tab multi-selection context menu - create a new tab group from selected tabs"),
                 action: #selector(TabMultiSelectionMenuController.createTabGroup),
                 keyEquivalent: "")
@@ -103,8 +96,7 @@ enum TabMultiSelectionMenu {
             let orderedGroups = orderedGroupsInStripOrder(state: browserState)
             if !orderedGroups.isEmpty {
                 let addToGroup = NSMenuItem(
-                    title: NSLocalizedString(
-                        "Move Tabs to Group",
+                    title: NSLocalizedString("common.tabMultiSelectionContextMenu.moveToGroupSubmenu", value: "Move Tabs to Group",
                         comment: "Tab multi-selection context menu - submenu to move selected tabs to an existing tab group"),
                     action: nil,
                     keyEquivalent: "")
@@ -134,8 +126,7 @@ enum TabMultiSelectionMenu {
             items.append(.separator())
 
             let closeItem = NSMenuItem(
-                title: NSLocalizedString(
-                    "Close Tabs",
+                title: NSLocalizedString("common.tabMultiSelectionContextMenu.closeTabsAction", value: "Close Tabs",
                     comment: "Tab multi-selection context menu - close all selected tabs"),
                 action: #selector(TabMultiSelectionMenuController.closeSelected),
                 keyEquivalent: "w")
@@ -143,8 +134,7 @@ enum TabMultiSelectionMenu {
             items.append(closeItem)
 
             let closeOtherItem = NSMenuItem(
-                title: NSLocalizedString(
-                    "Close Other Tabs",
+                title: NSLocalizedString("common.tabMultiSelectionContextMenu.closeOtherTabsAction", value: "Close Other Tabs",
                     comment: "Tab multi-selection context menu - close all tabs except the selected ones"),
                 action: #selector(TabMultiSelectionMenuController.closeOtherSelected),
                 keyEquivalent: "")
@@ -179,21 +169,21 @@ enum TabMultiSelectionMenu {
     ) -> String {
         if context.folderCount > 0, context.bookmarkCount == 0 {
             let format = context.folderCount == 1
-                ? NSLocalizedString("Delete %d Folder", comment: "Tab multi-selection context menu - delete selected bookmark folder")
-                : NSLocalizedString("Delete %d Folders", comment: "Tab multi-selection context menu - delete selected bookmark folders")
+                ? NSLocalizedString("common.tabMultiSelectionContextMenu.deleteSingleFolderAction", value: "Delete %d Folder", comment: "Tab multi-selection context menu - delete selected bookmark folder")
+                : NSLocalizedString("common.tabMultiSelectionContextMenu.deleteMultipleFoldersAction", value: "Delete %d Folders", comment: "Tab multi-selection context menu - delete selected bookmark folders")
             return String(format: format, context.folderCount)
         }
 
         if context.bookmarkCount > 0, context.folderCount == 0 {
             let format = context.bookmarkCount == 1
-                ? NSLocalizedString("Delete %d Bookmark", comment: "Tab multi-selection context menu - delete selected bookmark")
-                : NSLocalizedString("Delete %d Bookmarks", comment: "Tab multi-selection context menu - delete selected bookmarks")
+                ? NSLocalizedString("common.tabMultiSelectionContextMenu.deleteSingleBookmarkAction", value: "Delete %d Bookmark", comment: "Tab multi-selection context menu - delete selected bookmark")
+                : NSLocalizedString("common.tabMultiSelectionContextMenu.deleteMultipleBookmarksAction", value: "Delete %d Bookmarks", comment: "Tab multi-selection context menu - delete selected bookmarks")
             return String(format: format, context.bookmarkCount)
         }
 
         let format = context.totalCount == 1
-            ? NSLocalizedString("Delete %d Item", comment: "Tab multi-selection context menu - delete selected bookmark item")
-            : NSLocalizedString("Delete %d Items", comment: "Tab multi-selection context menu - delete selected bookmark items")
+            ? NSLocalizedString("common.tabMultiSelectionContextMenu.deleteSingleItemAction", value: "Delete %d Item", comment: "Tab multi-selection context menu - delete selected bookmark item")
+            : NSLocalizedString("common.tabMultiSelectionContextMenu.deleteMultipleItemsAction", value: "Delete %d Items", comment: "Tab multi-selection context menu - delete selected bookmark items")
         return String(format: format, context.totalCount)
     }
 
@@ -254,8 +244,7 @@ enum TabMultiSelectionMenu {
 
         if !moveTargets.isEmpty {
             let parent = NSMenuItem(
-                title: NSLocalizedString(
-                    "Move to Space",
+                title: NSLocalizedString("common.tabMultiSelectionContextMenu.moveToSpaceSubmenu", value: "Move to Space",
                     comment: "Tab multi-selection context menu - Submenu to move selected tabs and bookmarks to another Space"),
                 action: nil,
                 keyEquivalent: "")
@@ -265,9 +254,7 @@ enum TabMultiSelectionMenu {
                                        action: #selector(TabMultiSelectionMenuController.moveSelectedToSpace(_:)),
                                        keyEquivalent: "")
                 entry.target = controller
-                if let icon = NSImage(systemSymbolName: space.iconName, accessibilityDescription: nil) {
-                    entry.image = icon
-                }
+                entry.image = SpaceIconView.menuImage(for: space.iconName)
                 entry.representedObject = space.spaceId
                 submenu.addItem(entry)
             }
@@ -277,8 +264,7 @@ enum TabMultiSelectionMenu {
 
         if !cloneTargets.isEmpty {
             let parent = NSMenuItem(
-                title: NSLocalizedString(
-                    "Clone to Space",
+                title: NSLocalizedString("common.tabMultiSelectionContextMenu.cloneToSpaceSubmenu", value: "Clone to Space",
                     comment: "Tab multi-selection context menu - Submenu to clone selected tabs and bookmarks to another Space"),
                 action: nil,
                 keyEquivalent: "")
@@ -288,9 +274,7 @@ enum TabMultiSelectionMenu {
                                        action: #selector(TabMultiSelectionMenuController.cloneSelectedToSpace(_:)),
                                        keyEquivalent: "")
                 entry.target = controller
-                if let icon = NSImage(systemSymbolName: space.iconName, accessibilityDescription: nil) {
-                    entry.image = icon
-                }
+                entry.image = SpaceIconView.menuImage(for: space.iconName)
                 entry.representedObject = space.spaceId
                 submenu.addItem(entry)
             }
@@ -417,11 +401,11 @@ final class TabMultiSelectionMenuController: NSObject {
             message: deleteAlertMessage(for: context),
             style: .critical,
             secondaryAction: PhiAlertAppKitAction(
-                NSLocalizedString("Cancel", comment: "Cancel button"),
+                NSLocalizedString("common.bookmarkDeletion.cancelButton", value: "Cancel", comment: "Cancel button"),
                 response: .alertSecondButtonReturn
             ),
             primaryAction: PhiAlertAppKitAction(
-                NSLocalizedString("Delete", comment: "Destructive button"),
+                NSLocalizedString("common.bookmarkDeletion.deleteButton", value: "Delete", comment: "Destructive button"),
                 role: .primary,
                 response: .alertFirstButtonReturn
             )
@@ -436,19 +420,19 @@ final class TabMultiSelectionMenuController: NSObject {
     private func deleteAlertTitle(for context: BrowserState.MultiSelectionBookmarkDeletionContext) -> String {
         if context.folderCount > 0, context.bookmarkCount == 0 {
             let format = context.folderCount == 1
-                ? NSLocalizedString("Delete %d Folder?", comment: "Bookmark multi-selection delete confirmation title")
-                : NSLocalizedString("Delete %d Folders?", comment: "Bookmark multi-selection delete confirmation title")
+                ? NSLocalizedString("common.bookmarkDeletion.singleFolderTitle", value: "Delete %d Folder?", comment: "Bookmark multi-selection delete confirmation title")
+                : NSLocalizedString("common.bookmarkDeletion.multipleFoldersTitle", value: "Delete %d Folders?", comment: "Bookmark multi-selection delete confirmation title")
             return String(format: format, context.folderCount)
         }
 
         if context.bookmarkCount > 0, context.folderCount == 0 {
             let format = context.bookmarkCount == 1
-                ? NSLocalizedString("Delete %d Bookmark?", comment: "Bookmark multi-selection delete confirmation title")
-                : NSLocalizedString("Delete %d Bookmarks?", comment: "Bookmark multi-selection delete confirmation title")
+                ? NSLocalizedString("common.bookmarkDeletion.singleBookmarkTitle", value: "Delete %d Bookmark?", comment: "Bookmark multi-selection delete confirmation title")
+                : NSLocalizedString("common.bookmarkDeletion.multipleBookmarksTitle", value: "Delete %d Bookmarks?", comment: "Bookmark multi-selection delete confirmation title")
             return String(format: format, context.bookmarkCount)
         }
 
-        let format = NSLocalizedString("Delete %d Items?", comment: "Bookmark multi-selection delete confirmation title")
+        let format = NSLocalizedString("common.bookmarkDeletion.mixedItemsTitle", value: "Delete %d Items?", comment: "Bookmark multi-selection delete confirmation title")
         return String(format: format, context.totalCount)
     }
 
@@ -456,42 +440,42 @@ final class TabMultiSelectionMenuController: NSObject {
         let deletionText: String
         if context.folderCount > 0, context.bookmarkCount == 0 {
             deletionText = String(
-                format: NSLocalizedString("%@ will be deleted.",
+                format: NSLocalizedString("common.bookmarkDeletion.foldersMessage", value: "%@ will be deleted.",
                                           comment: "Bookmark multi-selection delete confirmation body for folders"),
                 folderDeletionPhrase(context.folderCount)
             )
         } else if context.bookmarkCount > 0, context.folderCount == 0 {
             deletionText = String(
-                format: NSLocalizedString("%@ will be deleted.",
+                format: NSLocalizedString("common.bookmarkDeletion.bookmarksMessage", value: "%@ will be deleted.",
                                           comment: "Bookmark multi-selection delete confirmation body for bookmarks"),
                 bookmarkDeletionPhrase(context.bookmarkCount)
             )
         } else {
             deletionText = String(
-                format: NSLocalizedString("%@ and %@ will be deleted.",
+                format: NSLocalizedString("common.bookmarkDeletion.mixedItemsMessage", value: "%@ and %@ will be deleted.",
                                           comment: "Bookmark multi-selection delete confirmation body for mixed folders and bookmarks"),
                 folderDeletionPhrase(context.folderCount),
                 bookmarkDeletionPhrase(context.bookmarkCount)
             )
         }
-        return deletionText + " " + NSLocalizedString("This action cannot be undone.",
+        return deletionText + " " + NSLocalizedString("common.bookmarkDeletion.irreversibleWarning", value: "This action cannot be undone.",
                                                       comment: "Bookmark multi-selection delete confirmation irreversible warning")
     }
 
     private func folderDeletionPhrase(_ count: Int) -> String {
         let format = count == 1
-            ? NSLocalizedString("%d folder and its contents",
+            ? NSLocalizedString("common.bookmarkDeletion.singleFolderDescription", value: "%d folder and its contents",
                                 comment: "Bookmark multi-selection delete confirmation phrase for folder")
-            : NSLocalizedString("%d folders and their contents",
+            : NSLocalizedString("common.bookmarkDeletion.multipleFoldersDescription", value: "%d folders and their contents",
                                 comment: "Bookmark multi-selection delete confirmation phrase for folders")
         return String(format: format, count)
     }
 
     private func bookmarkDeletionPhrase(_ count: Int) -> String {
         let format = count == 1
-            ? NSLocalizedString("%d bookmark",
+            ? NSLocalizedString("common.bookmarkDeletion.singleBookmarkDescription", value: "%d bookmark",
                                 comment: "Bookmark multi-selection delete confirmation phrase for bookmark")
-            : NSLocalizedString("%d bookmarks",
+            : NSLocalizedString("common.bookmarkDeletion.multipleBookmarksDescription", value: "%d bookmarks",
                                 comment: "Bookmark multi-selection delete confirmation phrase for bookmarks")
         return String(format: format, count)
     }

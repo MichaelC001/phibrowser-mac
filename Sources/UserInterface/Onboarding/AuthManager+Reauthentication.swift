@@ -130,16 +130,13 @@ extension AuthManager {
         isPresentingReauthenticationPrompt = true
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = NSLocalizedString(
-            "Sign in again to continue",
+        alert.messageText = NSLocalizedString("oobe.reauthentication.title", value: "Sign in again to continue",
             comment: "Auth reauthentication - Alert title when the access token can no longer be renewed"
         )
-        alert.informativeText = NSLocalizedString(
-            "We need to refresh your session before account features can keep working. Please sign in again.",
+        alert.informativeText = NSLocalizedString("oobe.reauthentication.message", value: "We need to refresh your session before account features can keep working. Please sign in again.",
             comment: "Auth reauthentication - Alert body explaining required authentication"
         )
-        alert.addButton(withTitle: NSLocalizedString(
-            "Reauthenticate",
+        alert.addButton(withTitle: NSLocalizedString("oobe.reauthentication.confirmButton", value: "Reauthenticate",
             comment: "Auth reauthentication - Primary action to start Auth0 web authentication"
         ))
 

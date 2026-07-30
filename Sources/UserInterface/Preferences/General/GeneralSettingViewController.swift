@@ -9,7 +9,7 @@ import SnapKit
 
 class GeneralSettingViewController: NSViewController, SettingsPane {
     var paneIdentifier: Settings.PaneIdentifier = .general
-    var paneTitle: String = NSLocalizedString("General", comment: "Settings - Tab title for general settings")
+    var paneTitle: String = NSLocalizedString("settings.navigation.generalTitle", value: "General", comment: "Settings - Tab title for general settings")
 //    var toolbarItemIcon: NSImage = NSImage(systemSymbolName: "gearshape", accessibilityDescription: "general") ?? NSImage()
     var toolbarItemIcon: NSImage = NSImage(resource: .settingGeneralIcon)
     

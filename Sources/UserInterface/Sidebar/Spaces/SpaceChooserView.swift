@@ -122,7 +122,7 @@ struct SpaceChooserView: View {
             Text(item.name)
                 .fontWeight(.medium)
             if item.isCurrent {
-                Text(NSLocalizedString("Current",
+                Text(NSLocalizedString("sidebar.spaceChooser.currentStatus", value: "Current",
                     comment: "Marks the Space the user is currently in, in the ask-Space list"))
                     .font(.caption)
                     .opacity(0.6)

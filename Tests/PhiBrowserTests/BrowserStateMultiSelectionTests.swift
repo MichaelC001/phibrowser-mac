@@ -74,12 +74,13 @@ final class BrowserStateMultiSelectionTests: XCTestCase {
     }
 
     private func makeSpace(id: String = "space-target",
-                           profileId: String = "Default") -> SpaceModel {
+                           profileId: String = "Default",
+                           iconName: String = "circle") -> SpaceModel {
         SpaceModel(spaceId: id,
                    profileId: profileId,
                    name: "Target",
                    colorHex: "#000000",
-                   iconName: "circle",
+                   iconName: iconName,
                    sortOrder: 1)
     }
 
@@ -294,7 +295,11 @@ final class BrowserStateMultiSelectionTests: XCTestCase {
         state.toggleMultiSelection(for: state.tabs[1])
         let controller = SidebarTabListViewController(state: state)
 
-        controller.outlineView(SideBarOutlineView(), didClickRow: -1)
+        controller.outlineView(
+            SideBarOutlineView(),
+            didClickRow: -1,
+            modifierFlags: []
+        )
 
         XCTAssertFalse(state.multiSelection.isActive)
     }
@@ -1678,13 +1683,16 @@ final class BrowserStateMultiSelectionTests: XCTestCase {
         let folder = try XCTUnwrap(state.bookmarkManager.bookmark(withGuid: folderGuid))
         let menu = NSMenu()
 
+        let target = makeSpace(iconName: "emoji:1F916")
         XCTAssertTrue(folder.appendSpaceTransferMenuItems(to: menu,
                                                           browserState: state,
-                                                          spaces: [makeSpace()]))
+                                                          spaces: [target]))
         let moveItem = try XCTUnwrap(menu.items.first { $0.title == "Move to Space" })
         let cloneItem = try XCTUnwrap(menu.items.first { $0.title == "Clone to Space" })
         XCTAssertEqual(moveItem.submenu?.items.map(\.title), ["Target"])
         XCTAssertEqual(cloneItem.submenu?.items.map(\.title), ["Target"])
+        XCTAssertNotNil(moveItem.submenu?.items.first?.image)
+        XCTAssertNotNil(cloneItem.submenu?.items.first?.image)
     }
 
     func testCanMoveMultiSelectionAllowsLiveSplitTabWithSourceSlot() throws {

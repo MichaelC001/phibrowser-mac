@@ -72,7 +72,7 @@ final class SearchTabsResultCellView: NSTableCellView {
         let view = ZeroSafeAreaHostingView(rootView: makeCloseButtonRootView())
         view.wantsLayer = true
         view.layer?.backgroundColor = NSColor.clear.cgColor
-        view.toolTip = NSLocalizedString("Close Tab", comment: "Search Tabs - Close open tab button tooltip")
+        view.toolTip = NSLocalizedString("searchTabs.result.closeTabButtonTooltip", value: "Close Tab", comment: "Search Tabs - Close open tab button tooltip")
         view.isHidden = true
         return view
     }()
@@ -325,7 +325,7 @@ final class SearchTabsResultCellView: NSTableCellView {
 
     private static func dateText(for item: SearchTabsItem) -> String {
         if item.state.isActive {
-            return NSLocalizedString("Active", comment: "Search Tabs - Trailing label for the active tab result")
+            return NSLocalizedString("searchTabs.result.activeStatus", value: "Active", comment: "Search Tabs - Trailing label for the active tab result")
         }
         return item.state.lastActiveElapsedText ?? ""
     }

@@ -27,7 +27,9 @@ extension AppController {
     static let spacesDeleteProfileParentItemTag = 500016
     static let viewMenuPhiSectionSeparatorTag = 500023
     static let agentAutoViewItemTag = 500024
-    static let agentTranscriptItemTag = 500036
+    // 500025: was 500036, which collided with spacesChangeProfileParentTag
+    // (harmless across submenus, but tags must stay unique to grep sanely).
+    static let agentTranscriptItemTag = 500025
     static let spacesProfileSeparatorTag = 500020
     static let deleteProfileSubmenuIdentifier = NSUserInterfaceItemIdentifier("phi.spaces.deleteProfile")
     static let spacesMenuItemTag = 500018
@@ -56,6 +58,14 @@ extension AppController {
         }
     }
     
+    /// Re-runs the main-menu hook so pref-gated items appear or disappear
+    /// without waiting for Chromium's next menu swap — the View ▸ agent items
+    /// follow the agent CDP switch (`AgentCDPListener.setEnabled` calls this).
+    /// Safe to call repeatedly: the hook is remove-then-insert idempotent.
+    func refreshPrefGatedMenuItems() {
+        hookAndRebuildMainMenu()
+    }
+
     private func hookAndRebuildMainMenu() {
         guard let mainMenu = NSApp.mainMenu else {
             return
@@ -92,7 +102,7 @@ extension AppController {
                     submenu.addItem(topSeparator)
                 }
                 
-                let layoutTtitle = NSMenuItem.sectionHeader(title: NSLocalizedString("Layout Mode", comment: "View menu - Layout mode section header in View menu"))
+                let layoutTtitle = NSMenuItem.sectionHeader(title: NSLocalizedString("app.viewMenu.layoutModeSectionTitle", value: "Layout Mode", comment: "View menu - Layout mode section header in View menu"))
                 layoutTtitle.tag = AppController.layoutModeTitleItemTag
                 submenu.addItem(layoutTtitle)
                 
@@ -120,14 +130,14 @@ extension AppController {
                 let bookmarkBarSeparator = NSMenuItem.separator()
                 bookmarkBarSeparator.tag = AppController.viewMenuPhiSectionSeparatorTag
                 submenu.addItem(bookmarkBarSeparator)
-                let toggleBookmarkBarItem = NSMenuItem(title: NSLocalizedString("Always Show Bookmark Bar", comment: "View menu - Menu item to always show the bookmark bar"),
+                let toggleBookmarkBarItem = NSMenuItem(title: NSLocalizedString("app.viewMenu.alwaysShowBookmarkBar", value: "Always Show Bookmark Bar", comment: "View menu - Menu item to always show the bookmark bar"),
                                                    action: #selector(toggleBookmarkBar(_:)),
                                                    keyEquivalent: "b")
                 toggleBookmarkBarItem.keyEquivalentModifierMask = [.command, .shift]
                 toggleBookmarkBarItem.tag = AppController.toggleBookmarkBarItemTag
                 toggleBookmarkBarItem.target = self
                 submenu.addItem(toggleBookmarkBarItem)
-                let toggleBookmarkBarOnNewTabItem = NSMenuItem(title: NSLocalizedString("Show Bookmark Bar on New Tab", comment: "View menu - Menu item to show the bookmark bar on new tab pages"),
+                let toggleBookmarkBarOnNewTabItem = NSMenuItem(title: NSLocalizedString("app.viewMenu.showBookmarkBarOnNewTab", value: "Show Bookmark Bar on New Tab", comment: "View menu - Menu item to show the bookmark bar on new tab pages"),
                                                    action: #selector(toggleBookmarkBarOnNewTab(_:)),
                                                    keyEquivalent: "")
                 toggleBookmarkBarOnNewTabItem.tag = AppController.toggleBookmarkBarOnNewTabItemTag
@@ -138,7 +148,7 @@ extension AppController {
                 sidebarSeparator.tag = AppController.viewMenuPhiSectionSeparatorTag
                 submenu.addItem(sidebarSeparator)
 
-                let toggleSidebarItem = NSMenuItem(title: NSLocalizedString("Toggle Sidebar", comment: "View menu - Menu item to show or hide the sidebar"),
+                let toggleSidebarItem = NSMenuItem(title: NSLocalizedString("app.viewMenu.toggleSidebar", value: "Toggle Sidebar", comment: "View menu - Menu item to show or hide the sidebar"),
                                                    action: #selector(toggleSidebar(_:)),
                                                    keyEquivalent: "s")
                 toggleSidebarItem.keyEquivalentModifierMask = [.command]
@@ -147,7 +157,7 @@ extension AppController {
                 toggleSidebarItem.target = self
                 submenu.addItem(toggleSidebarItem)
 
-                let toggleChatbarItem = NSMenuItem(title: NSLocalizedString("Toggle Chatbar", comment: "View menu - Menu item to show or hide the AI chat bar"),
+                let toggleChatbarItem = NSMenuItem(title: NSLocalizedString("app.viewMenu.toggleChatbar", value: "Toggle Chatbar", comment: "View menu - Menu item to show or hide the AI chat bar"),
                                                    action: #selector(toggleChatbar(_:)),
                                                    keyEquivalent: "s")
                 toggleChatbarItem.keyEquivalentModifierMask = [.command, .shift]
@@ -156,7 +166,7 @@ extension AppController {
                 toggleChatbarItem.target = self
                 submenu.addItem(toggleChatbarItem)
 
-                let newConversationItem = NSMenuItem(title: NSLocalizedString("New Conversation", comment: "View menu - Menu item to start a new AI conversation in the sidebar"),
+                let newConversationItem = NSMenuItem(title: NSLocalizedString("app.viewMenu.newConversation", value: "New Conversation", comment: "View menu - Menu item to start a new AI conversation in the sidebar"),
                                                    action: #selector(newConversation(_:)),
                                                    keyEquivalent: "o")
                 newConversationItem.keyEquivalentModifierMask = [.command, .shift]
@@ -165,18 +175,22 @@ extension AppController {
                 newConversationItem.target = self
                 submenu.addItem(newConversationItem)
 
-                if PhiPreferences.AgentSpaces.skillFeatureEnabled {
+                // The agent view items follow the CDP master switch, not
+                // developer mode: they matter exactly while agents can drive
+                // the browser, and `AgentCDPListener.setEnabled` refreshes the
+                // menu so they appear/disappear the moment the switch flips.
+                if PhiPreferences.AgentSpaces.cdpAgentAccessEnabled {
                     let agentAutoViewSeparator = NSMenuItem.separator()
                     agentAutoViewSeparator.tag = AppController.viewMenuPhiSectionSeparatorTag
                     submenu.addItem(agentAutoViewSeparator)
-                    let agentAutoViewItem = NSMenuItem(title: NSLocalizedString("Agent Autoview", comment: "View menu - Toggle that automatically switches to the Space of an operating agent"),
+                    let agentAutoViewItem = NSMenuItem(title: NSLocalizedString("app.viewMenu.agentAutoview", value: "Agent Autoview", comment: "View menu - Toggle that automatically switches to the Space of an operating agent"),
                                                        action: #selector(toggleAgentAutoView(_:)),
                                                        keyEquivalent: "")
                     agentAutoViewItem.tag = AppController.agentAutoViewItemTag
                     agentAutoViewItem.target = self
                     submenu.addItem(agentAutoViewItem)
 
-                    let agentTranscriptItem = NSMenuItem(title: NSLocalizedString("Agent Transcript", comment: "View menu - Toggle for the console mirroring the driving agent's session"),
+                    let agentTranscriptItem = NSMenuItem(title: NSLocalizedString("app.viewMenu.agentTranscript", value: "Agent Transcript", comment: "View menu - Toggle for the console mirroring the driving agent's session"),
                                                          action: #selector(toggleAgentTranscript(_:)),
                                                          keyEquivalent: "")
                     agentTranscriptItem.tag = AppController.agentTranscriptItemTag
@@ -190,7 +204,7 @@ extension AppController {
 
                 for (index, item) in subMenu.items.enumerated() {
                     if item.title == "Settings..." || item.tag == 40015 {
-                        let checkForUpdateItem = NSMenuItem(title: NSLocalizedString("Check for Update...", comment: "Phi menu - Menu item to check for app updates"),
+                        let checkForUpdateItem = NSMenuItem(title: NSLocalizedString("app.phiMenu.checkForUpdatesMenuItem", value: "Check for Update...", comment: "Phi menu - Menu item to check for app updates"),
                                                            action: #selector(checkForUpdate(_:)),
                                                            keyEquivalent: "")
                         checkForUpdateItem.tag = AppController.checkForUpdateItemTag
@@ -216,7 +230,7 @@ extension AppController {
                 // rebuilds (Chromium can swap the main menu wholesale).
                 subMenu.items.removeAll { $0.tag == AppController.fileNewIncognitoSpaceItemTag }
                 let newIncognitoSpaceItem = NSMenuItem(
-                    title: NSLocalizedString("New Incognito Space", comment: "File menu - Create a new Incognito Space and bring it to the front"),
+                    title: NSLocalizedString("app.fileMenu.createNewIncognitoSpace", value: "New Incognito Space", comment: "File menu - Create a new Incognito Space and bring it to the front"),
                     action: #selector(newIncognitoSpaceFromMenu(_:)),
                     keyEquivalent: ""
                 )
@@ -265,14 +279,14 @@ extension AppController {
                     $0.tag == AppController.manageUserDataParentItemTag
                 }
                 
-                let extensionInfoItem = NSMenuItem(title: NSLocalizedString("Extension Info", comment: "Help menu - Menu item to show extension version info, only visible when holding Option key"),
+                let extensionInfoItem = NSMenuItem(title: NSLocalizedString("app.helpMenu.extensionInfo", value: "Extension Info", comment: "Help menu - Menu item to show extension version info, only visible when holding Option key"),
                                                    action: #selector(showExtensionInfo(_:)),
                                                    keyEquivalent: "")
                 extensionInfoItem.tag = AppController.extensionInfoItemTag
                 extensionInfoItem.isHidden = true
                 extensionInfoItem.target = self
 
-                let exportLogsItem = NSMenuItem(title: NSLocalizedString("Export Logs...", comment: "Help menu - Menu item to export Phi and Sentinel logs as a zip archive; visible only when holding Option key"),
+                let exportLogsItem = NSMenuItem(title: NSLocalizedString("app.helpMenu.exportLogs", value: "Export Logs...", comment: "Help menu - Menu item to export Phi and Sentinel logs as a zip archive; visible only when holding Option key"),
                                                 action: #selector(exportLogs(_:)),
                                                 keyEquivalent: "")
                 exportLogsItem.tag = AppController.exportLogsItemTag
@@ -287,7 +301,7 @@ extension AppController {
                     subMenu.addItem(exportLogsItem)
                 }
 
-                let whatsNewItem = NSMenuItem(title: NSLocalizedString("What's New", comment: "Help menu - Menu item that opens the chrome://whats-new page in a new tab, placed right below 'Report an Issue'"),
+                let whatsNewItem = NSMenuItem(title: NSLocalizedString("app.helpMenu.whatsNew", value: "What's New", comment: "Help menu - Menu item that opens the chrome://whats-new page in a new tab, placed right below 'Report an Issue'"),
                                               action: #selector(showWhatsNew(_:)),
                                               keyEquivalent: "")
                 whatsNewItem.tag = AppController.whatsNewItemTag
@@ -306,18 +320,18 @@ extension AppController {
 
                 subMenu.addItem(makeTimeMachineBackupsMenuItem())
 
-                let manageUserDataTitle = NSLocalizedString("Manage User Data", comment: "Help menu - Parent menu item for exporting and importing Phi user data backup")
+                let manageUserDataTitle = NSLocalizedString("app.helpMenu.manageUserData", value: "Manage User Data", comment: "Help menu - Parent menu item for exporting and importing Phi user data backup")
                 let manageUserDataItem = NSMenuItem(title: manageUserDataTitle, action: nil, keyEquivalent: "")
                 manageUserDataItem.tag = AppController.manageUserDataParentItemTag
                 let userDataSubmenu = NSMenu(title: manageUserDataTitle)
                 let exportUserDataItem = NSMenuItem(
-                    title: NSLocalizedString("Export User Data...", comment: "Help menu - Submenu item to save Phi user data folder as a zip backup"),
+                    title: NSLocalizedString("app.helpMenu.exportUserData", value: "Export User Data...", comment: "Help menu - Submenu item to save Phi user data folder as a zip backup"),
                     action: #selector(exportUserData(_:)),
                     keyEquivalent: ""
                 )
                 exportUserDataItem.target = self
                 let importUserDataItem = NSMenuItem(
-                    title: NSLocalizedString("Import User Data...", comment: "Help menu - Submenu item to replace Phi user data from a zip backup and relaunch the app"),
+                    title: NSLocalizedString("app.helpMenu.importUserData", value: "Import User Data...", comment: "Help menu - Submenu item to replace Phi user data from a zip backup and relaunch the app"),
                     action: #selector(importUserDataFromBackup(_:)),
                     keyEquivalent: ""
                 )
@@ -354,7 +368,7 @@ extension AppController {
         let deletable = ProfileManager.shared.profiles.filter { $0.profileId != LocalStore.defaultProfileId }
         guard !deletable.isEmpty else {
             let empty = NSMenuItem(
-                title: NSLocalizedString("No Profiles to Delete", comment: "Spaces menu - Delete Profile submenu empty state"),
+                title: NSLocalizedString("app.spacesMenu.deleteProfile.emptyPlaceholder", value: "No Profiles to Delete", comment: "Spaces menu - Delete Profile submenu empty state"),
                 action: nil,
                 keyEquivalent: ""
             )
@@ -367,7 +381,7 @@ extension AppController {
             let title: String
             if inUse {
                 title = String(
-                    format: NSLocalizedString("%@ — in use by a Space", comment: "Spaces menu - Delete Profile row label for a profile bound to a Space"),
+                    format: NSLocalizedString("app.spacesMenu.deleteProfile.inUseLabel", value: "%@ — in use by a Space", comment: "Spaces menu - Delete Profile row label for a profile bound to a Space"),
                     profile.displayName
                 )
             } else {
@@ -396,29 +410,28 @@ extension AppController {
         }
         let alert = NSAlert()
         alert.messageText = String(
-            format: NSLocalizedString("Delete profile \u{201C}%@\u{201D}?", comment: "Title of the delete-profile confirmation"),
+            format: NSLocalizedString("app.deleteProfileConfirmation.title", value: "Delete profile \u{201C}%@\u{201D}?", comment: "Title of the delete-profile confirmation"),
             profile.displayName
         )
-        alert.informativeText = NSLocalizedString(
-            "All cookies, history, extensions, and saved data on this profile will be permanently removed. This cannot be undone.",
+        alert.informativeText = NSLocalizedString("app.deleteProfileConfirmation.message", value: "All cookies, history, extensions, and saved data on this profile will be permanently removed. This cannot be undone.",
             comment: "Body of the delete-profile confirmation"
         )
         alert.alertStyle = .warning
-        alert.addButton(withTitle: NSLocalizedString("Delete", comment: "Destructive button"))
-        alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Cancel button"))
+        alert.addButton(withTitle: NSLocalizedString("app.deleteProfileConfirmation.deleteButton", value: "Delete", comment: "Destructive button"))
+        alert.addButton(withTitle: NSLocalizedString("app.deleteProfileConfirmation.cancelButton", value: "Cancel", comment: "Cancel button"))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         ProfileManager.shared.deleteProfile(profile.profileId) { success, error in
             if !success {
                 let errAlert = NSAlert()
-                errAlert.messageText = NSLocalizedString("Couldn't delete profile", comment: "Title of the profile-delete error")
-                errAlert.informativeText = error ?? NSLocalizedString("Unknown error", comment: "Fallback profile-delete error reason")
+                errAlert.messageText = NSLocalizedString("app.deleteProfileFailure.title", value: "Couldn't delete profile", comment: "Title of the profile-delete error")
+                errAlert.informativeText = error ?? NSLocalizedString("app.deleteProfileFailure.unknownError", value: "Unknown error", comment: "Fallback profile-delete error reason")
                 errAlert.runModal()
             }
         }
     }
 
     private func configureBookmarksMenuItem(_ menuItem: NSMenuItem) {
-        menuItem.title = NSLocalizedString("Bookmarks", comment: "Main menu - Top-level Bookmarks menu title in the application menu bar")
+        menuItem.title = NSLocalizedString("app.mainMenu.bookmarksConfiguredTitle", value: "Bookmarks", comment: "Main menu - Top-level Bookmarks menu title in the application menu bar")
         menuItem.tag = AppController.bookmarksMenuItemTag
         menuItem.isHidden = isActiveWindowIncognito()
 
@@ -432,7 +445,7 @@ extension AppController {
 
     private func installBookmarksMenu(in mainMenu: NSMenu) {
         let menuItem = NSMenuItem(
-            title: NSLocalizedString("Bookmarks", comment: "Main menu - Top-level Bookmarks menu title in the application menu bar"),
+            title: NSLocalizedString("app.mainMenu.bookmarksInstalledTitle", value: "Bookmarks", comment: "Main menu - Top-level Bookmarks menu title in the application menu bar"),
             action: nil,
             keyEquivalent: ""
         )
@@ -449,7 +462,7 @@ extension AppController {
     }
 
     private func makeTimeMachineBackupsMenuItem() -> NSMenuItem {
-        let title = NSLocalizedString("Time Machine Backups", comment: "Help menu - Parent menu item listing completed Phi Time Machine backups")
+        let title = NSLocalizedString("app.helpMenu.timeMachineBackups", value: "Time Machine Backups", comment: "Help menu - Parent menu item listing completed Phi Time Machine backups")
         let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         item.tag = AppController.timeMachineBackupsParentItemTag
 
@@ -472,7 +485,7 @@ extension AppController {
             AppLogError("Time Machine backups menu failed: \(error.localizedDescription)")
             menu.removeAllItems()
             let item = NSMenuItem(
-                title: NSLocalizedString("Backups Unavailable", comment: "Help menu - Time Machine submenu placeholder when the backup catalog cannot be read"),
+                title: NSLocalizedString("app.helpMenu.timeMachineBackupsUnavailablePlaceholder", value: "Backups Unavailable", comment: "Help menu - Time Machine submenu placeholder when the backup catalog cannot be read"),
                 action: nil,
                 keyEquivalent: ""
             )
@@ -551,7 +564,7 @@ extension AppController {
         menu.items.removeAll { $0.tag == CommandWrapper.PHI_COPY_URL.rawValue }
 
         let item = NSMenuItem(
-            title: NSLocalizedString("Copy URL", comment: "Edit menu - Copy the selected tab URL to the clipboard"),
+            title: NSLocalizedString("app.editMenu.copySelectedTabURLAction", value: "Copy URL", comment: "Edit menu - Copy the selected tab URL to the clipboard"),
             action: #selector(copySelectedTabURLs(_:)),
             keyEquivalent: ""
         )
@@ -721,8 +734,7 @@ extension AppController {
             let html = BookmarkHTMLExporter.htmlDocument(
                 for: bookmarks,
                 pinnedTabs: pinnedTabs,
-                favoritesFolderTitle: NSLocalizedString(
-                    "Favorites",
+                favoritesFolderTitle: NSLocalizedString("app.bookmarkExport.exportedFolderName", value: "Favorites",
                     comment: "Bookmark export - name of the exported folder carrying the window's pinned tabs"))
             AppController.inFlightBookmarkExportWrites += 1
             DispatchQueue.global(qos: .userInitiated).async {
@@ -742,7 +754,7 @@ extension AppController {
                         AppLogError("Bookmark export failed: \(error.localizedDescription)")
                         let alert = NSAlert()
                         alert.alertStyle = .critical
-                        alert.messageText = NSLocalizedString("Could Not Export Bookmarks", comment: "Export bookmarks failure alert - title shown when writing the exported HTML file fails")
+                        alert.messageText = NSLocalizedString("app.bookmarkExport.failure.title", value: "Could Not Export Bookmarks", comment: "Export bookmarks failure alert - title shown when writing the exported HTML file fails")
                         alert.informativeText = error.localizedDescription
                         alert.beginSheetModal(for: window)
                     }
@@ -780,22 +792,21 @@ extension AppController {
         do {
             guard let backup = try TimeMachineMenuPresenter().backup(id: backupID) else {
                 presentTimeMachineRestoreFailure(
-                    NSLocalizedString("The selected Time Machine backup is no longer available.", comment: "Help menu - Time Machine restore error when a selected backup disappears")
+                    NSLocalizedString("app.timeMachineRestore.backupUnavailableMessage", value: "The selected Time Machine backup is no longer available.", comment: "Help menu - Time Machine restore error when a selected backup disappears")
                 )
                 return
             }
 
             let backupTitle = backup.menuTitle()
             let alert = NSAlert()
-            alert.messageText = NSLocalizedString("Restore Time Machine Backup?", comment: "Help menu - Time Machine restore confirmation title")
-            let messageTemplate = NSLocalizedString(
-                "Phi will quit and restore %@. The current app and selected user data will be replaced.",
+            alert.messageText = NSLocalizedString("app.timeMachineRestore.confirmation.title", value: "Restore Time Machine Backup?", comment: "Help menu - Time Machine restore confirmation title")
+            let messageTemplate = NSLocalizedString("app.timeMachineRestore.confirmation.message", value: "Phi will quit and restore %@. The current app and selected user data will be replaced.",
                 comment: "Help menu - Time Machine restore confirmation body"
             )
             alert.informativeText = String(format: messageTemplate, backupTitle)
             alert.alertStyle = .warning
-            alert.addButton(withTitle: NSLocalizedString("Restore", comment: "Help menu - Time Machine restore confirmation button"))
-            alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Generic - Cancel button to dismiss an alert"))
+            alert.addButton(withTitle: NSLocalizedString("app.timeMachineRestore.confirmation.restoreButton", value: "Restore", comment: "Help menu - Time Machine restore confirmation button"))
+            alert.addButton(withTitle: NSLocalizedString("app.timeMachineRestore.confirmation.cancelButton", value: "Cancel", comment: "Time Machine restore - Cancel confirmation button"))
 
             guard alert.runModal() == .alertFirstButtonReturn else {
                 return
@@ -828,8 +839,7 @@ extension AppController {
             case .some(.success):
                 NSApp.terminate(nil)
             case .some(.failure(let error)):
-                let messageTemplate = NSLocalizedString(
-                    "Phi could not start Time Machine restore: %@",
+                let messageTemplate = NSLocalizedString("app.timeMachineRestore.launchFailureMessage", value: "Phi could not start Time Machine restore: %@",
                     comment: "Help menu - Time Machine restore launch failure body"
                 )
                 presentTimeMachineRestoreFailure(String(format: messageTemplate, error.localizedDescription))
@@ -837,8 +847,7 @@ extension AppController {
                 break
             }
         } catch {
-            let messageTemplate = NSLocalizedString(
-                "Phi could not read Time Machine backups: %@",
+            let messageTemplate = NSLocalizedString("app.timeMachineRestore.catalogReadFailureMessage", value: "Phi could not read Time Machine backups: %@",
                 comment: "Help menu - Time Machine restore catalog read failure body"
             )
             presentTimeMachineRestoreFailure(String(format: messageTemplate, error.localizedDescription))
@@ -848,10 +857,10 @@ extension AppController {
     private func presentTimeMachineRestoreFailure(_ message: String) {
         AppLogError("Time Machine restore failed: \(message)")
         let alert = NSAlert()
-        alert.messageText = NSLocalizedString("Time Machine Restore Failed", comment: "Help menu - Time Machine restore failure alert title")
+        alert.messageText = NSLocalizedString("app.timeMachineRestore.failure.title", value: "Time Machine Restore Failed", comment: "Help menu - Time Machine restore failure alert title")
         alert.informativeText = message
         alert.alertStyle = .warning
-        alert.addButton(withTitle: NSLocalizedString("OK", comment: "Generic - OK button to dismiss an alert"))
+        alert.addButton(withTitle: NSLocalizedString("app.timeMachineRestore.failure.dismissButton", value: "OK", comment: "Time Machine restore - Failure alert dismiss button"))
         alert.runModal()
     }
     
@@ -864,10 +873,10 @@ extension AppController {
         let hasSentinel = fm.fileExists(atPath: sentinelLogsURL.path)
         guard hasPhi || hasSentinel else {
             let alert = NSAlert()
-            alert.messageText = NSLocalizedString("Export Logs", comment: "Help menu - Log export alert title when no log folders exist")
-            alert.informativeText = NSLocalizedString("No Phi or Sentinel log folders were found.", comment: "Help menu - Log export alert when both PhiLogs and Sentinel log directory are missing")
+            alert.messageText = NSLocalizedString("app.logExport.noLogsFound.title", value: "Export Logs", comment: "Help menu - Log export alert title when no log folders exist")
+            alert.informativeText = NSLocalizedString("app.logExport.noLogsFound.message", value: "No Phi or Sentinel log folders were found.", comment: "Help menu - Log export alert when both PhiLogs and Sentinel log directory are missing")
             alert.alertStyle = .informational
-            alert.addButton(withTitle: NSLocalizedString("OK", comment: "Generic - OK button to dismiss an alert"))
+            alert.addButton(withTitle: NSLocalizedString("app.logExport.noLogsFound.dismissButton", value: "OK", comment: "Log export - No-log-folders alert dismiss button"))
             alert.runModal()
             return
         }
@@ -881,8 +890,8 @@ extension AppController {
         formatter.timeZone = TimeZone.current
         formatter.dateFormat = "yyyy-MM-dd"
         panel.nameFieldStringValue = "Phi_Logs_\(formatter.string(from: Date())).zip"
-        panel.title = NSLocalizedString("Export Logs", comment: "Help menu - NSSavePanel window title for saving the log export zip")
-        panel.prompt = NSLocalizedString("Export", comment: "Help menu - NSSavePanel primary button title for confirming log export save location")
+        panel.title = NSLocalizedString("app.logExport.savePanel.title", value: "Export Logs", comment: "Help menu - NSSavePanel window title for saving the log export zip")
+        panel.prompt = NSLocalizedString("app.logExport.savePanel.exportButton", value: "Export", comment: "Help menu - NSSavePanel primary button title for confirming log export save location")
 
         let completion: (NSApplication.ModalResponse) -> Void = { [weak self] response in
             guard let self, response == .OK, let destURL = panel.url else { return }
@@ -897,10 +906,10 @@ extension AppController {
             } catch {
                 AppLogError("Log export failed: \(error.localizedDescription)")
                 let alert = NSAlert()
-                alert.messageText = NSLocalizedString("Export Failed", comment: "Help menu - Log export error alert title")
+                alert.messageText = NSLocalizedString("app.logExport.failure.title", value: "Export Failed", comment: "Help menu - Log export error alert title")
                 alert.informativeText = error.localizedDescription
                 alert.alertStyle = .warning
-                alert.addButton(withTitle: NSLocalizedString("OK", comment: "Generic - OK button to dismiss an alert"))
+                alert.addButton(withTitle: NSLocalizedString("app.logExport.failure.dismissButton", value: "OK", comment: "Log export - Failure alert dismiss button"))
                 alert.runModal()
             }
         }
@@ -961,7 +970,7 @@ extension AppController {
         let versionsDict = MainBrowserWindowControllersManager.shared.activeWindowController?.browserState.extensionManager.phiExtensionVersions
         
         let alert = NSAlert()
-        alert.messageText = NSLocalizedString("Extension Info", comment: "Extension info alert - Title of the alert showing extension version information")
+        alert.messageText = NSLocalizedString("app.extensionInfoAlert.title", value: "Extension Info", comment: "Extension info alert - Title of the alert showing extension version information")
         
         let informativeText: String
         if let dict = versionsDict, !dict.isEmpty {
@@ -969,12 +978,12 @@ extension AppController {
                 .map { "\($0.key): \($0.value)" }
             informativeText = lines.joined(separator: "\n")
         } else {
-            informativeText = NSLocalizedString("No extensions found or versions unavailable.", comment: "Extension info alert - Fallback when no extension versions are available")
+            informativeText = NSLocalizedString("app.extensionInfoAlert.emptyMessage", value: "No extensions found or versions unavailable.", comment: "Extension info alert - Fallback when no extension versions are available")
         }
         
         alert.informativeText = informativeText
         alert.alertStyle = .informational
-        alert.addButton(withTitle: NSLocalizedString("OK", comment: "Extension info alert - OK button to dismiss the alert"))
+        alert.addButton(withTitle: NSLocalizedString("app.extensionInfoAlert.dismissButton", value: "OK", comment: "Extension info alert - OK button to dismiss the alert"))
         alert.runModal()
     }
 
@@ -1017,7 +1026,7 @@ extension AppController {
             isNew = false
         } else {
             menuItem = NSMenuItem(
-                title: NSLocalizedString("Spaces", comment: "Main menu - Top-level Spaces menu title in the application menu bar"),
+                title: NSLocalizedString("app.mainMenu.spaces", value: "Spaces", comment: "Main menu - Top-level Spaces menu title in the application menu bar"),
                 action: nil,
                 keyEquivalent: ""
             )
@@ -1059,7 +1068,7 @@ extension AppController {
         let activeSpace = currentActiveSpace()
 
         let newSpaceItem = NSMenuItem(
-            title: NSLocalizedString("New Space\u{2026}", comment: "Spaces menu - Create a new Space"),
+            title: NSLocalizedString("app.activeSpaceContextMenu.newSpaceAction", value: "New Space\u{2026}", comment: "Active Space context menu - Create a new Space"),
             action: #selector(newSpaceFromMenu(_:)),
             keyEquivalent: ""
         )
@@ -1067,7 +1076,7 @@ extension AppController {
         menu.addItem(newSpaceItem)
 
         let renameItem = NSMenuItem(
-            title: NSLocalizedString("Rename Space\u{2026}", comment: "Spaces menu - Rename the active Space"),
+            title: NSLocalizedString("app.activeSpaceContextMenu.renameSpaceAction", value: "Rename Space\u{2026}", comment: "Active Space context menu - Rename the active Space"),
             action: #selector(renameActiveSpace(_:)),
             keyEquivalent: ""
         )
@@ -1075,7 +1084,7 @@ extension AppController {
         menu.addItem(renameItem)
 
         let changeIconItem = NSMenuItem(
-            title: NSLocalizedString("Change Icon\u{2026}", comment: "Tab-area menu - opens the icon/emoji picker below the active Space's icon"),
+            title: NSLocalizedString("app.tabAreaMenu.changeIcon", value: "Change Icon\u{2026}", comment: "Tab-area menu - opens the icon/emoji picker below the active Space's icon"),
             action: #selector(requestActiveSpaceIconPicker(_:)),
             keyEquivalent: ""
         )
@@ -1083,7 +1092,7 @@ extension AppController {
         menu.addItem(changeIconItem)
 
         let editThemeParent = NSMenuItem(
-            title: NSLocalizedString("Edit Theme", comment: "Spaces menu - Submenu to set a theme override for the active Space"),
+            title: NSLocalizedString("app.activeSpaceContextMenu.themeSubmenuTitle", value: "Edit Theme", comment: "Active Space context menu - Submenu to set a theme override for the active Space"),
             action: nil,
             keyEquivalent: ""
         )
@@ -1091,7 +1100,7 @@ extension AppController {
         menu.addItem(editThemeParent)
 
         let changeProfileParent = NSMenuItem(
-            title: NSLocalizedString("Change Profile", comment: "Spaces menu - Submenu to re-bind the active Space to another profile"),
+            title: NSLocalizedString("app.activeSpaceContextMenu.profileSubmenuTitle", value: "Change Profile", comment: "Active Space context menu - Submenu to re-bind the active Space to another profile"),
             action: nil,
             keyEquivalent: ""
         )
@@ -1099,7 +1108,7 @@ extension AppController {
         menu.addItem(changeProfileParent)
 
         let deleteSpaceItem = NSMenuItem(
-            title: NSLocalizedString("Delete Space\u{2026}", comment: "Spaces menu - Delete the active Space"),
+            title: NSLocalizedString("app.activeSpaceContextMenu.deleteSpaceAction", value: "Delete Space\u{2026}", comment: "Active Space context menu - Delete the active Space"),
             action: #selector(deleteActiveSpace(_:)),
             keyEquivalent: ""
         )
@@ -1113,7 +1122,7 @@ extension AppController {
         if let activeSpaceId = activeSpace?.spaceId, SpaceManager.isIncognitoSpaceId(activeSpaceId) {
             menu.addItem(.separator())
             let closeSpaceItem = NSMenuItem(
-                title: NSLocalizedString("Close Incognito Space", comment: "Spaces menu - close the active Incognito Space's windows and end it"),
+                title: NSLocalizedString("app.spacesMenu.closeActiveIncognitoSpace", value: "Close Incognito Space", comment: "Spaces menu - close the active Incognito Space's windows and end it"),
                 action: #selector(closeIncognitoSpaceFromMenu(_:)),
                 keyEquivalent: ""
             )
@@ -1179,7 +1188,7 @@ extension AppController {
             menu.addItem(.separator())
         }
         let newSpaceItem = NSMenuItem(
-            title: NSLocalizedString("New Space\u{2026}", comment: "Spaces menu - Create a new Space"),
+            title: NSLocalizedString("app.spaceSwitcherMenu.newSpaceAction", value: "New Space\u{2026}", comment: "Space switcher menu - Create a new Space"),
             action: #selector(newSpaceFromMenu(_:)),
             keyEquivalent: ""
         )
@@ -1260,7 +1269,7 @@ extension AppController {
         let activeSpaceId = activeSpace?.spaceId
 
         let newSpaceItem = NSMenuItem(
-            title: NSLocalizedString("New Space\u{2026}", comment: "Spaces menu - Create a new Space"),
+            title: NSLocalizedString("app.spacesMenu.newSpace", value: "New Space\u{2026}", comment: "Spaces menu - Create a new Space"),
             action: #selector(newSpaceFromMenu(_:)),
             keyEquivalent: ""
         )
@@ -1269,7 +1278,7 @@ extension AppController {
         menu.addItem(newSpaceItem)
 
         let renameItem = NSMenuItem(
-            title: NSLocalizedString("Rename Space\u{2026}", comment: "Spaces menu - Rename the active Space"),
+            title: NSLocalizedString("app.spacesMenu.renameSpace", value: "Rename Space\u{2026}", comment: "Spaces menu - Rename the active Space"),
             action: #selector(renameActiveSpace(_:)),
             keyEquivalent: ""
         )
@@ -1278,7 +1287,7 @@ extension AppController {
         menu.addItem(renameItem)
 
         let changeIconItem = NSMenuItem(
-            title: NSLocalizedString("Change Icon\u{2026}", comment: "Spaces menu - opens the icon/emoji picker below the active Space's icon"),
+            title: NSLocalizedString("app.spacesMenu.changeIcon", value: "Change Icon\u{2026}", comment: "Spaces menu - opens the icon/emoji picker below the active Space's icon"),
             action: #selector(requestActiveSpaceIconPicker(_:)),
             keyEquivalent: ""
         )
@@ -1286,7 +1295,7 @@ extension AppController {
         menu.addItem(changeIconItem)
 
         let editThemeParent = NSMenuItem(
-            title: NSLocalizedString("Edit Theme", comment: "Spaces menu - Submenu to set a theme override for the active Space"),
+            title: NSLocalizedString("app.spacesMenu.changeTheme", value: "Edit Theme", comment: "Spaces menu - Submenu to set a theme override for the active Space"),
             action: nil,
             keyEquivalent: ""
         )
@@ -1295,7 +1304,7 @@ extension AppController {
         menu.addItem(editThemeParent)
 
         let changeProfileParent = NSMenuItem(
-            title: NSLocalizedString("Change Profile", comment: "Spaces menu - Submenu to re-bind the active Space to another profile"),
+            title: NSLocalizedString("app.spacesMenu.changeProfile", value: "Change Profile", comment: "Spaces menu - Submenu to re-bind the active Space to another profile"),
             action: nil,
             keyEquivalent: ""
         )
@@ -1304,7 +1313,7 @@ extension AppController {
         menu.addItem(changeProfileParent)
 
         let deleteSpaceItem = NSMenuItem(
-            title: NSLocalizedString("Delete Space\u{2026}", comment: "Spaces menu - Delete the active Space"),
+            title: NSLocalizedString("app.spacesMenu.deleteSpace", value: "Delete Space\u{2026}", comment: "Spaces menu - Delete the active Space"),
             action: #selector(deleteActiveSpace(_:)),
             keyEquivalent: ""
         )
@@ -1327,7 +1336,7 @@ extension AppController {
         menu.addItem(.separator())
 
         let nextItem = NSMenuItem(
-            title: NSLocalizedString("Next Space", comment: "Spaces menu - Activate the next Space in the strip"),
+            title: NSLocalizedString("app.spacesMenu.nextSpace", value: "Next Space", comment: "Spaces menu - Activate the next Space in the strip"),
             action: #selector(activateNextSpace(_:)),
             keyEquivalent: ""
         )
@@ -1336,7 +1345,7 @@ extension AppController {
         menu.addItem(nextItem)
 
         let prevItem = NSMenuItem(
-            title: NSLocalizedString("Previous Space", comment: "Spaces menu - Activate the previous Space in the strip"),
+            title: NSLocalizedString("app.spacesMenu.previousSpace", value: "Previous Space", comment: "Spaces menu - Activate the previous Space in the strip"),
             action: #selector(activatePreviousSpace(_:)),
             keyEquivalent: ""
         )
@@ -1369,7 +1378,7 @@ extension AppController {
         menu.addItem(urlRulesSeparator)
 
         let urlRulesItem = NSMenuItem(
-            title: NSLocalizedString("URL Rules\u{2026}", comment: "Spaces menu - Open the universal URL routing rules editor"),
+            title: NSLocalizedString("app.spacesMenu.urlRules", value: "URL Rules\u{2026}", comment: "Spaces menu - Open the universal URL routing rules editor"),
             action: #selector(openURLRulesEditor(_:)),
             keyEquivalent: ""
         )
@@ -1382,7 +1391,7 @@ extension AppController {
         menu.addItem(profileSeparator)
 
         let newProfileItem = NSMenuItem(
-            title: NSLocalizedString("New Profile\u{2026}", comment: "Spaces menu - Create a new browser profile"),
+            title: NSLocalizedString("app.spacesMenu.newProfile", value: "New Profile\u{2026}", comment: "Spaces menu - Create a new browser profile"),
             action: #selector(newProfile(_:)),
             keyEquivalent: ""
         )
@@ -1390,7 +1399,7 @@ extension AppController {
         newProfileItem.target = self
         menu.addItem(newProfileItem)
 
-        let deleteProfileTitle = NSLocalizedString("Delete Profile", comment: "Spaces menu - Submenu listing deletable browser profiles")
+        let deleteProfileTitle = NSLocalizedString("app.spacesMenu.deleteProfile.submenuTitle", value: "Delete Profile", comment: "Spaces menu - Submenu listing deletable browser profiles")
         let deleteProfileParent = NSMenuItem(
             title: deleteProfileTitle,
             action: nil,
@@ -1407,7 +1416,7 @@ extension AppController {
 
 
     private func makeSpacesThemeSubmenu(for spaceId: String?) -> NSMenu {
-        let menu = NSMenu(title: NSLocalizedString("Edit Theme", comment: "Spaces menu - Submenu to set a theme override for the active Space"))
+        let menu = NSMenu(title: NSLocalizedString("app.spacesMenu.themeSubmenu.title", value: "Edit Theme", comment: "Spaces menu - Theme submenu title for the active Space"))
         let pinnedId = spaceId.map { SpaceManager.shared.resolvedThemeId(forSpaceId: $0) }
 
         for theme in ThemeManager.shared.orderedThemes {
@@ -1426,7 +1435,7 @@ extension AppController {
     }
 
     private func makeSpacesProfileSubmenu(for space: SpaceModel?) -> NSMenu {
-        let menu = NSMenu(title: NSLocalizedString("Change Profile", comment: "Spaces menu - Submenu to re-bind the active Space to another profile"))
+        let menu = NSMenu(title: NSLocalizedString("app.spacesMenu.profileSubmenu.title", value: "Change Profile", comment: "Spaces menu - Profile submenu title for the active Space"))
         // The agent's fallback profile belongs to the agent — the user can't
         // re-bind a normal Space to it (matches the create-Space pickers).
         for profile in ProfileManager.shared.userAssignableProfiles {
@@ -1519,10 +1528,10 @@ extension AppController {
     @objc func renameActiveSpace(_ sender: Any?) {
         guard let space = currentActiveSpace() else { return }
         let alert = NSAlert()
-        alert.messageText = NSLocalizedString("Rename Space", comment: "Title of the rename-Space dialog")
-        alert.informativeText = NSLocalizedString("Enter a new name for this Space.", comment: "Body of the rename-Space dialog")
-        alert.addButton(withTitle: NSLocalizedString("Rename", comment: "Rename button"))
-        alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Cancel button"))
+        alert.messageText = NSLocalizedString("app.renameSpaceDialog.title", value: "Rename Space", comment: "Title of the rename-Space dialog")
+        alert.informativeText = NSLocalizedString("app.renameSpaceDialog.message", value: "Enter a new name for this Space.", comment: "Body of the rename-Space dialog")
+        alert.addButton(withTitle: NSLocalizedString("app.renameSpaceDialog.renameButton", value: "Rename", comment: "Rename button"))
+        alert.addButton(withTitle: NSLocalizedString("app.renameSpaceDialog.cancelButton", value: "Cancel", comment: "Cancel button"))
         let textField = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
         textField.stringValue = space.name
         textField.placeholderString = space.name
@@ -1565,7 +1574,7 @@ extension AppController {
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = String(
-            format: NSLocalizedString("Change Profile to \u{201C}%@\u{201D}?", comment: "Title of the change-Space-profile confirmation"),
+            format: NSLocalizedString("app.changeSpaceProfileConfirmation.title", value: "Change Profile to \u{201C}%@\u{201D}?", comment: "Title of the change-Space-profile confirmation"),
             profile.displayName
         )
         let pinnedTabScope = MainActor.assumeIsolated {
@@ -1573,23 +1582,20 @@ extension AppController {
         }
         switch pinnedTabScope {
         case .space:
-            alert.informativeText = NSLocalizedString(
-                "This Space's window will be reopened with the new profile and its open tabs will be reloaded there. Site logins won't carry over. Bookmarks and pinned tabs stay with the Space.",
+            alert.informativeText = NSLocalizedString("app.changeSpaceProfileConfirmation.spaceScopedMessage", value: "This Space's window will be reopened with the new profile and its open tabs will be reloaded there. Site logins won't carry over. Bookmarks and pinned tabs stay with the Space.",
                 comment: "Body of the change-Space-profile confirmation with Space-scoped pinned tabs"
             )
         case .profile:
-            alert.informativeText = NSLocalizedString(
-                "This Space's window will be reopened with the new profile and its open tabs will be reloaded there. Site logins won't carry over. Bookmarks stay with the Space; pinned tabs will be the new profile's.",
+            alert.informativeText = NSLocalizedString("app.changeSpaceProfileConfirmation.profileScopedMessage", value: "This Space's window will be reopened with the new profile and its open tabs will be reloaded there. Site logins won't carry over. Bookmarks stay with the Space; pinned tabs will be the new profile's.",
                 comment: "Body of the change-Space-profile confirmation with Profile-scoped pinned tabs"
             )
         case .app:
-            alert.informativeText = NSLocalizedString(
-                "This Space's window will be reopened with the new profile and its open tabs will be reloaded there. Site logins won't carry over. Bookmarks stay with the Space; pinned tabs remain shared across the app.",
+            alert.informativeText = NSLocalizedString("app.changeSpaceProfileConfirmation.appScopedMessage", value: "This Space's window will be reopened with the new profile and its open tabs will be reloaded there. Site logins won't carry over. Bookmarks stay with the Space; pinned tabs remain shared across the app.",
                 comment: "Body of the change-Space-profile confirmation with App-scoped pinned tabs"
             )
         }
-        alert.addButton(withTitle: NSLocalizedString("Change Profile", comment: "Confirm button of the change-Space-profile confirmation"))
-        alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Cancel button"))
+        alert.addButton(withTitle: NSLocalizedString("app.changeSpaceProfileConfirmation.confirmButton", value: "Change Profile", comment: "Confirm button of the change-Space-profile confirmation"))
+        alert.addButton(withTitle: NSLocalizedString("app.changeSpaceProfileConfirmation.cancelButton", value: "Cancel", comment: "Cancel button"))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         SpaceManager.shared.changeProfile(spaceId: space.spaceId, toProfileId: profileId)
     }
@@ -1599,26 +1605,24 @@ extension AppController {
               space.spaceId != LocalStore.defaultSpaceId else { return }
         let alert = NSAlert()
         alert.messageText = String(
-            format: NSLocalizedString("Delete \u{201C}%@\u{201D}?", comment: "Title of the delete-Space confirmation"),
+            format: NSLocalizedString("app.deleteSpaceConfirmation.title", value: "Delete \u{201C}%@\u{201D}?", comment: "Title of the delete-Space confirmation"),
             space.name
         )
         let usesSpaceScopedPinnedTabs = MainActor.assumeIsolated {
             AccountController.shared.account?.localStorage.pinnedTabScope() == .space
         }
         if usesSpaceScopedPinnedTabs {
-            alert.informativeText = NSLocalizedString(
-                "Bookmarks and pinned tabs belonging to this Space will also be removed. This action cannot be undone.",
+            alert.informativeText = NSLocalizedString("app.deleteSpaceConfirmation.spaceScopedMessage", value: "Bookmarks and pinned tabs belonging to this Space will also be removed. This action cannot be undone.",
                 comment: "Body of the delete-Space confirmation with Space-scoped pinned tabs"
             )
         } else {
-            alert.informativeText = NSLocalizedString(
-                "Bookmarks belonging to this Space will also be removed. This action cannot be undone.",
+            alert.informativeText = NSLocalizedString("app.deleteSpaceConfirmation.message", value: "Bookmarks belonging to this Space will also be removed. This action cannot be undone.",
                 comment: "Body of the delete-Space confirmation"
             )
         }
         alert.alertStyle = .warning
-        alert.addButton(withTitle: NSLocalizedString("Delete", comment: "Destructive button"))
-        alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Cancel button"))
+        alert.addButton(withTitle: NSLocalizedString("app.deleteSpaceConfirmation.deleteButton", value: "Delete", comment: "Destructive button"))
+        alert.addButton(withTitle: NSLocalizedString("app.deleteSpaceConfirmation.cancelButton", value: "Cancel", comment: "Cancel button"))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         SpaceManager.shared.deleteSpace(spaceId: space.spaceId)
     }
@@ -1692,7 +1696,7 @@ extension AppController {
             defer: false
         )
         window.identifier = NSUserInterfaceItemIdentifier("Phi URL Rules")
-        window.title = NSLocalizedString("URL Rules", comment: "Window title for the universal URL rules editor")
+        window.title = NSLocalizedString("app.urlRulesEditor.windowTitle", value: "URL Rules", comment: "Window title for the universal URL rules editor")
         window.isReleasedWhenClosed = false
         let editor = URLRulesEditor(manager: SpaceManager.shared) { [weak window] in
             window?.close()
@@ -1987,8 +1991,8 @@ extension AppController {
             }
             if let menuItem = item as? NSMenuItem {
                 menuItem.title = state.selectedTabCountForURLCopy > 1
-                    ? NSLocalizedString("Copy URLs", comment: "Edit menu - Copy the selected tab URLs to the clipboard")
-                    : NSLocalizedString("Copy URL", comment: "Edit menu - Copy the selected tab URL to the clipboard")
+                    ? NSLocalizedString("app.editMenu.copySelectedTabURLs", value: "Copy URLs", comment: "Edit menu - Copy the selected tab URLs to the clipboard")
+                    : NSLocalizedString("app.editMenu.copySelectedTabURLState", value: "Copy URL", comment: "Edit menu - Single selected-tab URL title when updating menu state")
             }
             return state.hasCopyableSelectedTabURLs
         }
@@ -2107,15 +2111,14 @@ private final class TimeMachineRestoreProgressModal {
             backing: .buffered,
             defer: false
         )
-        window.title = NSLocalizedString("Time Machine Restore", comment: "Time Machine restore progress window title")
+        window.title = NSLocalizedString("app.timeMachineRestore.progress.windowTitle", value: "Time Machine Restore", comment: "Time Machine restore progress window title")
         window.level = .modalPanel
         window.isReleasedWhenClosed = false
         window.standardWindowButton(.closeButton)?.isHidden = true
         window.standardWindowButton(.miniaturizeButton)?.isHidden = true
         window.standardWindowButton(.zoomButton)?.isHidden = true
 
-        titleLabel = NSTextField(labelWithString: NSLocalizedString(
-            "Preparing Time Machine Restore",
+        titleLabel = NSTextField(labelWithString: NSLocalizedString("app.timeMachineRestore.progress.title", value: "Preparing Time Machine Restore",
             comment: "Time Machine restore progress title"
         ))
         titleLabel.font = .systemFont(ofSize: 15, weight: .semibold)
@@ -2206,19 +2209,19 @@ private final class TimeMachineRestoreProgressModal {
     private static func message(for stage: TimeMachineRestorePreparationStage) -> String {
         switch stage {
         case .preparing:
-            return NSLocalizedString("Preparing restore...", comment: "Time Machine restore progress stage")
+            return NSLocalizedString("app.timeMachineRestore.progress.preparingRestore", value: "Preparing restore...", comment: "Time Machine restore progress stage")
         case .downloadingPackage:
-            return NSLocalizedString("Downloading rollback package...", comment: "Time Machine restore progress stage")
+            return NSLocalizedString("app.timeMachineRestore.progress.downloadingRollbackPackage", value: "Downloading rollback package...", comment: "Time Machine restore progress stage")
         case .expandingPackage:
-            return NSLocalizedString("Expanding rollback package...", comment: "Time Machine restore progress stage")
+            return NSLocalizedString("app.timeMachineRestore.progress.expandingRollbackPackage", value: "Expanding rollback package...", comment: "Time Machine restore progress stage")
         case .validatingPackage:
-            return NSLocalizedString("Validating rollback app...", comment: "Time Machine restore progress stage")
+            return NSLocalizedString("app.timeMachineRestore.progress.validatingRollbackApp", value: "Validating rollback app...", comment: "Time Machine restore progress stage")
         case .preparingInstaller:
-            return NSLocalizedString("Preparing installer...", comment: "Time Machine restore progress stage")
+            return NSLocalizedString("app.timeMachineRestore.progress.preparingInstaller", value: "Preparing installer...", comment: "Time Machine restore progress stage")
         case .launchingInstaller:
-            return NSLocalizedString("Starting restore...", comment: "Time Machine restore progress stage")
+            return NSLocalizedString("app.timeMachineRestore.progress.startingRestore", value: "Starting restore...", comment: "Time Machine restore progress stage")
         case .readyToQuit:
-            return NSLocalizedString("Restarting Phi...", comment: "Time Machine restore progress stage")
+            return NSLocalizedString("app.timeMachineRestore.progress.restartingPhi", value: "Restarting Phi...", comment: "Time Machine restore progress stage")
         }
     }
 }

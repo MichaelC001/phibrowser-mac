@@ -47,20 +47,23 @@ public extension ThemedColor {
     }
 
     /// Background for tabs in the temporary multi-selection (excluding the active tab).
-    /// Offset from `contentOverlayBackground` so a sub-selected tab reads as distinct
-    /// from both the active tab and a hover.
+    /// Pure uses a relative neutral overlay so the selection stays visible
+    /// across its adjustable light-background brightness range.
     static let tabSubSelectionBackground = ThemedColor { theme, appearance in
-        let base = contentOverlayBackground.resolve(theme: theme, appearance: appearance)
+        if theme.id == Theme.pure.id, appearance.isLight {
+            return NSColor.black.withAlphaComponent(0.08)
+        }
+
         return appearance.isLight
-            ? base.adjustingBrightness(percent: -8)
-            : base.adjustingBrightness(percent: 12)
+            ? NSColor(white: 0.9, alpha: 1)
+            : NSColor.white.withAlphaComponent(0.18)
     }
     
     // MARK: - Sidebar Colors
     
     /// Selected sidebar tab background color.
     static let sidebarTabSelectedBackground = ThemedColor(role: .sidebarTabSelectedBackground)
-    
+
     /// Hovered sidebar tab background color.
     static let sidebarTabHoveredBackground = ThemedColor(role: .sidebarTabHoveredBackground)
     
@@ -180,8 +183,8 @@ private func makeDesignTheme(
 public extension Theme {
     static let pure = makeDesignTheme(
         id: "pure",
-        name: NSLocalizedString("Pure", comment: "Pure theme name"),
-        lightOverlay: 0xEAEAEA,
+        name: NSLocalizedString("themes.theme.pure.name", value: "Pure", comment: "Pure theme name"),
+        lightOverlay: 0xFFFFFF,
         lightBackground: 0xFFFFFF,
         lightThemeColor: 0x3AA4D5,
         lightExtensionAction: 0x2DC882,
@@ -193,7 +196,7 @@ public extension Theme {
 
     static let mist = makeDesignTheme(
         id: "mist",
-        name: NSLocalizedString("Mist", comment: "Mist theme color name"),
+        name: NSLocalizedString("themes.theme.mist.name", value: "Mist", comment: "Mist theme color name"),
         lightOverlay: 0x66CCFF,
         lightBackground: 0xFFFFFF,
         lightThemeColor: 0x57AED9,
@@ -206,7 +209,7 @@ public extension Theme {
     
     static let mint = makeDesignTheme(
         id: "mint",
-        name: NSLocalizedString("Mint", comment: "Mint theme color name"),
+        name: NSLocalizedString("themes.theme.mint.name", value: "Mint", comment: "Mint theme color name"),
         lightOverlay: 0x8AE25A,
         lightBackground: 0xFFFFFF,
         lightThemeColor: 0x73BD4B,
@@ -219,7 +222,7 @@ public extension Theme {
 
     static let aqua = makeDesignTheme(
         id: "aqua",
-        name: NSLocalizedString("Aqua", comment: "Aqua theme color name"),
+        name: NSLocalizedString("themes.theme.aqua.name", value: "Aqua", comment: "Aqua theme color name"),
         lightOverlay: 0x5BDEE3,
         lightBackground: 0xFFFFFF,
         lightThemeColor: 0x4BB9BD,
@@ -232,7 +235,7 @@ public extension Theme {
 
     static let iris = makeDesignTheme(
         id: "iris",
-        name: NSLocalizedString("Iris", comment: "Iris theme color name"),
+        name: NSLocalizedString("themes.theme.iris.name", value: "Iris", comment: "Iris theme color name"),
         lightOverlay: 0x7566FF,
         lightBackground: 0xFFFFFF,
         lightThemeColor: 0x6357D9,
@@ -245,7 +248,7 @@ public extension Theme {
 
     static let petal = makeDesignTheme(
         id: "petal",
-        name: NSLocalizedString("Petal", comment: "Petal theme color name"),
+        name: NSLocalizedString("themes.theme.petal.name", value: "Petal", comment: "Petal theme color name"),
         lightOverlay: 0xD966FF,
         lightBackground: 0xFFFFFF,
         lightThemeColor: 0xB857D9,
@@ -258,7 +261,7 @@ public extension Theme {
 
     static let coral = makeDesignTheme(
         id: "coral",
-        name: NSLocalizedString("Coral", comment: "Coral theme color name"),
+        name: NSLocalizedString("themes.theme.coral.name", value: "Coral", comment: "Coral theme color name"),
         lightOverlay: 0xFF6666,
         lightBackground: 0xFFFFFF,
         lightThemeColor: 0xD95757,
@@ -271,7 +274,7 @@ public extension Theme {
 
     static let amber = makeDesignTheme(
         id: "amber",
-        name: NSLocalizedString("Amber", comment: "Amber theme color name"),
+        name: NSLocalizedString("themes.theme.amber.name", value: "Amber", comment: "Amber theme color name"),
         lightOverlay: 0xFFD966,
         lightBackground: 0xFFFFFF,
         lightThemeColor: 0xD9B857,

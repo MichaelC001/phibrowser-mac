@@ -5,6 +5,7 @@
 
 import AppKit
 import Combine
+import PostHog
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -266,8 +267,8 @@ struct SpacesStripView: View {
 
     /// Single-row height — matches the visual rhythm of pinned-tab rows above.
     static let height: CGFloat = 30
-    /// Slimmer height used when the switch sits at the top of the sidebar.
-    static let sidebarHeight: CGFloat = 24
+    /// Sidebar row height, leaving 4pt above and below each 24pt item.
+    static let sidebarHeight: CGFloat = 32
     private static let horizontalPadding: CGFloat = 10
     /// Tighter horizontal padding for the lone horizontal-layout chip, so the
     /// single Space icon hugs its glyph instead of floating in a wide chip.
@@ -286,6 +287,7 @@ struct SpacesStripView: View {
     /// them. Drives the fit arithmetic in `visiblePipCount` and the wheel
     /// tracker's per-pip scroll distance (hence fileprivate).
     fileprivate static let stripItemWidth: CGFloat = 24
+    private static let stripItemHeight: CGFloat = 24
     fileprivate static let stripSpacing: CGFloat = 4
     /// How long a pip must stay hovered before its card appears, so brushing
     /// the cursor across the strip doesn't flash cards.
@@ -360,7 +362,7 @@ struct SpacesStripView: View {
     private var compactChip: some View {
         // The label is kept for VoiceOver only — it doesn't render a badge.
         activeLabel
-            .accessibilityLabel(NSLocalizedString("Spaces", comment: "Accessibility label for the Spaces picker affordance"))
+            .accessibilityLabel(NSLocalizedString("sidebar.spacesPicker.accessibilityLabel", value: "Spaces", comment: "Accessibility label for the Spaces picker affordance"))
             .onHover { hovering in
                 guard let activeId = slot.activeSpaceId else { return }
                 if hovering {
@@ -583,11 +585,19 @@ struct SpacesStripView: View {
         .onDrop(of: [.text], delegate: SpaceListResetDropDelegate(
             draggingSpaceId: $stripDraggingId,
             orderedIds: $stripOrderedIds,
-            commit: { manager.reorder(spaceIds: $0) }
+            commit: { ids in
+                guard !slot.isCreatingSpace else { return }
+                manager.reorder(spaceIds: ids)
+            }
         ))
         .onAppear {
             stripOrderedIds = manager.spaces.map(\.spaceId)
             wireTooltipPointerWatchdog()
+        }
+        .onChange(of: slot.isCreatingSpace) { isCreating in
+            guard isCreating else { return }
+            stripDraggingId = nil
+            stripOrderedIds = manager.spaces.map(\.spaceId)
         }
         .onChange(of: manager.spaces.map(\.spaceId)) { ids in
             // A deleted Space's pip leaves the ForEach with no mouse-exit, so
@@ -639,6 +649,7 @@ struct SpacesStripView: View {
                 spacePip(for: space)
                     .overlay(alignment: .topTrailing) {
                         agentBadge(for: space.spaceId)
+                            .offset(y: max(0, (rowHeight - Self.stripItemHeight) / 2))
                     }
                     .opacity(stripDraggingId == space.spaceId ? 0.5 : 1)
                     // `.clipped()` below is visual only — pips beyond the
@@ -646,6 +657,12 @@ struct SpacesStripView: View {
                     // Spacer and the trailing button without this.
                     .allowsHitTesting(index >= start && index < start + visibleCount)
                     .onDrag {
+                        // Keep hover available while the create form is open,
+                        // but do not vend a reorder payload from its read-only
+                        // Space strip.
+                        guard !slot.isCreatingSpace else {
+                            return NSItemProvider()
+                        }
                         stripDraggingId = space.spaceId
                         return NSItemProvider(object: space.spaceId as NSString)
                     }
@@ -653,7 +670,10 @@ struct SpacesStripView: View {
                         targetSpaceId: space.spaceId,
                         draggingSpaceId: $stripDraggingId,
                         orderedIds: $stripOrderedIds,
-                        commit: { manager.reorder(spaceIds: $0) }
+                        commit: { ids in
+                            guard !slot.isCreatingSpace else { return }
+                            manager.reorder(spaceIds: ids)
+                        }
                     ))
             }
         }
@@ -817,12 +837,16 @@ struct SpacesStripView: View {
                 return ("circle.fill", .green)
             }()
             if let (symbol, color) = badge {
+                // No outward offset: the pip row clips hard at its bounds
+                // (`pipsViewport`'s `.clipped()` — load-bearing for the
+                // sliding window), so a badge nudged past the pip frame
+                // loses its top/right arc. Inside the frame it still reads
+                // as a corner badge — the glyph is only `iconSize` centered
+                // in the wider pip, so the dot lands on the glyph's corner.
                 Image(systemName: symbol)
                     .font(.system(size: 8))
                     .foregroundStyle(color)
                     .padding(2)
-                    .background(Circle().fill(Color(nsColor: .windowBackgroundColor)))
-                    .offset(x: 3, y: -3)
             }
         }
     }
@@ -873,7 +897,7 @@ struct SpacesStripView: View {
             activatePip(space)
         } label: {
             pipIcon(for: space)
-            .frame(width: 24, height: rowHeight)
+            .frame(width: Self.stripItemWidth, height: Self.stripItemHeight)
             // Publishes this pip's frame under its spaceId, for the
             // strip-level glass chip to target (see `iconStrip`).
             .matchedGeometryEffect(id: space.spaceId, in: pipGlassNamespace)
@@ -888,6 +912,8 @@ struct SpacesStripView: View {
                 }
             }
             .contentShape(RoundedRectangle(cornerRadius: 8))
+            .frame(width: Self.stripItemWidth, height: rowHeight)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(space.name)
@@ -897,8 +923,7 @@ struct SpacesStripView: View {
         // context menu is the pip's one interactive extra.
         .contextMenu {
             if let task = agentSpaceManager.tasksBySpaceId[space.spaceId] {
-                Button(NSLocalizedString(
-                    "Show Transcript",
+                Button(NSLocalizedString("sidebar.agentContextMenu.showTranscriptAction", value: "Show Transcript",
                     comment: "Agent pip context menu - open the agent console for this task")) {
                     AgentTranscriptPanelController.shared.show(focusTaskId: task.taskId)
                 }
@@ -1147,12 +1172,14 @@ struct SpacesStripView: View {
             Image(systemName: "plus")
                 .font(.system(size: Self.iconSize, weight: .semibold))
                 .foregroundStyle(Color.secondary)
-                .frame(width: Self.stripItemWidth, height: rowHeight)
+                .frame(width: Self.stripItemWidth, height: Self.stripItemHeight)
                 .background(
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
                         .fill(isAddButtonHovered ? Color.sidebarTabHovered : Color.clear)
                 )
                 .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .frame(width: Self.stripItemWidth, height: rowHeight)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .opacity(slot.isStripRowHovered ? 1 : 0)
@@ -1162,7 +1189,7 @@ struct SpacesStripView: View {
         .animation(.easeInOut(duration: 0.15), value: slot.isStripRowHovered)
 //        .offset(x: -2)
         .onHover { isAddButtonHovered = $0 }
-        .help(NSLocalizedString("New Space", comment: "Tooltip for the add-Space button in the sidebar Spaces strip"))
+        .help(NSLocalizedString("sidebar.spacesStrip.addSpaceButtonTooltip", value: "New Space", comment: "Tooltip for the add-Space button in the sidebar Spaces strip"))
     }
 
     /// Overflow affordance shown in the add button's trailing slot when the row
@@ -1177,16 +1204,18 @@ struct SpacesStripView: View {
             Image(systemName: "ellipsis")
                 .font(.system(size: Self.iconSize, weight: .semibold))
                 .foregroundStyle(Color.secondary)
-                .frame(width: Self.stripItemWidth, height: rowHeight)
+                .frame(width: Self.stripItemWidth, height: Self.stripItemHeight)
                 .background(
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
                         .fill(isMoreButtonHovered ? Color.sidebarTabHovered : Color.clear)
                 )
                 .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .frame(width: Self.stripItemWidth, height: rowHeight)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .onHover { isMoreButtonHovered = $0 }
-        .help(NSLocalizedString("More Spaces", comment: "Tooltip for the overflow button that opens the full Spaces list"))
+        .help(NSLocalizedString("sidebar.spacesOverflowButtonTooltip", value: "More Spaces", comment: "Tooltip for the overflow button that opens the full Spaces list"))
         .background(SpaceSwitcherMenuAnchor(isPresented: $isPickerOpen) { menu in
             AppController.shared?.populateSpaceSwitcherMenu(menu)
         })
@@ -1264,10 +1293,10 @@ struct SpacesStripView: View {
 
     private func promptRename(for space: SpaceModel) {
         let alert = NSAlert()
-        alert.messageText = NSLocalizedString("Rename Space", comment: "Title of the rename-Space dialog")
-        alert.informativeText = NSLocalizedString("Enter a new name for this Space.", comment: "Body of the rename-Space dialog")
-        alert.addButton(withTitle: NSLocalizedString("Rename", comment: "Rename button"))
-        alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Cancel button"))
+        alert.messageText = NSLocalizedString("sidebar.renameSpaceDialog.title", value: "Rename Space", comment: "Title of the rename-Space dialog")
+        alert.informativeText = NSLocalizedString("sidebar.renameSpaceDialog.message", value: "Enter a new name for this Space.", comment: "Body of the rename-Space dialog")
+        alert.addButton(withTitle: NSLocalizedString("sidebar.renameSpaceDialog.renameButton", value: "Rename", comment: "Rename button"))
+        alert.addButton(withTitle: NSLocalizedString("sidebar.renameSpaceDialog.cancelButton", value: "Cancel", comment: "Cancel button"))
         let textField = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
         textField.stringValue = space.name
         textField.placeholderString = space.name
@@ -1286,25 +1315,24 @@ struct SpacesStripView: View {
     private func confirmDelete(_ space: SpaceModel) {
         let alert = NSAlert()
         alert.messageText = String(
-            format: NSLocalizedString("Delete \u{201C}%@\u{201D}?", comment: "Title of the delete-Space confirmation"),
+            format: NSLocalizedString("sidebar.deleteSpaceConfirmation.title", value: "Delete \u{201C}%@\u{201D}?", comment: "Title of the delete-Space confirmation"),
             space.name
         )
         if AccountController.shared.account?.localStorage.pinnedTabScope() == .space {
-            alert.informativeText = NSLocalizedString(
-                "Bookmarks and pinned tabs belonging to this Space will also be removed. This action cannot be undone.",
+            alert.informativeText = NSLocalizedString("sidebar.deleteSpaceConfirmation.spaceScopedMessage", value: "Bookmarks and pinned tabs belonging to this Space will also be removed. This action cannot be undone.",
                 comment: "Body of the delete-Space confirmation with Space-scoped pinned tabs"
             )
         } else {
-            alert.informativeText = NSLocalizedString(
-                "Bookmarks belonging to this Space will also be removed. This action cannot be undone.",
+            alert.informativeText = NSLocalizedString("sidebar.deleteSpaceConfirmation.message", value: "Bookmarks belonging to this Space will also be removed. This action cannot be undone.",
                 comment: "Body of the delete-Space confirmation"
             )
         }
         alert.alertStyle = .warning
-        alert.addButton(withTitle: NSLocalizedString("Delete", comment: "Destructive button"))
-        alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Cancel button"))
+        alert.addButton(withTitle: NSLocalizedString("sidebar.deleteSpaceConfirmation.deleteButton", value: "Delete", comment: "Destructive button"))
+        alert.addButton(withTitle: NSLocalizedString("sidebar.deleteSpaceConfirmation.cancelButton", value: "Cancel", comment: "Cancel button"))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         manager.deleteSpace(spaceId: space.spaceId)
+        PostHogSDK.shared.capture("space_deleted")
     }
 }
 
@@ -1386,7 +1414,7 @@ private struct SpacePickerPopup: View {
                         Image(systemName: "plus")
                             .font(.system(size: 13, weight: .semibold))
                             .frame(width: 16)
-                        Text(NSLocalizedString("New Space", comment: "Spaces picker - create a new Space"))
+                        Text(NSLocalizedString("sidebar.spacesPicker.newSpaceAction", value: "New Space", comment: "Spaces picker - create a new Space"))
                             .font(.system(size: 13))
                         Spacer(minLength: 8)
                     }
@@ -1671,13 +1699,13 @@ private struct SpacePickerRow: View {
         }
         .contextMenu {
             if isRenamable {
-                Button(NSLocalizedString("Rename\u{2026}", comment: "")) { onRename() }
+                Button(NSLocalizedString("sidebar.spacesContextMenu.renameAction", value: "Rename\u{2026}", comment: "Spaces context menu - Rename Space action")) { onRename() }
             }
-            Button(NSLocalizedString("Change Icon\u{2026}", comment: "Opens the icon/emoji picker for a Space")) {
+            Button(NSLocalizedString("sidebar.spacesContextMenu.changeIconAction", value: "Change Icon\u{2026}", comment: "Opens the icon/emoji picker for a Space")) {
                 showsIconPicker = true
             }
-            Menu(NSLocalizedString("Change Theme", comment: "")) {
-                Picker(NSLocalizedString("Change Theme", comment: ""), selection: themeSelection) {
+            Menu(NSLocalizedString("sidebar.spacesContextMenu.themeSubmenuTitle", value: "Change Theme", comment: "Spaces context menu - Change Theme submenu title")) {
+                Picker(NSLocalizedString("sidebar.spacesContextMenu.themePickerLabel", value: "Change Theme", comment: "Spaces context menu - Theme picker accessibility label"), selection: themeSelection) {
                     ForEach(ThemeManager.shared.orderedThemes, id: \.id) { theme in
                         Label {
                             Text(theme.name)
@@ -1696,7 +1724,7 @@ private struct SpacePickerRow: View {
                 Button(role: .destructive) {
                     onDelete()
                 } label: {
-                    Text(NSLocalizedString("Delete", comment: "Destructive menu item"))
+                    Text(NSLocalizedString("sidebar.spacesContextMenu.deleteAction", value: "Delete", comment: "Destructive menu item"))
                 }
             }
         }
@@ -1779,20 +1807,34 @@ struct SpaceIconView: View {
         if let symbolImage = NSImage(systemSymbolName: stored, accessibilityDescription: nil) {
             return symbolImage
         }
+        return rasterizedImage(
+            for: stored,
+            canvasSize: size + 4,
+            scale: NSScreen.main?.backingScaleFactor ?? 2
+        )
+    }
+
+    @MainActor
+    static func rasterizedImage(
+        for storedValue: String,
+        canvasSize: CGFloat,
+        scale: CGFloat
+    ) -> NSImage? {
+        let stored = storedValue.isEmpty ? "rectangle.stack" : storedValue
         // Match the menu's appearance so phi-icons pick their light/dark asset
         // variant — ImageRenderer defaults to light, which leaves dark-mode menus
         // showing the dark-ink variant on a dark background. Unlike the import
         // label (always dark) this follows the current system appearance.
         let icon = SpaceIconView(
             storedValue: stored,
-            size: size,
+            size: max(canvasSize - 4, 1),
             symbolWeight: .semibold,
             tint: Color(nsColor: .labelColor)
         )
         .environment(\.colorScheme, appAppearance.isDark ? .dark : .light)
-        .frame(width: size + 4, height: size + 4)
+        .frame(width: canvasSize, height: canvasSize)
         let renderer = ImageRenderer(content: icon)
-        renderer.scale = NSScreen.main?.backingScaleFactor ?? 2
+        renderer.scale = scale
         return renderer.nsImage
     }
 }

@@ -423,8 +423,7 @@ class Tab: WebContentRepresentable {
     }
 
     /// Placeholder title for native-NTP (off-the-record) new-tab pages.
-    static let incognitoNewTabTitle = NSLocalizedString(
-        "New Incognito Tab",
+    static let incognitoNewTabTitle = NSLocalizedString("common.newTabPage.incognitoTitle", value: "New Incognito Tab",
         comment: "Tab title shown for an incognito new-tab page rendered by the native NTP")
 
     /// Replace an untitled newtab title with the incognito NTP placeholder.
@@ -513,12 +512,16 @@ class Tab: WebContentRepresentable {
               let route = TabSplitActionRoute.resolve(
                   selectedTabId: guid,
                   focusedTabId: focusedTab.guid,
-                  // `splitMembership(forCellTab:)` rather than a plain
-                  // `splitGroup(forTabId:)`: this cell may be a pinned record
-                  // whose synthetic guid hides a live pane — or a closed
-                  // pinned split pair — and both must keep click-to-restore.
-                  selectedTabIsInSplit: browserState.splitMembership(forCellTab: self) != nil,
-                  focusedTabIsInSplit: browserState.splitGroup(forTabId: focusedTab.guid) != nil
+                  // Keep the direct live-group check fail-closed while a
+                  // partner pane is still arriving. Membership also catches
+                  // pinned records whose synthetic guid hides a live pane,
+                  // plus persisted pinned pairs with no live group yet.
+                  selectedTabIsInSplit:
+                      browserState.splitGroup(forTabId: guid) != nil ||
+                      browserState.splitMembership(forCellTab: self) != nil,
+                  focusedTabIsInSplit:
+                      browserState.splitGroup(forTabId: focusedTab.guid) != nil ||
+                      browserState.splitMembership(forCellTab: focusedTab) != nil
               ) else {
             return false
         }
@@ -572,6 +575,10 @@ class Tab: WebContentRepresentable {
     
     func reload() {
         webContentWrapper?.reload()
+    }
+
+    func reloadBypassingCache() {
+        webContentWrapper?.reloadBypassingCache()
     }
     
     func stopLoading() {

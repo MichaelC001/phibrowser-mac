@@ -138,17 +138,17 @@ struct AboutView: View {
                     .foregroundColor(.primary)
                 
                 VStack(spacing: 2) {
-                    Text(String(format: NSLocalizedString("Version %@ (%@)", comment: "About window - App version and build number label"), appVersion, buildNumber))
+                    Text(String(format: NSLocalizedString("about.versionLabel", value: "Version %@ (%@)", comment: "About window - App version and build number label"), appVersion, buildNumber))
                         .font(.system(size: 10))
                         .foregroundColor(Color(NSColor.labelColor))
 
-                    Text(String(format: NSLocalizedString("Chromium Engine Version %@", comment: "About window - Chromium engine version label"), chromiumVersion))
+                    Text(String(format: NSLocalizedString("about.chromiumVersionLabel", value: "Chromium Engine Version %@", comment: "About window - Chromium engine version label"), chromiumVersion))
                         .font(.system(size: 10))
                         .foregroundColor(Color(NSColor.labelColor))
                 }
 
                 VStack(spacing: 8) {
-                    Text(String(format: NSLocalizedString("© %d Phinomenon. All rights reserved.", comment: "About window - Copyright notice at bottom"), currentYear))
+                    Text(String(format: NSLocalizedString("about.copyrightNotice", value: "© %d Phinomenon. All rights reserved.", comment: "About window - Copyright notice at bottom"), currentYear))
                         .font(.caption)
                         .foregroundColor(Color(NSColor.labelColor))
                         .padding(.top, 5)

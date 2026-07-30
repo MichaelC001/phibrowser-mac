@@ -4,6 +4,7 @@
 // found in the LICENSE file.
 
 import Foundation
+import PostHog
 
 /// The management slice of the `agentSpace.*` message surface: operating the
 /// browser's user-facing features (Spaces, profiles, URL rules, tab groups,
@@ -179,6 +180,80 @@ extension AgentSpaceRouter {
                 ]
             }
             return encode(["ok": true, "windowId": target.windowId, "tabs": tabs])
+        }
+    }
+
+    /// `agentSpace.spaces.openTab` — open a URL as a new tab in a user
+    /// Space's open window: the direct user-Space counterpart of the
+    /// task-scoped `agentSpace.openTab`. `activate` (default true) selects
+    /// the new tab — the common caller is opening a page *for* the user to
+    /// see. Fails when the Space has no open window, like `spaces.listTabs`.
+    static func handleSpacesOpenTab(context: ExtensionMessageContext) -> String? {
+        guard let obj = json(context.payload),
+              let spaceId = obj["spaceId"] as? String,
+              let url = obj["url"] as? String, !url.isEmpty else { return invalid() }
+        let activate = obj["activate"] as? Bool ?? true
+        return MainActor.assumeIsolated {
+            guard let target = spaceWindow(spaceId: spaceId) else {
+                return failure("space_not_open")
+            }
+            ChromiumLauncher.sharedInstance().bridge?
+                .createNewTab(withUrl: url,
+                              windowId: Int64(target.windowId),
+                              customGuid: nil,
+                              focusAfterCreate: activate)
+            return encode(["ok": true, "windowId": target.windowId])
+        }
+    }
+
+    /// `agentSpace.spaces.activate` — surface a user Space in the focused
+    /// window, opening its window when it has none: the programmatic
+    /// counterpart of clicking the Space in the switcher. On-screen change,
+    /// so callers invoke it only on the user's ask (or when a Space they
+    /// were asked to work in has no window to drive).
+    static func handleSpacesActivate(context: ExtensionMessageContext) -> String? {
+        guard let obj = json(context.payload),
+              let spaceId = obj["spaceId"] as? String else { return invalid() }
+        return MainActor.assumeIsolated {
+            let manager = SpaceManager.shared
+            guard let space = manager.spaces.first(where: { $0.spaceId == spaceId }) else {
+                return failure("unknown_space")
+            }
+            guard !space.isAgentSpace else { return failure("agent_space") }
+            manager.activateInFocusedWindow(spaceId: spaceId)
+            return ok()
+        }
+    }
+
+    /// `agentSpace.spaces.focus` — where the user currently is: the active
+    /// Space (same source as `spaces.list`'s `isActive`) plus its window and
+    /// selected tab when the Space has an open window. The tab detail is
+    /// withheld for Incognito Spaces — they are runtime-only and not part of
+    /// the managed surface.
+    static func handleSpacesFocus(context: ExtensionMessageContext) -> String? {
+        return MainActor.assumeIsolated {
+            let manager = SpaceManager.shared
+            guard let spaceId = manager.activeSpaceId else {
+                return failure("no_active_space")
+            }
+            let space = manager.spaces.first { $0.spaceId == spaceId }
+            var reply: [String: Any] = [
+                "ok": true,
+                "spaceId": spaceId,
+                "spaceName": space?.name ?? "",
+                "isAgentSpace": space?.isAgentSpace ?? false,
+                "isIncognito": SpaceManager.isIncognitoSpaceId(spaceId),
+            ]
+            if !SpaceManager.isIncognitoSpaceId(spaceId),
+               let target = spaceWindow(spaceId: spaceId) {
+                reply["windowId"] = target.windowId
+                if let tab = (target.state?.normalTabs ?? []).first(where: { $0.isActive }) {
+                    reply["tab"] = ["tabId": tab.guid,
+                                    "url": tab.url ?? "",
+                                    "title": tab.title]
+                }
+            }
+            return encode(reply)
         }
     }
 
@@ -424,6 +499,12 @@ extension AgentSpaceRouter {
     ) -> String? {
         if let spaceId = obj["spaceId"] as? String {
             if let denied = userSpaceOperationsRefusal() { return denied }
+            // The spaceId path targets a USER Space's window (the taskId path
+            // below is the agent's own window) — count it as user-space usage.
+            PostHogSDK.shared.capture("agent_user_space_command", properties: [
+                "command": context.type,
+                "agent_name": AgentDriverBadge.telemetryName(context.agentName),
+            ])
             return MainActor.assumeIsolated {
                 guard let target = spaceWindow(spaceId: spaceId) else {
                     return failure("space_not_open")

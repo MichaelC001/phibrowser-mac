@@ -48,8 +48,7 @@ final class WebContentGroupInfo: ObservableObject {
     /// the caller because membership lives on `Tab.groupToken`, not here.
     func displayTitle(memberCount: Int) -> String {
         if !title.isEmpty { return title }
-        let format = NSLocalizedString(
-            "%@ · %d tabs",
+        let format = NSLocalizedString("tabs.tabGroup.summaryWithTabCount", value: "%@ · %d tabs",
             comment: "Tab Groups - auto-generated group title, e.g. 'Blue · 3 tabs'")
         return String(format: format, color.localizedName, memberCount)
     }

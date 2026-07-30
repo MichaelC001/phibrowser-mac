@@ -556,7 +556,7 @@ class BookmarkBar: NSView {
 
         let menu = NSMenu()
         let newFolderItem = NSMenuItem(
-            title: NSLocalizedString("New Folder", comment: "Bookmark New Folder menu item"),
+            title: NSLocalizedString("toolbar.bookmarkBar.newFolderAction", value: "New Folder", comment: "Bookmark New Folder menu item"),
             action: #selector(newFolderAction),
             keyEquivalent: ""
         )
