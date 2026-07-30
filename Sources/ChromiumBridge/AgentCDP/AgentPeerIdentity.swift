@@ -326,8 +326,12 @@ enum AgentPeerIdentity {
         return false
     }
 
-    /// argv[0] brands used by the skill's own daemons (see mirror-tailer.mjs).
-    private static let ownBrandNames: Set<String> = ["phi-mirror-tailer"]
+    /// argv[0] brands used by the skill's own daemons (see mirror-tailer.mjs)
+    /// and the phibrowser CLI (a thin command surface over the same helper
+    /// lib — like the heredoc runner, it acts for whoever drives it).
+    private static let ownBrandNames: Set<String> = [
+        "phi-mirror-tailer", "phibrowser-cli",
+    ]
 
     /// The script an interpreter runs: its first existing non-flag argument.
     private static func scriptArgument(in argv: [String]) -> String? {
@@ -543,8 +547,20 @@ enum AgentPeerIdentity {
         let rc = withUnsafeMutablePointer(to: &info) {
             proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, $0, size)
         }
-        guard rc == size else { return nil }
-        return pid_t(info.pbi_ppid)
+        if rc == size { return pid_t(info.pbi_ppid) }
+        // proc_pidinfo is denied (EPERM) for another user's process — notably
+        // the setuid-root `login` that sits above every Terminal tab, which
+        // would end the walk before the terminal application is reached and
+        // misresolve a terminal-run CLI. The kernel process table via sysctl
+        // is world-readable (it is what `ps` uses), so fall back to it.
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+        var kp = kinfo_proc()
+        var kpSize = MemoryLayout<kinfo_proc>.stride
+        let ok = withUnsafeMutablePointer(to: &kp) { kpPtr in
+            sysctl(&mib, 4, kpPtr, &kpSize, nil, 0)
+        }
+        guard ok == 0, kpSize > 0 else { return nil }
+        return kp.kp_eproc.e_ppid
     }
 
     /// Effective uid of a process, nil when it can't be read (process gone).
