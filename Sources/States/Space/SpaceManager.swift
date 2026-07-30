@@ -3489,9 +3489,9 @@ final class SpaceWindowSlot: ObservableObject {
     private static let agentKeyFalloutWindow: TimeInterval = 3.0
 
     /// Space IDs whose imminent window close is driven by the user
-    /// closing the last tab in the active Space via the tab-row ✕
-    /// button, not by closing the window itself. Populated by
-    /// `markTabDrivenClose` from `Tab.close()` just before dispatching
+    /// closing the last tab in the active Space, not by closing the
+    /// window itself. Populated by `markTabDrivenClose` from
+    /// `Tab.close()` just before dispatching
     /// `IDC_CLOSE_TAB` when only one tab remains; drained by
     /// `unregisterWindow` to decide whether to switch to a sibling
     /// Space (tab-driven) or cascade-close every Space (window-driven,
@@ -3502,13 +3502,23 @@ final class SpaceWindowSlot: ObservableObject {
     /// (`SpaceManager.requestCloseIncognitoSpace`) instead of dispatching
     /// the close.
     ///
+    /// Cancelled by `cancelTabDrivenClose` when the window enters
+    /// placeholder mode. A last-tab close in a normal non-Incognito
+    /// window always does, so the auto-close this marker predicts never
+    /// happens and no user gesture carries a live marker into
+    /// `unregisterWindow` — the tab-driven hand-off there is currently
+    /// unreachable through this path.
+    ///
     /// Stored as spaceId → expiration deadline rather than a plain
     /// set: when the dispatched `IDC_CLOSE_TAB` is vetoed (typically
-    /// an `onbeforeunload` prompt the user cancels), no
-    /// `unregisterWindow` ever fires to drain the marker, and a later
-    /// window-driven close would otherwise misclassify itself as
-    /// tab-driven. The TTL caps that stale window at
-    /// `Self.tabDrivenCloseTTL` seconds.
+    /// an `onbeforeunload` prompt the user cancels), the window enters
+    /// no placeholder and no `unregisterWindow` ever fires, so nothing
+    /// cancels or drains the marker and a later window-driven close
+    /// would otherwise misclassify itself as tab-driven. The TTL caps
+    /// that stale window at `Self.tabDrivenCloseTTL` seconds. This
+    /// residual is the only remaining way a live marker reaches
+    /// `unregisterWindow`, and it is a known defect rather than an
+    /// intended behavior.
     private var pendingTabDrivenCloseDeadlines: [String: Date] = [:]
 
     /// Maximum lifetime of a `pendingTabDrivenCloseDeadlines` entry.
@@ -3528,7 +3538,8 @@ final class SpaceWindowSlot: ObservableObject {
     /// `unregisterWindow`, Chromium has already drained the WebContents
     /// and the contentView's GPU surface, so a snapshot taken there
     /// captures blank/partial pixels. Same lifetime semantics as
-    /// `pendingTabDrivenCloseDeadlines` — drained alongside it.
+    /// `pendingTabDrivenCloseDeadlines` — drained and cancelled
+    /// alongside it, and reachable only through the same residual.
     private var pendingTabDrivenCloseSnapshots: [String: NSImage] = [:]
 
     /// Set for the duration of an `activate(spaceId:)` call so the
@@ -3648,7 +3659,9 @@ final class SpaceWindowSlot: ObservableObject {
     /// previous (closing) window's contentView can no longer produce a
     /// usable snapshot — the override holds the composite captured at
     /// `markTabDrivenClose` time. Per-style animation functions consult
-    /// it as a fallback after their own snapshot attempt fails.
+    /// it as a fallback after their own snapshot attempt fails. Only the
+    /// tab-driven hand-off passes it, so it is currently unreachable
+    /// outside the residual documented on `unregisterWindow`.
     func activate(
         spaceId: String,
         leavingSnapshotOverride: NSImage? = nil,
@@ -6191,8 +6204,9 @@ final class SpaceWindowSlot: ObservableObject {
 
     /// Records that `spaceId`'s next window close is going to be the
     /// result of the user closing the last tab in this Space, not
-    /// the result of closing the window itself. Called from the tab-
-    /// row ✕ button (`Tab.close()`) right before dispatching the
+    /// the result of closing the window itself. Called from
+    /// `Tab.close()` — the tab-row ✕ button and every other UI path
+    /// that funnels into it — right before dispatching the
     /// IDC_CLOSE_TAB command, when the active Space's tab count is
     /// about to drop to zero. ⌘W (`CommandDispatcher` IDC_CLOSE_TAB)
     /// deliberately does NOT call this: closing the last tab with ⌘W
@@ -6200,6 +6214,13 @@ final class SpaceWindowSlot: ObservableObject {
     /// sibling Space. Incognito Spaces never get here on a last-tab
     /// close — both paths intercept it and route into the confirmed
     /// Space teardown (`SpaceManager.requestCloseIncognitoSpace`).
+    ///
+    /// The predicted auto-close does not actually happen any more:
+    /// the window enters placeholder mode instead, and
+    /// `cancelTabDrivenClose` drops the marker and the composite
+    /// captured below. Both are kept because the vetoed-close residual
+    /// documented on `pendingTabDrivenCloseDeadlines` still consumes
+    /// them.
     func markTabDrivenClose(for spaceId: String) {
         pendingTabDrivenCloseDeadlines[spaceId] = Date().addingTimeInterval(Self.tabDrivenCloseTTL)
         // Capture the closing window's pixels now, while the WebContents
@@ -6211,13 +6232,34 @@ final class SpaceWindowSlot: ObservableObject {
         }
     }
 
+    /// Cancels what `markTabDrivenClose` armed for `spaceId`, marker and
+    /// pre-captured composite together. Called when Chromium reports the
+    /// window entered placeholder mode: the last-tab close left the window
+    /// standing, so the auto-close the marker predicts never happens. Left
+    /// armed it would live out its TTL and misclassify the user's next
+    /// genuine close of this window as a tab-driven hand-off, switching the
+    /// slot to a sibling Space instead of closing it. Idempotent — every
+    /// placeholder entry runs it, most with nothing to cancel.
+    func cancelTabDrivenClose(for spaceId: String) {
+        pendingTabDrivenCloseDeadlines.removeValue(forKey: spaceId)
+        pendingTabDrivenCloseSnapshots.removeValue(forKey: spaceId)
+    }
+
     /// Drops the controller for `spaceId`. Behavior splits on whether the
     /// close was tab-driven or window-driven:
     ///
     /// - Tab-driven (the user just closed the last tab in the visible Space)
     ///   AND another Space in the slot still has tabs: activate that
     ///   sibling. The user-perceived window stays alive showing the
-    ///   sibling Space's content.
+    ///   sibling Space's content. **Currently unreachable from any user
+    ///   gesture**: a last-tab close now leaves the window standing on the
+    ///   placeholder page, and that entry cancels the marker
+    ///   (`cancelTabDrivenClose`), so no close arrives here still tagged.
+    ///   The branch survives for the one residual that can still leave a
+    ///   live marker behind — an `IDC_CLOSE_TAB` vetoed by an
+    ///   `onbeforeunload` prompt, after which a genuine window close inside
+    ///   the TTL still lands here (a known defect, see
+    ///   `pendingTabDrivenCloseDeadlines`).
     /// - Otherwise (user closed the window itself, OR every other
     ///   Space is also empty): tear down every remaining Space via
     ///   `cascadeCloseRemainingWindows`, which calls `NSWindow.close()` one
@@ -6335,7 +6377,9 @@ final class SpaceWindowSlot: ObservableObject {
         let siblingWithTabs = (wasVisible && isTabDriven) ? firstSiblingWithTabs() : nil
         if let siblingWithTabs {
             // Tab-driven close with a viable sibling: hand off to
-            // the sibling instead of tearing the slot down.
+            // the sibling instead of tearing the slot down. Currently
+            // unreachable from a user gesture — see the branch note in
+            // this method's doc comment.
             // `visibleController` is left pointing at the closing
             // controller so the pre-close composite snapshot can be
             // threaded into the per-style animation even after the
@@ -6635,6 +6679,9 @@ final class SpaceWindowSlot: ObservableObject {
     /// slot shut. Agent and Incognito Spaces are never hand-off targets
     /// (both scans): a last-tab close must not dump the user into an agent's
     /// hidden workspace or the Incognito Space.
+    ///
+    /// Only the tab-driven hand-off consults this, so it is currently
+    /// unreachable outside the residual documented on `unregisterWindow`.
     private func firstSiblingWithTabs() -> String? {
         if let manager {
             for space in manager.spaces where manager.isAutomaticSwitchTarget(space) {

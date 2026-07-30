@@ -1071,6 +1071,13 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
             AppLogWarn("🦖 [Coordinator] no controller for windowId=\(windowId)")
             return
         }
+        // Placeholder mode means the last-tab close did NOT close the window,
+        // so the tab-driven-close marker `Tab.close()` armed for this Space
+        // predicts an auto-close that will never happen. Cancel it here —
+        // before the cast below, which can fail and would otherwise leave a
+        // live marker to misclassify the user's next genuine close of this
+        // window as a hand-off to a sibling Space.
+        windowController.slot?.cancelTabDrivenClose(for: windowController.spaceId)
         guard let nsWrapper = wrapper as? (WebContentWrapper & NSObject) else {
             AppLogWarn("🦖 [Coordinator] wrapper cast failed")
             return
