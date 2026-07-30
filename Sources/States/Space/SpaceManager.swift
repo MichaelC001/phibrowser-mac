@@ -459,6 +459,24 @@ final class SpaceManager: ObservableObject {
     /// absorbed into a stale, never-claimed snapshot slot.
     private var restoreReattachDeadline: Date?
     private static let restoreReattachGracePeriod: TimeInterval = 60
+    /// Reserved `restoredFromWindowId` for the window Chromium's session restore
+    /// creates when a profile's saved session held nothing restorable
+    /// (`phi::kRestoreFallbackWindowId` — the two must stay in sync). Phi
+    /// produces such sessions routinely: a window whose last tab closes stays
+    /// alive on a placeholder page, and a window saved with an empty tab list is
+    /// dropped when the session is read back, so reopening one macOS window that
+    /// hosted two Spaces can mean one profile with an empty session and one with
+    /// a real one.
+    ///
+    /// The window re-creates no saved window, so it is never a snapshot key —
+    /// but it is still this restore's stand-in for the slot being reopened, so
+    /// it claims a snapshot entry by profile. It is the one shape that may do so
+    /// outside the launch grace period, because the id says what the window IS;
+    /// no ambient "a restore is running" state is consulted, which would be
+    /// unsafe (a Cmd+N during a restore is handled by the window-level path once
+    /// the first restored window takes key, so a misclaimed — hence concealed —
+    /// window would look like the command did nothing).
+    private static let restoreFallbackWindowId = -1
 
     /// True from the moment a windowless session restore is requested until
     /// Chromium reports every profile's restore has settled — a started replay
@@ -720,10 +738,10 @@ final class SpaceManager: ObservableObject {
                 // still mid-replay), reported restoredAny=false, and spawned a
                 // stray plain window, while a windowless Cmd+N slipped past
                 // `AppController`'s drop gate into the same replay.
-                // Still clear here rather than on window arrival: a restored
-                // window can come back without a claimable id (an emptied
-                // session's ALWAYS_CREATE_TABBED_BROWSER fallback) and would
-                // never reach the claim path, so clearing on arrival could
+                // Still clear here rather than on window arrival: a restore can
+                // produce a window that claims no snapshot entry at all (an
+                // emptied session's stand-in window claims by profile, and no
+                // entry need match its profile), so clearing on arrival could
                 // wedge the flag on. This completion is guaranteed to run
                 // (every per-profile terminal — settled, skipped, refused, or
                 // failed — signals the Chromium barrier), so the flag can
@@ -798,6 +816,14 @@ final class SpaceManager: ObservableObject {
     /// zero id never claims, so Cmd+N and other later Chromium-initiated
     /// windows can't be misclaimed by stale snapshot entries.
     ///
+    /// `restoreFallbackWindowId` is the third shape: restore's own stand-in
+    /// window for a profile whose session held nothing restorable. It also
+    /// claims by profile, but needs no grace period — the id itself says the
+    /// window is a restore product, which a user-opened window can never claim
+    /// to be. Without it a reopened slot whose visible Space was emptied comes
+    /// back split: this window mints its own slot, and the sibling profile's
+    /// window seeds a second slot on a Space that never arrives.
+    ///
     /// On a hit, returns the slot the previous session paired this window
     /// with — reusing the in-memory slot we already minted for a sibling
     /// window from the same saved slot, or creating a fresh one on first
@@ -815,20 +841,27 @@ final class SpaceManager: ObservableObject {
     /// tabs into that one Space.
     func claimRestoredWindow(forRestoredFromWindowId restoredFromWindowId: Int,
                              profileId: String) -> (slot: SpaceWindowSlot, spaceId: String)? {
-        // Primary: exact previous-session windowId match.
-        if restoredFromWindowId != 0,
+        // Primary: exact previous-session windowId match. Positive ids only —
+        // a SessionID is always positive, so both `0` and the reserved
+        // `restoreFallbackWindowId` name a window that re-created no saved
+        // window and must never be looked up as one.
+        if restoredFromWindowId > 0,
            let index = restoreIndexByWindowId[restoredFromWindowId],
            index < restoreEntries.count,
            let spaceId = restoreEntries[index].windowMap[restoredFromWindowId] {
             restoreIndexByWindowId.removeValue(forKey: restoredFromWindowId)
             return (slotForRestoreIndex(index, fallbackSpaceId: spaceId), spaceId)
         }
-        // Fallback: ONLY for a window with no usable previous-session id
-        // (`restoredFromWindowId == 0` — Chromium's multi-profile startup opens
-        // one fresh window per last-open profile). Within the launch grace
-        // period, reattach by profile — claim the first not-yet-restored
-        // snapshot window, in saved-slot order, whose Space is bound to
-        // `profileId`.
+        // Fallback: reattach by PROFILE instead of by id. Open to the two window
+        // shapes that carry no usable previous-session id:
+        //
+        //   * `restoreFallbackWindowId` — restore's own stand-in window for a
+        //     profile whose session held nothing restorable. Self-identifying,
+        //     so no grace period is consulted: a mid-session reopen leaves the
+        //     deadline deliberately disarmed, and this window still has to find
+        //     its slot.
+        //   * `0` within the launch grace period — Chromium's multi-profile
+        //     startup opens one fresh window per last-open profile.
         //
         // A NON-zero id that misses the primary lookup is a window genuinely not
         // in the snapshot (e.g. opened while the live count was below the
@@ -843,21 +876,50 @@ final class SpaceManager: ObservableObject {
         // that entry's fullscreen marker. Checked here rather than when the
         // snapshot loads: `bind(to:)` runs before Chromium is up, where the
         // preference read falls back to its enabled default.
-        guard restoredFromWindowId == 0,
+        let claimsByProfile: Bool = {
+            if restoredFromWindowId == Self.restoreFallbackWindowId { return true }
+            guard restoredFromWindowId == 0,
+                  let deadline = restoreReattachDeadline else { return false }
+            return Date() < deadline
+        }()
+        guard claimsByProfile,
               SessionRestorePreference.isEnabled,
-              !profileId.isEmpty,
-              let deadline = restoreReattachDeadline,
-              Date() < deadline else { return nil }
+              !profileId.isEmpty else { return nil }
+        // Which of the profile's unclaimed snapshot windows this one takes over
+        // decides both the Space the user gets back and whose fullscreen marker
+        // the slot inherits — and a profile can own several (two of its Spaces
+        // surfaced from one slot, or Spaces sitting in different slots). Rank:
+        // the window whose Space was the visible one in its own entry, then an
+        // entry that holds the persisted last-active Space, then **snapshot
+        // order** — saved slot order, then previous-session window id. A total
+        // order, so the pick never depends on dictionary iteration order.
+        //
+        // Snapshot order is the project's single deterministic ordering over
+        // snapshot windows: anything else that has to pick among a saved slot's
+        // windows uses this one rather than inventing a near-synonym.
+        let persistedActive = persistedActiveSpaceId
+        var candidates: [(key: (Int, Int, Int, Int),
+                          index: Int, windowId: Int, spaceId: String)] = []
         for index in restoreEntries.indices {
-            for windowId in restoreEntries[index].windowMap.keys.sorted()
-                where restoreIndexByWindowId[windowId] == index {
-                guard let spaceId = restoreEntries[index].windowMap[windowId],
+            let entry = restoreEntries[index]
+            let holdsPersistedActive = persistedActive.map {
+                entry.windowMap.values.contains($0)
+            } ?? false
+            for (windowId, spaceId) in entry.windowMap {
+                guard restoreIndexByWindowId[windowId] == index,
                       boundProfileId(forSpaceId: spaceId) == profileId else { continue }
-                restoreIndexByWindowId.removeValue(forKey: windowId)
-                return (slotForRestoreIndex(index, fallbackSpaceId: spaceId), spaceId)
+                candidates.append((key: (spaceId == entry.activeSpaceId ? 0 : 1,
+                                         holdsPersistedActive ? 0 : 1,
+                                         index,
+                                         windowId),
+                                   index: index,
+                                   windowId: windowId,
+                                   spaceId: spaceId))
             }
         }
-        return nil
+        guard let pick = candidates.min(by: { $0.key < $1.key }) else { return nil }
+        restoreIndexByWindowId.removeValue(forKey: pick.windowId)
+        return (slotForRestoreIndex(pick.index, fallbackSpaceId: pick.spaceId), pick.spaceId)
     }
 
     /// Resolves (and reuses for later siblings) the live slot for a saved
@@ -1117,7 +1179,9 @@ final class SpaceManager: ObservableObject {
         // absorbed (see `claimRestoredWindow`). A mid-session re-arm passes
         // `armReattachDeadline: false`: those restored windows carry their real
         // ids, and arming the fallback would let a concurrent Cmd+N misclaim a
-        // stale slot.
+        // stale slot. The one exception needs no deadline — restore's own
+        // stand-in window announces itself with `restoreFallbackWindowId` and
+        // claims by profile regardless.
         if armReattachDeadline && !restoreEntries.isEmpty {
             restoreReattachDeadline = Date().addingTimeInterval(Self.restoreReattachGracePeriod)
         }

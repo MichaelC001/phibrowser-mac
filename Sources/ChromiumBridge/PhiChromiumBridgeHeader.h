@@ -387,6 +387,12 @@ typedef NS_ENUM(NSInteger, PhiWindowCloseState) {
 /// `windowId` is always the fresh per-run id; the two never coincide by
 /// contract, only by counter accident, so match restore snapshots against
 /// `restoredFromWindowId` exclusively.
+///
+/// The reserved value `-1` means session restore created this window because
+/// the profile's session held no restorable window at all. It re-creates no
+/// saved window, so it is never a snapshot key — but it is still the restore's
+/// stand-in for the window group being reopened, and the client places it by
+/// profile instead.
 - (void)mainBrowserWindowCreated:(NSWindow *)window
                             type:(ChromiumBrowserType)browserType
                        profileId:(NSString *)profileId
