@@ -896,6 +896,27 @@ typedef NS_ENUM(NSInteger, PhiWindowCloseState) {
 - (void)executeCommand:(int)commandId windowId:(int64_t)windowId;
 
 // ==========================================================================
+// Session restore concealment (Mac → Chromium)
+// ==========================================================================
+
+/// Tells Chromium that a restored window is one of the sibling-Space windows
+/// the Mac client keeps concealed for the restore burst.
+///
+/// Concealment drops the window's alpha to zero, which Chromium cannot see:
+/// the window and its selected restored tab both stay VISIBLE, so session
+/// restore would eagerly start a navigation for a window nobody can see —
+/// once per concealed Space, all of it competing with the landing window for
+/// the main thread. While the flag is set, the selected tab is replayed but
+/// not loaded.
+///
+/// Send YES from inside the window-created callback (slot registration runs
+/// there, before Chromium replays the tabs) and NO when the window is
+/// revealed — clearing the flag starts the skipped load, so the Space the
+/// user switches to is never a blank page. Both directions are idempotent
+/// and a `windowId` that no longer resolves is a no-op.
+- (void)setRestoredSiblingConcealed:(BOOL)concealed windowId:(int64_t)windowId;
+
+// ==========================================================================
 // Window-group close (Mac → Chromium)
 // ==========================================================================
 

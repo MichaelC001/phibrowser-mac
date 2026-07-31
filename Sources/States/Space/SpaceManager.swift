@@ -5920,17 +5920,41 @@ final class SpaceWindowSlot: ObservableObject {
     /// mode when the window is regrouped. Mirrors the dangling-window alpha
     /// conceal/restore pair in
     /// `MainBrowserWindowControllersManager.hideDanglingWindow`.
-    private func concealRestoredSiblingWindow(_ window: NSWindow) {
+    ///
+    /// Chromium is told too: alpha concealment is invisible to it, so it
+    /// would otherwise start a page load for this window's selected restored
+    /// tab — once per concealed Space, competing with the visible window for
+    /// the main thread. This runs inside Chromium's window-created callback,
+    /// ahead of the tab replay, so the mark is in place when it decides.
+    private func concealRestoredSiblingWindow(_ window: NSWindow, windowId: Int) {
         window.alphaValue = 0
         window.ignoresMouseEvents = true
         window.tabbingMode = .disallowed
+        ChromiumLauncher.sharedInstance().bridge?
+            .setRestoredSiblingConcealed(true, windowId: Int64(windowId))
     }
 
     /// Idempotent undo of `concealRestoredSiblingWindow`; safe on windows
-    /// that were never concealed.
+    /// that were never concealed. Dropping the Chromium mark starts the page
+    /// load that was skipped while concealed, so a Space that surfaces is
+    /// never a blank page. Dropped on every call rather than only on an alpha
+    /// transition — Chromium ignores the drop for a window it never marked,
+    /// while gating on the alpha would strand a window some other path had
+    /// already made opaque.
+    ///
+    /// The window carries no Chromium id, so the slot has to recover its
+    /// controller; every caller passes a window this slot owns, which makes a
+    /// miss a bug rather than a state to tolerate — hence the log.
     private func revealConcealedWindow(_ window: NSWindow) {
         if window.alphaValue != 1 { window.alphaValue = 1 }
         if window.ignoresMouseEvents { window.ignoresMouseEvents = false }
+        guard let controller = windowsBySpaceId.values.first(where: { $0.window === window })
+        else {
+            AppLogWarn("[SpaceWindowSlot] revealConcealedWindow: window is not registered with this slot — Chromium keeps its restored-sibling mark")
+            return
+        }
+        ChromiumLauncher.sharedInstance().bridge?
+            .setRestoredSiblingConcealed(false, windowId: Int64(controller.windowId))
     }
 
     /// Catch-all for the reconcile's final pass: no restored window may stay
@@ -6284,7 +6308,7 @@ final class SpaceWindowSlot: ObservableObject {
         // See `markRestoredSiblingForConcealment`.
         let concealAsRestoredSibling = pendingRestoreConcealSpaceIds.remove(spaceId) != nil
         if let window = controller.window, concealAsRestoredSibling {
-            concealRestoredSiblingWindow(window)
+            concealRestoredSiblingWindow(window, windowId: controller.windowId)
         }
         if !deferGroupingForReveal && !concealAsRestoredSibling {
             syncSlotTabGroup(selecting: shouldBecomeVisible ? controller.window : visibleController?.window)
