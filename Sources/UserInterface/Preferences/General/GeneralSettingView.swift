@@ -421,9 +421,13 @@ private struct LanguageSectionView: View {
             repairedStoredLanguage = PhiPreferences.GeneralSettings.saveAppLanguagePreference(
                 selection
             )
+            if repairedStoredLanguage {
+                SentinelLanguagePreferenceSync.publish(selection)
+            }
         }
         .onChange(of: selection) { _, newValue in
             PhiPreferences.GeneralSettings.saveAppLanguagePreference(newValue)
+            SentinelLanguagePreferenceSync.publish(newValue)
         }
     }
 

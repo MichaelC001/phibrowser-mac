@@ -159,6 +159,44 @@ final class AppLanguagePreferenceTests: XCTestCase {
         )
     }
 
+    func testExplicitPreferenceResolvesToCanonicalLanguage() {
+        XCTAssertEqual(
+            PhiPreferences.GeneralSettings.resolvedAppLanguage(
+                for: .language(.simplifiedChinese),
+                from: defaults,
+                applicationDomainName: defaultsSuiteName,
+                systemPreferredLanguages: ["fr"]
+            ),
+            .simplifiedChinese
+        )
+    }
+
+    func testSystemPreferenceResolvesAppSpecificLanguage() {
+        defaults.set(["zh-Hans"], forKey: "AppleLanguages")
+
+        XCTAssertEqual(
+            PhiPreferences.GeneralSettings.resolvedAppLanguage(
+                for: .system,
+                from: defaults,
+                applicationDomainName: defaultsSuiteName,
+                systemPreferredLanguages: ["fr"]
+            ),
+            .simplifiedChinese
+        )
+    }
+
+    func testSystemPreferenceFallsBackToSupportedSystemLanguage() {
+        XCTAssertEqual(
+            PhiPreferences.GeneralSettings.resolvedAppLanguage(
+                for: .system,
+                from: defaults,
+                applicationDomainName: defaultsSuiteName,
+                systemPreferredLanguages: ["pt-BR", "es-MX"]
+            ),
+            .spanish
+        )
+    }
+
     private var persistentAppleLanguages: [String]? {
         defaults.persistentDomain(forName: defaultsSuiteName)?["AppleLanguages"] as? [String]
     }

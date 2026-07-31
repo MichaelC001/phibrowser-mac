@@ -35,8 +35,9 @@ import Foundation
 /// deliberately untouched: every file in it is runtime machinery shared
 /// with the Sentinel side process (`SharedTokenLock` lock files,
 /// `SharedHeartbeatStore` heartbeats, `SharedAuth0Config` client-config
-/// mirrors, Sentinel runtime-info markers), and account credentials live in
-/// the keychain, cleared separately by `AuthManager`.
+/// mirrors, `SharedAppLanguagePreferenceStore` language state, Sentinel
+/// runtime-info markers), and account credentials live in the keychain,
+/// cleared separately by `AuthManager`.
 enum UserDataRemoval {
     /// The on-disk locations the mechanism erases. Injected so tests can
     /// point the mechanism at a throwaway tree; production uses

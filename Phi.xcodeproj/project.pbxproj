@@ -316,6 +316,7 @@
 		B17DE00000000000000000E3 /* Vendor/PhiBitwardenHelper-LICENSE.txt in Copy Bitwarden GPL Notices */ = {isa = PBXBuildFile; fileRef = B17DE00000000000000000E5 /* Vendor/PhiBitwardenHelper-LICENSE.txt */; };
 		B17DE00000000000000000E4 /* Vendor/PhiBitwardenHelper-SOURCE-OFFER.txt in Copy Bitwarden GPL Notices */ = {isa = PBXBuildFile; fileRef = B17DE00000000000000000E6 /* Vendor/PhiBitwardenHelper-SOURCE-OFFER.txt */; };
 		B17DE0000000000000000B01 /* BitwardenSessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17DE0000000000000000B02 /* BitwardenSessionStore.swift */; };
+		B7A100013001000000000002 /* SentinelLanguagePreferenceSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7A100013001000000000001 /* SentinelLanguagePreferenceSync.swift */; };
 		C0D1D0022FEA000000000002 /* SidebarTabListViewController+MultiSelectionDragPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D1D0012FEA000000000001 /* SidebarTabListViewController+MultiSelectionDragPreview.swift */; };
 		C70000000000000000000011 /* CustomTooltipController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C70000000000000000000001 /* CustomTooltipController.swift */; };
 		C70000000000000000000012 /* CustomTooltip+Hosting.swift in Sources */ = {isa = PBXBuildFile; fileRef = C70000000000000000000002 /* CustomTooltip+Hosting.swift */; };
@@ -895,6 +896,7 @@
 		B17DE00000000000000000E5 /* Vendor/PhiBitwardenHelper-LICENSE.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Vendor/PhiBitwardenHelper-LICENSE.txt"; sourceTree = SOURCE_ROOT; };
 		B17DE00000000000000000E6 /* Vendor/PhiBitwardenHelper-SOURCE-OFFER.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Vendor/PhiBitwardenHelper-SOURCE-OFFER.txt"; sourceTree = SOURCE_ROOT; };
 		B17DE0000000000000000B02 /* BitwardenSessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BitwardenSessionStore.swift; sourceTree = "<group>"; };
+		B7A100013001000000000001 /* SentinelLanguagePreferenceSync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SentinelLanguagePreferenceSync.swift; sourceTree = "<group>"; };
 		C0D1D0012FEA000000000001 /* SidebarTabListViewController+MultiSelectionDragPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SidebarTabListViewController+MultiSelectionDragPreview.swift"; sourceTree = "<group>"; };
 		C70000000000000000000001 /* CustomTooltipController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CustomTooltipController.swift; sourceTree = "<group>"; };
 		C70000000000000000000002 /* CustomTooltip+Hosting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "CustomTooltip+Hosting.swift"; sourceTree = "<group>"; };
@@ -1887,6 +1889,7 @@
 				CCBF0F9F2ECEC1AE005E729B /* AppController+Deeplink.swift */,
 				19B477B37CF44BC48335A032 /* AccountDeletedEventAuthentication.swift */,
 				3703C9832F6956E600E7CF6D /* SentinelHelper.swift */,
+				B7A100013001000000000001 /* SentinelLanguagePreferenceSync.swift */,
 				3703C9852F6956E600E7CF6D /* SentinelVersionGuard.swift */,
 				11E8BEE1510290AB35D5C5AD /* SentinelBackupCoordination.swift */,
 				6A44C5FF60DF6F7860A061D4 /* SentinelWatchdog.swift */,
@@ -2630,6 +2633,7 @@
 				37C1B28A2EE0457F00DD4496 /* LivingDownloadsListView.swift in Sources */,
 				F9E478A224C44EA7BC0D85CC /* AccountDeletedEventAuthentication.swift in Sources */,
 				3703C9842F6956E600E7CF6D /* SentinelHelper.swift in Sources */,
+				B7A100013001000000000002 /* SentinelLanguagePreferenceSync.swift in Sources */,
 				3703C9862F6956E600E7CF6D /* SentinelVersionGuard.swift in Sources */,
 				3AC6117E11925E637EB4711A /* SentinelBackupCoordination.swift in Sources */,
 				793C1DDEA1022CC850FEFFF9 /* SentinelWatchdog.swift in Sources */,

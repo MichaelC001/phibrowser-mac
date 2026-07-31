@@ -136,6 +136,7 @@ import PostHog
         UserDefaultsRegistration.registerDefaults()
         
         setupLogging()
+        SentinelLanguagePreferenceSync.persistCurrentPreference()
         // Wire the shared keychain store into AppLog so its keychain errors and
         // retry recoveries land in the same log file as the rest of the app.
         // Must happen before any auth flow (login / renew / launch recovery)
