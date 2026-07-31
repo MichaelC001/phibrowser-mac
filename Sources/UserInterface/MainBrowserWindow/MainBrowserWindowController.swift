@@ -187,8 +187,19 @@ class MainBrowserWindowController: NSWindowController {
         // in the spawn path). The not-logged-in/dangling window is hidden then
         // force-sized on restore, so it never depended on this autosave either.
         let frameToRestore = window.frame
+        // Pin the window's appearance before the content tree exists, so the
+        // split view's first layout already resolves against the final theme
+        // instead of repainting once the theme lands (same reasoning as the
+        // `seedPersistedTheme` call in `init`). Only the window and the
+        // outgoing Chromium content view are reachable here: the guards inside
+        // stop this call from force-loading the split view, so the tree is
+        // built by `setupContentView()` below instead of as a side effect of
+        // setting an appearance. `MainSplitViewController.viewDidLoad`
+        // therefore runs after the observers registered below — safe, because
+        // none of them fire during this function and `viewDidLoad` neither
+        // mutates `browserState` nor posts notifications.
         applyThemeAppearance(to: window)
-        
+
         NotificationCenter.default.addObserver(self,
                                                selector: #selector(myWindowWillEnterFullScreen),
                                                name: NSWindow.willEnterFullScreenNotification,
@@ -236,6 +247,8 @@ class MainBrowserWindowController: NSWindowController {
             }
             .store(in: &cancellables)
         setupContentView()
+        // Not a repeat of the call above: that one ran before the split view
+        // existed, so this is the only one that reaches the content tree.
         applyThemeAppearance(to: window)
         window.setFrame(frameToRestore, display: true)
     }
@@ -248,12 +261,31 @@ class MainBrowserWindowController: NSWindowController {
         mainSplitViewController.phiHandleRestoreFromMinimized()
     }
 
+    /// Applies the window's theme appearance without dragging the content view
+    /// hierarchy into existence.
+    ///
+    /// Reading `.view` on a not-yet-loaded `NSViewController` forces
+    /// `loadView`/`viewDidLoad`. Without the `isViewLoaded` guards below, the
+    /// first call from `setupWindow()` pulled the whole split-view tree
+    /// (sidebar, split items, web content container) into window
+    /// initialization purely to assign an appearance — and in the default
+    /// "follow the system" case the value being assigned is `nil`.
+    ///
+    /// Because of those guards, an appearance change that arrives while the
+    /// views are unloaded is **dropped, not queued**. Any code that defers
+    /// building the hierarchy must therefore re-run a full
+    /// `applyThemeAppearance(to:)` once it materializes the views, or the
+    /// window shows up wearing the theme it had when it was deferred.
     private func applyThemeAppearance(to window: NSWindow) {
         let appearance = browserState.themeContext.windowAppearance
         window.appearance = appearance
         window.contentView?.appearance = appearance
-        contentViewController?.view.appearance = appearance
-        mainSplitViewController.view.appearance = appearance
+        if let contentViewController, contentViewController.isViewLoaded {
+            contentViewController.view.appearance = appearance
+        }
+        if mainSplitViewController.isViewLoaded {
+            mainSplitViewController.view.appearance = appearance
+        }
     }
     
     private func setupContentView() {
