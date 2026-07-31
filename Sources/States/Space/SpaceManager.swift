@@ -750,10 +750,108 @@ final class SpaceManager: ObservableObject {
                 if !restoredAnyWindow {
                     // Nothing restorable: open a plain window.
                     self.spawnPersistedSpaceWindow()
+                } else {
+                    self.repairSlotsWithAbsentActiveSpace()
                 }
             }
         }
         return true
+    }
+
+    /// Makes every still-registered slot show the Space it says it is showing,
+    /// once a reopen restore has settled.
+    ///
+    /// A slot is seeded with the Space its snapshot entry had visible, but that
+    /// Space's window does not always come back: a window saved with an empty
+    /// tab list is dropped when the session is read back, so a slot whose
+    /// visible Space was left on a placeholder page restores its OTHER Spaces
+    /// only. The slot then reports a Space that owns no window — its indicator,
+    /// name and tint name one Space while the tabs on screen belong to another
+    /// — and `reconcileRestoreVisibility` bails on every pass (it has no active
+    /// window to front), so the restored windows stay concealed until the reveal
+    /// ladder's blind catch-all surfaces all of them at once, seconds later.
+    ///
+    /// Per slot that owns windows but none for its active Space:
+    ///   * the active Space can still be surfaced here → spawn its window
+    ///     through the slot's own `activate`, so it registers back into THIS
+    ///     slot (never a second one) and the windows already there stay hidden
+    ///     siblings. This is what Chromium's own fallback window does for a
+    ///     profile whose session held nothing restorable (see
+    ///     `restoreFallbackWindowId`); doing it here too means the same user
+    ///     gesture no longer gives two different results depending on whether
+    ///     that profile happened to hold another restorable window.
+    ///   * otherwise (the Space was deleted, or is an Incognito / agent Space
+    ///     and never an automatic destination) → switch the slot to a Space
+    ///     that did come back, taking the first present one in snapshot order.
+    ///
+    /// Driven by the restore-settled signal rather than the visibility
+    /// reconcile's timed ladder: that ladder arms on every Dock reopen whether
+    /// or not a restore runs, keeps ticking on slots already dropped from the
+    /// registry, and its early ticks fire while a sibling profile's window is
+    /// still legitimately in flight — repairing on one of those would freeze a
+    /// transient into a permanent misplacement. Idempotent: a slot whose active
+    /// Space owns a window is left alone, so this is a no-op whenever the
+    /// fallback window above already brought that Space back.
+    private func repairSlotsWithAbsentActiveSpace() {
+        // The Spaces an automatic switch may land on: still in the store, and
+        // neither Incognito nor agent-owned (both are deliberate destinations
+        // only — see `isAutomaticSwitchTarget`). Screens the Space being brought
+        // back AND the stand-in: the snapshot filters Incognito Spaces out of
+        // its window map but not agent ones, so an agent Space can come back
+        // with the rest of the slot.
+        let switchTargetIds = Set(
+            spaces.filter { isAutomaticSwitchTarget($0) }.map(\.spaceId)
+        )
+        for slot in slots {
+            let presentSpaceIds = slot.spaceIdsWithWindow
+            guard !slot.isTearingDown,
+                  let activeId = slot.activeSpaceId,
+                  !presentSpaceIds.isEmpty,
+                  !presentSpaceIds.contains(activeId) else { continue }
+            // Spawning the absent Space also needs its window to be owned by no
+            // OTHER slot — a Space maps 1:1 to a Chromium window, so a second
+            // window for it would put the same Space on screen twice.
+            let ownedElsewhere = slots.contains {
+                $0 !== slot && $0.windowController(for: activeId) != nil
+            }
+            let target: String
+            if switchTargetIds.contains(activeId), !ownedElsewhere {
+                AppLogInfo("[SpaceManager] restore settled: no window for slot's active Space \(activeId) — spawning it")
+                target = activeId
+            } else if let present = Self.firstPresentSpaceInSnapshotOrder(
+                windowMaps: restoreEntries.map(\.windowMap),
+                presentSpaceIds: presentSpaceIds.intersection(switchTargetIds)
+            ) {
+                // Snapshot order rather than the store-wide fallback the other
+                // "the active Space went away" paths resolve to
+                // (`handleSpacesUpdate`, `spawnPersistedSpaceWindow`): the
+                // stand-in has to be a Space whose window is in THIS slot, and
+                // the same one every time this state arises.
+                AppLogInfo("[SpaceManager] restore settled: slot's active Space \(activeId) cannot be surfaced — showing restored Space \(present) instead")
+                target = present
+            } else {
+                AppLogWarn("[SpaceManager] restore settled: slot's active Space \(activeId) cannot be surfaced and the snapshot names none of its restored Spaces — left as is")
+                continue
+            }
+            // Re-assert the slot's one-visible-window invariant once the target
+            // window is up: the passes that bailed never ran the sibling sweep,
+            // and never re-entered fullscreen either — `reconcileRestoreVisibility`
+            // is the only caller of `applyPendingRestoreFullScreen`, and a slot
+            // left with that marker set also stops re-arming `.moveToActiveSpace`
+            // on its hidden siblings. Armed from the swap's settle callback (the
+            // spawn path fires it once the new window is revealed, which an async
+            // profile load can push past this turn) and, for a repoint onto a
+            // window that is already the visible one, right after `activate`
+            // returns. Whichever runs first arms the coalesced ladder; the other
+            // is a no-op. Never armed while the window is still missing: such a
+            // pass can only bail.
+            slot.activate(spaceId: target, animated: false, onSwapSettled: { [weak slot] in
+                slot?.scheduleRestoreVisibilityReconcile()
+            })
+            if let active = slot.activeSpaceId, slot.windowController(for: active) != nil {
+                slot.scheduleRestoreVisibilityReconcile()
+            }
+        }
     }
 
     /// If the app is windowless with a restorable history and the switch is on,
@@ -937,6 +1035,33 @@ final class SpaceManager: ObservableObject {
         }
         restoredSlotsByIndex[index] = slot
         return slot
+    }
+
+    /// The first of `presentSpaceIds` in **snapshot order** — saved slot order,
+    /// then previous-session window id — or nil when the snapshot names none of
+    /// them. `windowMaps` holds each snapshot entry's previous-session windowId
+    /// → spaceId map, in saved order.
+    ///
+    /// Snapshot order is the one ordering the project defines over snapshot
+    /// windows: `claimRestoredWindow` sorts by it too, below its own two
+    /// priority levels, so its ranking key spells the same rule out rather than
+    /// calling this — the two answer different questions (rank all of a
+    /// profile's candidates vs. take the first Space present in one slot).
+    /// Independent of dictionary iteration order either way, so the pick is
+    /// reproducible instead of whatever a hash walk happens to yield first.
+    static func firstPresentSpaceInSnapshotOrder(
+        windowMaps: [[Int: String]],
+        presentSpaceIds: Set<String>
+    ) -> String? {
+        for windowMap in windowMaps {
+            for windowId in windowMap.keys.sorted() {
+                if let spaceId = windowMap[windowId],
+                   presentSpaceIds.contains(spaceId) {
+                    return spaceId
+                }
+            }
+        }
+        return nil
     }
 
     /// The profileId a Space is bound to, or nil if unknown. Reads the live
@@ -6788,6 +6913,14 @@ final class SpaceWindowSlot: ObservableObject {
     /// nil. Used by theme application across slots.
     func windowController(for spaceId: String) -> MainBrowserWindowController? {
         windowsBySpaceId[spaceId]
+    }
+
+    /// The Spaces this slot currently hosts a window for. Read by
+    /// `SpaceManager.repairSlotsWithAbsentActiveSpace` to tell a slot whose
+    /// active Space came back from one whose did not, and to pick a stand-in
+    /// among the Spaces that did.
+    var spaceIdsWithWindow: Set<String> {
+        Set(windowsBySpaceId.keys)
     }
 
     /// Does this slot host the given Chromium windowId?
