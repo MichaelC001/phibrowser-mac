@@ -75,6 +75,13 @@ takes, and it is the fix for the flaky teardown:
   changes *and* prior user interaction can surface a dialog — the same
   behavior the visible window already has. (Chrome suppresses the dialog for
   pages with no user gesture, so untouched background Spaces close silently.)
+- **Siblings on the placeholder page depend on a Chromium-side whitelist.** A
+  window parked on the placeholder page has an empty tab strip, and
+  `BrowserCommandController::ExecuteCommandWithDisposition` drops every command
+  that is not on the placeholder whitelist it keeps for that state.
+  `IDC_CLOSE_WINDOW` sits on that list for this cascade's sake; take it off and
+  placeholder siblings silently survive the cascade, which the slot then reads
+  as a vetoed close and puts back on screen seconds later.
 
 ## Sequence (matching log tags)
 
