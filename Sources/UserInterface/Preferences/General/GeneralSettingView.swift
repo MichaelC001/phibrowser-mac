@@ -406,7 +406,7 @@ private struct LanguageSectionView: View {
                                 value: "Restart Phi",
                                 comment: "General settings - Button to restart Phi and apply the selected display language"
                             ),
-                            action: restartApplication
+                            action: promptToRestartApplication
                         )
                         .controlSize(.small)
                     }
@@ -428,11 +428,53 @@ private struct LanguageSectionView: View {
         .onChange(of: selection) { _, newValue in
             PhiPreferences.GeneralSettings.saveAppLanguagePreference(newValue)
             SentinelLanguagePreferenceSync.publish(newValue)
+            if newValue != PhiPreferences.GeneralSettings.appLanguagePreferenceAtLaunch {
+                promptToRestartApplication()
+            }
         }
     }
 
-    private func restartApplication() {
-        // TODO: Coordinate Phi and Sentinel before implementing application relaunch.
+    @MainActor
+    private func promptToRestartApplication() {
+        let configuration = PhiAlertAppKitConfiguration(
+            title: NSLocalizedString(
+                "settings.general.language.restartPrompt.title",
+                value: "Restart Phi?",
+                comment: "General settings - Confirmation title shown after selecting a display language that differs from the currently applied language"
+            ),
+            message: NSLocalizedString(
+                "settings.general.language.restartPrompt.message",
+                value: "The selected language will take effect after Phi restarts. Restart now?",
+                comment: "General settings - Confirmation message explaining that the newly selected display language requires a restart"
+            ),
+            secondaryAction: PhiAlertAppKitAction(
+                NSLocalizedString(
+                    "settings.general.language.restartPrompt.notNowButton",
+                    value: "Not Now",
+                    comment: "General settings - Button that postpones restarting after changing the display language"
+                ),
+                response: .alertSecondButtonReturn
+            ),
+            primaryAction: PhiAlertAppKitAction(
+                NSLocalizedString(
+                    "settings.general.language.restartButton",
+                    value: "Restart Phi",
+                    comment: "General settings - Button to restart Phi and apply the selected display language"
+                ),
+                role: .primary,
+                response: .alertFirstButtonReturn
+            )
+        )
+
+        DispatchQueue.main.async {
+            guard let sourceWindow = NSApp.keyWindow ?? NSApp.mainWindow,
+                  sourceWindow.isVisible else { return }
+
+            sourceWindow.presentPhiAlert(configuration) { response in
+                guard response == .alertFirstButtonReturn else { return }
+                AppController.relaunchPhiApplication()
+            }
+        }
     }
 }
 
