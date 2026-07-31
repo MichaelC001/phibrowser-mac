@@ -745,6 +745,96 @@ final class PhiBrowserTests: XCTestCase {
         )
     }
 
+    func testAuthSessionGenerationOnlyCommitsToCapturedSession() {
+        let sessions = AuthSessionGeneration()
+        let session = sessions.capture()
+        var canonicalCredential = "old-session"
+
+        let currentCommit = sessions.performIfCurrent(session) {
+            canonicalCredential = "renewed-session"
+            return true
+        }
+
+        XCTAssertEqual(currentCommit, true)
+        XCTAssertEqual(canonicalCredential, "renewed-session")
+
+        sessions.advance {
+            canonicalCredential = "new-session"
+        }
+        let staleCommit = sessions.performIfCurrent(session) {
+            canonicalCredential = "late-renewal"
+            return true
+        }
+
+        XCTAssertFalse(sessions.isCurrent(session))
+        XCTAssertNil(staleCommit)
+        XCTAssertEqual(canonicalCredential, "new-session")
+    }
+
+    func testAuthSessionGenerationSerializesRestoreAndRenewalCommits() {
+        let state = AuthCredentialCommitTestState()
+        let session = state.sessions.capture()
+        let restoreEntered = DispatchSemaphore(value: 0)
+        let allowRestoreToFinish = DispatchSemaphore(value: 0)
+        let renewalEntered = DispatchSemaphore(value: 0)
+        let restoreFinished = expectation(description: "Restore finished")
+        let renewalFinished = expectation(description: "Renewal finished")
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            _ = state.sessions.performIfCurrent(session) {
+                restoreEntered.signal()
+                allowRestoreToFinish.wait()
+                state.currentCredential = state.canonicalCredential
+            }
+            restoreFinished.fulfill()
+        }
+
+        XCTAssertEqual(restoreEntered.wait(timeout: .now() + 1), .success)
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            _ = state.sessions.performIfCurrent(session) {
+                renewalEntered.signal()
+                state.canonicalCredential = "renewed"
+                state.currentCredential = "renewed"
+            }
+            renewalFinished.fulfill()
+        }
+
+        XCTAssertEqual(
+            renewalEntered.wait(timeout: .now() + 0.1),
+            .timedOut,
+            "Renewal must not interleave between a persisted credential read and restore commit."
+        )
+
+        allowRestoreToFinish.signal()
+        wait(for: [restoreFinished, renewalFinished], timeout: 1)
+
+        XCTAssertEqual(state.canonicalCredential, "renewed")
+        XCTAssertEqual(state.currentCredential, "renewed")
+    }
+
+    func testInMemoryCredentialsStorageKeepsSnapshotWritesIsolated() {
+        let key = "credentials"
+        let canonicalData = Data("canonical".utf8)
+        let renewedData = Data("renewed".utf8)
+        let canonicalStorage = InMemoryCredentialsStorage(
+            entry: canonicalData,
+            forKey: key
+        )
+        let snapshotStorage = InMemoryCredentialsStorage(
+            entry: canonicalStorage.getEntry(forKey: key),
+            forKey: key
+        )
+
+        XCTAssertTrue(snapshotStorage.setEntry(renewedData, forKey: key))
+        XCTAssertEqual(snapshotStorage.getEntry(forKey: key), renewedData)
+        XCTAssertEqual(canonicalStorage.getEntry(forKey: key), canonicalData)
+
+        XCTAssertTrue(snapshotStorage.deleteEntry(forKey: key))
+        XCTAssertNil(snapshotStorage.getEntry(forKey: key))
+        XCTAssertEqual(canonicalStorage.getEntry(forKey: key), canonicalData)
+    }
+
     @MainActor
     func testExtensionPopupAnchorUsesPrimaryScreenHeightForChromiumFlip() {
         let point = NSPoint(x: 240, y: 320)
@@ -1176,6 +1266,12 @@ final class PhiBrowserTests: XCTestCase {
         XCTAssertEqual(actualColor.blueComponent, expectedColor.blueComponent, accuracy: 0.001, file: file, line: line)
         XCTAssertEqual(actualColor.alphaComponent, expectedColor.alphaComponent, accuracy: 0.001, file: file, line: line)
     }
+}
+
+private final class AuthCredentialCommitTestState: @unchecked Sendable {
+    let sessions = AuthSessionGeneration()
+    var canonicalCredential = "persisted"
+    var currentCredential: String?
 }
 
 private final class BookmarkMenuTestTarget: NSObject {
