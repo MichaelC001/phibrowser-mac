@@ -49,7 +49,7 @@ One robustness rule applies to the tag:
 
 The `wasVisible == false && isTabDriven == false` row is why the cascade is **not** gated on `wasVisible` alone: in the slot's native tab group `visibleController` can lag AppKit's actually-selected tab, so a real window-driven close can arrive on a controller that isn't the tracked visible one. Gating the cascade on `wasVisible` only let that close slip through and strand the slot's other Spaces with live tabs. Background closes that must NOT cascade (`deleteSpace` / `changeProfile` / `respawnWindow`) evict the controller first, so they early-return on the identity guard and never reach this branch.
 
-After the body, if `windowsBySpaceId.isEmpty` the slot removes itself from `SpaceManager.slots`. If `SpaceManager.slots` is then empty, the slot calls `NSApp.terminate(nil)` — the user asked for "close all spaces and exit" on window-driven close, and the cleanup path through `applicationShouldTerminate` → `applicationWillTerminate` (see `AppController`) gives Chromium a clean shutdown for SessionService state.
+After the body, if `windowsBySpaceId.isEmpty` the slot removes itself from `SpaceManager.slots`. Emptying the last slot does **not** quit the app: it stays alive with no windows on screen, so the Dock icon can reopen the group. `removeSlot` shrinks the restore snapshot on its way out, and that write is a no-op when this was the last slot — `persistSlotsSnapshot` never overwrites a saved snapshot with an empty one, which is exactly what freezes the final layout for the reopen to restore from.
 
 ## How the cascade closes windows (`cascadeCloseRemainingWindows`)
 
@@ -100,4 +100,4 @@ Tab-driven close with a viable sibling (currently unreachable — this line appe
 [SpaceWindowSlot] tab-driven close of <visibleSpaceId>; switching to sibling <siblingSpaceId>
 ```
 
-(Slot stays alive; no further log line, no terminate.)
+(Slot stays alive; no further log line.)
