@@ -51,6 +51,8 @@ The `wasVisible == false && isTabDriven == false` row is why the cascade is **no
 
 After the body, if `windowsBySpaceId.isEmpty` the slot removes itself from `SpaceManager.slots`. Emptying the last slot does **not** quit the app: it stays alive with no windows on screen, so the Dock icon can reopen the group. `removeSlot` shrinks the restore snapshot on its way out, and that write is a no-op when this was the last slot — `persistSlotsSnapshot` never overwrites a saved snapshot with an empty one, which is exactly what freezes the final layout for the reopen to restore from.
 
+Because that final write is a no-op, the snapshot a reopen restores from is whichever one landed *before* the close — which is why `unregisterWindow` opens with `flushPendingSlotsSnapshotPersist()`, before it touches the window map. Window moves and resizes persist on a debounce (they fire far too often to write per event), and this is the last moment such a pending write can still describe a whole, live slot. It is a no-op unless a frame change is actually outstanding, and mid-cascade it writes nothing at all — `persistSlotsSnapshot` refuses while any slot is tearing down.
+
 ## How the cascade closes windows (`cascadeCloseRemainingWindows`)
 
 The cascade closes each remaining window **through Chromium**, via

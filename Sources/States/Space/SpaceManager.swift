@@ -438,6 +438,22 @@ final class SpaceManager: ObservableObject {
         /// so the slot reopens fullscreen as ONE Space instead of orphaning
         /// blank Spaces. See `SpaceWindowSlot.applyPendingRestoreFullScreen`.
         let wasFullScreen: Bool
+        /// Where the slot's window sat on screen at snapshot time, already
+        /// clamped to the screens attached NOW (`loadRestoreSnapshot`) — the
+        /// display it was saved on may be gone by the time it is read back.
+        ///
+        /// Always a WINDOWED rect: a slot in fullscreen records the geometry it
+        /// will have once it leaves fullscreen, never the screen-sized one (see
+        /// `SpaceWindowSlot.snapshotFrame`).
+        ///
+        /// Nil for a snapshot written before this field existed, and for one
+        /// whose recorded rect no longer parses. A future consumer must read
+        /// that as "no remembered geometry" and fall back to its own placement,
+        /// never as a reason to skip the entry — every other restore path here
+        /// works without it, and none is gated on it.
+        ///
+        /// Recorded only: nothing places a window from this yet.
+        let frame: NSRect?
     }
     private var restoreEntries: [SlotRestoreEntry] = []
     /// Previous-session windowId → index into `restoreEntries`. Entries are
@@ -592,10 +608,12 @@ final class SpaceManager: ObservableObject {
         // account bind clears the map.
         restoredSlotsByIndex = restoredSlotsByIndex.filter { $0.value !== slot }
         // Shrink the restore snapshot now that the slot is gone. Nothing on the
-        // close path writes it — `unregisterWindow` and the cascade deliberately
-        // don't, and the deferred fullscreen reconcile skips itself mid-cascade
-        // — so without this the snapshot kept describing a window group the user
-        // closed, and it came back (as loose windows) at the next cold launch.
+        // close path rewrites it from the settled layout — `unregisterWindow`
+        // only flushes a debounced frame write, before it drains anything, and
+        // the cascade and the deferred fullscreen reconcile both skip
+        // themselves mid-cascade — so without this the snapshot kept describing
+        // a window group the user closed, and it came back (as loose windows)
+        // at the next cold launch.
         // When this was the LAST slot the write is a no-op: `persistSlotsSnapshot`
         // never overwrites a saved snapshot with an empty one, which is exactly
         // what freezes the final layout for a reopen.
@@ -1188,6 +1206,10 @@ final class SpaceManager: ObservableObject {
     /// Once set, `persistSlotsSnapshot` no-ops, freezing the snapshot at the last
     /// healthy layout for the rest of the process's life.
     func markTerminating() {
+        // Land a debounced frame write before the freeze, or quitting within a
+        // second of the last drag persists the position the window had BEFORE
+        // that drag — the freeze below makes every later write a no-op.
+        flushPendingSlotsSnapshotPersist()
         isTerminating = true
     }
 
@@ -1240,6 +1262,14 @@ final class SpaceManager: ObservableObject {
             if slot.snapshotIsFullScreen() {
                 dict["isFullScreen"] = true
             }
+            // Where the slot sits on screen, so a reopen has a position on hand
+            // before Chromium reports the restored window's bounds. Stored as
+            // the AppKit rect string (plist-native, and `NSRectFromString` is
+            // the matching reader); absent for a slot that has never had a
+            // positioned window.
+            if let frame = slot.snapshotFrame() {
+                dict["frame"] = NSStringFromRect(frame)
+            }
             dicts.append(dict)
         }
         // Backstop: never overwrite a saved snapshot with an empty one. A
@@ -1247,7 +1277,61 @@ final class SpaceManager: ObservableObject {
         // while the app stays alive) must not erase the layout the next launch
         // restores into.
         guard !dicts.isEmpty else { return }
+        // This write supersedes any debounced one. Dropped only here, past
+        // every guard above: a refused write must leave the timer armed so the
+        // frame change that armed it still reaches disk once the slot settles.
+        pendingSlotsSnapshotPersistWorkItem?.cancel()
+        pendingSlotsSnapshotPersistWorkItem = nil
         userDefaults.set(dicts, forKey: AccountUserDefaults.DefaultsKey.slotsRestoreSnapshot.rawValue)
+    }
+
+    /// Trailing-edge debounce for `persistSlotsSnapshot`, used by the ONE
+    /// trigger that fires continuously: the visible window moving or resizing
+    /// (`SpaceWindowSlot.observeFrameChanges`). Every other trigger is a
+    /// discrete layout event and still writes synchronously.
+    ///
+    /// A drag emits `didMove` at screen refresh rate, and each write rewrites
+    /// the whole slot array, so the write has to wait for the gesture to stop:
+    /// one write per drag instead of one per pixel. Long enough that no
+    /// realistic drag or resize splits into two writes; short enough that the
+    /// user cannot both finish a drag and be gone before it lands — and the two
+    /// ways out (closing the window, quitting) flush it explicitly anyway.
+    private static let slotsSnapshotPersistDebounce: TimeInterval = 1.0
+
+    /// Non-nil while a frame change is still unwritten — not merely while a
+    /// timer is armed. `persistSlotsSnapshot` drops it only for a write that
+    /// actually lands, so a timer that fires into a refusal (a slot mid-cascade)
+    /// leaves it set and the next flush picks the change up instead of losing it.
+    private var pendingSlotsSnapshotPersistWorkItem: DispatchWorkItem?
+
+    /// Requests a snapshot write once the current burst of frame changes stops.
+    /// Re-arming cancels the previous timer, so a continuous drag writes once,
+    /// `slotsSnapshotPersistDebounce` after the user lets go.
+    fileprivate func scheduleSlotsSnapshotPersist() {
+        pendingSlotsSnapshotPersistWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            // Deliberately does not clear the handle first: see its doc above.
+            self?.persistSlotsSnapshot()
+        }
+        pendingSlotsSnapshotPersistWorkItem = workItem
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + Self.slotsSnapshotPersistDebounce, execute: workItem)
+    }
+
+    /// Writes a debounced snapshot immediately, if one is pending. Called from
+    /// the two points past which the debounce can no longer fire usefully: a
+    /// window leaving its slot (`SpaceWindowSlot.unregisterWindow`, while the
+    /// map is still whole) and the start of quit (`markTerminating`). A no-op
+    /// when nothing is pending, so neither point changes the write frequency of
+    /// a session where the user never moved a window.
+    ///
+    /// Deliberately does not drop the pending item itself — `persistSlotsSnapshot`
+    /// does that only for a write that actually lands. A flush arriving while
+    /// the write is refused (another slot mid-cascade) therefore leaves the
+    /// timer armed to try again, instead of swallowing the change.
+    fileprivate func flushPendingSlotsSnapshotPersist() {
+        guard pendingSlotsSnapshotPersistWorkItem != nil else { return }
+        persistSlotsSnapshot()
     }
 
     /// Rewrites the persisted snapshot entry containing `windowId` to carry
@@ -1281,6 +1365,10 @@ final class SpaceManager: ObservableObject {
         guard let raw = boundAccount?.userDefaults.object(
             forKey: AccountUserDefaults.DefaultsKey.slotsRestoreSnapshot.rawValue
         ) as? [[String: Any]] else { return }
+        // Clamp against the layout in front of the user NOW, not the one the
+        // frames were recorded against — the display a slot was saved on may be
+        // gone. Read once for the whole snapshot.
+        let screens = Self.currentScreenGeometries()
         for dict in raw {
             let rawMap = (dict["windowMap"] as? [String: String]) ?? [:]
             let windowMap: [Int: String] = rawMap.reduce(into: [:]) { partial, pair in
@@ -1290,7 +1378,10 @@ final class SpaceManager: ObservableObject {
             let entry = SlotRestoreEntry(
                 activeSpaceId: dict["activeSpaceId"] as? String,
                 windowMap: windowMap,
-                wasFullScreen: (dict["isFullScreen"] as? Bool) ?? false
+                wasFullScreen: (dict["isFullScreen"] as? Bool) ?? false,
+                frame: Self.decodedSlotFrame(dict["frame"]).map {
+                    Self.clampedSlotFrame($0, toScreens: screens)
+                }
             )
             let index = restoreEntries.count
             restoreEntries.append(entry)
@@ -1310,6 +1401,74 @@ final class SpaceManager: ObservableObject {
         if armReattachDeadline && !restoreEntries.isEmpty {
             restoreReattachDeadline = Date().addingTimeInterval(Self.restoreReattachGracePeriod)
         }
+    }
+
+    /// One attached display, reduced to the two rects a frame clamp needs.
+    /// Exists so the clamp itself can be a pure function over plain values —
+    /// `NSScreen` cannot be constructed in a test, and the clamp is the piece
+    /// worth pinning down by table.
+    struct ScreenGeometry {
+        /// Full display bounds, in AppKit's bottom-left-origin global space.
+        let frame: NSRect
+        /// The part of `frame` a window may occupy — menu bar and Dock removed.
+        let visibleFrame: NSRect
+    }
+
+    /// The displays attached right now, in `NSScreen.screens` order, so index 0
+    /// is the one the clamp falls back to when a frame belongs to none of them.
+    fileprivate static func currentScreenGeometries() -> [ScreenGeometry] {
+        NSScreen.screens.map { ScreenGeometry(frame: $0.frame, visibleFrame: $0.visibleFrame) }
+    }
+
+    /// The slot frame stored in a snapshot entry, or nil when the entry has
+    /// none. Nil covers both graceful-degradation cases together: an entry
+    /// written before the field existed (no value) and one whose value no
+    /// longer parses — `NSRectFromString` answers an unreadable string with a
+    /// zero rect, which is not a frame any window ever had.
+    static func decodedSlotFrame(_ raw: Any?) -> NSRect? {
+        guard let string = raw as? String else { return nil }
+        let rect = NSRectFromString(string)
+        return rect.isEmpty ? nil : rect
+    }
+
+    /// `frame` corrected for the screens listed in `screens`, or `frame`
+    /// unchanged when it is still usable as-is.
+    ///
+    /// Deliberately far weaker than AppKit's own constraint, which pulls a
+    /// frame fully inside `visibleFrame`: a window the user dragged halfway off
+    /// an edge is exactly where they put it and must stay there. Only the
+    /// states the user cannot get out of are corrected — a frame too large for
+    /// its display, or one with nothing left on any work area to grab, which is
+    /// what a saved frame becomes when its display is unplugged or shrinks.
+    ///
+    /// Total by construction: every input yields a frame, so a caller placing a
+    /// window never has to handle "the clamp declined".
+    static func clampedSlotFrame(_ frame: NSRect, toScreens screens: [ScreenGeometry]) -> NSRect {
+        guard !screens.isEmpty else { return frame }
+        // A frame that exactly covers a display is a fullscreen frame; macOS
+        // resizes those itself across a layout change. Checked on the frame
+        // rather than a styleMask because this runs where no window exists yet.
+        guard !screens.contains(where: { $0.frame.equalTo(frame) }) else { return frame }
+        // The display this frame belongs to: whichever it covers most. Ties —
+        // including the all-zero tie a frame off every display produces — keep
+        // the first, so a homeless frame deterministically lands on the primary.
+        let host = screens.max {
+            let lhs = NSIntersectionRect(frame, $0.frame)
+            let rhs = NSIntersectionRect(frame, $1.frame)
+            return lhs.width * lhs.height < rhs.width * rhs.height
+        } ?? screens[0]
+        let workArea = host.visibleFrame
+        var clamped = frame
+        clamped.size.width = min(clamped.width, workArea.width)
+        clamped.size.height = min(clamped.height, workArea.height)
+        if clamped.maxY > workArea.maxY {
+            clamped.origin.y = workArea.maxY - clamped.height
+        }
+        if !NSIntersectsRect(clamped, workArea) {
+            clamped.origin.x = workArea.minX
+            clamped.origin.y = workArea.maxY - clamped.height
+        }
+        return clamped
     }
 
     /// Returns the slot that currently hosts the given Chromium windowId,
@@ -3759,6 +3918,20 @@ final class SpaceWindowSlot: ObservableObject {
     /// source window closed during the profile load). Nil only before the slot
     /// has ever had a positioned window.
     private var lastKnownFrame: NSRect?
+
+    /// `lastKnownFrame` minus the fullscreen rects — the geometry this slot
+    /// would occupy as an ordinary window. Kept apart because the two answer
+    /// different questions: `lastKnownFrame` is "align the siblings to this",
+    /// which must follow the window into fullscreen, while this is "reopen
+    /// here", which must not (a restored window always comes back windowed, so
+    /// a screen-sized rect would be a lie every time it were used).
+    ///
+    /// Refreshed from the visible window's live frame whenever one is available
+    /// — by the frame observer on every move/resize, and by `snapshotFrame` at
+    /// each persist — so a slot that enters fullscreen keeps the position it
+    /// had on the way in. Nil only before the slot has ever had a positioned
+    /// window outside fullscreen.
+    private var lastKnownWindowedFrame: NSRect?
 
     /// True for the duration of a `performHorizontalWindowSlide`. Read by
     /// the `observeFrameChanges` propagation closure to early-return — the
@@ -6505,6 +6678,17 @@ final class SpaceWindowSlot: ObservableObject {
         // spaceId. A stale unregister must neither remove the replacement
         // nor run the visible-close side effects (sibling handoff/cascade).
         guard windowsBySpaceId[spaceId] === controller else { return }
+        // Land a debounced frame write while the slot is still whole. This is
+        // the last moment it can be written truthfully: the map is drained on
+        // the next line, the cascade below freezes persistence outright, and
+        // the write `removeSlot` does on the way out no-ops for the last slot —
+        // which is precisely the one a reopen restores from. A drag in the
+        // second before the user hit the red X would otherwise be lost, and the
+        // snapshot would keep an older position for good.
+        // Mid-cascade this reduces to nothing: `persistSlotsSnapshot` refuses
+        // to write while any slot is tearing down, so the flush cannot smuggle
+        // a half-drained group into the snapshot.
+        manager?.flushPendingSlotsSnapshotPersist()
         windowsBySpaceId.removeValue(forKey: spaceId)
         defer { manager?.pushSpaceStateToChromium() }
         // Drain the marker unconditionally so a stale entry can't poison
@@ -6969,6 +7153,24 @@ final class SpaceWindowSlot: ObservableObject {
         isFullScreen
     }
 
+    /// Where this slot should reopen, for the cross-launch restore record. Read
+    /// by `SpaceManager.persistSlotsSnapshot`.
+    ///
+    /// Prefers the visible window's live frame and refreshes the cache from it
+    /// — the same read-live-then-fall-back shape as `resolveInheritedFrame`, so
+    /// a persist triggered while the window is mid-teardown still answers with
+    /// the last position the window actually held. A fullscreen slot answers
+    /// with its pre-fullscreen geometry: the live frame is the screen rect
+    /// there, which `lastKnownWindowedFrame` deliberately never adopts.
+    fileprivate func snapshotFrame() -> NSRect? {
+        if let frame = visibleController?.window?.frame,
+           !frame.isEmpty,
+           !NSScreen.screens.contains(where: { $0.frame.equalTo(frame) }) {
+            lastKnownWindowedFrame = frame
+        }
+        return lastKnownWindowedFrame
+    }
+
     /// Used by `SpaceManager.handleSpacesUpdate` when a slot's active Space
     /// has been deleted and no fallback Space exists.
     fileprivate func clearActiveSpace() {
@@ -7337,6 +7539,31 @@ final class SpaceWindowSlot: ObservableObject {
             if NSScreen.screens.contains(where: { $0.frame.equalTo(frame) }) {
                 return
             }
+            // Past the fullscreen filter, so this is a windowed rect: the
+            // geometry the slot should reopen at. Recording it here is what
+            // makes moving and resizing reach the restore snapshot at all —
+            // every other trigger of a snapshot write is a layout event
+            // (registering a window, switching Space, fullscreen, key, evicting
+            // a window), so without this a drag was remembered only until the
+            // next one of those happened to fire, if one ever did.
+            //
+            // Skipped while the slot is fullscreen, on top of the exact-screen
+            // check above: the will-enter hook arms that flag before AppKit
+            // animates the window up to the screen, and the intermediate rects
+            // that animation posts match no display exactly — the check above
+            // would wave them through and the slot would remember a size it was
+            // never parked at. Leaving fullscreen needs no such guard: the flag
+            // is already false by then, and the trailing-edge debounce means
+            // only the settled windowed rect is ever written.
+            //
+            // Also gated on the value actually changing, so the writes stay
+            // tied to the user moving the window: a Space switch re-asserts the
+            // slot's inherited frame on the entering window, which lands here
+            // as a frame change carrying no new position.
+            if !self.isFullScreen, self.lastKnownWindowedFrame != frame {
+                self.lastKnownWindowedFrame = frame
+                self.manager?.scheduleSlotsSnapshotPersist()
+            }
             for (_, sibling) in self.windowsBySpaceId where sibling !== visible {
                 sibling.window?.setFrame(frame, display: false)
             }
@@ -7359,38 +7586,15 @@ final class SpaceWindowSlot: ObservableObject {
     /// The frame `frame` has to be corrected to for the current screen layout,
     /// or nil when it is still usable as-is.
     ///
-    /// Deliberately far weaker than AppKit's own constraint, which pulls a frame
-    /// fully inside `visibleFrame`: a window the user dragged halfway off an
-    /// edge is exactly where they put it and must stay there. Only the states
-    /// the user cannot get out of are repaired — a window too large for every
-    /// screen, or one whose title bar sits above every screen's work area, with
-    /// nothing left on screen to grab.
+    /// The correction itself is `SpaceManager.clampedSlotFrame` — the same rule
+    /// a saved frame is read back through, so a slot repaired live and a slot
+    /// reopened from the snapshot land in the same place. This wrapper only
+    /// adds "nil when nothing changed", which its caller uses to skip a
+    /// pointless `setFrame`.
     private static func screenRepairedFrame(for frame: NSRect) -> NSRect? {
-        let screens = NSScreen.screens
+        let screens = SpaceManager.currentScreenGeometries()
         guard !screens.isEmpty else { return nil }
-        // A frame that exactly covers a display is a fullscreen frame; macOS
-        // resizes those itself across a layout change. Checked on the frame
-        // rather than the styleMask for the same reason the sibling propagation
-        // is — the mask flips at a point in the transition this code cannot
-        // observe.
-        guard !screens.contains(where: { $0.frame.equalTo(frame) }) else { return nil }
-        // The screen this window belongs to: whichever it covers most.
-        let host = screens.max {
-            let lhs = NSIntersectionRect(frame, $0.frame)
-            let rhs = NSIntersectionRect(frame, $1.frame)
-            return lhs.width * lhs.height < rhs.width * rhs.height
-        } ?? screens[0]
-        let workArea = host.visibleFrame
-        var repaired = frame
-        repaired.size.width = min(repaired.width, workArea.width)
-        repaired.size.height = min(repaired.height, workArea.height)
-        if repaired.maxY > workArea.maxY {
-            repaired.origin.y = workArea.maxY - repaired.height
-        }
-        if !NSIntersectsRect(repaired, workArea) {
-            repaired.origin.x = workArea.minX
-            repaired.origin.y = workArea.maxY - repaired.height
-        }
+        let repaired = SpaceManager.clampedSlotFrame(frame, toScreens: screens)
         return repaired.equalTo(frame) ? nil : repaired
     }
 
