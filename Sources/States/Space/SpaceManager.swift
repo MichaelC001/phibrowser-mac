@@ -546,6 +546,14 @@ final class SpaceManager: ObservableObject {
     /// windowless new-window commands, so none of them can race the restore —
     /// neither its per-profile session commit nor the replay itself. Read by
     /// `AppController`.
+    ///
+    /// It also freezes cross-launch snapshot persistence for its whole span
+    /// (`mayPersistSlotsSnapshot`), which is the largest thing hanging off it:
+    /// a replay in progress is a half-restored group, and the reopen writes
+    /// once from the completion below instead. So a completion that never
+    /// arrived would not merely wedge the three gates above — it would stop
+    /// this session persisting its layout at all. The transitions are logged
+    /// for exactly that reason.
     private(set) var isSessionRestoreInFlight = false
 
     /// One queued "reopen these tabs after the profile change lands" intent
@@ -787,6 +795,12 @@ final class SpaceManager: ObservableObject {
         // see `ReopenLoadingWindow.featureEnabledKey`.
         showReopenLoadingWindows()
         isSessionRestoreInFlight = true
+        // Both transitions are logged because snapshot persistence is frozen
+        // between them: a completion that never arrives leaves an app that
+        // looks entirely normal and silently never records its layout again,
+        // and this pair is the only way to see that from a log bundle.
+        AppLogInfo("[SpaceManager] windowless reopen — session restore in flight (snapshot writes deferred)")
+        armSessionRestoreWatchdog()
         // Name the last-active Space's profile so Chromium replays it first:
         // its window is the one revealed the moment its own snapshot lands
         // (`frontRestoredWindowOnSnapshotApplied`), so it must not queue
@@ -817,7 +831,13 @@ final class SpaceManager: ObservableObject {
                 // (every per-profile terminal — settled, skipped, refused, or
                 // failed — signals the Chromium barrier), so the flag can
                 // never get stuck.
-                self.isSessionRestoreInFlight = false
+                // Ahead of the two branches below, so an ordinary reopen has
+                // persisted before either can run. The branches only fire when
+                // the reopen did not produce a usable layout, and each writes
+                // again on its own — a second write in a case that is already
+                // the unusual one, which is the cheaper trade than holding the
+                // transaction open across a spawn.
+                self.endSessionRestoreTransaction(restoredAnyWindow: restoredAnyWindow)
                 if !restoredAnyWindow {
                     // Nothing restorable: open a plain window.
                     self.spawnPersistedSpaceWindow()
@@ -838,6 +858,51 @@ final class SpaceManager: ObservableObject {
             }
         }
         return true
+    }
+
+    /// Ends the reopen's restore transaction: the live layout is trustworthy
+    /// again, and the one snapshot write the whole transaction was deferring
+    /// lands now.
+    ///
+    /// The two halves are one method rather than two adjacent statements
+    /// because splitting them is silent and total: clear the flag without
+    /// writing and the reopen never persists at all — for the life of the
+    /// process, since nothing else rewrites the record until the next layout
+    /// change — while writing before the clear is a write that refuses itself
+    /// (`mayPersistSlotsSnapshot`). Neither shows up in a test; no test in this
+    /// repo constructs a `SpaceManager`. Keeping them inseparable is the guard.
+    ///
+    /// Called once, from the completion that reports every profile settled.
+    /// A reopen that never settles never calls it, and the last complete
+    /// snapshot stands — which is the point of deferring in the first place.
+    private func endSessionRestoreTransaction(restoredAnyWindow: Bool) {
+        sessionRestoreWatchdog?.cancel()
+        sessionRestoreWatchdog = nil
+        isSessionRestoreInFlight = false
+        AppLogInfo("[SpaceManager] windowless reopen — restore settled (restoredAnyWindow=\(restoredAnyWindow)); writing the slot snapshot")
+        persistSlotsSnapshot()
+    }
+
+    /// Arms the deadline that bounds the freeze. Re-arming replaces any
+    /// previous one, so a reopen that somehow begins twice ends up with a
+    /// single pending deadline rather than two.
+    private func armSessionRestoreWatchdog() {
+        sessionRestoreWatchdog?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.sessionRestoreWatchdog = nil
+            let outcome = Self.sessionRestoreWatchdogOutcome(
+                isSessionRestoreInFlight: self.isSessionRestoreInFlight)
+            guard outcome.releasesFreeze else { return }
+            // Loud on purpose: reaching this means the restore never reported
+            // every profile settled, which is a Chromium-side fault this side
+            // cannot see any other way.
+            AppLogError("[SpaceManager] windowless reopen never settled within \(Self.sessionRestoreWatchdogDeadline)s — releasing the snapshot freeze without writing")
+            self.isSessionRestoreInFlight = false
+        }
+        sessionRestoreWatchdog = work
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + Self.sessionRestoreWatchdogDeadline, execute: work)
     }
 
     /// Puts a loading window on screen for every saved slot that qualifies,
@@ -1443,30 +1508,123 @@ final class SpaceManager: ObservableObject {
         // Land a debounced frame write before the freeze, or quitting within a
         // second of the last drag persists the position the window had BEFORE
         // that drag — the freeze below makes every later write a no-op.
+        // A quit landing inside a reopen's replay refuses this flush like any
+        // other write (`mayPersistSlotsSnapshot`), losing that one pending
+        // frame change rather than stamping a half-restored group as the
+        // layout to come back to. That trade is deliberate.
         flushPendingSlotsSnapshotPersist()
         isTerminating = true
     }
+
+    /// Whether the live slot layout may be written over the saved snapshot at
+    /// all right now. Each answer of `false` names a state in which the layout
+    /// this side can see is a transient, not the group the next launch should
+    /// reattach into — so the last complete one has to stand.
+    ///
+    /// * `isTerminating` — quit dismantles the slots window by window; see the
+    ///   property for what a write during that costs.
+    /// * `isSessionRestoreInFlight` — a windowless reopen replays its windows
+    ///   one at a time, so every write before the replay settles describes a
+    ///   half-restored group. The reopen writes once itself, from the
+    ///   completion that reports every profile settled. Covers that reopen
+    ///   ONLY: a cold launch replays the same way but has no settle signal on
+    ///   this side, so it still writes once per restored window. Gating that
+    ///   on a wall clock instead would fire the batch write whether or not the
+    ///   restore aborted — buying the write count by giving up the guarantee
+    ///   that matters more.
+    /// * `isAnySlotTearingDown` — a slot mid-cascade has a half-drained window
+    ///   map, so a write from ANY trigger (AppKit's fullscreen teardown
+    ///   notifications, tab-bar churn, a sibling's key change) persists a
+    ///   partial group — dropping already-closed windows and the fullscreen
+    ///   marker from the very snapshot the next reopen restores, which splits
+    ///   the group into separate slots. The teardown's own endpoints persist
+    ///   the settled state after clearing the cascade flag: `removeSlot`
+    ///   shrinks the snapshot once the cascade drains, and
+    ///   `recoverFromVetoedCascade` rewrites it after a veto.
+    ///
+    /// Pure and static so the three can be pinned down by table: they are what
+    /// stands between a transient layout and the snapshot a reopen trusts, and
+    /// inline they were untestable. The fourth refusal — never replacing a
+    /// saved snapshot with an empty one — deliberately stays at the call site:
+    /// it can only be answered from the built array, and answering here is
+    /// precisely what avoids building it. `amendPersistedSnapshotActiveSpaceId`
+    /// does not come through here either; it patches one field of an existing
+    /// entry rather than rewriting the record, and says why.
+    static func mayPersistSlotsSnapshot(
+        isTerminating: Bool,
+        isSessionRestoreInFlight: Bool,
+        isAnySlotTearingDown: Bool
+    ) -> Bool {
+        !isTerminating && !isSessionRestoreInFlight && !isAnySlotTearingDown
+    }
+
+    /// What the watchdog below does when its deadline finds the reopen's
+    /// restore transaction still open.
+    struct SessionRestoreWatchdogOutcome: Equatable {
+        /// Stop refusing snapshot writes.
+        let releasesFreeze: Bool
+        /// Whether the watchdog itself writes the snapshot. Always false, and
+        /// separated out so it is pinned by a test rather than by a comment.
+        let writesSnapshot: Bool
+    }
+
+    /// The watchdog releases the freeze and **writes nothing**.
+    ///
+    /// Writing here is the tempting mistake: the transaction is over, so why
+    /// not persist? Because at this point the layout is whatever a hung
+    /// restore left behind — writing it stamps exactly the half-restored group
+    /// the freeze exists to keep out, reintroducing the defect this whole
+    /// mechanism fixed, just later and rarer. Releasing is enough: the next
+    /// ordinary layout change writes what the user actually has by then, and
+    /// until it comes the last complete snapshot stands, which is correct.
+    static func sessionRestoreWatchdogOutcome(
+        isSessionRestoreInFlight: Bool
+    ) -> SessionRestoreWatchdogOutcome {
+        SessionRestoreWatchdogOutcome(
+            releasesFreeze: isSessionRestoreInFlight, writesSnapshot: false)
+    }
+
+    /// Bounds how long `isSessionRestoreInFlight` may hold snapshot writes.
+    ///
+    /// The flag is cleared from one place: the completion that reports every
+    /// profile settled. That completion is argued to be unmissable — every
+    /// per-profile terminal, including failure, signals the Chromium barrier.
+    /// A profile that **hangs** rather than terminating signals nothing, and
+    /// then the flag is set for the life of the process: the app looks
+    /// entirely normal while silently never recording its layout again, so
+    /// every window the user moves afterwards is lost at the next launch.
+    ///
+    /// This is deliberately not a second completion path competing with the
+    /// barrier — it never writes and never spawns anything. It is a timeout on
+    /// a flag that gates all persistence, which is the kind of single point
+    /// worth a bound even when the argument for its terminality is good.
+    ///
+    /// 30s against a measured restore of roughly two seconds: long enough that
+    /// a merely slow machine never reaches it, short enough that the user has
+    /// not yet done much rearranging to lose.
+    private static let sessionRestoreWatchdogDeadline: TimeInterval = 30
+
+    /// Cancelled by `endSessionRestoreTransaction`, so the ordinary path never
+    /// reaches the deadline.
+    private var sessionRestoreWatchdog: DispatchWorkItem?
 
     /// Writes the current slot/window/Space layout to
     /// `AccountUserDefaults.slotsRestoreSnapshot`. Called from
     /// `SpaceWindowSlot.registerWindow` (and a few live-state mutations) so the
     /// persisted snapshot reflects the most recent healthy layout — sufficient
-    /// to reattach Chromium-restored windows next launch. Frozen during
-    /// termination (`isTerminating`, set before the teardown cascade) and never
-    /// overwrites a non-empty snapshot with an empty one, so quit teardown can't
-    /// drain it before the next launch reads it.
+    /// to reattach Chromium-restored windows next launch. Refused while the
+    /// layout is a transient (`mayPersistSlotsSnapshot`) and never overwrites a
+    /// non-empty snapshot with an empty one, so neither quit teardown nor a
+    /// half-finished reopen can drain it before the next launch reads it.
     fileprivate func persistSlotsSnapshot() {
-        guard !isTerminating else { return }
-        // Never write while a slot is mid-cascade: its window map is
-        // half-drained, so a write from ANY trigger (AppKit's fullscreen
-        // teardown notifications, tab-bar churn, a sibling's key change)
-        // persists a partial group — dropping already-closed windows and the
-        // fullscreen marker from the very snapshot the next reopen restores,
-        // which splits the group into separate slots. The teardown's own
-        // endpoints persist the settled state after clearing the cascade
-        // flag: `removeSlot` shrinks the snapshot once the cascade drains,
-        // and `recoverFromVetoedCascade` rewrites it after a veto.
-        guard !slots.contains(where: { $0.isTearingDown }) else { return }
+        // Asked before anything is built: a refusal here saves the whole array
+        // rebuild over every slot's window map, and the states it refuses in
+        // are exactly the ones whose triggers fire once per window.
+        guard Self.mayPersistSlotsSnapshot(
+            isTerminating: isTerminating,
+            isSessionRestoreInFlight: isSessionRestoreInFlight,
+            isAnySlotTearingDown: slots.contains(where: { $0.isTearingDown })
+        ) else { return }
         guard let userDefaults = boundAccount?.userDefaults else { return }
         var dicts: [[String: Any]] = []
         for slot in slots {
@@ -1543,6 +1701,11 @@ final class SpaceManager: ObservableObject {
         // frame change that armed it still reaches disk once the slot settles.
         pendingSlotsSnapshotPersistWorkItem?.cancel()
         pendingSlotsSnapshotPersistWorkItem = nil
+        // The one place the cross-launch record is rewritten, and a synchronous
+        // whole-file write. Logged so how often it happens — a reopen must
+        // reach it once, not once per restored window — is answerable from a
+        // log bundle rather than only from a plist diff.
+        AppLogInfo("[SpaceManager] slot snapshot persisted: \(dicts.count) slot(s)")
         userDefaults.set(dicts, forKey: AccountUserDefaults.DefaultsKey.slotsRestoreSnapshot.rawValue)
     }
 
@@ -1561,8 +1724,9 @@ final class SpaceManager: ObservableObject {
 
     /// Non-nil while a frame change is still unwritten — not merely while a
     /// timer is armed. `persistSlotsSnapshot` drops it only for a write that
-    /// actually lands, so a timer that fires into a refusal (a slot mid-cascade)
-    /// leaves it set and the next flush picks the change up instead of losing it.
+    /// actually lands, so a timer that fires into a refusal (any reason
+    /// `mayPersistSlotsSnapshot` gives) leaves it set and the next flush picks
+    /// the change up instead of losing it.
     private var pendingSlotsSnapshotPersistWorkItem: DispatchWorkItem?
 
     /// Requests a snapshot write once the current burst of frame changes stops.
@@ -1588,8 +1752,10 @@ final class SpaceManager: ObservableObject {
     ///
     /// Deliberately does not drop the pending item itself — `persistSlotsSnapshot`
     /// does that only for a write that actually lands. A flush arriving while
-    /// the write is refused (another slot mid-cascade) therefore leaves the
-    /// timer armed to try again, instead of swallowing the change.
+    /// the write is refused (see `mayPersistSlotsSnapshot`) therefore leaves
+    /// the change on record for the next write of any kind to pick up, instead
+    /// of swallowing it. The fired timer itself is spent either way; what
+    /// survives a refusal is the handle saying something is still unwritten.
     fileprivate func flushPendingSlotsSnapshotPersist() {
         guard pendingSlotsSnapshotPersistWorkItem != nil else { return }
         persistSlotsSnapshot()
@@ -6822,7 +6988,10 @@ final class SpaceWindowSlot: ObservableObject {
         defer {
             manager?.pushSpaceStateToChromium()
             // Snapshot the live layout so the next launch can route
-            // session-restored windows back to their original Space.
+            // session-restored windows back to their original Space. A reopen
+            // replaying a saved group refuses here on every one of its windows
+            // and writes once from its own completion instead — see
+            // `SpaceManager.mayPersistSlotsSnapshot`.
             manager?.persistSlotsSnapshot()
         }
         if let window = controller.window {
@@ -7163,8 +7332,10 @@ final class SpaceWindowSlot: ObservableObject {
         // second before the user hit the red X would otherwise be lost, and the
         // snapshot would keep an older position for good.
         // Mid-cascade this reduces to nothing: `persistSlotsSnapshot` refuses
-        // to write while any slot is tearing down, so the flush cannot smuggle
-        // a half-drained group into the snapshot.
+        // to write while any slot is tearing down (and in the other states
+        // `mayPersistSlotsSnapshot` names), so the flush cannot smuggle a
+        // half-drained group into the snapshot. A refused flush keeps the
+        // change pending rather than dropping it.
         manager?.flushPendingSlotsSnapshotPersist()
         windowsBySpaceId.removeValue(forKey: spaceId)
         defer { manager?.pushSpaceStateToChromium() }
