@@ -150,13 +150,46 @@ final class GuestModeUITests: XCTestCase {
     @MainActor
     func testContinueAsGuestInvokesLifecycleCallback() {
         let controller = LoginViewController()
+        controller.isGuestModeActiveProvider = { false }
         var callbackCount = 0
         controller.onContinueAsGuest = {
             callbackCount += 1
         }
 
+        XCTAssertTrue(controller.shouldShowContinueAsGuest)
         controller.continueAsGuestAction()
 
         XCTAssertEqual(callbackCount, 1)
+    }
+
+    @MainActor
+    func testGuestLoginPresentationHidesAndBlocksContinueAsGuest() {
+        let controller = LoginViewController()
+        controller.isGuestModeActiveProvider = { true }
+        var callbackCount = 0
+        controller.onContinueAsGuest = {
+            callbackCount += 1
+        }
+
+        XCTAssertFalse(controller.shouldShowContinueAsGuest)
+        controller.continueAsGuestAction()
+
+        XCTAssertEqual(callbackCount, 0)
+    }
+
+    @MainActor
+    func testGuestMigrationRecoveryHidesAndBlocksContinueAsGuest() {
+        let controller = LoginViewController()
+        controller.presentationMode = .guestMigrationRecovery
+        controller.isGuestModeActiveProvider = { false }
+        var callbackCount = 0
+        controller.onContinueAsGuest = {
+            callbackCount += 1
+        }
+
+        XCTAssertFalse(controller.shouldShowContinueAsGuest)
+        controller.continueAsGuestAction()
+
+        XCTAssertEqual(callbackCount, 0)
     }
 }

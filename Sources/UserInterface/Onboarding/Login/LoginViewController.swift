@@ -23,6 +23,12 @@ class LoginViewController: NSViewController {
     var onLoginSuccess: ((Credentials?) -> Void)?
     var onContinueAsGuest: (() -> Void)?
     var presentationMode: PresentationMode = .standard
+    var isGuestModeActiveProvider: () -> Bool = {
+        ApplicationState.shared.isGuest
+    }
+    var shouldShowContinueAsGuest: Bool {
+        presentationMode == .standard && !isGuestModeActiveProvider()
+    }
     private var player: AVPlayer?
     private var playerLayer: AVPlayerLayer?
     private var timeObserver: Any?
@@ -222,6 +228,11 @@ class LoginViewController: NSViewController {
         setupVideoBackground()
         setupUI()
     }
+
+    override func viewWillAppear() {
+        super.viewWillAppear()
+        updateLoginPresentation()
+    }
     
     override func viewDidAppear() {
         super.viewDidAppear()
@@ -262,11 +273,7 @@ class LoginViewController: NSViewController {
     }
     
     private func setupUI() {
-        let isRecoveringGuestMigration =
-            presentationMode == .guestMigrationRecovery
-        continueAsGuestButton.isHidden = isRecoveringGuestMigration
-        continueAsGuestButton.isEnabled = !isRecoveringGuestMigration
-        guestMigrationRecoveryLabel.isHidden = !isRecoveringGuestMigration
+        updateLoginPresentation()
 
         view.snp.makeConstraints { make in
             make.size.equalTo(NSSize(width: 640, height: 800))
@@ -291,6 +298,14 @@ class LoginViewController: NSViewController {
             make.leading.greaterThanOrEqualToSuperview().offset(40)
             make.trailing.lessThanOrEqualToSuperview().offset(-40)
         }
+    }
+
+    private func updateLoginPresentation() {
+        let showsContinueAsGuest = shouldShowContinueAsGuest
+        continueAsGuestButton.isHidden = !showsContinueAsGuest
+        continueAsGuestButton.isEnabled = showsContinueAsGuest
+        guestMigrationRecoveryLabel.isHidden =
+            presentationMode != .guestMigrationRecovery
     }
     
     private func startPlaybackOnce() {
@@ -371,7 +386,7 @@ class LoginViewController: NSViewController {
     }
 
     @objc func continueAsGuestAction() {
-        guard presentationMode == .standard else { return }
+        guard shouldShowContinueAsGuest else { return }
         onContinueAsGuest?()
     }
     
