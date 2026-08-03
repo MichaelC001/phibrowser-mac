@@ -125,9 +125,8 @@ Chromium profile.
 The Chromium `canShowChromiumWindow` callback decides whether Phi browser
 windows and the Tab, History, Window, and Dock menu items are available. Its
 native implementation returns `canUseBrowser` and does not represent account
-authentication. Chromium can query the independent `getSigninStatus`
-dictionary when it needs the actual Phi mode: `isSignnedIn` is a Boolean and
-`isGuestMode` is `0` or `1`.
+authentication. Chromium can independently query `isPhiGuestMode` when it
+needs to distinguish Phi Guest Mode from signed-in browser access.
 
 Real identity APIs remain strict:
 

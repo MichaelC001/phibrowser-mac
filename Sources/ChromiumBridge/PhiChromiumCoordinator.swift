@@ -327,11 +327,7 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
         )
     }
     
-    func isUserLoggedIn() -> Bool {
-        // Kept under the existing ABI name for framework compatibility. The
-        // callback controls whether Chromium browser UI may be surfaced; real
-        // identity remains strict in getAuth0AccessTokenSyncly and
-        // getPhiAccountInfo.
+    func canShowChromiumWindow() -> Bool {
         if ApplicationState.shared.isGuest {
             let canUseBrowser = ApplicationState.shared.canUseBrowser
             AppLogDebug(
@@ -353,6 +349,10 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
             "authenticated: \(ApplicationState.shared.isAuthenticated)"
         )
         return canUseBrowser
+    }
+
+    func isPhiGuestMode() -> Bool {
+        ApplicationState.shared.isGuest
     }
 
     /// Returns the current Phi account identity from the same per-account

@@ -227,7 +227,8 @@ typedef NS_ENUM(NSInteger, PhiWindowCloseState) {
 - (BOOL)dispatchCommand:(int)commandId window:(NSWindow*)window;
 
 // Login management
-- (BOOL)isUserLoggedIn;
+- (BOOL)canShowChromiumWindow;
+- (BOOL)isPhiGuestMode;
 - (void)showLoginUI;
 - (NSString *)getAuth0AccessTokenSyncly;
 
