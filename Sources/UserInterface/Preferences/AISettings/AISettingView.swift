@@ -131,7 +131,7 @@ private struct GuestAILoginPromptRow: View {
         HStack(spacing: 12) {
             Text(NSLocalizedString(
                 "settings.ai.guestLoginPrompt.message",
-                value: "Sign in to use AI features.",
+                value: "Sign in to use AI features",
                 comment: "AI settings - Message above the AI master toggle when Guest Mode requires sign-in"
             ))
             .font(.system(size: 13))

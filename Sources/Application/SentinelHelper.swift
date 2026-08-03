@@ -248,7 +248,7 @@ enum AuthenticatedSentinelSessionLifecycle {
                 isAuthenticated: isAuthenticated,
                 aiEnabled: aiEnabled
             ) {
-                SentinelHelper.terminate()
+                SentinelHelper.requestTerminationForBrowserUpdate()
             }
             return
         }

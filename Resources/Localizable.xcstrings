@@ -71,42 +71,6 @@
         }
       }
     },
-    "accountRequired.phiAI.detail" : {
-      "comment" : "Account-required presentation - Detail shown when a Guest opens a Phi AI feature",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "This feature requires a Phi account."
-          }
-        }
-      }
-    },
-    "accountRequired.phiAI.loginButton" : {
-      "comment" : "Account-required presentation - Button that opens the Phi sign-in window",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Sign in"
-          }
-        }
-      }
-    },
-    "accountRequired.phiAI.title" : {
-      "comment" : "Account-required presentation - Title shown when a Guest opens a Phi AI feature",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Sign in to use Phi AI"
-          }
-        }
-      }
-    },
     "accountDeletion.cancelButton" : {
       "comment" : "Account deletion - Button abandoning the deletion flow without deleting anything",
       "extractionState" : "extracted_with_value",
@@ -415,6 +379,42 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "Delete Phi Account"
+          }
+        }
+      }
+    },
+    "accountRequired.phiAI.detail" : {
+      "comment" : "Account-required presentation - Detail shown when a Guest opens a Phi AI feature",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "This feature requires a Phi account."
+          }
+        }
+      }
+    },
+    "accountRequired.phiAI.loginButton" : {
+      "comment" : "Account-required presentation - Button that opens the Phi sign-in window",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Sign in"
+          }
+        }
+      }
+    },
+    "accountRequired.phiAI.title" : {
+      "comment" : "Account-required presentation - Title shown when a Guest opens a Phi AI feature",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Sign in to use Phi AI"
           }
         }
       }
@@ -6227,42 +6227,6 @@
         }
       }
     },
-    "oobe.guestMode.credentialClearFailure.dismissButton" : {
-      "comment" : "Guest mode - Button that dismisses the credential cleanup failure alert",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "OK"
-          }
-        }
-      }
-    },
-    "oobe.guestMode.credentialClearFailure.message" : {
-      "comment" : "Guest mode - Alert message asking the user to retry after credential cleanup failed",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Phi couldn’t securely clear the previous session. Try again before continuing as Guest."
-          }
-        }
-      }
-    },
-    "oobe.guestMode.credentialClearFailure.title" : {
-      "comment" : "Guest mode - Alert title when authenticated credentials could not be cleared",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Couldn’t start Guest Mode"
-          }
-        }
-      }
-    },
     "oobe.guestMigration.cleanupDeferred.dismissButton" : {
       "comment" : "Guest migration - Button that dismisses the deferred cleanup alert",
       "extractionState" : "extracted_with_value",
@@ -6359,18 +6323,6 @@
         }
       }
     },
-    "oobe.guestMigration.targetRecovery.message" : {
-      "comment" : "Guest migration - Alert message explaining why the same account migration must be retried",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Some data has already been moved to this account. Phi must retry with the same account before Guest data can be used again."
-          }
-        }
-      }
-    },
     "oobe.guestMigration.targetRecovery.cancelButton" : {
       "comment" : "Guest migration - Button that returns to the recovery login while Guest data stays locked",
       "extractionState" : "extracted_with_value",
@@ -6379,6 +6331,18 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "Cancel"
+          }
+        }
+      }
+    },
+    "oobe.guestMigration.targetRecovery.message" : {
+      "comment" : "Guest migration - Alert message explaining why the same account migration must be retried",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Some data has already been moved to this account. Phi must retry with the same account before Guest data can be used again."
           }
         }
       }
@@ -6403,6 +6367,42 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "Finish moving your Guest data"
+          }
+        }
+      }
+    },
+    "oobe.guestMode.credentialClearFailure.dismissButton" : {
+      "comment" : "Guest mode - Button that dismisses the credential cleanup failure alert",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "OK"
+          }
+        }
+      }
+    },
+    "oobe.guestMode.credentialClearFailure.message" : {
+      "comment" : "Guest mode - Alert message asking the user to retry after credential cleanup failed",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Phi couldn’t securely clear the previous session. Try again before continuing as Guest."
+          }
+        }
+      }
+    },
+    "oobe.guestMode.credentialClearFailure.title" : {
+      "comment" : "Guest mode - Alert title when authenticated credentials could not be cleared",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Couldn’t start Guest Mode"
           }
         }
       }
@@ -7854,7 +7854,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Sign in to use AI features."
+            "value" : "Sign in to use AI features"
           }
         }
       }
