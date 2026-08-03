@@ -578,8 +578,7 @@ final class PhiBrowserTests: XCTestCase {
 
     func testBookmarkMainMenuItemRoutingKeepsChromiumBookmarksItemUntouched() {
         let action = BookmarkMainMenuItemRouting.action(
-            title: "Bookmarks",
-            tag: 40029
+            tag: ChromiumMainMenuRole.bookmarks.rawValue
         )
 
         XCTAssertEqual(
@@ -591,7 +590,6 @@ final class PhiBrowserTests: XCTestCase {
 
     func testBookmarkMainMenuItemRoutingRecognizesCustomBookmarksItem() {
         let action = BookmarkMainMenuItemRouting.action(
-            title: "Bookmarks",
             tag: AppController.bookmarksMenuItemTag
         )
 
@@ -599,6 +597,37 @@ final class PhiBrowserTests: XCTestCase {
             action,
             .configureCustomItem,
             "The native Phi Bookmarks item should be the only menu item that gets reconfigured and rebuilt."
+        )
+    }
+
+    func testChromiumMainMenuRoleUsesTagsInsteadOfLocalizedTitles() {
+        let mainMenu = NSMenu(title: "")
+        let appItem = NSMenuItem(title: "Localized App Menu", action: nil, keyEquivalent: "")
+        appItem.tag = ChromiumMainMenuRole.app.rawValue
+        let viewItem = NSMenuItem(title: "Localized View Menu", action: nil, keyEquivalent: "")
+        viewItem.tag = ChromiumMainMenuRole.view.rawValue
+        let historyItem = NSMenuItem(title: "Localized History Menu", action: nil, keyEquivalent: "")
+        historyItem.tag = ChromiumMainMenuRole.history.rawValue
+        mainMenu.addItem(appItem)
+        mainMenu.addItem(viewItem)
+        mainMenu.addItem(historyItem)
+
+        XCTAssertEqual(
+            ChromiumMainMenuRole.resolve(viewItem, helpMenu: nil),
+            .view
+        )
+        XCTAssertTrue(ChromiumMainMenuRole.app.item(in: mainMenu) === appItem)
+        XCTAssertEqual(ChromiumMainMenuRole.history.index(in: mainMenu), 2)
+    }
+
+    func testChromiumMainMenuRoleRecognizesAppKitHelpMenuByIdentity() {
+        let helpMenu = NSMenu(title: "Localized Help Menu")
+        let helpItem = NSMenuItem(title: "Localized Help Menu", action: nil, keyEquivalent: "")
+        helpItem.submenu = helpMenu
+
+        XCTAssertEqual(
+            ChromiumMainMenuRole.resolve(helpItem, helpMenu: helpMenu),
+            .help
         )
     }
 

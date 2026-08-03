@@ -8,6 +8,40 @@ import Cocoa
 import SwiftUI
 import UniformTypeIdentifiers
 
+// chrome/app/chrome_command_ids.h
+enum ChromiumMainMenuRole: Int {
+    case edit = 36004
+    case bookmarks = 40029
+    case help = 40244
+    case window = 34045
+    case view = 44000
+    case file = 44001
+    case app = 44002
+    case history = 46000
+    case tab = 46001
+    case profiles = 46100
+
+    static func resolve(_ item: NSMenuItem, helpMenu: NSMenu?) -> Self? {
+        if let role = Self(rawValue: item.tag) {
+            return role
+        }
+        // Chromium currently assigns IDC_HELP_MENU to no AppKit item. Its
+        // NSApplication helpMenu reference is the stable native fallback.
+        if let helpMenu = helpMenu, item.submenu === helpMenu {
+            return .help
+        }
+        return nil
+    }
+
+    func item(in menu: NSMenu) -> NSMenuItem? {
+        menu.items.first { $0.tag == rawValue }
+    }
+
+    func index(in menu: NSMenu) -> Int? {
+        menu.items.firstIndex { $0.tag == rawValue }
+    }
+}
+
 extension AppController {
     static let extensionInfoItemTag = 500002
     static let exportLogsItemTag = 500011
@@ -31,6 +65,7 @@ extension AppController {
     // (harmless across submenus, but tags must stay unique to grep sanely).
     static let agentTranscriptItemTag = 500025
     static let uninstallPhiItemTag = 500026
+    static let debugMenuItemTag = 500027
     static let spacesProfileSeparatorTag = 500020
     static let deleteProfileSubmenuIdentifier = NSUserInterfaceItemIdentifier("phi.spaces.deleteProfile")
     static let spacesMenuItemTag = 500018
@@ -74,7 +109,9 @@ extension AppController {
 
         var hasBookmarksMenu = false
         for menuItem in mainMenu.items {
-            if let submenu = menuItem.submenu, menuItem.title == "View" {
+            let menuRole = ChromiumMainMenuRole.resolve(menuItem, helpMenu: NSApp.helpMenu)
+
+            if let submenu = menuItem.submenu, menuRole == .view {
                 submenu.items.forEach {
                     let tag = $0.tag
                     if [40009, 40250, 40259, 40282, 40296, 40251].contains(tag) {
@@ -200,11 +237,11 @@ extension AppController {
                 }
             } else
             
-            if menuItem.title == "Phi", let subMenu = menuItem.submenu {
+            if menuRole == .app, let subMenu = menuItem.submenu {
                 subMenu.items.removeAll { $0.tag == AppController.checkForUpdateItemTag }
 
                 for (index, item) in subMenu.items.enumerated() {
-                    if item.title == "Settings..." || item.tag == 40015 {
+                    if item.tag == CommandWrapper.IDC_OPTIONS.rawValue {
                         let checkForUpdateItem = NSMenuItem(title: NSLocalizedString("app.phiMenu.checkForUpdatesMenuItem", value: "Check for Update...", comment: "Phi menu - Menu item to check for app updates"),
                                                            action: #selector(checkForUpdate(_:)),
                                                            keyEquivalent: "")
@@ -217,11 +254,11 @@ extension AppController {
 
             } else
             
-            if menuItem.title == "Edit", let subMenu = menuItem.submenu {
+            if menuRole == .edit, let subMenu = menuItem.submenu {
                 installOrUpdateCopyURLMenuItem(in: subMenu)
             } else
 
-            if menuItem.title == "File", let subMenu = menuItem.submenu {
+            if menuRole == .file, let subMenu = menuItem.submenu {
                 subMenu.items.forEach { item in
                     if item.tag == CommandWrapper.IDC_SAVE_PAGE.rawValue {
                         item.keyEquivalent = ""
@@ -247,11 +284,11 @@ extension AppController {
                 }
             } else
             
-            if menuItem.title == "Profiles" || menuItem.tag == 46100 {
+            if menuRole == .profiles {
                 menuItem.isHidden = true
             }
 
-            switch BookmarkMainMenuItemRouting.action(title: menuItem.title, tag: menuItem.tag) {
+            switch BookmarkMainMenuItemRouting.action(tag: menuItem.tag) {
             case .configureCustomItem:
                 hasBookmarksMenu = true
                 configureBookmarksMenuItem(menuItem)
@@ -261,16 +298,22 @@ extension AppController {
                 break
             }
 
-            if menuItem.title == "Tab", let subMenu = menuItem.submenu {
-                let hiddenTitles = ["Pin Tab", "Group Tab", "Move Tab to New Window", "Close Other Tabs", "Close Tabs to the Right"]
+            if menuRole == .tab, let subMenu = menuItem.submenu {
+                let hiddenCommandTags: Set<Int> = [
+                    CommandWrapper.IDC_WINDOW_PIN_TAB.rawValue,
+                    CommandWrapper.IDC_WINDOW_GROUP_TAB.rawValue,
+                    CommandWrapper.IDC_MOVE_TAB_TO_NEW_WINDOW.rawValue,
+                    CommandWrapper.IDC_WINDOW_CLOSE_OTHER_TABS.rawValue,
+                    CommandWrapper.IDC_WINDOW_CLOSE_TABS_TO_RIGHT.rawValue
+                ]
                 subMenu.items.forEach { item in
-                    if hiddenTitles.contains(item.title) {
+                    if hiddenCommandTags.contains(item.tag) {
                         item.isHidden = true
                     }
                 }
             } else
             
-            if menuItem.title == "Help", let subMenu = menuItem.submenu {
+            if menuRole == .help, let subMenu = menuItem.submenu {
                 // Remove existing custom items to avoid duplication on menu rebuild
                 subMenu.items.removeAll {
                     $0.tag == AppController.extensionInfoItemTag ||
@@ -367,7 +410,7 @@ extension AppController {
 
         installOrUpdateSpacesMenu(in: mainMenu)
 
-        if mainMenu.items.first(where: { $0.title == "*DEBUG*" }) == nil {
+        if mainMenu.items.first(where: { $0.tag == AppController.debugMenuItemTag }) == nil {
             let item = buildDebugMenuItem()
             #if DEBUG || NIGHTLY_BUILD
             mainMenu.addItem(item)
@@ -468,9 +511,9 @@ extension AppController {
         menuItem.tag = AppController.bookmarksMenuItemTag
         configureBookmarksMenuItem(menuItem)
 
-        if let historyIndex = mainMenu.items.firstIndex(where: { $0.title == "History" }) {
+        if let historyIndex = ChromiumMainMenuRole.history.index(in: mainMenu) {
             mainMenu.insertItem(menuItem, at: historyIndex + 1)
-        } else if let windowIndex = mainMenu.items.firstIndex(where: { $0.title == "Window" }) {
+        } else if let windowIndex = ChromiumMainMenuRole.window.index(in: mainMenu) {
             mainMenu.insertItem(menuItem, at: windowIndex)
         } else {
             mainMenu.addItem(menuItem)
@@ -588,7 +631,7 @@ extension AppController {
         item.target = self
 
         if let copyIndex = menu.items.firstIndex(where: {
-            $0.tag == CommandWrapper.IDC_CONTENT_CONTEXT_COPY.rawValue || $0.title == "Copy"
+            $0.tag == CommandWrapper.IDC_CONTENT_CONTEXT_COPY.rawValue
         }) {
             menu.insertItem(item, at: copyIndex + 1)
         } else {
@@ -1061,9 +1104,9 @@ extension AppController {
 
         if isNew {
             let insertIndex: Int
-            if let viewIdx = mainMenu.items.firstIndex(where: { $0.title == "View" }) {
+            if let viewIdx = ChromiumMainMenuRole.view.index(in: mainMenu) {
                 insertIndex = viewIdx + 1
-            } else if let historyIdx = mainMenu.items.firstIndex(where: { $0.title == "History" }) {
+            } else if let historyIdx = ChromiumMainMenuRole.history.index(in: mainMenu) {
                 insertIndex = historyIdx
             } else {
                 insertIndex = mainMenu.items.count
@@ -1505,8 +1548,8 @@ extension AppController {
 
     /// True when `item` lives in the Tab, Bookmarks, or History top-level menu —
     /// the menus disabled wholesale while the focused Space is agent-controlled.
-    /// Bookmarks carries a stable identifier; Tab and History are matched by
-    /// title, as elsewhere in this file.
+    /// Bookmarks carries a stable identifier; Chromium-owned Tab and History
+    /// menus are identified through their owning top-level menu item's tag.
     func itemIsInAgentLockedMenu(_ item: NSMenuItem) -> Bool {
         // Walk up to the submenu that sits directly under the main menu.
         var top: NSMenu? = item.menu
@@ -1515,11 +1558,9 @@ extension AppController {
         }
         guard let topMenu = top else { return false }
         if topMenu.identifier == AppController.bookmarksMenuIdentifier { return true }
-        if topMenu.title == "Tab" || topMenu.title == "History" { return true }
-        // The submenu's own title isn't always the menu name; fall back to the
-        // owning main-menu item's title.
         if let owner = NSApp.mainMenu?.items.first(where: { $0.submenu === topMenu }) {
-            return owner.title == "Tab" || owner.title == "History"
+            let role = ChromiumMainMenuRole.resolve(owner, helpMenu: NSApp.helpMenu)
+            return role == .tab || role == .history
         }
         return false
     }
