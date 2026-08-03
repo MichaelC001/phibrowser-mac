@@ -768,6 +768,21 @@ class SidebarViewController: NSViewController {
             }
             .store(in: &contentCancellables)
 
+        // Restore-transaction signal: synchronous by design (no receive(on:),
+        // mirroring TabSectionController), so the pinned band is formed and
+        // its height applied before `frontRestoredWindowOnSnapshotApplied`
+        // reveals the window later in this same main-thread turn. The
+        // debounced `$contentHeight` pipeline above re-delivers the same
+        // height a beat later, which `updateFavoriteHeight` absorbs.
+        state.restoredWindowTransactionSignal
+            .sink { [weak self] in
+                guard let self else { return }
+                self.pinnedTabViewController.formRestoredContentNow()
+                self.updateFavoriteHeight(self.pinnedTabViewController.contentHeight,
+                                          isDragging: self.state.isDraggingTab)
+            }
+            .store(in: &contentCancellables)
+
         updateFavoriteHeight(pinnedTabViewController.contentHeight, isDragging: state.isDraggingTab)
     }
     
