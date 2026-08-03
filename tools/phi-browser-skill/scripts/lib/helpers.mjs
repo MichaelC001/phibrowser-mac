@@ -1429,7 +1429,7 @@ export async function waitForElement(target, { timeout = 15, visible = true,
     let count = null
     if (minCount > 1) {
       count = await evalInPage(
-        `${PHI_LOCATE};__phiCount(${JSON.stringify(spec)}, ${!!visible})`, 4000)
+        locateExpr(`__phiCount(${JSON.stringify(spec)}, ${!!visible})`), 4000)
         .catch(() => 0)
       if (!(count >= minCount)) { await wait(0.25); continue }
     }
@@ -1533,7 +1533,8 @@ export async function waitForNetworkIdle({ timeout = 30, idleMs = 500, maxInflig
   }
 }
 
-async function evalInPage(expression, timeoutMs = 20000, depth = 0) {
+async function evalInPage(expression, timeoutMs = 20000,
+                          { depth = 0, objectGroup = null } = {}) {
   // Fail fast instead of burning the timeout: an open dialog holds the
   // renderer main thread, so the evaluate below could never run.
   if (state.openDialog) {
@@ -1541,7 +1542,12 @@ async function evalInPage(expression, timeoutMs = 20000, depth = 0) {
                     'call handleDialog(accept) first')
   }
   const client = await cdpClient()
-  const params = { expression, returnByValue: true, awaitPromise: true }
+  // objectGroup asks for the result BY REFERENCE — a RemoteObject the caller
+  // reads through callFunctionOn and frees with releaseObjectGroup — instead
+  // of a serialized copy. Used by pageScan to carry DOM nodes back without
+  // parking them on a page global (see PHI_SCAN_FN).
+  const params = { expression, awaitPromise: true, returnByValue: !objectGroup }
+  if (objectGroup) params.objectGroup = objectGroup
   // Pin to the tracked main-frame context (see attachTab); retry unpinned
   // when a navigation destroyed it between tracking and evaluating.
   if (state.contextId) params.contextId = state.contextId
@@ -1555,7 +1561,7 @@ async function evalInPage(expression, timeoutMs = 20000, depth = 0) {
       // Capped: a page churning main-frame contexts must not recurse forever.
       if (gone.test(msg) && depth < 2) {
         state.contextId = null
-        return evalInPage(expression, timeoutMs, depth + 1)
+        return evalInPage(expression, timeoutMs, { depth: depth + 1, objectGroup })
       }
       // A pinned eval that TIMES OUT (rather than erroring) is the signature
       // of a stale-but-alive context — e.g. the previous document parked
@@ -1575,7 +1581,7 @@ async function evalInPage(expression, timeoutMs = 20000, depth = 0) {
                  exceptionDetails.text || 'evaluation failed'
     throw new Error(`js: ${desc}`)
   }
-  return result?.value
+  return objectGroup ? result : result?.value
 }
 
 /** Runtime.evaluate pinned to an EXPLICIT session — for the short-lived
@@ -2040,9 +2046,10 @@ function wrapUntrusted(text) {
 // `text` (the prose outline for snapshotText()). A ref is the node's CDP
 // backendNodeId — the renderer's own identifier, stable for the node's
 // lifetime — so @N keeps working across scans until the element itself is
-// destroyed. Page JS can't see backend ids, so the scan stashes the nodes on
-// the top window's __phiNodes and emits NUL-framed scan indices; pageScan()
-// swaps both views over to the real ids right after (see scanBackendIds).
+// destroyed. Page JS can't see backend ids, so the scan emits NUL-framed scan
+// indices and returns the matching nodes by reference alongside them;
+// pageScan() swaps both views over to the real ids right after (see
+// scanBackendIds).
 //
 // The scan is a function (not an IIFE) so it can run against any root:
 // document.body for full-page scans, or a resolved `within` target via
@@ -2063,13 +2070,11 @@ const PHI_SCAN_FN = `function (opts) {
   // Scoping to a currently-hidden subtree (closed menu, collapsed panel)
   // implies the caller wants its contents — behave as if showHidden were on.
   const showHidden = !!opts.showHidden || (root !== document.body && !visible(root))
-  // Stash on the TOP window: a scoped scan can run in a same-origin child
-  // frame's context, and scanBackendIds reads the stash pinned to the MAIN
-  // frame's context — both must see the same array.
-  let stashWin = window
-  try { if (window.top && window.top.document) stashWin = window.top } catch (e) {}
-  stashWin.__phiNodes = []
-  const nodes = stashWin.__phiNodes
+  // Plain local: the scan hands this array back BY REFERENCE alongside the
+  // serializable view (see pageScan), so the node handles never land on a
+  // global the page could read — and the caller's remote handle works from
+  // whatever context the scan ran in, child frame included.
+  const nodes = []
   const out = []
   const els = []
   const headings = []
@@ -2251,8 +2256,15 @@ const PHI_SCAN_FN = `function (opts) {
   }
   if (root) walk(root, 0)
   const text = out.join(' ').replace(/[ \\t]*\\n[ \\t]*/g, '\\n').replace(/\\n{3,}/g, '\\n\\n')
-  return { url: location.href, title: document.title, headings: headings, elements: els, text: text }
+  return {
+    data: { url: location.href, title: document.title, headings: headings,
+            elements: els, text: text },
+    nodes: nodes,
+  }
 }`
+
+/** objectGroup holding one scan's remote handles — released when it finishes. */
+const SCAN_GROUP = 'phi-scan'
 
 /**
  * Runs the shared DOM scan, then swaps the scan-index placeholders in both
@@ -2263,9 +2275,17 @@ const PHI_SCAN_FN = `function (opts) {
  */
 async function pageScan({ within = null, showHidden = false, withRects = false } = {}) {
   const opts = { showHidden, withRects }
-  let data
+  const client = await cdpClient()
+  const sid = requireSession()
+  // The scan returns {data, nodes} BY REFERENCE. Both reads below ride the
+  // wrapper's own objectId, so they land in the context the scan ran in —
+  // child frame included — with no pinning of their own.
+  let wrapperId
   if (within == null) {
-    data = await evalInPage(`(${PHI_SCAN_FN}).call(document.body, ${JSON.stringify(opts)})`)
+    const result = await evalInPage(
+      `(${PHI_SCAN_FN}).call(document.body, ${JSON.stringify(opts)})`,
+      20000, { objectGroup: SCAN_GROUP })
+    wrapperId = result?.objectId
   } else {
     const spec = normalizeTarget(within)
     if (spec.coords) {
@@ -2273,24 +2293,33 @@ async function pageScan({ within = null, showHidden = false, withRects = false }
     }
     const objectId = await resolveSpecObjectId(spec)
     if (!objectId) throw new Error('within: target not found: ' + describeTarget(within))
-    const client = await cdpClient()
-    const sid = requireSession()
     try {
       const { result, exceptionDetails } = await client.send('Runtime.callFunctionOn', {
         objectId, functionDeclaration: PHI_SCAN_FN,
-        arguments: [{ value: opts }], returnByValue: true,
+        arguments: [{ value: opts }], objectGroup: SCAN_GROUP,
       }, sid, 30000)
       if (exceptionDetails) {
         throw new Error('scan failed: ' +
           (exceptionDetails.exception?.description || exceptionDetails.text || 'error'))
       }
-      data = result?.value
+      wrapperId = result?.objectId
     } finally {
       client.send('Runtime.releaseObject', { objectId }, sid).catch(() => {})
     }
   }
+  if (!wrapperId) throw new Error('scan failed: no result object')
+  let data, ids
+  try {
+    data = await scanView(client, sid, wrapperId)
+    ids = await scanBackendIds(client, sid, wrapperId,
+                               Array.isArray(data?.elements) ? data.elements.length : 0)
+  } finally {
+    // One call frees the wrapper, the node array and every node handle. Safe
+    // to do here: the placeholder swap below is pure string work.
+    await client.send('Runtime.releaseObjectGroup',
+                      { objectGroup: SCAN_GROUP }, sid).catch(() => {})
+  }
   const els = Array.isArray(data?.elements) ? data.elements : []
-  const ids = await scanBackendIds(els.length)
   for (const el of els) el.ref = ids[el.ref] ?? null
   if (typeof data.text === 'string') {
     data.text = data.text.replace(/\u0000(\d+)\u0000/g, (_, i) => String(ids[i] ?? '?'))
@@ -2298,26 +2327,37 @@ async function pageScan({ within = null, showHidden = false, withRects = false }
   return data
 }
 
+/** Reads the serializable half of the scan result off the wrapper. */
+async function scanView(client, sid, wrapperId) {
+  const { result, exceptionDetails } = await client.send('Runtime.callFunctionOn', {
+    objectId: wrapperId, functionDeclaration: 'function () { return this.data }',
+    returnByValue: true,
+  }, sid, 30000)
+  if (exceptionDetails) throw new Error('scan failed: could not read scan data')
+  return result?.value
+}
+
 /**
- * Maps the scan's node stash (window.__phiNodes, in scan order) to CDP
- * backendNodeIds: one Runtime.getProperties over the stash array, then a
- * DOM.describeNode per node — issued concurrently, the CDP client multiplexes
- * by command id. backendNodeId comes from the renderer itself, which is what
- * lets a ref outlive the scan that produced it.
+ * Maps the scan's node array (in scan order) to CDP backendNodeIds: one
+ * Runtime.getProperties over the array, then a DOM.describeNode per node —
+ * issued concurrently, the CDP client multiplexes by command id. backendNodeId
+ * comes from the renderer itself, which is what lets a ref outlive the scan
+ * that produced it.
+ *
+ * The array is reached through the scan's returned wrapper rather than a page
+ * global, so nothing Phi-named is ever visible to the page — not even for the
+ * length of the scan — and the handle resolves in the scan's own context.
  */
-async function scanBackendIds(count) {
+async function scanBackendIds(client, sid, wrapperId, count) {
   const ids = new Array(count).fill(null)
   if (count === 0) return ids
-  const client = await cdpClient()
-  const sid = requireSession()
-  // Same context as the scan itself, or the stash lookup misses it.
-  const { result } = await client.send('Runtime.evaluate', {
-    expression: 'window.__phiNodes', objectGroup: 'phi-scan',
-    ...(state.contextId ? { contextId: state.contextId } : {}),
+  const { result: nodes } = await client.send('Runtime.callFunctionOn', {
+    objectId: wrapperId, functionDeclaration: 'function () { return this.nodes }',
+    objectGroup: SCAN_GROUP,
   }, sid)
-  if (!result?.objectId) return ids
+  if (!nodes?.objectId) return ids
   const { result: props } = await client.send('Runtime.getProperties', {
-    objectId: result.objectId, ownProperties: true,
+    objectId: nodes.objectId, ownProperties: true,
   }, sid)
   await Promise.all((props || []).map(async (p) => {
     const i = /^\d+$/.test(p.name) ? Number(p.name) : -1
@@ -2328,11 +2368,6 @@ async function scanBackendIds(count) {
       ids[i] = node.backendNodeId
     } catch {}  // node died mid-scan — its ref stays null
   }))
-  // Drop the stash (it would pin detached nodes) and the protocol handles.
-  await client.send('Runtime.evaluate',
-                    { expression: 'window.__phiNodes = null' }, sid).catch(() => {})
-  await client.send('Runtime.releaseObjectGroup',
-                    { objectGroup: 'phi-scan' }, sid).catch(() => {})
   return ids
 }
 
@@ -2731,6 +2766,19 @@ function __phiCount(spec, needVisible){
 }`
 
 /**
+ * Builds an expression that calls into PHI_LOCATE with its declarations kept
+ * function-scoped.
+ *
+ * Evaluated bare, `${PHI_LOCATE};__phiFind(...)` declares __phiDocs, __phiFind,
+ * __phiCount, __phiRoleOf and __phiNameOf on the page's global object, where
+ * they outlive the round — leaving five Phi-named functions on `window` for any
+ * page the agent targeted to read back. The IIFE scopes them to the call.
+ */
+const locateExpr = (call) => `(function () {${PHI_LOCATE}
+return ${call}
+})()`
+
+/**
  * Resolves a normalized (non-coordinate) spec to a Runtime remote object.
  * Ref specs go through DOM.resolveNode — a ref IS a backendNodeId, so no
  * page-side table is involved and a destroyed node simply fails to resolve.
@@ -2762,7 +2810,7 @@ async function resolveSpecObjectId(spec) {
   }
   try {
     const { result, exceptionDetails } = await client.send('Runtime.evaluate', {
-      expression: `${PHI_LOCATE};__phiFind(${JSON.stringify(spec)})`,
+      expression: locateExpr(`__phiFind(${JSON.stringify(spec)})`),
       objectGroup: 'phi-target',
       ...(state.contextId ? { contextId: state.contextId } : {}),
     }, sid)
