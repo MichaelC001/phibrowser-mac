@@ -175,4 +175,39 @@ extension AppController {
     static func getDefaultBrowserName() -> String {
         return getDefaultBrowserInfo().name
     }
+
+    // MARK: - Launch Preferences Analytics
+
+    /// Captures the user's current preference selections once per app launch.
+    func captureUserDefaultsSnapshot() {
+        let defaultBrowser = Self.getDefaultBrowserInfo()
+        let appearanceRawValue = UserDefaults.standard.integer(
+            forKey: PhiPreferences.ThemeSettings.userAppearanceChoice.rawValue
+        )
+        let appearance = UserAppearanceChoice(rawValue: appearanceRawValue) ?? .system
+
+        PostHogSDK.shared.capture("user_defaults_snapshot", properties: [
+            "new_tab_behavior": PhiPreferences.GeneralSettings.openNewTabPageOnCmdT.loadValue()
+                ? "ntp"
+                : "omnibox",
+            "layout_mode": PhiPreferences.GeneralSettings.loadLayoutMode().rawValue,
+            "appearance": Self.analyticsValue(for: appearance),
+            "default_browser_name": defaultBrowser.name,
+            "default_browser_bundle_id": defaultBrowser.bundleIdentifier ?? "unknown",
+            "is_phi_default_browser": defaultBrowser.isPhiDefault,
+            "proactive_suggestions_enabled": PhiPreferences.AISettings.enableProactiveSuggestionsOnNTP.loadValue(),
+            "automatically_add_context_enabled": PhiPreferences.AISettings.enableChatWithTabs.loadValue()
+        ])
+    }
+
+    private static func analyticsValue(for appearance: UserAppearanceChoice) -> String {
+        switch appearance {
+        case .system:
+            return "system"
+        case .light:
+            return "light"
+        case .dark:
+            return "dark"
+        }
+    }
 }

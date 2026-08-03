@@ -60,17 +60,19 @@ All custom events are snake_case. Events prefixed `$` are auto-captured by the S
 
 | Event | Trigger | File |
 |-------|---------|------|
-| `$app_opened` | SDK lifecycle auto-capture; enriched with `layout_mode` (`balanced` / `performance` / `comfortable`) and `ai_enabled` (bool) via a `beforeSend` hook | `Application/AppController.swift` |
+| `$app_opened` | SDK lifecycle auto-capture; enriched with `layout_mode` (`balanced` / `performance` / `comfortable`), `ai_enabled` (bool), and `is_guest_mode` (bool) via a `beforeSend` hook | `Application/AppController.swift` |
 | `$app_installed` / `$app_updated` / `$app_backgrounded` | SDK lifecycle auto-capture | — |
 | `user_logged_in` | Auth0 login completed | `Onboarding/Login/LoginViewController.swift` |
 | `login_retried` | User tapped "Go back and try again" after failed/timed-out login | `Onboarding/Login/LoginViewController.swift` |
 | `user_logged_out` | User logged out; identity reset follows | `Onboarding/AuthManager.swift` |
+| `guest_mode_entered` | User successfully crossed the local credential boundary and entered Guest Mode | `Onboarding/LoginController.swift` |
+| `guest_mode_exited` | Guest account migration and authenticated account publication completed; `destination` is `signed_in` | `Onboarding/LoginController.swift` |
 | `onboarding_completed` | User tapped Next on welcome screen | `Onboarding/Welcome/OnboardingWelcomeViewController.swift` |
 | `ai_features_toggled` | User enabled/disabled AI features in settings | `Preferences/AISettings/AISettingView.swift` |
 | `connector_status` | Snapshot of each AI connector's connected/disconnected state, fired on refresh | `Preferences/AISettings/AISettingsConnectorViewModel.swift` |
 | `ai_chat_page_opened` | AI Chat page became visible | `Chat/AIChatViewController.swift` |
 | `ai_chat_page_viewed` | Fires on AI Chat page close, with `duration_seconds` dwell time | `Chat/AIChatViewController.swift` |
-| `user_defaults_snapshot` | Launch-time snapshot of selected preferences (NTP, AI toggles, default browser, appearance) | `Application/AppControlle+LaunchInfo.swift` |
+| `user_defaults_snapshot` | Launch-time snapshot of new-tab behavior, layout mode, appearance, default browser, proactive suggestions, and automatic current-tab context | `Application/AppControlle+LaunchInfo.swift` |
 
 Naming rule: **don't reuse PostHog-reserved names** (anything starting with `$`, or that collides with SDK-auto events like "app installed"). For features that could be ambiguous with app-level concepts (e.g. downloads), prefix with the feature scope (`file_download_*`, not `download_*`).
 

@@ -8,6 +8,7 @@ import Cocoa
 import SwiftUI
 import Auth0
 import WebKit
+import PostHog
 
 extension Notification.Name {
     static let loginStatusRefreshCompleted = Notification.Name("LoginStatusRefreshCompleted")
@@ -283,6 +284,7 @@ class LoginController {
         ApplicationState.shared.cancelGuestAccountPromotion()
         GuestModePreferences.disableAI()
         ApplicationState.shared.enterGuestMode()
+        PostHogSDK.shared.capture("guest_mode_entered")
         closeLoginWindow()
     }
 
@@ -383,11 +385,13 @@ class LoginController {
         guard !isCompletingAccountTransition else { return }
         isCompletingAccountTransition = true
         defer { isCompletingAccountTransition = false }
+        let startedInGuestMode = ApplicationState.shared.isGuest
 
         while true {
             let result = await activatePreparedAccount()
             switch result {
             case .completed:
+                captureGuestModeExitIfNeeded(startedInGuestMode)
                 finishBrowserAccessAfterLogin()
                 return
             case .guestMigrationFailed(let error):
@@ -416,6 +420,7 @@ class LoginController {
                 showLoginWindow()
                 return
             case .completedWithDeferredGuestCleanup(let error):
+                captureGuestModeExitIfNeeded(startedInGuestMode)
                 AppLogError(
                     "🔐 [GuestMigration] Account published with deferred Guest cleanup: " +
                     error.localizedDescription
@@ -425,6 +430,11 @@ class LoginController {
                 return
             }
         }
+    }
+
+    private func captureGuestModeExitIfNeeded(_ startedInGuestMode: Bool) {
+        guard startedInGuestMode else { return }
+        PostHogSDK.shared.capture("guest_mode_exited")
     }
     
     @discardableResult

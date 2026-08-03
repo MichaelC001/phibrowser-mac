@@ -196,9 +196,11 @@ import PostHog
                 guard event.event == "Application Opened" else { return event }
                 event.properties["layout_mode"] = PhiPreferences.GeneralSettings.loadLayoutMode().rawValue
                 event.properties["ai_enabled"] = PhiPreferences.AISettings.phiAIEnabled.loadValue()
+                event.properties["is_guest_mode"] = ApplicationState.shared.isGuest
                 return event
             }
             PostHogSDK.shared.setup(postHogConfig)
+            captureUserDefaultsSnapshot()
         } else {
             AppLogInfo("PostHog: project token or host not set in PostHogConfig.generated.swift; skipping init")
         }

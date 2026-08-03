@@ -10,8 +10,6 @@
 		04FE4637EFE3A1396687DD63 /* AISettingsConnectorViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8FCAEAE328C802016D87943 /* AISettingsConnectorViewModel.swift */; };
 		15B618E574463D94C98AEA5F /* AISettingHostingViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1B584F695BF7833FAA99558 /* AISettingHostingViewController.swift */; };
 		2ABF91DB68C2445BAA58C9BA /* GroupTabsTableView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 457F461C0F164136A46FF641 /* GroupTabsTableView.swift */; };
-		6A4750013B12345600000002 /* LoginRequiredPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A4750013B12345600000001 /* LoginRequiredPresentation.swift */; };
-		6A4750023B12345600000002 /* GuestDataMigration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A4750023B12345600000001 /* GuestDataMigration.swift */; };
 		3703C88C2F68F78500E7CF6D /* AISettingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3703C88B2F68F78500E7CF6D /* AISettingView.swift */; };
 		3703C9822F69558C00E7CF6D /* BrowserState+ToggleAI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3703C9812F69558C00E7CF6D /* BrowserState+ToggleAI.swift */; };
 		3703C9842F6956E600E7CF6D /* SentinelHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3703C9832F6956E600E7CF6D /* SentinelHelper.swift */; };
@@ -201,6 +199,8 @@
 		5F1A5A11AC1D000000000001 /* BrowserState+Split.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F1A5A11AC1D000000000002 /* BrowserState+Split.swift */; };
 		5F1A5A11AC1D000000000003 /* SplitPaneHostView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F1A5A11AC1D000000000004 /* SplitPaneHostView.swift */; };
 		5F1A5A11AC1D000000000005 /* SplitTabDropContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F1A5A11AC1D000000000006 /* SplitTabDropContainer.swift */; };
+		6A4750013B12345600000002 /* LoginRequiredPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A4750013B12345600000001 /* LoginRequiredPresentation.swift */; };
+		6A4750023B12345600000002 /* GuestDataMigration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A4750023B12345600000001 /* GuestDataMigration.swift */; };
 		793C1DDEA1022CC850FEFFF9 /* SentinelWatchdog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A44C5FF60DF6F7860A061D4 /* SentinelWatchdog.swift */; };
 		7A5B00A02EF0000000000001 /* MemoryButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A5B00A02EF0000000000002 /* MemoryButton.swift */; };
 		7B00AAAA000000050000A5B5 /* PostHogEnv.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B00AAAA000000040000A4B4 /* PostHogEnv.swift */; };
@@ -800,6 +800,8 @@
 		5F1A5A11AC1D000000000004 /* SplitPaneHostView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SplitPaneHostView.swift; sourceTree = "<group>"; };
 		5F1A5A11AC1D000000000006 /* SplitTabDropContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SplitTabDropContainer.swift; sourceTree = "<group>"; };
 		6A44C5FF60DF6F7860A061D4 /* SentinelWatchdog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SentinelWatchdog.swift; sourceTree = "<group>"; };
+		6A4750013B12345600000001 /* LoginRequiredPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginRequiredPresentation.swift; sourceTree = "<group>"; };
+		6A4750023B12345600000001 /* GuestDataMigration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuestDataMigration.swift; sourceTree = "<group>"; };
 		7A5B00A02EF0000000000002 /* MemoryButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemoryButton.swift; sourceTree = "<group>"; };
 		7B00AAAA000000040000A4B4 /* PostHogEnv.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PostHogEnv.swift; sourceTree = "<group>"; };
 		7B00AAAA000000060000A6B6 /* PostHogConfig.generated.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PostHogConfig.generated.swift; sourceTree = "<group>"; };
@@ -941,7 +943,6 @@
 		CC24EF072E89251D00CE9DD7 /* AuthManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthManager.swift; sourceTree = "<group>"; };
 		CC2708972E7959DF00B65AB8 /* PinnedTabLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PinnedTabLayout.swift; sourceTree = "<group>"; };
 		CC2708A22E7A65E500B65AB8 /* LocalStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalStore.swift; sourceTree = "<group>"; };
-		6A4750023B12345600000001 /* GuestDataMigration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuestDataMigration.swift; sourceTree = "<group>"; };
 		CC2708A32E7A65E500B65AB8 /* TabDataModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabDataModel.swift; sourceTree = "<group>"; };
 		CC2708A72E7A675C00B65AB8 /* Account.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Account.swift; sourceTree = "<group>"; };
 		CC288A662E4F12CB004A6C1C /* SidebarViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarViewController.swift; sourceTree = "<group>"; };
@@ -1082,7 +1083,6 @@
 		D10000000000000000000031 /* ExtensionDialogManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtensionDialogManager.swift; sourceTree = "<group>"; };
 		D10000000000000000000032 /* ExtensionDialogViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtensionDialogViewController.swift; sourceTree = "<group>"; };
 		D12800000000000000000002 /* PhiSegmentedPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhiSegmentedPicker.swift; sourceTree = "<group>"; };
-		6A4750013B12345600000001 /* LoginRequiredPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginRequiredPresentation.swift; sourceTree = "<group>"; };
 		D1B584F695BF7833FAA99558 /* AISettingHostingViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AISettingHostingViewController.swift; sourceTree = "<group>"; };
 		D1F600012FD6000000000001 /* DiffableOutlineSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiffableOutlineSnapshot.swift; sourceTree = "<group>"; };
 		D1F600032FD6000000000003 /* DiffableOutlineDiffPlanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiffableOutlineDiffPlanner.swift; sourceTree = "<group>"; };
@@ -3569,8 +3569,8 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.phibrowser.PhiUninstaller;
 				PHI_UNINSTALLER_KEYCHAIN_GROUP_SUFFIX = com.phibrowser.Mac.webauthn;
+				PRODUCT_BUNDLE_IDENTIFIER = com.phibrowser.PhiUninstaller;
 				PRODUCT_MODULE_NAME = PhiUninstaller;
 				PRODUCT_NAME = PhiUninstaller;
 				SKIP_INSTALL = YES;
@@ -3591,8 +3591,8 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.phibrowser.canary.PhiUninstaller;
 				PHI_UNINSTALLER_KEYCHAIN_GROUP_SUFFIX = com.phibrowser.canary.Mac.webauthn;
+				PRODUCT_BUNDLE_IDENTIFIER = com.phibrowser.canary.PhiUninstaller;
 				PRODUCT_MODULE_NAME = PhiUninstaller;
 				PRODUCT_NAME = PhiUninstaller;
 				SKIP_INSTALL = YES;
@@ -3613,8 +3613,8 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.phibrowser.canary.PhiUninstaller;
 				PHI_UNINSTALLER_KEYCHAIN_GROUP_SUFFIX = com.phibrowser.canary.Mac.webauthn;
+				PRODUCT_BUNDLE_IDENTIFIER = com.phibrowser.canary.PhiUninstaller;
 				PRODUCT_MODULE_NAME = PhiUninstaller;
 				PRODUCT_NAME = PhiUninstaller;
 				SKIP_INSTALL = YES;
@@ -3635,8 +3635,8 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.phibrowser.PhiUninstaller;
 				PHI_UNINSTALLER_KEYCHAIN_GROUP_SUFFIX = com.phibrowser.Mac.webauthn;
+				PRODUCT_BUNDLE_IDENTIFIER = com.phibrowser.PhiUninstaller;
 				PRODUCT_MODULE_NAME = PhiUninstaller;
 				PRODUCT_NAME = PhiUninstaller;
 				SKIP_INSTALL = YES;
@@ -3657,8 +3657,8 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.phibrowser.canary.PhiUninstaller;
 				PHI_UNINSTALLER_KEYCHAIN_GROUP_SUFFIX = com.phibrowser.canary.Mac.webauthn;
+				PRODUCT_BUNDLE_IDENTIFIER = com.phibrowser.canary.PhiUninstaller;
 				PRODUCT_MODULE_NAME = PhiUninstaller;
 				PRODUCT_NAME = PhiUninstaller;
 				SKIP_INSTALL = YES;
