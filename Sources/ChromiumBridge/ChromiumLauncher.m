@@ -154,6 +154,16 @@
                 [[NSUserDefaults standardUserDefaults]
                     removeObjectForKey:@"PhiRemoteDebuggingPort"];
 
+                // Builds from that era also left a DevToolsActivePort file in
+                // the profile. The FD-injection transport binds no port and
+                // never rewrites it, so a leftover copy misdirects any tool
+                // that looks there — it reports a port nothing listens on
+                // instead of "Phi is not running". Purge stale copies.
+                [[NSFileManager defaultManager]
+                    removeItemAtPath:[applicationSupportDir
+                        stringByAppendingPathComponent:@"DevToolsActivePort"]
+                               error:nil];
+
                 [self appendLaunchCommandLineArgc:launchArgc argv:launchArgv toArguments:arguments];
 
                 int argc = (int)arguments.count;
