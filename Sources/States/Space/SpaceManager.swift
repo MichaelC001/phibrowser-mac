@@ -6382,13 +6382,24 @@ final class SpaceWindowSlot: ObservableObject {
     /// restored window keep its own fullscreen state instead would make macOS
     /// spawn a separate Space per window and orphan the hidden ones — which is
     /// why restore comes back normal first (see Chromium session_restore.cc).
+    /// True from the moment `applyPendingRestoreFullScreen` schedules the
+    /// deferred `toggleFullScreen` until that toggle has been issued.
+    /// `pendingRestoreFullScreen` is consumed at scheduling, but the slot's
+    /// windows only start reporting `.fullScreen` once the toggle fires — a
+    /// restore reconcile pass landing in that gap must still treat the slot
+    /// as sharing a fullscreen Space, or it would hard-orderOut (and thereby
+    /// detach) the siblings the previous pass just grouped for the re-entry.
+    private var fullScreenReentryInFlight = false
+
     private func applyPendingRestoreFullScreen(activeWindow: NSWindow) {
         guard pendingRestoreFullScreen, activeWindow.isVisible else { return }
         pendingRestoreFullScreen = false
         guard !activeWindow.styleMask.contains(.fullScreen) else { return }
+        fullScreenReentryInFlight = true
         // Defer one runloop turn so the just-surfaced window has settled before
         // the fullscreen transition begins; re-check the state at fire time.
-        DispatchQueue.main.async { [weak activeWindow] in
+        DispatchQueue.main.async { [weak self, weak activeWindow] in
+            defer { self?.fullScreenReentryInFlight = false }
             guard let activeWindow,
                   !activeWindow.styleMask.contains(.fullScreen) else { return }
             activeWindow.toggleFullScreen(nil)
@@ -6454,7 +6465,7 @@ final class SpaceWindowSlot: ObservableObject {
     /// slot's hidden windows instead.
     private func orderOutRearmingMoveToActiveSpace(_ window: NSWindow) {
         window.orderOut(nil)
-        if !slotHasFullScreenWindow && !pendingRestoreFullScreen {
+        if !slotHasFullScreenWindow && !pendingRestoreFullScreen && !fullScreenReentryInFlight {
             window.collectionBehavior.insert(.moveToActiveSpace)
         }
     }
@@ -6832,7 +6843,32 @@ final class SpaceWindowSlot: ObservableObject {
         // siblings stay stacked behind the re-selected active tab and the
         // strip bleed guard hides their ghost rows; a DETACHED sibling (never
         // part of the fullscreen Space) still gets the hard hide.
-        let inSharedFullScreen = slotHasFullScreenWindow
+        let inSharedFullScreen = slotHasFullScreenWindow || fullScreenReentryInFlight
+        // A slot about to re-enter fullscreen must NOT hard-orderOut its
+        // siblings: that detaches them from the native tab group, and the
+        // first Space switch after the re-entry then has to re-attach and
+        // key a window whose adoption into the fullscreen Space the window
+        // server is still processing — which kicks macOS off the fullscreen
+        // desktop entirely (the reopen-and-switch bug; deferring the key one
+        // turn was measured insufficient). Group the whole slot behind the
+        // active window BEFORE the fullscreen toggle instead: the tab group
+        // enters the fullscreen Space as one unit, so the first switch
+        // selects an already-settled member — the same shape as every later
+        // switch, which never yanks. Siblings stay stacked behind the
+        // selected active tab, the state the fullscreen branch below already
+        // trusts on every later pass.
+        if pendingRestoreFullScreen {
+            syncSlotTabGroup(selecting: activeWindow)
+            for controller in windowsBySpaceId.values {
+                guard let window = controller.window else { continue }
+                revealConcealedWindow(window)
+            }
+            visibleController = activeController
+            makeKeyAndOrderFrontHidingSlotTabBar(activeWindow)
+            updateWindowsMenuExclusion()
+            applyPendingRestoreFullScreen(activeWindow: activeWindow)
+            return
+        }
         var hidCount = 0
         for (siblingSpaceId, controller) in windowsBySpaceId where siblingSpaceId != activeId {
             guard let window = controller.window, window.isVisible else { continue }
