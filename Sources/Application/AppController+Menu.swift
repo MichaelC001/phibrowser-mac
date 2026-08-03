@@ -30,6 +30,7 @@ extension AppController {
     // 500025: was 500036, which collided with spacesChangeProfileParentTag
     // (harmless across submenus, but tags must stay unique to grep sanely).
     static let agentTranscriptItemTag = 500025
+    static let uninstallPhiItemTag = 500026
     static let spacesProfileSeparatorTag = 500020
     static let deleteProfileSubmenuIdentifier = NSUserInterfaceItemIdentifier("phi.spaces.deleteProfile")
     static let spacesMenuItemTag = 500018
@@ -213,6 +214,7 @@ extension AppController {
                         break
                     }
                 }
+
             } else
             
             if menuItem.title == "Edit", let subMenu = menuItem.submenu {
@@ -276,7 +278,8 @@ extension AppController {
                     $0.tag == AppController.whatsNewItemTag ||
                     $0.tag == AppController.manageUserDataHelpSeparatorTag ||
                     $0.tag == AppController.timeMachineBackupsParentItemTag ||
-                    $0.tag == AppController.manageUserDataParentItemTag
+                    $0.tag == AppController.manageUserDataParentItemTag ||
+                    $0.tag == AppController.uninstallPhiItemTag
                 }
                 
                 let extensionInfoItem = NSMenuItem(title: NSLocalizedString("app.helpMenu.extensionInfo", value: "Extension Info", comment: "Help menu - Menu item to show extension version info, only visible when holding Option key"),
@@ -340,6 +343,19 @@ extension AppController {
                 userDataSubmenu.addItem(importUserDataItem)
                 manageUserDataItem.submenu = userDataSubmenu
                 subMenu.addItem(manageUserDataItem)
+
+                let uninstallItem = NSMenuItem(
+                    title: NSLocalizedString(
+                        "app.helpMenu.uninstallPhi",
+                        value: "Uninstall Phi...",
+                        comment: "Help menu - Menu item below Manage User Data that opens the critical confirmation for uninstalling Phi and its local data"
+                    ),
+                    action: #selector(uninstallPhi(_:)),
+                    keyEquivalent: ""
+                )
+                uninstallItem.tag = AppController.uninstallPhiItemTag
+                uninstallItem.target = self
+                subMenu.addItem(uninstallItem)
                 
                 subMenu.delegate = self
             }
@@ -2028,7 +2044,8 @@ extension AppController {
                 #selector(exportLogs(_:)),
                 #selector(restoreTimeMachineBackup(_:)),
                 #selector(exportUserData(_:)),
-                #selector(importUserDataFromBackup(_:))
+                #selector(importUserDataFromBackup(_:)),
+                #selector(uninstallPhi(_:))
             ]
 
             if let action = item.action {

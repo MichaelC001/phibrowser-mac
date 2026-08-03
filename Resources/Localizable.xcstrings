@@ -1523,6 +1523,18 @@
         }
       }
     },
+    "app.helpMenu.uninstallPhi" : {
+      "comment" : "Help menu - Menu item below Manage User Data that opens the critical confirmation for uninstalling Phi and its local data",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Uninstall Phi..."
+          }
+        }
+      }
+    },
     "app.helpMenu.whatsNew" : {
       "comment" : "Help menu - Menu item that opens the chrome://whats-new page in a new tab, placed right below 'Report an Issue'",
       "extractionState" : "extracted_with_value",
@@ -2215,6 +2227,90 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "Time Machine Restore"
+          }
+        }
+      }
+    },
+    "app.uninstall.confirmation.cancelButton" : {
+      "comment" : "Phi uninstall - Button that cancels the uninstall confirmation",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Cancel"
+          }
+        }
+      }
+    },
+    "app.uninstall.confirmation.message" : {
+      "comment" : "Phi uninstall - Critical confirmation message describing the channel-scoped data that will be permanently removed",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Phi and Phi Sentinel will quit. Browsing data, conversations, AI memory, service data, and local AI models for this version of Phi will be permanently deleted. This cannot be undone."
+          }
+        }
+      }
+    },
+    "app.uninstall.confirmation.title" : {
+      "comment" : "Phi uninstall - Critical confirmation alert title before permanently removing the app and local data",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Uninstall Phi?"
+          }
+        }
+      }
+    },
+    "app.uninstall.confirmation.uninstallButton" : {
+      "comment" : "Phi uninstall - Destructive confirmation button that starts uninstalling Phi",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Uninstall"
+          }
+        }
+      }
+    },
+    "app.uninstall.failure.dismissButton" : {
+      "comment" : "Phi uninstall - Button that dismisses an uninstall startup failure",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "OK"
+          }
+        }
+      }
+    },
+    "app.uninstall.failure.message" : {
+      "comment" : "Phi uninstall - Error alert message; the placeholder is the technical reason the uninstall could not start",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "No data was deleted. %@"
+          }
+        }
+      }
+    },
+    "app.uninstall.failure.title" : {
+      "comment" : "Phi uninstall - Error alert title when the uninstall helper could not be prepared or launched",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Phi Could Not Be Uninstalled"
           }
         }
       }

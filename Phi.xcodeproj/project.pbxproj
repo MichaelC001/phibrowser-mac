@@ -271,6 +271,14 @@
 		A71E00000000000000000004 /* CredentialApprovalAlert.swift in Sources */ = {isa = PBXBuildFile; fileRef = A71E00000000000000000003 /* CredentialApprovalAlert.swift */; };
 		A71E00000000000000000006 /* AgentAccessApprovalAlert.swift in Sources */ = {isa = PBXBuildFile; fileRef = A71E00000000000000000005 /* AgentAccessApprovalAlert.swift */; };
 		A7C021022FFD000000000002 /* ContextMenuEvent.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7C021012FFD000000000001 /* ContextMenuEvent.swift */; };
+		A8F100012FF0000000000001 /* PhiUninstallCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8F100112FF0000000000011 /* PhiUninstallCore.swift */; };
+		A8F100022FF0000000000002 /* PhiUninstallSignatureVerifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8F100122FF0000000000012 /* PhiUninstallSignatureVerifier.swift */; };
+		A8F100032FF0000000000003 /* PhiUninstallHelperLauncher.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8F100132FF0000000000013 /* PhiUninstallHelperLauncher.swift */; };
+		A8F100042FF0000000000004 /* PhiUninstallCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8F100142FF0000000000014 /* PhiUninstallCoordinator.swift */; };
+		A8F100052FF0000000000005 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8F100152FF0000000000015 /* main.swift */; };
+		A8F100062FF0000000000006 /* PhiUninstallCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8F100112FF0000000000011 /* PhiUninstallCore.swift */; };
+		A8F100072FF0000000000007 /* PhiUninstallSignatureVerifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8F100122FF0000000000012 /* PhiUninstallSignatureVerifier.swift */; };
+		A8F100082FF0000000000008 /* PhiUninstaller in Copy Uninstall Helper */ = {isa = PBXBuildFile; fileRef = A8F100162FF0000000000016 /* PhiUninstaller */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		AA10000000000000000000B1 /* TabSwitchMetrics.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA10000000000000000000F1 /* TabSwitchMetrics.swift */; };
 		AA10000000000000000000B2 /* TabSwitchItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA10000000000000000000F2 /* TabSwitchItem.swift */; };
 		AA10000000000000000000B3 /* TabSwitchCellView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA10000000000000000000F3 /* TabSwitchCellView.swift */; };
@@ -483,6 +491,13 @@
 			remoteGlobalIDString = 54A200402FE1000000000040;
 			remoteInfo = PhiTimeMachineInstaller;
 		};
+		A8F100302FF0000000000030 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = B0C469402E3B10E1007F0C7A /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A8F100402FF0000000000040;
+			remoteInfo = PhiUninstaller;
+		};
 		B0C469582E3B10E2007F0C7A /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = B0C469402E3B10E1007F0C7A /* Project object */;
@@ -535,6 +550,17 @@
 				54A200072FE1000000000007 /* PhiTimeMachineInstaller in Copy Time Machine Helpers */,
 			);
 			name = "Copy Time Machine Helpers";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A8F100312FF0000000000031 /* Copy Uninstall Helper */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = Contents/Helpers;
+			dstSubfolderSpec = 1;
+			files = (
+				A8F100082FF0000000000008 /* PhiUninstaller in Copy Uninstall Helper */,
+			);
+			name = "Copy Uninstall Helper";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		B17DE00000000000000000E2 /* Copy Bitwarden Helper */ = {
@@ -844,6 +870,12 @@
 		A71E00000000000000000003 /* CredentialApprovalAlert.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CredentialApprovalAlert.swift; sourceTree = "<group>"; };
 		A71E00000000000000000005 /* AgentAccessApprovalAlert.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentAccessApprovalAlert.swift; sourceTree = "<group>"; };
 		A7C021012FFD000000000001 /* ContextMenuEvent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextMenuEvent.swift; sourceTree = "<group>"; };
+		A8F100112FF0000000000011 /* PhiUninstallCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhiUninstallCore.swift; sourceTree = "<group>"; };
+		A8F100122FF0000000000012 /* PhiUninstallSignatureVerifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhiUninstallSignatureVerifier.swift; sourceTree = "<group>"; };
+		A8F100132FF0000000000013 /* PhiUninstallHelperLauncher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhiUninstallHelperLauncher.swift; sourceTree = "<group>"; };
+		A8F100142FF0000000000014 /* PhiUninstallCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhiUninstallCoordinator.swift; sourceTree = "<group>"; };
+		A8F100152FF0000000000015 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
+		A8F100162FF0000000000016 /* PhiUninstaller */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = PhiUninstaller; sourceTree = BUILT_PRODUCTS_DIR; };
 		AA10000000000000000000F1 /* TabSwitchMetrics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabSwitchMetrics.swift; sourceTree = "<group>"; };
 		AA10000000000000000000F2 /* TabSwitchItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabSwitchItem.swift; sourceTree = "<group>"; };
 		AA10000000000000000000F3 /* TabSwitchCellView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabSwitchCellView.swift; sourceTree = "<group>"; };
@@ -1083,6 +1115,13 @@
 
 /* Begin PBXFrameworksBuildPhase section */
 		54A200322FE1000000000032 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A8F100322FF0000000000032 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -1673,6 +1712,25 @@
 			path = Tabs;
 			sourceTree = "<group>";
 		};
+		A8F100202FF0000000000020 /* Uninstall */ = {
+			isa = PBXGroup;
+			children = (
+				A8F100112FF0000000000011 /* PhiUninstallCore.swift */,
+				A8F100122FF0000000000012 /* PhiUninstallSignatureVerifier.swift */,
+				A8F100132FF0000000000013 /* PhiUninstallHelperLauncher.swift */,
+				A8F100142FF0000000000014 /* PhiUninstallCoordinator.swift */,
+			);
+			path = Uninstall;
+			sourceTree = "<group>";
+		};
+		A8F100212FF0000000000021 /* PhiUninstaller */ = {
+			isa = PBXGroup;
+			children = (
+				A8F100152FF0000000000015 /* main.swift */,
+			);
+			path = PhiUninstaller;
+			sourceTree = "<group>";
+		};
 		AA10000000000000000000G1 /* TabSwitch */ = {
 			isa = PBXGroup;
 			children = (
@@ -1725,6 +1783,7 @@
 				B17DE00000000000000000E5 /* Vendor/PhiBitwardenHelper-LICENSE.txt */,
 				B17DE00000000000000000E6 /* Vendor/PhiBitwardenHelper-SOURCE-OFFER.txt */,
 				54A200202FE1000000000020 /* TimeMachineInstaller */,
+				A8F100212FF0000000000021 /* PhiUninstaller */,
 				B0F370CC2E432646000B51F9 /* UserInterface */,
 				B0F370CD2E4326DC000B51F9 /* Utilities */,
 				37F574C32F7A83DF00879867 /* Other */,
@@ -1774,6 +1833,7 @@
 			children = (
 				B0C469482E3B10E1007F0C7A /* Phi.app */,
 				54A200122FE1000000000012 /* PhiTimeMachineInstaller */,
+				A8F100162FF0000000000016 /* PhiUninstaller */,
 				B0C469572E3B10E2007F0C7A /* PhiBrowserTests.xctest */,
 				B0C469612E3B10E2007F0C7A /* PhiBrowserUITests.xctest */,
 			);
@@ -1897,6 +1957,7 @@
 				6A44C5FF60DF6F7860A061D4 /* SentinelWatchdog.swift */,
 				37CC00012F9D000100000001 /* SentinelIPCClient.swift */,
 				54A100202FE0000000000020 /* TimeMachine */,
+				A8F100202FF0000000000020 /* Uninstall */,
 			);
 			path = Application;
 			sourceTree = "<group>";
@@ -2395,6 +2456,22 @@
 			productReference = 54A200122FE1000000000012 /* PhiTimeMachineInstaller */;
 			productType = "com.apple.product-type.tool";
 		};
+		A8F100402FF0000000000040 /* PhiUninstaller */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A8F100502FF0000000000050 /* Build configuration list for PBXNativeTarget "PhiUninstaller" */;
+			buildPhases = (
+				A8F100332FF0000000000033 /* Sources */,
+				A8F100322FF0000000000032 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = PhiUninstaller;
+			productName = PhiUninstaller;
+			productReference = A8F100162FF0000000000016 /* PhiUninstaller */;
+			productType = "com.apple.product-type.tool";
+		};
 		B0C469472E3B10E1007F0C7A /* PhiBrowser */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = B0C4696B2E3B10E2007F0C7A /* Build configuration list for PBXNativeTarget "PhiBrowser" */;
@@ -2406,6 +2483,7 @@
 				37C1B3072EE6739C00DD4496 /* Copy LottieFiles */,
 				37C1B28D2EE0504100DD4496 /* Embed Frameworks */,
 				54A200312FE1000000000031 /* Copy Time Machine Helpers */,
+				A8F100312FF0000000000031 /* Copy Uninstall Helper */,
 				B17DE00000000000000000E2 /* Copy Bitwarden Helper */,
 				B17DE00000000000000000E7 /* Copy Bitwarden GPL Notices */,
 			);
@@ -2413,6 +2491,7 @@
 			);
 			dependencies = (
 				54A200342FE1000000000034 /* PBXTargetDependency */,
+				A8F100342FF0000000000034 /* PBXTargetDependency */,
 			);
 			name = PhiBrowser;
 			packageProductDependencies = (
@@ -2482,6 +2561,9 @@
 					54A200402FE1000000000040 = {
 						CreatedOnToolsVersion = 16.2;
 					};
+					A8F100402FF0000000000040 = {
+						CreatedOnToolsVersion = 16.2;
+					};
 					B0C469472E3B10E1007F0C7A = {
 						CreatedOnToolsVersion = 16.2;
 						LastSwiftMigration = 1620;
@@ -2522,6 +2604,7 @@
 			targets = (
 				B0C469472E3B10E1007F0C7A /* PhiBrowser */,
 				54A200402FE1000000000040 /* PhiTimeMachineInstaller */,
+				A8F100402FF0000000000040 /* PhiUninstaller */,
 				B0C469562E3B10E2007F0C7A /* PhiBrowserTests */,
 				B0C469602E3B10E2007F0C7A /* PhiBrowserUITests */,
 			);
@@ -2580,10 +2663,24 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A8F100332FF0000000000033 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A8F100052FF0000000000005 /* main.swift in Sources */,
+				A8F100062FF0000000000006 /* PhiUninstallCore.swift in Sources */,
+				A8F100072FF0000000000007 /* PhiUninstallSignatureVerifier.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		B0C469442E3B10E1007F0C7A /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A8F100012FF0000000000001 /* PhiUninstallCore.swift in Sources */,
+				A8F100022FF0000000000002 /* PhiUninstallSignatureVerifier.swift in Sources */,
+				A8F100032FF0000000000003 /* PhiUninstallHelperLauncher.swift in Sources */,
+				A8F100042FF0000000000004 /* PhiUninstallCoordinator.swift in Sources */,
 				A11E00000000000000000001 /* PhiScriptingService.swift in Sources */,
 				A11E00000000000000000002 /* PhiScriptCommands.swift in Sources */,
 				A71E00000000000000000002 /* PhiAlert.swift in Sources */,
@@ -3035,6 +3132,11 @@
 			target = 54A200402FE1000000000040 /* PhiTimeMachineInstaller */;
 			targetProxy = 54A200302FE1000000000030 /* PBXContainerItemProxy */;
 		};
+		A8F100342FF0000000000034 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A8F100402FF0000000000040 /* PhiUninstaller */;
+			targetProxy = A8F100302FF0000000000030 /* PBXContainerItemProxy */;
+		};
 		B0C469592E3B10E2007F0C7A /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = B0C469472E3B10E1007F0C7A /* PhiBrowser */;
@@ -3444,6 +3546,116 @@
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 5.0;
 				TEST_TARGET_NAME = PhiBrowser;
+			};
+			name = "Release-Canary";
+		};
+		A8F100512FF0000000000051 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Resources/PhiUninstaller.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 87DQ3HMK5G;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.phibrowser.PhiUninstaller;
+				PHI_UNINSTALLER_KEYCHAIN_GROUP_SUFFIX = com.phibrowser.Mac.webauthn;
+				PRODUCT_MODULE_NAME = PhiUninstaller;
+				PRODUCT_NAME = PhiUninstaller;
+				SKIP_INSTALL = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = PHI_UNINSTALLER;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		A8F100522FF0000000000052 /* Debug-Canary */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Resources/PhiUninstaller.entitlements;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 87DQ3HMK5G;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.phibrowser.canary.PhiUninstaller;
+				PHI_UNINSTALLER_KEYCHAIN_GROUP_SUFFIX = com.phibrowser.canary.Mac.webauthn;
+				PRODUCT_MODULE_NAME = PhiUninstaller;
+				PRODUCT_NAME = PhiUninstaller;
+				SKIP_INSTALL = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = PHI_UNINSTALLER;
+				SWIFT_VERSION = 5.0;
+			};
+			name = "Debug-Canary";
+		};
+		A8F100532FF0000000000053 /* OpenSource */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_HARDENED_RUNTIME = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.phibrowser.canary.PhiUninstaller;
+				PHI_UNINSTALLER_KEYCHAIN_GROUP_SUFFIX = com.phibrowser.canary.Mac.webauthn;
+				PRODUCT_MODULE_NAME = PhiUninstaller;
+				PRODUCT_NAME = PhiUninstaller;
+				SKIP_INSTALL = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = PHI_UNINSTALLER;
+				SWIFT_VERSION = 5.0;
+			};
+			name = OpenSource;
+		};
+		A8F100542FF0000000000054 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Resources/PhiUninstaller.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 87DQ3HMK5G;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.phibrowser.PhiUninstaller;
+				PHI_UNINSTALLER_KEYCHAIN_GROUP_SUFFIX = com.phibrowser.Mac.webauthn;
+				PRODUCT_MODULE_NAME = PhiUninstaller;
+				PRODUCT_NAME = PhiUninstaller;
+				SKIP_INSTALL = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = PHI_UNINSTALLER;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		A8F100552FF0000000000055 /* Release-Canary */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Resources/PhiUninstaller.entitlements;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 87DQ3HMK5G;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.phibrowser.canary.PhiUninstaller;
+				PHI_UNINSTALLER_KEYCHAIN_GROUP_SUFFIX = com.phibrowser.canary.Mac.webauthn;
+				PRODUCT_MODULE_NAME = PhiUninstaller;
+				PRODUCT_NAME = PhiUninstaller;
+				SKIP_INSTALL = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = PHI_UNINSTALLER;
+				SWIFT_VERSION = 5.0;
 			};
 			name = "Release-Canary";
 		};
@@ -3914,6 +4126,18 @@
 				54A200532FE1000000000053 /* OpenSource */,
 				54A200542FE1000000000054 /* Release */,
 				54A200552FE1000000000055 /* Release-Canary */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A8F100502FF0000000000050 /* Build configuration list for PBXNativeTarget "PhiUninstaller" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A8F100512FF0000000000051 /* Debug */,
+				A8F100522FF0000000000052 /* Debug-Canary */,
+				A8F100532FF0000000000053 /* OpenSource */,
+				A8F100542FF0000000000054 /* Release */,
+				A8F100552FF0000000000055 /* Release-Canary */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
