@@ -83,7 +83,7 @@ class LoginViewController: NSViewController {
     
     private lazy var loginButton: GradientBorderButton = {
         let button = GradientBorderButton()
-        button.title = NSLocalizedString("oobe.login.loginButton", value: "Log in", comment: "Onboarding Login button title")
+        button.title = NSLocalizedString("oobe.login.loginButton", value: "Sign in", comment: "Onboarding sign-in button title")
         button.clickAction = { [weak self] in
             self?.loginAction()
         }
@@ -93,8 +93,8 @@ class LoginViewController: NSViewController {
     private lazy var continueAsGuestButton: NSButton = {
         let title = NSLocalizedString(
             "oobe.login.continueAsGuestButton",
-            value: "Continue without an account",
-            comment: "Onboarding Login - Tertiary button that enters persistent Guest Mode"
+            value: "Explore Phi without signing in",
+            comment: "Onboarding sign-in - Tertiary button that enters persistent Guest Mode"
         )
         let button = NSButton(title: title, target: self, action: #selector(continueAsGuestAction))
         button.isBordered = false
@@ -114,8 +114,8 @@ class LoginViewController: NSViewController {
     private lazy var guestMigrationRecoveryLabel: NSTextField = {
         let label = NSTextField(labelWithString: NSLocalizedString(
             "oobe.guestMigration.recovery.loginMessage",
-            value: "Log in to the account you previously selected to finish moving your Guest data.",
-            comment: "Guest migration recovery - Guidance shown when the original target account must log in again"
+            value: "Sign in to the account you previously selected to finish moving your Guest data.",
+            comment: "Guest migration recovery - Guidance shown when the original target account must sign in again"
         ))
         label.font = .systemFont(ofSize: 14)
         label.textColor = .white.withAlphaComponent(0.78)
@@ -151,7 +151,7 @@ class LoginViewController: NSViewController {
     }()
     
     private lazy var waitingTitleLabel: NSTextField = {
-        let label = NSTextField(labelWithString: NSLocalizedString("oobe.login.progressTitle", value: "Go to the browser to complete log in", comment: "Waiting view title shown during login process in onboarding"))
+        let label = NSTextField(labelWithString: NSLocalizedString("oobe.login.progressTitle", value: "Finish signing in in your browser", comment: "Waiting view title shown during sign-in process in onboarding"))
         label.font = NSFont(name: "IvyPresto Display", size: 40)
         label.textColor = .white
         label.alignment = .center

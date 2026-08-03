@@ -222,8 +222,8 @@ struct PasswordManagerSectionView: View {
         }
     }
 
-    /// Explicit Log In / Unlock / Log Out controls, shown per state:
-    /// signed out → Log In; locked → Unlock + Log Out; signed in → Log Out.
+    /// Explicit Sign in / Unlock / Sign out controls, shown per state:
+    /// signed out → Sign in; locked → Unlock + Sign out; signed in → Sign out.
     @ViewBuilder
     private var actionButtons: some View {
         HStack(spacing: 8) {
@@ -242,7 +242,7 @@ struct PasswordManagerSectionView: View {
     }
 
     private var logInButton: some View {
-        Button(NSLocalizedString("settings.developer.passwordManager.bitwarden.loginAction", value: "Log In\u{2026}", comment: "Phi & AI settings - Bitwarden log in action")) {
+        Button(NSLocalizedString("settings.developer.passwordManager.bitwarden.loginAction", value: "Sign in\u{2026}", comment: "Phi & AI settings - Bitwarden sign-in action")) {
             loginSheetMode = .login
         }
         .controlSize(.small)
@@ -256,7 +256,7 @@ struct PasswordManagerSectionView: View {
     }
 
     private var logOutButton: some View {
-        Button(NSLocalizedString("settings.developer.passwordManager.bitwarden.logoutAction", value: "Log Out", comment: "Phi & AI settings - Bitwarden log out action")) {
+        Button(NSLocalizedString("settings.developer.passwordManager.bitwarden.logoutAction", value: "Sign out", comment: "Phi & AI settings - Bitwarden sign-out action")) {
             Task {
                 try? await BitwardenService.shared.logout()
                 await bitwarden.refreshStatus()

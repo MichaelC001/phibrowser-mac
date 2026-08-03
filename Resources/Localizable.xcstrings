@@ -84,13 +84,13 @@
       }
     },
     "accountRequired.phiAI.loginButton" : {
-      "comment" : "Account-required presentation - Button that opens the Phi login window",
+      "comment" : "Account-required presentation - Button that opens the Phi sign-in window",
       "extractionState" : "extracted_with_value",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Log In"
+            "value" : "Sign in"
           }
         }
       }
@@ -102,7 +102,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Log in to use Phi AI"
+            "value" : "Sign in to use Phi AI"
           }
         }
       }
@@ -6348,13 +6348,13 @@
       }
     },
     "oobe.guestMigration.recovery.loginMessage" : {
-      "comment" : "Guest migration recovery - Guidance shown when the original target account must log in again",
+      "comment" : "Guest migration recovery - Guidance shown when the original target account must sign in again",
       "extractionState" : "extracted_with_value",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Log in to the account you previously selected to finish moving your Guest data."
+            "value" : "Sign in to the account you previously selected to finish moving your Guest data."
           }
         }
       }
@@ -6756,13 +6756,13 @@
       }
     },
     "oobe.login.continueAsGuestButton" : {
-      "comment" : "Onboarding Login - Tertiary button that enters persistent Guest Mode",
+      "comment" : "Onboarding sign-in - Tertiary button that enters persistent Guest Mode",
       "extractionState" : "extracted_with_value",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Continue without an account"
+            "value" : "Explore Phi without signing in"
           }
         }
       }
@@ -6792,25 +6792,25 @@
       }
     },
     "oobe.login.loginButton" : {
-      "comment" : "Onboarding Login button title",
+      "comment" : "Onboarding sign-in button title",
       "extractionState" : "extracted_with_value",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Log in"
+            "value" : "Sign in"
           }
         }
       }
     },
     "oobe.login.progressTitle" : {
-      "comment" : "Waiting view title shown during login process in onboarding",
+      "comment" : "Waiting view title shown during sign-in process in onboarding",
       "extractionState" : "extracted_with_value",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Go to the browser to complete log in"
+            "value" : "Finish signing in in your browser"
           }
         }
       }
@@ -7187,26 +7187,14 @@
         }
       }
     },
-    "settings.account.guest.detail" : {
-      "comment" : "Account settings - Detail explaining Guest data storage",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Your Phi browsing data is stored locally on this Mac."
-          }
-        }
-      }
-    },
     "settings.account.guest.loginButton" : {
-      "comment" : "Account settings - Button shown in the Guest account card to open login",
+      "comment" : "Account settings - Button shown in the Guest account card to open sign-in",
       "extractionState" : "extracted_with_value",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Log In"
+            "value" : "Sign in"
           }
         }
       }
@@ -7230,7 +7218,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Using Phi without an account"
+            "value" : "You’re using Phi without signing in"
           }
         }
       }
@@ -7272,19 +7260,19 @@
       }
     },
     "settings.account.logoutButton" : {
-      "comment" : "Account settings - Logout button",
+      "comment" : "Account settings - Sign-out button",
       "extractionState" : "extracted_with_value",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Logout"
+            "value" : "Sign out"
           }
         }
       }
     },
     "settings.account.logoutConfirmation.cancelButton" : {
-      "comment" : "Account settings - Cancel button in logout confirmation dialog",
+      "comment" : "Account settings - Cancel button in sign-out confirmation dialog",
       "extractionState" : "extracted_with_value",
       "localizations" : {
         "en" : {
@@ -7296,43 +7284,43 @@
       }
     },
     "settings.account.logoutConfirmation.logoutButton" : {
-      "comment" : "Account settings - Logout button in logout confirmation dialog",
+      "comment" : "Account settings - Sign-out button in sign-out confirmation dialog",
       "extractionState" : "extracted_with_value",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Logout"
+            "value" : "Sign out"
           }
         }
       }
     },
     "settings.account.logoutConfirmation.message" : {
-      "comment" : "Account settings - Logout confirmation dialog message",
+      "comment" : "Account settings - Sign-out confirmation dialog message",
       "extractionState" : "extracted_with_value",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "You will be logged out and returned to the login screen. Are you sure?"
+            "value" : "You’ll return to the sign-in screen."
           }
         }
       }
     },
     "settings.account.logoutConfirmation.title" : {
-      "comment" : "Account settings - Logout confirmation dialog title",
+      "comment" : "Account settings - Sign-out confirmation dialog title",
       "extractionState" : "extracted_with_value",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Confirm Logout"
+            "value" : "Sign out of Phi?"
           }
         }
       }
     },
     "settings.account.logoutFailure.dismissButton" : {
-      "comment" : "Account settings - OK button to dismiss logout failed alert",
+      "comment" : "Account settings - OK button to dismiss sign-out failed alert",
       "extractionState" : "extracted_with_value",
       "localizations" : {
         "en" : {
@@ -7344,37 +7332,37 @@
       }
     },
     "settings.account.logoutFailure.message" : {
-      "comment" : "Account settings - Alert message when logout fails",
+      "comment" : "Account settings - Alert message when sign-out fails",
       "extractionState" : "extracted_with_value",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Something went wrong when logging out"
+            "value" : "Something went wrong when signing out"
           }
         }
       }
     },
     "settings.account.logoutFailure.title" : {
-      "comment" : "Account settings - Alert title when logout fails",
+      "comment" : "Account settings - Alert title when sign-out fails",
       "extractionState" : "extracted_with_value",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Logout Failed"
+            "value" : "Sign out failed"
           }
         }
       }
     },
     "settings.account.logoutProgress.browserConfirmationStatus" : {
-      "comment" : "Account settings - Status shown while waiting for logout to finish",
+      "comment" : "Account settings - Status shown while waiting for sign-out to finish",
       "extractionState" : "extracted_with_value",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Confirm logout in the opened browser."
+            "value" : "Finish signing out in your browser."
           }
         }
       }
@@ -7848,25 +7836,25 @@
       }
     },
     "settings.ai.guestLoginPrompt.loginButton" : {
-      "comment" : "AI settings - Button in the Guest Mode AI prompt that opens login",
+      "comment" : "AI settings - Button in the Guest Mode AI prompt that opens sign-in",
       "extractionState" : "extracted_with_value",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Log In"
+            "value" : "Sign in"
           }
         }
       }
     },
     "settings.ai.guestLoginPrompt.message" : {
-      "comment" : "AI settings - Message above the AI master toggle when Guest Mode requires login",
+      "comment" : "AI settings - Message above the AI master toggle when Guest Mode requires sign-in",
       "extractionState" : "extracted_with_value",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "To use AI features, please log in."
+            "value" : "Sign in to use AI features."
           }
         }
       }
@@ -7896,13 +7884,13 @@
       }
     },
     "settings.ai.phiSentinel.autoLaunchToggle" : {
-      "comment" : "AI settings - Toggle to auto-launch Phi Sentinel at system login",
+      "comment" : "AI settings - Toggle to auto-launch Phi Sentinel when signing in to the Mac",
       "extractionState" : "extracted_with_value",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Launch Phi Sentinel automatically at login"
+            "value" : "Launch Phi Sentinel when you sign in to your Mac"
           }
         }
       }
@@ -8028,25 +8016,25 @@
       }
     },
     "settings.bitwardenLoginSheet.emailStep.title" : {
-      "comment" : "Bitwarden login sheet - Email step title",
+      "comment" : "Bitwarden sign-in sheet - Email step title",
       "extractionState" : "extracted_with_value",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Log in"
+            "value" : "Sign in"
           }
         }
       }
     },
     "settings.bitwardenLoginSheet.loginButton" : {
-      "comment" : "Bitwarden login sheet - submit button",
+      "comment" : "Bitwarden sign-in sheet - Submit button",
       "extractionState" : "extracted_with_value",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Log in"
+            "value" : "Sign in"
           }
         }
       }
@@ -8064,13 +8052,13 @@
       }
     },
     "settings.bitwardenLoginSheet.passwordStep.title" : {
-      "comment" : "Bitwarden login sheet - Password step title",
+      "comment" : "Bitwarden sign-in sheet - Password step title",
       "extractionState" : "extracted_with_value",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Log in"
+            "value" : "Sign in"
           }
         }
       }
@@ -8136,7 +8124,7 @@
       }
     },
     "settings.bitwardenLoginSheet.twoStepCodeField.label" : {
-      "comment" : "Bitwarden login sheet - 2FA field label",
+      "comment" : "Bitwarden sign-in sheet - Official two-step login field label",
       "extractionState" : "extracted_with_value",
       "localizations" : {
         "en" : {
@@ -8172,7 +8160,7 @@
       }
     },
     "settings.bitwardenUnlockSheet.twoStepCodeField.label" : {
-      "comment" : "Bitwarden login sheet - 2FA field label",
+      "comment" : "Bitwarden sign-in sheet - Official two-step login field label",
       "extractionState" : "extracted_with_value",
       "localizations" : {
         "en" : {
@@ -8880,25 +8868,25 @@
       }
     },
     "settings.developer.passwordManager.bitwarden.loginAction" : {
-      "comment" : "Phi & AI settings - Bitwarden log in action",
+      "comment" : "Phi & AI settings - Bitwarden sign-in action",
       "extractionState" : "extracted_with_value",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Log In…"
+            "value" : "Sign in…"
           }
         }
       }
     },
     "settings.developer.passwordManager.bitwarden.logoutAction" : {
-      "comment" : "Phi & AI settings - Bitwarden log out action",
+      "comment" : "Phi & AI settings - Bitwarden sign-out action",
       "extractionState" : "extracted_with_value",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Log Out"
+            "value" : "Sign out"
           }
         }
       }
@@ -9108,13 +9096,13 @@
       }
     },
     "settings.developer.passwordManager.session.timeoutAction.logout" : {
-      "comment" : "Bitwarden timeout action - log out",
+      "comment" : "Bitwarden timeout action - sign out",
       "extractionState" : "extracted_with_value",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Log out"
+            "value" : "Sign out"
           }
         }
       }

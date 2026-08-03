@@ -131,8 +131,8 @@ private struct GuestAILoginPromptRow: View {
         HStack(spacing: 12) {
             Text(NSLocalizedString(
                 "settings.ai.guestLoginPrompt.message",
-                value: "To use AI features, please log in.",
-                comment: "AI settings - Message above the AI master toggle when Guest Mode requires login"
+                value: "Sign in to use AI features.",
+                comment: "AI settings - Message above the AI master toggle when Guest Mode requires sign-in"
             ))
             .font(.system(size: 13))
             .themedForeground(.textSecondary)
@@ -142,8 +142,8 @@ private struct GuestAILoginPromptRow: View {
             Button(
                 NSLocalizedString(
                     "settings.ai.guestLoginPrompt.loginButton",
-                    value: "Log In",
-                    comment: "AI settings - Button in the Guest Mode AI prompt that opens login"
+                    value: "Sign in",
+                    comment: "AI settings - Button in the Guest Mode AI prompt that opens sign-in"
                 ),
                 action: loginAction
             )
@@ -226,7 +226,7 @@ private struct PhiSentinelSectionView: View {
         ) {
             AIContainerView {
                 AIToggleRow(
-                    title: NSLocalizedString("settings.ai.phiSentinel.autoLaunchToggle", value: "Launch Phi Sentinel automatically at login", comment: "AI settings - Toggle to auto-launch Phi Sentinel at system login"),
+                    title: NSLocalizedString("settings.ai.phiSentinel.autoLaunchToggle", value: "Launch Phi Sentinel when you sign in to your Mac", comment: "AI settings - Toggle to auto-launch Phi Sentinel when signing in to the Mac"),
                     isOn: $launchSentinelOnLogin,
                     enabled: enabled
                 )

@@ -520,10 +520,10 @@ class AccountViewModel: ObservableObject {
     @MainActor
     private func showLogoutConfirmation() -> Bool {
         let alert = NSAlert()
-        alert.messageText = NSLocalizedString("settings.account.logoutConfirmation.title", value: "Confirm Logout", comment: "Account settings - Logout confirmation dialog title")
-        alert.informativeText = NSLocalizedString("settings.account.logoutConfirmation.message", value: "You will be logged out and returned to the login screen. Are you sure?", comment: "Account settings - Logout confirmation dialog message")
-        alert.addButton(withTitle: NSLocalizedString("settings.account.logoutConfirmation.cancelButton", value: "Cancel", comment: "Account settings - Cancel button in logout confirmation dialog"))
-        alert.addButton(withTitle: NSLocalizedString("settings.account.logoutConfirmation.logoutButton", value: "Logout", comment: "Account settings - Logout button in logout confirmation dialog"))
+        alert.messageText = NSLocalizedString("settings.account.logoutConfirmation.title", value: "Sign out of Phi?", comment: "Account settings - Sign-out confirmation dialog title")
+        alert.informativeText = NSLocalizedString("settings.account.logoutConfirmation.message", value: "You’ll return to the sign-in screen.", comment: "Account settings - Sign-out confirmation dialog message")
+        alert.addButton(withTitle: NSLocalizedString("settings.account.logoutConfirmation.cancelButton", value: "Cancel", comment: "Account settings - Cancel button in sign-out confirmation dialog"))
+        alert.addButton(withTitle: NSLocalizedString("settings.account.logoutConfirmation.logoutButton", value: "Sign out", comment: "Account settings - Sign-out button in sign-out confirmation dialog"))
         alert.alertStyle = .warning
         return alert.runModal() == .alertSecondButtonReturn
     }
@@ -531,10 +531,10 @@ class AccountViewModel: ObservableObject {
     @MainActor
     private func showLogoutFailedAlert() {
         let alert = NSAlert()
-        alert.messageText = NSLocalizedString("settings.account.logoutFailure.title", value: "Logout Failed", comment: "Account settings - Alert title when logout fails")
-        alert.informativeText = NSLocalizedString("settings.account.logoutFailure.message", value: "Something went wrong when logging out", comment: "Account settings - Alert message when logout fails")
+        alert.messageText = NSLocalizedString("settings.account.logoutFailure.title", value: "Sign out failed", comment: "Account settings - Alert title when sign-out fails")
+        alert.informativeText = NSLocalizedString("settings.account.logoutFailure.message", value: "Something went wrong when signing out", comment: "Account settings - Alert message when sign-out fails")
         alert.alertStyle = .warning
-        alert.addButton(withTitle: NSLocalizedString("settings.account.logoutFailure.dismissButton", value: "OK", comment: "Account settings - OK button to dismiss logout failed alert"))
+        alert.addButton(withTitle: NSLocalizedString("settings.account.logoutFailure.dismissButton", value: "OK", comment: "Account settings - OK button to dismiss sign-out failed alert"))
         alert.runModal()
     }
 
@@ -1015,8 +1015,8 @@ class AccountCardView: SettingItemBackgroundView {
     }()
 
     private let logoutStatusLabel: NSTextField = {
-        let tf = NSTextField(labelWithString: NSLocalizedString("settings.account.logoutProgress.browserConfirmationStatus", value: "Confirm logout in the opened browser.",
-            comment: "Account settings - Status shown while waiting for logout to finish"
+        let tf = NSTextField(labelWithString: NSLocalizedString("settings.account.logoutProgress.browserConfirmationStatus", value: "Finish signing out in your browser.",
+            comment: "Account settings - Status shown while waiting for sign-out to finish"
         ))
         tf.font = .systemFont(ofSize: 11, weight: .medium)
         tf.textColor = .secondaryLabelColor
@@ -1031,7 +1031,7 @@ class AccountCardView: SettingItemBackgroundView {
 
     private let logoutButton: NSButton = {
         let btn = NSButton()
-        btn.title = NSLocalizedString("settings.account.logoutButton", value: "Logout", comment: "Account settings - Logout button")
+        btn.title = NSLocalizedString("settings.account.logoutButton", value: "Sign out", comment: "Account settings - Sign-out button")
         btn.bezelStyle = .rounded
         btn.image = NSImage(systemSymbolName: "rectangle.portrait.and.arrow.right", accessibilityDescription: nil)
         btn.imagePosition = .imageLeading
@@ -1042,8 +1042,8 @@ class AccountCardView: SettingItemBackgroundView {
         let btn = NSButton()
         btn.title = NSLocalizedString(
             "settings.account.guest.loginButton",
-            value: "Log In",
-            comment: "Account settings - Button shown in the Guest account card to open login"
+            value: "Sign in",
+            comment: "Account settings - Button shown in the Guest account card to open sign-in"
         )
         btn.bezelStyle = .rounded
         btn.isHidden = true
@@ -1333,6 +1333,7 @@ class AccountCardView: SettingItemBackgroundView {
     func updateGuestPresentation(_ isGuest: Bool) {
         guard isGuestPresentation != isGuest else { return }
         isGuestPresentation = isGuest
+        updateNameLayout(isGuest: isGuest)
         avatarRevalidateTask?.cancel()
         avatarRevalidateTask = nil
         canEdit = isGuest ? false : viewModel.canEditUserName
@@ -1345,18 +1346,13 @@ class AccountCardView: SettingItemBackgroundView {
             logoutButton.isHidden = true
             loginButton.isHidden = false
             nameLabel.isHidden = false
-            emailLabel.isHidden = false
+            emailLabel.isHidden = true
             logoutStatusLabel.isHidden = true
             reauthenticationWarningLabel.isHidden = true
             nameLabel.stringValue = NSLocalizedString(
                 "settings.account.guest.title",
-                value: "Using Phi without an account",
+                value: "You’re using Phi without signing in",
                 comment: "Account settings - Title of the Guest account card"
-            )
-            emailLabel.stringValue = NSLocalizedString(
-                "settings.account.guest.detail",
-                value: "Your Phi browsing data is stored locally on this Mac.",
-                comment: "Account settings - Detail explaining Guest data storage"
             )
             avatarImageView.image = NSImage(
                 systemSymbolName: "person.crop.circle.fill",
@@ -1369,6 +1365,28 @@ class AccountCardView: SettingItemBackgroundView {
             emailLabel.stringValue = viewModel.userEmail
             updateLoadingState(viewModel.isLoading)
             updateLogoutButtonState(viewModel.isLogoutInProgress)
+        }
+    }
+
+    private func updateNameLayout(isGuest: Bool) {
+        nameHoverArea.snp.remakeConstraints { make in
+            make.left.equalTo(avatarContainerView.snp.right)
+            make.right.equalTo(logoutButton.snp.left).offset(-4)
+            make.top.equalToSuperview()
+            if isGuest {
+                make.bottom.equalToSuperview()
+            } else {
+                make.bottom.equalTo(snp.centerY)
+            }
+        }
+
+        nameLabel.snp.remakeConstraints { make in
+            make.left.equalToSuperview().offset(12)
+            if isGuest {
+                make.centerY.equalToSuperview()
+            } else {
+                make.bottom.equalToSuperview().offset(-2)
+            }
         }
     }
 

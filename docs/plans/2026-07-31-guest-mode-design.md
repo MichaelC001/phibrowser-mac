@@ -17,13 +17,13 @@ Chromium's isolated and ephemeral Guest Profile.
 
 ## Product Decisions
 
-- The login screen offers an unobtrusive **Continue without an account**
+- The sign-in screen offers an unobtrusive **Explore Phi without signing in**
   action below the login button.
 - Guest Mode persists across quit and relaunch after the user explicitly
   selects it.
 - Guest Mode reuses the same Chromium profiles, cookies, site sessions,
   history, extensions, and password data before and after Phi account login.
-- A logout, expired session, or account deletion returns to the login screen.
+- A sign-out, expired session, or account deletion returns to the sign-in screen.
   It does not silently enter Guest Mode.
 - Guest-owned Phi data is stored under `AccountController.defaultAccount`.
 - A successful Phi account login merges Guest-owned local data into the target
@@ -92,7 +92,7 @@ Startup resolves access in this order:
 3. The pending Guest-migration journal and its filesystem boundary.
 4. A persisted explicit Guest choice.
 5. Another recoverable authenticated session and its onboarding phase.
-6. The login screen.
+6. The sign-in screen.
 
 The persisted Guest choice is loaded synchronously before Chromium first asks
 whether browser UI is available.
@@ -162,7 +162,7 @@ implementation.
 
 `LoginViewController` adds a secondary text-style button:
 
-- Title: **Continue without an account**
+- Title: **Explore Phi without signing in**
 - Placement: below the primary login button
 - Visual priority: tertiary, but keyboard accessible
 
@@ -174,9 +174,8 @@ browser access.
 The Account pane must render an explicit Guest state instead of a loading or
 empty account card:
 
-- Title: **Using Phi without an account**
-- Detail: **Your Phi browsing data is stored locally on this Mac.**
-- Primary action: **Log In**
+- Title: **You’re using Phi without signing in**
+- Primary action: **Sign in**
 
 Authenticated-only profile editing and logout controls are hidden. Local
 browser settings remain available.
@@ -201,9 +200,9 @@ for account-backed surfaces reached through a stale tab or direct internal URL:
 
 The presentation contains:
 
-- Title: **Log in to use Phi AI**
+- Title: **Sign in to use Phi AI**
 - Detail: **This feature requires a Phi account.**
-- Action: **Log In**
+- Action: **Sign in**
 
 The Phi AI master toggle and all subordinate AI controls are disabled in Guest
 Mode. The AI settings pane shows a login prompt immediately above the master

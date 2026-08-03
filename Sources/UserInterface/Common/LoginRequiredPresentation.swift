@@ -71,7 +71,7 @@ struct LoginRequiredPresentationView: View {
 
             Text(NSLocalizedString(
                 "accountRequired.phiAI.title",
-                value: "Log in to use Phi AI",
+                value: "Sign in to use Phi AI",
                 comment: "Account-required presentation - Title shown when a Guest opens a Phi AI feature"
             ))
             .font(.system(size: 16, weight: .semibold))
@@ -88,8 +88,8 @@ struct LoginRequiredPresentationView: View {
             Button(action: loginAction) {
                 Text(NSLocalizedString(
                     "accountRequired.phiAI.loginButton",
-                    value: "Log In",
-                    comment: "Account-required presentation - Button that opens the Phi login window"
+                    value: "Sign in",
+                    comment: "Account-required presentation - Button that opens the Phi sign-in window"
                 ))
                 .frame(minWidth: 72)
             }

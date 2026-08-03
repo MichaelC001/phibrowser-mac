@@ -44,7 +44,7 @@ enum BitwardenTimeoutAction: String, CaseIterable, Identifiable {
     var label: String {
         switch self {
         case .lock: return NSLocalizedString("settings.developer.passwordManager.session.timeoutAction.lock", value: "Lock", comment: "Bitwarden timeout action - lock")
-        case .logOut: return NSLocalizedString("settings.developer.passwordManager.session.timeoutAction.logout", value: "Log out", comment: "Bitwarden timeout action - log out")
+        case .logOut: return NSLocalizedString("settings.developer.passwordManager.session.timeoutAction.logout", value: "Sign out", comment: "Bitwarden timeout action - sign out")
         }
     }
 
