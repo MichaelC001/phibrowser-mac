@@ -753,7 +753,7 @@ private struct DeveloperModeSectionView: View {
     private var hintRow: some View {
         Text(developerModeEnabled
             ? NSLocalizedString("settings.general.developerMode.enabledHint", value: "Agent access, permissions, and the password manager live in the Developer tab.", comment: "General settings - Hint under the developer mode toggle pointing at the Developer settings pane")
-            : NSLocalizedString("settings.general.developerMode.disabledHint", value: "Turning developer mode off also turns off agent access and the agent password manager.", comment: "General settings - Hint under the developer mode toggle explaining the kill-switch behavior"))
+            : NSLocalizedString("settings.general.developerMode.disabledHint", value: "Turning developer mode off turns off agent access and the agent password manager, and revokes every allowed agent and credential approval. An agent that connects later can ask you to turn it back on.", comment: "General settings - Hint under the developer mode toggle explaining the kill-switch behavior, the revoked approvals, and that an agent may request it back"))
             .font(.system(size: 11))
             .themedForeground(.textTertiary)
             .fixedSize(horizontal: false, vertical: true)

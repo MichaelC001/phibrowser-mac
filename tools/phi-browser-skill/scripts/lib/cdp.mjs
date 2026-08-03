@@ -5,9 +5,15 @@
 // the accepted connection into Chromium's DevTools server; agent-Space
 // management/lifecycle is served by the app directly on the same socket
 // (/phi-agent). This client discovers the socket from a pointer file the app
-// writes and speaks HTTP + the CDP WebSocket over it. The `--remote-debugging
-// -port` developer override exposes raw CDP for other tools but has no
-// authenticated agent-Space surface, so the skill requires the socket.
+// writes and speaks HTTP + the CDP WebSocket over it. The socket is there
+// whenever Phi runs, switched on or not: connecting while agent control is off
+// raises the consent prompt that offers to turn it on, so the skill never has
+// to send the user into Settings first.
+//
+// That socket is Phi's ONLY CDP surface. `--remote-debugging-port` and
+// `--remote-debugging-pipe` are stripped from the launch arguments before
+// Chromium sees them (ChromiumLauncher.m), because a TCP or pipe endpoint
+// would supplant the FD-injection transport the app owns.
 
 import crypto from 'node:crypto'
 import http from 'node:http'
@@ -27,30 +33,30 @@ const CANDIDATE_DIRS = [
 const CONSENT_WAIT_MS = 180000
 
 const NOT_FOUND_MESSAGE =
-  'Phi Browser CDP endpoint not found. Turn on Settings ▸ Developer ▸ ' +
-  'Remote debugging ▸ “Allow agents to control Phi (CDP)” (it applies ' +
-  'immediately — no relaunch), then approve this agent when Phi asks. ' +
-  'See references/install.md.'
+  'Phi Browser CDP endpoint not found. Phi publishes the socket whenever it ' +
+  'runs — with agent control switched off it still answers, by asking the ' +
+  'user to turn it on — so this means Phi Browser is not running, or it is a ' +
+  'different install than the one being looked at (set PHI_USER_DATA_DIR to ' +
+  'pick one). See references/install.md.'
 
 const DENIED_MESSAGE =
-  'Phi Browser denied this agent CDP access. Approve it in the Phi prompt ' +
-  '(or remove it under Settings ▸ Developer ▸ Remote debugging ▸ ' +
-  'Remembered agents and reconnect to be asked again).'
-
-const TCP_ONLY_MESSAGE =
-  'Phi Browser\'s --remote-debugging-port is on, but the phi-browser skill ' +
-  'needs the app-owned socket: agent Spaces require authenticated access. ' +
-  'Turn on Settings ▸ Developer ▸ Remote debugging ▸ “Allow agents to control ' +
-  'Phi (CDP)”. The debugging port serves raw CDP tools only.'
+  'Phi Browser denied this agent CDP access. The user may have blocked it for ' +
+  '30 minutes or for good, in which case retrying will not prompt again — ask ' +
+  'them to allow it, or to unblock it under Settings ▸ Developer ▸ Remote ' +
+  'debugging ▸ Blocked agents.'
 
 /**
- * All plausible endpoints in precedence order — the PHI_USER_DATA_DIR
- * override, then canary, then stable: UDS pointers first (across ALL dirs),
- * then any `--remote-debugging-port` TCP override. A pointer or socket FILE
- * can outlive a crashed app (a crash skips the clean-quit unlink), so
- * existence is not liveness — callers walk the list and probe, see
- * discoverLiveEndpoint. Each entry is `{kind: 'uds', socketPath}` or
- * `{kind: 'tcp'}`.
+ * All plausible socket endpoints in precedence order — the PHI_USER_DATA_DIR
+ * override, then canary, then stable. A pointer or socket FILE can outlive a
+ * crashed app (a crash skips the clean-quit unlink), so existence is not
+ * liveness — callers walk the list and probe, see discoverLiveEndpoint. Each
+ * entry is `{socketPath}`.
+ *
+ * A `DevToolsActivePort` file in one of these dirs is deliberately ignored:
+ * only the retired TCP transport ever wrote one (the injected transport is
+ * handed an empty output dir precisely to suppress it), so today it can only
+ * be a leftover from a build that predates the app-owned socket. Treating it
+ * as an endpoint used to mask the real answer — Phi isn't running.
  */
 export function discoverEndpoints() {
   const out = []
@@ -60,11 +66,8 @@ export function discoverEndpoints() {
     const socketPath = readFileSync(pointer, 'utf8')
       .split('\n').map((l) => l.trim()).filter(Boolean)[0]
     if (socketPath && existsSync(socketPath)) {
-      out.push({ kind: 'uds', socketPath })
+      out.push({ socketPath })
     }
-  }
-  for (const dir of CANDIDATE_DIRS) {
-    if (existsSync(join(dir, 'DevToolsActivePort'))) out.push({ kind: 'tcp' })
   }
   return out
 }
@@ -165,8 +168,9 @@ export async function verifyEndpoint(endpoint, { agentPid = null,
         `(unsandboxed) permissions. [${err.message}]`)
     }
     throw new Error(
-      `Phi Browser CDP endpoint is not responding. Toggle it off and on in ` +
-      `Settings ▸ Developer ▸ Remote debugging. [${err.message}]`)
+      `Phi Browser CDP endpoint is not responding. A consent prompt may be ` +
+      `waiting for the user in Phi; otherwise check that Phi Browser is ` +
+      `running. [${err.message}]`)
   }
   // The browser advertises its target as ws://<host>/devtools/browser/<uuid>;
   // only the path matters (the transport is our socket, not that host:port).
@@ -596,14 +600,8 @@ export class DirectPhiChannel {
 export async function connectBrowser({ agentPid = null, agentCapability = null } = {}) {
   const candidates = discoverEndpoints()
   if (candidates.length === 0) throw new Error(NOT_FOUND_MESSAGE)
-  const uds = candidates.filter((c) => c.kind === 'uds')
-  if (uds.length === 0) {
-    // The --remote-debugging-port override has no authenticated agent-Space
-    // surface, so the skill can't drive agent Spaces over it.
-    throw new Error(TCP_ONLY_MESSAGE)
-  }
   let lastErr = null
-  for (const endpoint of uds) {
+  for (const endpoint of candidates) {
     let browserWsPath
     try {
       ({ browserWsPath } = await verifyEndpoint(endpoint,

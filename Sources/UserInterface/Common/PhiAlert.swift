@@ -1108,3 +1108,56 @@ extension PhiAlert where Icon == EmptyView, AlertContent == EmptyView, Actions =
     .background(Color(nsColor: .underPageBackgroundColor))
 }
 #endif
+
+/// Segmented option control matching the alert's rounded styling (a native
+/// segmented control would fight the material surface). Shared by the alerts
+/// that ask "for how long?" — agent access and credential approval — so the
+/// two prompts a user meets from the same agent look like one system.
+struct PhiAlertSegmentedPicker<Option: Hashable>: View {
+    let options: [Option]
+    @Binding var selection: Option
+    let title: KeyPath<Option, String>
+
+    @Environment(\.phiAppearance) private var appearance
+    @Namespace private var segmentNamespace
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(options, id: \.self) { option in
+                segment(option)
+            }
+        }
+        .padding(2)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(appearance.isLight ? Color.black.opacity(0.05) : Color.white.opacity(0.08))
+        )
+    }
+
+    private func segment(_ option: Option) -> some View {
+        let isSelected = selection == option
+        return Button {
+            withAnimation(.easeOut(duration: 0.15)) {
+                selection = option
+            }
+        } label: {
+            Text(option[keyPath: title])
+                .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
+                .themedForeground(.textPrimary)
+                .lineLimit(1)
+                .padding(.vertical, 5)
+                .frame(maxWidth: .infinity)
+                .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .background {
+            if isSelected {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(appearance.isLight ? Color.white : Color.white.opacity(0.22))
+                    .shadow(color: .black.opacity(appearance.isLight ? 0.12 : 0.3),
+                            radius: 1.5, y: 0.5)
+                    .matchedGeometryEffect(id: "selectedSegment", in: segmentNamespace)
+            }
+        }
+    }
+}

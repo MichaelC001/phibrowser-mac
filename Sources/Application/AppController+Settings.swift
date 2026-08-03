@@ -43,22 +43,35 @@ extension AppController {
     /// not just UI hiding: the Developer tab disappears AND the features it
     /// governs shut off — agent CDP access (listener, View-menu items,
     /// transcript panel) and the agent password manager (provider disabled,
-    /// session grants dropped, vault locked; the account stays on disk).
-    /// Turning developer mode back on re-enables nothing automatically.
+    /// vault locked; the account stays on disk).
+    ///
+    /// It also revokes, not merely suspends, every standing agent permission:
+    /// the allowed-agent list and all credential approvals — including the
+    /// persisted "Always" ones — are erased. Nothing an agent was previously
+    /// trusted with survives the switch, so turning developer mode back on
+    /// starts from zero: each agent asks for browser control again, and for
+    /// each credential again. That is the whole point of a kill-switch; a
+    /// version that left the grants in place would silently re-arm them.
+    ///
     /// SwiftUI callers must defer to the next runloop turn: the window
     /// rebuild closes the window hosting the toggle's own view.
     @MainActor
     func setDeveloperModeEnabled(_ enabled: Bool) {
         PhiPreferences.AgentSpaces.developerModeEnabled = enabled
         if !enabled {
-            if PhiPreferences.AgentSpaces.cdpAgentAccessEnabled {
-                AgentCDPListener.shared.setEnabled(false)
-            }
+            // Agent browser control: sever live connections, then forget every
+            // agent that was ever allowed through. Idempotent when the switch
+            // was already off — the grants still have to go.
+            AgentCDPListener.shared.setEnabled(false)
+            AgentCDPListener.shared.forgetAllGrants()
+
+            // Agent credential access: revoke every approval outright (the
+            // approvals sheet's own Revoke All), not just the timed ones.
+            CredentialGrantStore.shared.revokeAll()
             if PhiPreferences.PasswordManagerSettings.bitwardenEnabled.loadValue() {
                 // Mirrors the password manager card's own disable path.
                 UserDefaults.standard.set(
                     false, forKey: PhiPreferences.PasswordManagerSettings.bitwardenEnabled.rawValue)
-                CredentialAccessCoordinator.shared.clearGrants()
                 Task { await BitwardenService.shared.lock() }
             }
         }

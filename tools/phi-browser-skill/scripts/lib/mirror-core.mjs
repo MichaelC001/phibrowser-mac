@@ -215,10 +215,10 @@ function sanitizeKey(id) {
  * names the agent in the app's logs.
  */
 export async function openPhiChannel({ agentPid = null, agentCapability = null } = {}) {
-  const uds = discoverEndpoints().filter((c) => c.kind === 'uds')
-  if (uds.length === 0) throw new Error('no app socket endpoint')
+  const endpoints = discoverEndpoints()
+  if (endpoints.length === 0) throw new Error('no app socket endpoint')
   let lastErr = null
-  for (const endpoint of uds) {
+  for (const endpoint of endpoints) {
     try {
       return await new DirectPhiChannel({
         socketPath: endpoint.socketPath,

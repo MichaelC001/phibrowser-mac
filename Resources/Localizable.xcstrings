@@ -695,6 +695,18 @@
         }
       }
     },
+    "agentControl.connectionApproval.agentLabel" : {
+      "comment" : "CDP consent - agent row label",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Agent"
+          }
+        }
+      }
+    },
     "agentControl.connectionApproval.allowOnceButton" : {
       "comment" : "CDP consent - allow for this session",
       "extractionState" : "extracted_with_value",
@@ -719,6 +731,18 @@
         }
       }
     },
+    "agentControl.connectionApproval.control.headline" : {
+      "comment" : "CDP consent - headline naming what agent access grants",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Full control of this browser"
+          }
+        }
+      }
+    },
     "agentControl.connectionApproval.denyButton" : {
       "comment" : "CDP consent - deny",
       "extractionState" : "extracted_with_value",
@@ -727,6 +751,114 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "Deny"
+          }
+        }
+      }
+    },
+    "agentControl.connectionApproval.denyScope.allAgentsDescription" : {
+      "comment" : "CDP consent - all-agents deny row explanation",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Turn away every agent, not just “%@”."
+          }
+        }
+      }
+    },
+    "agentControl.connectionApproval.denyScope.allAgentsTitle" : {
+      "comment" : "CDP consent - all-agents deny row title",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Apply to all agents"
+          }
+        }
+      }
+    },
+    "agentControl.connectionApproval.denyScope.forever" : {
+      "comment" : "CDP consent - deny scope segment: refuse permanently",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Never ask again"
+          }
+        }
+      }
+    },
+    "agentControl.connectionApproval.denyScope.label" : {
+      "comment" : "CDP consent - label over the picker that scopes the Deny button",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "If you deny:"
+          }
+        }
+      }
+    },
+    "agentControl.connectionApproval.denyScope.reviewHint" : {
+      "comment" : "CDP consent - hint shown when the permanent deny scope is selected",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Blocked agents can be unblocked anytime in Settings ▸ Developer."
+          }
+        }
+      }
+    },
+    "agentControl.connectionApproval.denyScope.thirtyMinutes" : {
+      "comment" : "CDP consent - deny scope segment: refuse without asking again for thirty minutes",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "For 30 min"
+          }
+        }
+      }
+    },
+    "agentControl.connectionApproval.denyScope.thisTime" : {
+      "comment" : "CDP consent - deny scope segment: refuse this connection only",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Just this time"
+          }
+        }
+      }
+    },
+    "agentControl.connectionApproval.enablesFeature.headline" : {
+      "comment" : "CDP consent - headline shown when allowing will also enable the feature",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Agent control is currently off"
+          }
+        }
+      }
+    },
+    "agentControl.connectionApproval.enablesFeatureNote" : {
+      "comment" : "CDP consent - body of the banner shown when allowing will also enable the developer mode and agent control settings",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Allowing also turns on Developer mode and “Allow agents to control Phi (CDP)” in Settings; you can switch them back off there at any time."
           }
         }
       }
@@ -763,6 +895,18 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "verified"
+          }
+        }
+      }
+    },
+    "agentControl.connectionApproval.identityLabel" : {
+      "comment" : "CDP consent - code signing identity row label",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Identity"
           }
         }
       }
@@ -7727,6 +7871,114 @@
         }
       }
     },
+    "settings.developer.agentControl.block.allAgentsForeverSubtitle" : {
+      "comment" : "Developer settings - subtitle for a permanent all-agents block",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "No agent is asked for approval"
+          }
+        }
+      }
+    },
+    "settings.developer.agentControl.block.foreverSubtitle" : {
+      "comment" : "Developer settings - subtitle for a permanent single-agent block",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Refused without asking"
+          }
+        }
+      }
+    },
+    "settings.developer.agentControl.block.permanentStatus" : {
+      "comment" : "Developer settings - permanent block pill",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Never"
+          }
+        }
+      }
+    },
+    "settings.developer.agentControl.block.temporaryStatus" : {
+      "comment" : "Developer settings - temporary block pill",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Paused"
+          }
+        }
+      }
+    },
+    "settings.developer.agentControl.block.untilSubtitle" : {
+      "comment" : "Developer settings - subtitle for a timed block; %@ is a time of day",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Until %@"
+          }
+        }
+      }
+    },
+    "settings.developer.agentControl.blockedAgents.allAgentsName" : {
+      "comment" : "Developer settings - name of the blocked-agents entry that covers every agent",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "All agents"
+          }
+        }
+      }
+    },
+    "settings.developer.agentControl.blockedAgents.description" : {
+      "comment" : "Developer settings - Explanation for the blocked agent list",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Turned away without asking you, from a “Never ask again” or “For 30 min” denial. Unblocking one makes it ask again next time it connects."
+          }
+        }
+      }
+    },
+    "settings.developer.agentControl.blockedAgents.removeButton" : {
+      "comment" : "Developer settings - Lift a standing refusal",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Unblock"
+          }
+        }
+      }
+    },
+    "settings.developer.agentControl.blockedAgents.title" : {
+      "comment" : "Developer settings - Title for the list of agents refused at the consent prompt",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Blocked agents"
+          }
+        }
+      }
+    },
     "settings.developer.agentControl.enableDescription" : {
       "comment" : "Developer settings - Security note for the agent CDP toggle",
       "extractionState" : "extracted_with_value",
@@ -7734,7 +7986,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Lets agent tools (Claude Code, Codex) drive Phi over the DevTools Protocol through a private socket only this Mac’s processes can reach. Each agent asks for your approval the first time it connects. Applies immediately."
+            "value" : "Lets agent tools (Claude Code, Codex) drive Phi over the DevTools Protocol through a private socket only this Mac’s processes can reach. Each agent asks for your approval the first time it connects. Turning this off disconnects them right away; the next agent that connects asks you to turn it back on. Applies immediately."
           }
         }
       }
@@ -8748,13 +9000,13 @@
       }
     },
     "settings.general.developerMode.disabledHint" : {
-      "comment" : "General settings - Hint under the developer mode toggle explaining the kill-switch behavior",
+      "comment" : "General settings - Hint under the developer mode toggle explaining the kill-switch behavior, the revoked approvals, and that an agent may request it back",
       "extractionState" : "extracted_with_value",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Turning developer mode off also turns off agent access and the agent password manager."
+            "value" : "Turning developer mode off turns off agent access and the agent password manager, and revokes every allowed agent and credential approval. An agent that connects later can ask you to turn it back on."
           }
         }
       }

@@ -92,9 +92,11 @@ import PostHog
         DefaultExtensionManifestWriter.start()
         FeedbackOutboxUploader.shared.start()
 
-        // Start the agent CDP socket listener when the user has enabled agent
-        // browser control (Settings ▸ Developer ▸ Remote debugging).
-        AgentCDPListener.shared.startIfEnabled()
+        // The agent CDP socket listens for the whole app session, whether or
+        // not agent browser control is switched on: an agent that connects
+        // while it is off gets a consent prompt offering to turn it on, rather
+        // than an endpoint that isn't there (see AgentCDPListener).
+        AgentCDPListener.shared.start()
         
         NotificationCenter.default.addObserver(self,
                                                selector: #selector(phiWillTryToTerminateApplicationNotification(_:)),

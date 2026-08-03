@@ -238,6 +238,7 @@ extension PhiPreferences {
         private static let developerModeKey = "PhiDeveloperModeEnabled"
         private static let cdpAgentAccessKey = "PhiCDPAgentAccessEnabled"
         private static let rememberedAgentGrantsKey = "PhiCDPRememberedAgentGrants"
+        private static let agentDenialsKey = "PhiCDPAgentDenials"
         private static let autoViewKey = "PhiAgentSpaceAutoView"
         private static let userSpaceOperationsKey = "PhiAgentUserSpaceOperationsEnabled"
         private static let disallowedAgentProfilesKey = "PhiAgentDisallowedProfileIds"
@@ -247,9 +248,12 @@ extension PhiPreferences {
         /// and the features configured there. Driven by the "Developer mode"
         /// toggle in Settings ▸ General. Turning it OFF is a kill-switch, not
         /// just UI hiding: agent CDP access and the agent password manager are
-        /// disabled with it (see `AppController.setDeveloperModeEnabled`).
-        /// Turning it back ON re-enables nothing automatically — each feature
-        /// is re-enabled individually in the Developer tab. Defaults off,
+        /// disabled with it, AND every standing agent permission is revoked —
+        /// the allowed-agent list and all credential approvals, persisted ones
+        /// included (see `AppController.setDeveloperModeEnabled`). Turning it
+        /// back ON re-enables nothing and restores no permission: each feature
+        /// is re-enabled individually in the Developer tab, and every agent
+        /// asks for consent again from scratch. Defaults off,
         /// with a backfill: while the toggle was never touched, a user who
         /// already enabled agent CDP access or the agent password manager
         /// (pre-default-off users, or Bitwarden picked during onboarding) has
@@ -351,10 +355,13 @@ extension PhiPreferences {
 
         /// Settings ▸ Developer ▸ Remote debugging: master switch for agent CDP
         /// access over the app-owned Unix-domain socket (see
-        /// `AgentCDPListener`). Read live — flipping it starts or stops the
-        /// listener immediately, no relaunch, and shows or hides the View ▸
-        /// Agent Autoview / Agent Transcript menu items. Default off: while
-        /// on, an approved agent process can drive the browser.
+        /// `AgentCDPListener`). Read live — flipping it off severs every live
+        /// agent connection immediately, no relaunch, and shows or hides the
+        /// View ▸ Agent Autoview / Agent Transcript menu items. Default off:
+        /// while on, an approved agent process can drive the browser. The
+        /// socket listens either way, so an agent that connects while this is
+        /// off reaches the consent prompt, which offers to turn it on — that
+        /// prompt is the only thing outside Settings that may set it.
         static var cdpAgentAccessEnabled: Bool {
             get { UserDefaults.standard.bool(forKey: cdpAgentAccessKey) }
             set { UserDefaults.standard.set(newValue, forKey: cdpAgentAccessKey) }
@@ -374,6 +381,30 @@ extension PhiPreferences {
                 } else {
                     UserDefaults.standard.set(Array(newValue), forKey: rememberedAgentGrantsKey)
                 }
+            }
+        }
+
+        /// Standing refusals from the consent prompt's deny options — "Don't
+        /// ask for 30 min" and "Never ask again", each optionally widened to
+        /// all agents. A covered peer is turned away without a prompt (see
+        /// `AgentCDPListener.evaluate`). Timed entries are persisted, not
+        /// session-scoped: see `AgentDenial` for why a denial must not be
+        /// forgotten at relaunch the way a grant is. Empty by default; the
+        /// Settings "Blocked agents" list and re-enabling the CDP switch are
+        /// the two ways back.
+        static var agentDenials: [AgentDenial] {
+            get {
+                guard let data = UserDefaults.standard.data(forKey: agentDenialsKey),
+                      let decoded = try? JSONDecoder().decode([AgentDenial].self, from: data)
+                else { return [] }
+                return decoded
+            }
+            set {
+                guard !newValue.isEmpty, let data = try? JSONEncoder().encode(newValue) else {
+                    UserDefaults.standard.removeObject(forKey: agentDenialsKey)
+                    return
+                }
+                UserDefaults.standard.set(data, forKey: agentDenialsKey)
             }
         }
 

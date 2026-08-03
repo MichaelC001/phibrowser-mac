@@ -83,6 +83,50 @@ struct AgentGrant: Identifiable {
     }
 }
 
+/// A standing refusal recorded from the consent prompt's deny options: the
+/// peer is turned away with no prompt at all until `expires` — or forever, for
+/// "Never ask again". `key` is an `AgentIdentity.key`, or nil for the
+/// "all agents" scope, which turns away every agent including ones never seen.
+///
+/// Unlike `CredentialGrant`, timed entries are persisted rather than dropped at
+/// relaunch. The asymmetry is deliberate: forgetting a *grant* fails safe (the
+/// agent must ask again), while forgetting a *denial* fails open (the agent the
+/// user just silenced starts prompting again after an unrelated restart).
+struct AgentDenial: Codable, Equatable, Identifiable {
+    /// nil = every agent.
+    let key: String?
+    /// nil = never expires.
+    let expires: Date?
+
+    var id: String {
+        (key ?? "*") + "@" + (expires.map { String($0.timeIntervalSince1970) } ?? "never")
+    }
+
+    var appliesToAllAgents: Bool { key == nil }
+    var isPermanent: Bool { expires == nil }
+    var isExpired: Bool { (expires ?? .distantFuture) <= Date() }
+
+    /// Whether this entry turns away the agent identified by `identityKey`.
+    func covers(_ identityKey: String) -> Bool { key == nil || key == identityKey }
+
+    /// Whether this entry makes `other` redundant — at least as broad in scope
+    /// and standing at least as long.
+    func supersedes(_ other: AgentDenial) -> Bool {
+        (key == nil || key == other.key)
+            && (expires ?? .distantFuture) >= (other.expires ?? .distantFuture)
+    }
+
+    /// Display name for the Developer settings "Blocked agents" list, reusing
+    /// `AgentGrant`'s key decoding so a blocked agent reads the same as an
+    /// allowed one.
+    var displayName: String {
+        guard let key else {
+            return NSLocalizedString("settings.developer.agentControl.blockedAgents.allAgentsName", value: "All agents", comment: "Developer settings - name of the blocked-agents entry that covers every agent")
+        }
+        return AgentGrant(key: key, remembered: false).displayName
+    }
+}
+
 enum AgentPeerIdentity {
     /// Interpreters and shells that merely *host* an agent — never the
     /// identity we present. The walk skips past these to the real launcher.
