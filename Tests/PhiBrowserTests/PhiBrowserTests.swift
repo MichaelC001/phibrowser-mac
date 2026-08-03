@@ -892,6 +892,13 @@ final class PhiBrowserTests: XCTestCase {
                 aiEnabled: true
             )
         )
+        XCTAssertTrue(
+            AuthenticatedSentinelSessionPolicy.shouldTerminate(
+                browserAccessState: .guest,
+                isAuthenticated: false,
+                aiEnabled: false
+            )
+        )
         XCTAssertFalse(
             AuthenticatedSentinelSessionPolicy.shouldTerminate(
                 browserAccessState: .loginRequired,

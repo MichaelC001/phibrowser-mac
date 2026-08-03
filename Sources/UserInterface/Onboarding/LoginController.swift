@@ -13,6 +13,36 @@ extension Notification.Name {
     static let loginStatusRefreshCompleted = Notification.Name("LoginStatusRefreshCompleted")
 }
 
+struct PostLoginAIEnableIntent {
+    private(set) var isPending = false
+
+    mutating func request() {
+        isPending = true
+    }
+
+    mutating func cancel() {
+        isPending = false
+    }
+
+    mutating func consume() -> Bool {
+        defer { isPending = false }
+        return isPending
+    }
+
+    @discardableResult
+    mutating func enableAIIfRequested(
+        defaults: UserDefaults = .standard
+    ) -> Bool {
+        guard consume() else { return false }
+
+        defaults.set(
+            true,
+            forKey: PhiPreferences.AISettings.phiAIEnabled.rawValue
+        )
+        return true
+    }
+}
+
 class LoginController {
     enum Phase: Int {
         case login = 0
@@ -60,6 +90,8 @@ class LoginController {
     private var closeObserver: NSObjectProtocol?
     private var guestMigrationRecoveryTargetUserID: String?
     private var requiresGuestMigrationTargetRecovery = false
+    private var postLoginAIEnableIntent = PostLoginAIEnableIntent()
+    private var preservesPostLoginAIEnableIntentOnClose = false
     @MainActor private var isCompletingAccountTransition = false
 
     @MainActor
@@ -92,7 +124,7 @@ class LoginController {
         if let loginWindowController,
            loginWindowController.presentsGuestMigrationRecovery
                 != presentsGuestMigrationRecovery {
-            closeLoginWindow()
+            closeLoginWindow(preservingPostLoginAIEnableIntent: true)
         }
 
         if loginWindowController == nil {
@@ -111,8 +143,17 @@ class LoginController {
             AppLogDebug("🔐 [Login] Login window will close notification received")
             self?.auth0Manager.cancelOngoingWebAuthentication()
             self?.loginWindowController = nil
+            if self?.preservesPostLoginAIEnableIntentOnClose != true {
+                self?.postLoginAIEnableIntent.cancel()
+            }
         }
         AppLogDebug("🔐 [Login] Login window displayed")
+    }
+
+    @MainActor
+    func showLoginWindowToEnableAI() {
+        postLoginAIEnableIntent.request()
+        showLoginWindow()
     }
 
     /// Installs the crash-recovery gate before Chromium starts creating
@@ -190,6 +231,7 @@ class LoginController {
     /// and only the dedicated Guest marker is persisted.
     @MainActor
     func continueAsGuest() {
+        postLoginAIEnableIntent.cancel()
         guard !auth0Manager.isAccountDeletionInProgress else { return }
 
         let pendingAccess: GuestDataMigrationGuestAccessDisposition
@@ -239,7 +281,7 @@ class LoginController {
         AccountController.shared.account = nil
         pendingAuthenticatedAccount = nil
         ApplicationState.shared.cancelGuestAccountPromotion()
-        GuestNewTabPreference.applyDefaultIfNeeded(isGuest: true)
+        GuestModePreferences.disableAI()
         ApplicationState.shared.enterGuestMode()
         closeLoginWindow()
     }
@@ -441,9 +483,15 @@ class LoginController {
     }
     
     @MainActor
-    func closeLoginWindow() {
+    func closeLoginWindow(preservingPostLoginAIEnableIntent: Bool = false) {
+        if !preservingPostLoginAIEnableIntent {
+            postLoginAIEnableIntent.cancel()
+        }
+        preservesPostLoginAIEnableIntentOnClose =
+            preservingPostLoginAIEnableIntent
         loginWindowController?.window?.close()
         loginWindowController = nil
+        preservesPostLoginAIEnableIntentOnClose = false
     }
     
     @MainActor
@@ -766,6 +814,7 @@ class LoginController {
     private func finishBrowserAccessAfterLogin() {
         guestMigrationRecoveryTargetUserID = nil
         requiresGuestMigrationTargetRecovery = false
+        enableAIIfRequestedAfterLogin()
         closeLoginWindow()
 
         if MainBrowserWindowControllersManager.shared.getFirstAvailableWindowId() == nil {
@@ -778,8 +827,13 @@ class LoginController {
         NotificationCenter.default.post(name: .loginCompleted, object: nil)
     }
 
+    private func enableAIIfRequestedAfterLogin() {
+        postLoginAIEnableIntent.enableAIIfRequested()
+    }
+
     @MainActor
     private func abandonGuestAccountTransitionAfterFailure() -> Bool {
+        postLoginAIEnableIntent.cancel()
         auth0Manager.cancelOngoingWebAuthentication()
         pendingAuthenticatedAccount = nil
         guestMigrationRecoveryTargetUserID = nil

@@ -215,9 +215,9 @@ enum AuthenticatedSentinelSessionPolicy {
         isAuthenticated: Bool,
         aiEnabled: Bool
     ) -> Bool {
-        browserAccessState == .signedIn
-            && isAuthenticated
-            && !aiEnabled
+        guard !aiEnabled else { return false }
+        return browserAccessState == .guest
+            || (browserAccessState == .signedIn && isAuthenticated)
     }
 }
 
@@ -238,6 +238,11 @@ enum AuthenticatedSentinelSessionLifecycle {
             aiEnabled: aiEnabled
         ) else {
             SentinelWatchdog.shared.stop()
+            if !aiEnabled {
+                Task {
+                    await SentinelHelper.unregister()
+                }
+            }
             if AuthenticatedSentinelSessionPolicy.shouldTerminate(
                 browserAccessState: browserAccessState,
                 isAuthenticated: isAuthenticated,
@@ -325,6 +330,13 @@ enum SentinelHelper {
     static func unregister() async {
         let identifier = loginItemIdentifier()
         let service = SMAppService.loginItem(identifier: identifier)
+        guard service.status != .notRegistered,
+              service.status != .notFound else {
+            AppLogInfo(
+                "Sentinel login item already unavailable, status: \(service.status)"
+            )
+            return
+        }
         do {
             try await service.unregister()
             AppLogInfo("Sentinel login item unregistered, status: \(service.status)")

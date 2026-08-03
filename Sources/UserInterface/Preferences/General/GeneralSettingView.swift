@@ -494,10 +494,9 @@ private struct BrowsingSectionView: View {
     // Backed by Chromium local state through the bridge, not @AppStorage: the
     // cold-start path reads the same pref, so it is the single source of truth.
     @State private var restoreLastSessionEnabled = SessionRestorePreference.isEnabled
-    @State private var isGuest = ApplicationState.shared.isGuest
 
     private var isNewTabPageDisabled: Bool {
-        !phiAIEnabled && !isGuest
+        !phiAIEnabled
     }
 
     private var restoreLastSessionHint: String {
@@ -633,16 +632,6 @@ private struct BrowsingSectionView: View {
                     .buttonStyle(.plain)
                 }
             }
-        }
-        .onAppear {
-            GuestNewTabPreference.applyDefaultIfNeeded(isGuest: isGuest)
-        }
-        .onReceive(
-            NotificationCenter.default.publisher(for: .browserAccessStateDidChange)
-                .receive(on: DispatchQueue.main)
-        ) { _ in
-            isGuest = ApplicationState.shared.isGuest
-            GuestNewTabPreference.applyDefaultIfNeeded(isGuest: isGuest)
         }
     }
 

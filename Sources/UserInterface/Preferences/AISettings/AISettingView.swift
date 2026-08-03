@@ -18,6 +18,10 @@ struct AISettingView: View {
         _connectorViewModel = State(initialValue: connectorViewModel)
     }
 
+    private var aiFeaturesAvailable: Bool {
+        phiAIEnabled && !isGuest
+    }
+
     private var aiEnabledBinding: Binding<Bool> {
         Binding(
             get: { phiAIEnabled },
@@ -34,19 +38,19 @@ struct AISettingView: View {
     var body: some View {
         ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 24) {
-                AIEnableToggleRow(isOn: aiEnabledBinding)
-                BrowserMemorySectionView(enabled: phiAIEnabled)
-                PhiSentinelSectionView(enabled: phiAIEnabled)
-                NewTabPageSectionView(enabled: phiAIEnabled)
-                AISidebarSectionView(enabled: phiAIEnabled)
-                if isGuest {
-                    GuestExternalConnectorsSectionView()
-                } else {
-                    ExternalConnectorsSectionView(
-                        connectorViewModel: connectorViewModel,
-                        enabled: phiAIEnabled
-                    )
-                }
+                AIMasterControlSection(
+                    isOn: aiEnabledBinding,
+                    isGuest: isGuest,
+                    loginAction: logInToEnableAI
+                )
+                BrowserMemorySectionView(enabled: aiFeaturesAvailable)
+                PhiSentinelSectionView(enabled: aiFeaturesAvailable)
+                NewTabPageSectionView(enabled: aiFeaturesAvailable)
+                AISidebarSectionView(enabled: aiFeaturesAvailable)
+                ExternalConnectorsSectionView(
+                    connectorViewModel: connectorViewModel,
+                    enabled: aiFeaturesAvailable
+                )
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, 36)
@@ -93,24 +97,90 @@ struct AISettingView: View {
                                    comment: "AI settings - Alert message explaining consequences of disabling AI features"))
         }
     }
+
+    private func logInToEnableAI() {
+        LoginController.shared.showLoginWindowToEnableAI()
+    }
+}
+
+// MARK: - AI Master Controls
+
+private struct AIMasterControlSection: View {
+    @Binding var isOn: Bool
+    let isGuest: Bool
+    let loginAction: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if isGuest {
+                GuestAILoginPromptRow(loginAction: loginAction)
+            }
+
+            AIEnableToggleRow(
+                isOn: $isOn,
+                enabled: !isGuest
+            )
+        }
+    }
+}
+
+private struct GuestAILoginPromptRow: View {
+    let loginAction: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text(NSLocalizedString(
+                "settings.ai.guestLoginPrompt.message",
+                value: "To use AI features, please log in.",
+                comment: "AI settings - Message above the AI master toggle when Guest Mode requires login"
+            ))
+            .font(.system(size: 13))
+            .themedForeground(.textSecondary)
+
+            Spacer(minLength: 12)
+
+            Button(
+                NSLocalizedString(
+                    "settings.ai.guestLoginPrompt.loginButton",
+                    value: "Log In",
+                    comment: "AI settings - Button in the Guest Mode AI prompt that opens login"
+                ),
+                action: loginAction
+            )
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+        .padding(.vertical, 8)
+        .padding(.trailing, 12)
+    }
 }
 
 // MARK: - AI Enable Toggle (top-level, no container)
 
 private struct AIEnableToggleRow: View {
     @Binding var isOn: Bool
+    let enabled: Bool
+
+    private var effectiveBinding: Binding<Bool> {
+        Binding(
+            get: { enabled ? isOn : false },
+            set: { if enabled { isOn = $0 } }
+        )
+    }
 
     var body: some View {
         HStack {
             Text(NSLocalizedString("settings.ai.features.enableToggle", value: "Enable AI features in Phi Browser", comment: "AI settings - Master toggle to enable or disable all AI features in Phi Browser"))
                 .font(.system(size: 13))
                 .themedForeground(.textPrimary)
+                .opacity(enabled ? 1.0 : 0.4)
             Spacer(minLength: 12)
-            Toggle("", isOn: $isOn)
+            Toggle("", isOn: effectiveBinding)
                 .labelsHidden()
                 .toggleStyle(.switch)
                 .controlSize(.mini)
                 .themedTint(.themeColor)
+                .disabled(!enabled)
         }
         .padding(.vertical, 8)
         .padding(.trailing, 12)
@@ -228,21 +298,6 @@ private struct AISidebarSectionView: View {
         }
         .onChange(of: enableChatWithTabs) {
             notifyNativeSettingsChanged()
-        }
-    }
-}
-
-// MARK: - External Data Connectors Section
-
-private struct GuestExternalConnectorsSectionView: View {
-    var body: some View {
-        AISectionView(
-            title: NSLocalizedString("settings.ai.connectors.sectionTitle", value: "External Data Connectors", comment: "AI settings - Section title for external data connectors"),
-            subtitle: NSLocalizedString("settings.ai.connectors.description", value: "External Data Connectors help to provide additional context for better AI experience", comment: "AI settings - Description explaining external data connectors purpose")
-        ) {
-            AIContainerView {
-                LoginRequiredPresentationView()
-            }
         }
     }
 }

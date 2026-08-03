@@ -77,6 +77,9 @@ import PostHog
         // whether its windows may be shown. The async refresh below can still
         // recover a fresher shared credential snapshot afterwards.
         resolveBrowserAccessFromAuthentication(checkChromiumLaunchStatus: true)
+        if ApplicationState.shared.isGuest {
+            GuestModePreferences.disableAI()
+        }
         LoginController.shared.prepareGuestMigrationRecoveryBeforeChromiumLaunch()
         let permitsSentinelLaunch: Bool
         if ApplicationState.shared.isGuest {
@@ -150,8 +153,7 @@ import PostHog
                 await SentinelVersionGuard.shared.runStartupCheck()
             }
         } else {
-            AuthenticatedSentinelSessionLifecycle
-                .suspendForUnauthenticatedSession()
+            AuthenticatedSentinelSessionLifecycle.reconcile()
             if !permitsSentinelLaunch {
                 AppLogError(
                     "Sentinel launch suppressed because the Guest " +

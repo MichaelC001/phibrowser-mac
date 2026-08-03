@@ -485,30 +485,28 @@ extension PhiPreferences {
     }
 }
 
-/// Applies Guest Mode's one-time Cmd+T default without overriding a choice the
-/// user has already persisted. Kept with the preference definitions so login
-/// lifecycle code does not depend on the General Settings view.
-enum GuestNewTabPreference {
-    static let key = PhiPreferences.GeneralSettings.openNewTabPageOnCmdT.rawValue
+/// Applies the settings boundary required by Guest Mode. Kept with the
+/// preference definitions so launch and login lifecycle code do not depend on
+/// either settings view.
+enum GuestModePreferences {
+    static let aiEnabledKey = PhiPreferences.AISettings.phiAIEnabled.rawValue
+    static let newTabPageKey =
+        PhiPreferences.GeneralSettings.openNewTabPageOnCmdT.rawValue
 
     @discardableResult
-    static func applyDefaultIfNeeded(
-        isGuest: Bool,
-        defaults: UserDefaults = .standard,
-        persistentDomainName: String? = Bundle.main.bundleIdentifier
+    static func disableAI(
+        defaults: UserDefaults = .standard
     ) -> Bool {
-        guard isGuest else { return false }
+        let didChange = defaults.bool(
+            forKey: aiEnabledKey,
+            default: PhiPreferences.AISettings.phiAIEnabled.defaultValue
+        ) || defaults.bool(
+            forKey: newTabPageKey,
+            default: PhiPreferences.GeneralSettings.openNewTabPageOnCmdT.defaultValue
+        )
 
-        let hasPersistedValue: Bool
-        if let persistentDomainName {
-            hasPersistedValue =
-                defaults.persistentDomain(forName: persistentDomainName)?[key] != nil
-        } else {
-            hasPersistedValue = defaults.object(forKey: key) != nil
-        }
-
-        guard !hasPersistedValue else { return false }
-        defaults.set(false, forKey: key)
-        return true
+        defaults.set(false, forKey: aiEnabledKey)
+        defaults.set(false, forKey: newTabPageKey)
+        return didChange
     }
 }

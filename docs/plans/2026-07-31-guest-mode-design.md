@@ -34,8 +34,10 @@ Chromium's isolated and ephemeral Guest Profile.
   snapshot sealed and permits only identity-bound recovery for the same target
   account. It must never reopen Guest data for editing or offer a different
   account as an escape.
-- Guest Mode does not force or disable the Phi AI preference. Account-backed
-  AI surfaces present the same login-required UI when opened by a Guest.
+- Guest Mode forces the Phi AI master preference off before browser access is
+  granted. AI remains unavailable throughout the Guest session. A login
+  explicitly started from the AI settings prompt enables it only after the
+  account transition completes successfully.
 - Existing users return to the browser after login. New users complete any
   remaining account onboarding before the final account transition.
 
@@ -139,12 +141,12 @@ Real identity APIs remain strict:
   submitting **Set Name**. It is unavailable to Chromium, Phi AI, connectors,
   channels, and other account APIs.
 - Sentinel registration, launch, watchdog, backup export, and delayed version
-  actions remain stopped until the signed-in commit. Entering Guest or
-  login-required access does not terminate an already running Sentinel; Phi
-  clears its shared authentication state and leaves it idle. Explicit AI
-  disable and browser-update shutdown paths retain their termination behavior.
-  If shared credential cleanup fails, Phi still requests termination as an
-  exceptional fail-closed measure because Sentinel may retain the old token.
+  actions remain stopped until the signed-in commit. Entering Guest Mode uses
+  the existing AI-disable lifecycle to unregister and terminate Sentinel after
+  the shared authentication boundary is cleared. Login-required access without
+  a Guest choice leaves an already running helper idle. If shared credential
+  cleanup fails, Phi still requests termination as an exceptional fail-closed
+  measure because Sentinel may retain the old token.
 
 The Native coordinator remains responsible for hiding pre-access Chromium
 windows and replaying buffered window/tab state. Entering Guest Mode grants
@@ -181,19 +183,17 @@ browser settings remain available.
 
 ### New Tab Behavior
 
-`GeneralSettings.openNewTabPageOnCmdT` remains user-controlled:
-
-- On first Guest entry, set Omnibox only when the preference key has never
-  been persisted.
-- Preserve an existing selection.
-- Never disable or gray out the New Tab Page option because of Guest Mode.
-- Preserve subsequent Guest changes across login and relaunch.
+The Native New Tab Page depends on Phi AI. Entering or restoring Guest Mode
+therefore sets `GeneralSettings.openNewTabPageOnCmdT` to Omnibox before a
+browser window is released. The New Tab Page option remains disabled while the
+AI master preference is off.
 
 ### Account-Required Surfaces
 
-A shared Native login-required presentation is used by:
+A shared Native login-required presentation remains as a fail-closed boundary
+for account-backed surfaces reached through a stale tab or direct internal URL:
 
-- New Tab Page while Phi AI is enabled
+- New Tab Page if a stale enabled state reaches it
 - AI Chat
 - Browser Memory (`phi://memory/`)
 - AI Connectors
@@ -205,9 +205,15 @@ The presentation contains:
 - Detail: **This feature requires a Phi account.**
 - Action: **Log In**
 
-The Phi AI preference itself remains editable and may be enabled or disabled
-in Guest Mode. Account-backed content must not issue authenticated requests
-behind the presentation.
+The Phi AI master toggle and all subordinate AI controls are disabled in Guest
+Mode. The AI settings pane shows a login prompt immediately above the master
+toggle. Login started from this prompt records an in-memory, one-shot intent to
+enable the AI master preference only after account onboarding and Guest data
+migration complete successfully. Closing login, continuing as Guest, or
+abandoning the account transition cancels the intent and leaves AI off.
+Ordinary AI entry points are hidden by the off preference, and account-backed
+content must not issue authenticated requests behind the fallback
+presentation.
 
 ## Guest Data Merge
 
@@ -337,8 +343,9 @@ identity-bound recovery completes.
 
 ## Testing
 
-Focused automated tests cover the pure access policies, Guest preference
-behavior, shared login-required presentation policy, local-store merge and
+Focused automated tests cover the pure access policies, forced Guest AI and
+New Tab preference behavior, shared login-required presentation policy,
+Sentinel termination policy, local-store merge and
 conflict rules, identifier mappings, terminal source handling, target-touched
 recovery classification, startup journal/filesystem classification, staged
 credential matching, receipt verification, directory staging, cache

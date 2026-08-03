@@ -7847,6 +7847,30 @@
         }
       }
     },
+    "settings.ai.guestLoginPrompt.loginButton" : {
+      "comment" : "AI settings - Button in the Guest Mode AI prompt that opens login",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Log In"
+          }
+        }
+      }
+    },
+    "settings.ai.guestLoginPrompt.message" : {
+      "comment" : "AI settings - Message above the AI master toggle when Guest Mode requires login",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "To use AI features, please log in."
+          }
+        }
+      }
+    },
     "settings.ai.newTabPage.proactiveSuggestionsToggle" : {
       "comment" : "AI settings - Toggle to show proactive suggestions on the new tab page",
       "extractionState" : "extracted_with_value",

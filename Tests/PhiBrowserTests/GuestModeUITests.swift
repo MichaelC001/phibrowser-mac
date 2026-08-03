@@ -23,47 +23,56 @@ final class GuestModeUITests: XCTestCase {
         super.tearDown()
     }
 
-    func testFirstGuestEntryDefaultsNewTabsToOmnibox() {
-        let didApply = GuestNewTabPreference.applyDefaultIfNeeded(
-            isGuest: true,
-            defaults: defaults,
-            persistentDomainName: defaultsSuiteName
-        )
+    func testGuestModeDisablesAIAndUsesOmniboxForNewTabs() {
+        defaults.set(true, forKey: GuestModePreferences.aiEnabledKey)
+        defaults.set(true, forKey: GuestModePreferences.newTabPageKey)
+
+        let didApply = GuestModePreferences.disableAI(defaults: defaults)
 
         XCTAssertTrue(didApply)
-        XCTAssertFalse(defaults.bool(forKey: GuestNewTabPreference.key))
-        XCTAssertNotNil(
-            defaults.persistentDomain(forName: defaultsSuiteName)?[GuestNewTabPreference.key]
-        )
+        XCTAssertFalse(defaults.bool(forKey: GuestModePreferences.aiEnabledKey))
+        XCTAssertFalse(defaults.bool(forKey: GuestModePreferences.newTabPageKey))
     }
 
-    func testGuestEntryPreservesExistingNewTabPagePreference() {
-        defaults.set(true, forKey: GuestNewTabPreference.key)
+    func testGuestModePersistsDisabledDefaultsWhenKeysWereUnset() {
+        GuestModePreferences.disableAI(defaults: defaults)
 
-        let didApply = GuestNewTabPreference.applyDefaultIfNeeded(
-            isGuest: true,
-            defaults: defaults,
-            persistentDomainName: defaultsSuiteName
-        )
-
-        XCTAssertFalse(didApply)
-        XCTAssertTrue(defaults.bool(forKey: GuestNewTabPreference.key))
+        let domain = defaults.persistentDomain(forName: defaultsSuiteName)
+        XCTAssertEqual(domain?[GuestModePreferences.aiEnabledKey] as? Bool, false)
+        XCTAssertEqual(domain?[GuestModePreferences.newTabPageKey] as? Bool, false)
     }
 
-    func testNonGuestEntryDoesNotPersistNewTabPreference() {
-        let didApply = GuestNewTabPreference.applyDefaultIfNeeded(
-            isGuest: false,
-            defaults: defaults,
-            persistentDomainName: defaultsSuiteName
-        )
+    func testDisablingGuestAIIsIdempotent() {
+        GuestModePreferences.disableAI(defaults: defaults)
 
-        XCTAssertFalse(didApply)
-        XCTAssertNil(
-            defaults.persistentDomain(forName: defaultsSuiteName)?[GuestNewTabPreference.key]
-        )
+        XCTAssertFalse(GuestModePreferences.disableAI(defaults: defaults))
     }
 
-    func testLoginRequiredPolicyOnlyGatesGuestAISurfacesWhenAIIsEnabled() {
+    func testPostLoginAIEnableIntentIsConsumedOnce() {
+        var intent = PostLoginAIEnableIntent()
+
+        intent.request()
+
+        XCTAssertTrue(intent.isPending)
+        XCTAssertTrue(intent.enableAIIfRequested(defaults: defaults))
+        XCTAssertTrue(defaults.bool(forKey: GuestModePreferences.aiEnabledKey))
+        XCTAssertFalse(intent.isPending)
+        XCTAssertFalse(intent.enableAIIfRequested(defaults: defaults))
+    }
+
+    func testPostLoginAIEnableIntentCanBeCancelled() {
+        var intent = PostLoginAIEnableIntent()
+        defaults.set(false, forKey: GuestModePreferences.aiEnabledKey)
+
+        intent.request()
+        intent.cancel()
+
+        XCTAssertFalse(intent.isPending)
+        XCTAssertFalse(intent.enableAIIfRequested(defaults: defaults))
+        XCTAssertFalse(defaults.bool(forKey: GuestModePreferences.aiEnabledKey))
+    }
+
+    func testLoginRequiredPolicyFailsClosedForStaleEnabledGuestAIState() {
         for surface in [
             LoginRequiredSurface.newTabPage,
             .aiChat

@@ -19,9 +19,7 @@ extension BrowserState {
             }
             updateSentinelRegistration(sentinelOnLogin)
         } else {
-            if !ApplicationState.shared.isGuest {
-                UserDefaults.standard.set(false, forKey: PhiPreferences.GeneralSettings.openNewTabPageOnCmdT.rawValue)
-            }
+            UserDefaults.standard.set(false, forKey: PhiPreferences.GeneralSettings.openNewTabPageOnCmdT.rawValue)
             Task {
                 await SentinelHelper.unregister()
             }
