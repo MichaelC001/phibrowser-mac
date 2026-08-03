@@ -494,6 +494,11 @@ private struct BrowsingSectionView: View {
     // Backed by Chromium local state through the bridge, not @AppStorage: the
     // cold-start path reads the same pref, so it is the single source of truth.
     @State private var restoreLastSessionEnabled = SessionRestorePreference.isEnabled
+    @State private var isGuest = ApplicationState.shared.isGuest
+
+    private var isNewTabPageDisabled: Bool {
+        !phiAIEnabled && !isGuest
+    }
 
     private var restoreLastSessionHint: String {
         restoreLastSessionEnabled
@@ -530,7 +535,7 @@ private struct BrowsingSectionView: View {
                             Text(NSLocalizedString("settings.general.newTabShortcut.title", value: "New tab behavior", comment: "General settings - Row title for configuring new tab behavior"))
                                 .font(.system(size: 13))
                                 .themedForeground(.textPrimary)
-                            if !phiAIEnabled {
+                            if isNewTabPageDisabled {
                                 Text(NSLocalizedString("settings.general.newTabPage.aiRequiredHint", value: "New Tab Page requires Phi AI to be enabled", comment: "General settings - Hint shown when Phi AI is disabled explaining New Tab Page requires it"))
                                     .font(.system(size: 11))
                                     .themedForeground(.textTertiary)
@@ -542,13 +547,13 @@ private struct BrowsingSectionView: View {
                                 GeneralSttingCardView(
                                     image: Image(newTabImageName(for: behavior)),
                                     action: {
-                                        if behavior == .newTabPage && !phiAIEnabled { return }
+                                        if behavior == .newTabPage && isNewTabPageDisabled { return }
                                         selectedBehavior.wrappedValue = behavior
                                     },
                                     selected: selectedBehavior.wrappedValue == behavior,
                                     title: behavior.displayName
                                 )
-                                .opacity(behavior == .newTabPage && !phiAIEnabled ? 0.4 : 1.0)
+                                .opacity(behavior == .newTabPage && isNewTabPageDisabled ? 0.4 : 1.0)
                             }
                         }
                     }
@@ -628,6 +633,16 @@ private struct BrowsingSectionView: View {
                     .buttonStyle(.plain)
                 }
             }
+        }
+        .onAppear {
+            GuestNewTabPreference.applyDefaultIfNeeded(isGuest: isGuest)
+        }
+        .onReceive(
+            NotificationCenter.default.publisher(for: .browserAccessStateDidChange)
+                .receive(on: DispatchQueue.main)
+        ) { _ in
+            isGuest = ApplicationState.shared.isGuest
+            GuestNewTabPreference.applyDefaultIfNeeded(isGuest: isGuest)
         }
     }
 

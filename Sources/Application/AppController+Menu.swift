@@ -1594,7 +1594,7 @@ extension AppController {
             profile.displayName
         )
         let pinnedTabScope = MainActor.assumeIsolated {
-            AccountController.shared.account?.localStorage.pinnedTabScope() ?? .profile
+            AccountController.shared.localDataAccount?.localStorage.pinnedTabScope() ?? .profile
         }
         switch pinnedTabScope {
         case .space:
@@ -1625,7 +1625,7 @@ extension AppController {
             space.name
         )
         let usesSpaceScopedPinnedTabs = MainActor.assumeIsolated {
-            AccountController.shared.account?.localStorage.pinnedTabScope() == .space
+            AccountController.shared.localDataAccount?.localStorage.pinnedTabScope() == .space
         }
         if usesSpaceScopedPinnedTabs {
             alert.informativeText = NSLocalizedString("app.deleteSpaceConfirmation.spaceScopedMessage", value: "Bookmarks and pinned tabs belonging to this Space will also be removed. This action cannot be undone.",
@@ -1753,6 +1753,21 @@ extension AppController {
     // MARK: - Menu Validation
 
     @objc func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        if MainBrowserWindowControllersManager.shared
+            .isGuestTransitionInteractionBlocked {
+            let lifecycleSafeActions: [Selector] = [
+                #selector(orderFrontStandardAboutPanel(_:)),
+                #selector(NSApplication.terminate(_:)),
+                #selector(NSApplication.hide(_:)),
+                #selector(NSApplication.hideOtherApplications(_:)),
+                #selector(NSApplication.unhideAllApplications(_:)),
+            ]
+            if let action = item.action {
+                return lifecycleSafeActions.contains(action)
+            }
+            return false
+        }
+
         // Placeholder mode: tab-targeted menu items must not act on the
         // (now-empty) tab strip. Chromium-side CommandUpdater already disables
         // most of these because the placeholder isn't in TabStripModel; this
@@ -1830,7 +1845,7 @@ extension AppController {
         }
         
         if item.action == #selector(showPreferences(_:)) {
-            return LoginController.shared.isLoggedin()
+            return ApplicationState.shared.canUseBrowser
         }
         
         if item.action == #selector(checkForUpdate(_:)) {
@@ -1858,14 +1873,14 @@ extension AppController {
                 default:
                     break
                 }
-                return LoginController.shared.isLoggedin()
+                return ApplicationState.shared.canUseBrowser
             }
         }
 
         if item.action == #selector(toggleAgentAutoView(_:)) {
             if let menuItem = item as? NSMenuItem {
                 menuItem.state = PhiPreferences.AgentSpaces.autoViewEnabled ? .on : .off
-                return LoginController.shared.isLoggedin()
+                return ApplicationState.shared.canUseBrowser
             }
         }
 
@@ -1874,7 +1889,7 @@ extension AppController {
                 menuItem.state = MainActor.assumeIsolated {
                     AgentTranscriptPanelController.shared.isVisible
                 } ? .on : .off
-                return LoginController.shared.isLoggedin()
+                return ApplicationState.shared.canUseBrowser
             }
         }
 
@@ -1909,17 +1924,17 @@ extension AppController {
             if let menuItem = item as? NSMenuItem {
                 menuItem.isHidden = !spacesFeatureEnabled
             }
-            return spacesFeatureEnabled && LoginController.shared.isLoggedin()
+            return spacesFeatureEnabled && ApplicationState.shared.canUseBrowser
         }
         if item.action == #selector(newIncognitoSpaceFromMenu(_:)) {
             if let menuItem = item as? NSMenuItem {
                 menuItem.isHidden = !spacesFeatureEnabled
             }
-            return spacesFeatureEnabled && LoginController.shared.isLoggedin()
+            return spacesFeatureEnabled && ApplicationState.shared.canUseBrowser
         }
         if item.action == #selector(deleteSelectedProfile(_:)) {
             guard spacesFeatureEnabled,
-                  LoginController.shared.isLoggedin(),
+                  ApplicationState.shared.canUseBrowser,
                   let menuItem = item as? NSMenuItem,
                   let profile = menuItem.representedObject as? PhiBrowserProfile else {
                 return false
@@ -1940,7 +1955,7 @@ extension AppController {
             #selector(openURLRulesEditor(_:)),
         ]
         if let action = item.action, spacesActions.contains(action) {
-            guard spacesFeatureEnabled, LoginController.shared.isLoggedin() else { return false }
+            guard spacesFeatureEnabled, ApplicationState.shared.canUseBrowser else { return false }
             // An Incognito Space's name, profile binding and existence are
             // fixed: its name is derived ("Incognito" / "Incognito N"), its
             // shared OTR profile can't be re-bound, and the Space ends via
@@ -2028,8 +2043,8 @@ extension AppController {
             }
             return !bookmark.isFolder
         }
-        let isLoggedIn = LoginController.shared.isLoggedin()
-        if !isLoggedIn {
+        let canUseBrowser = ApplicationState.shared.canUseBrowser
+        if !canUseBrowser {
             let allowedActions: [Selector] = [
                 #selector(orderFrontStandardAboutPanel(_:)),
                 #selector(NSApplication.terminate(_:)),
@@ -2084,6 +2099,10 @@ extension AppController {
     ]
 
     @IBAction @objc func commandDispatch(_ sender: Any?) {
+        guard !MainBrowserWindowControllersManager.shared
+            .isGuestTransitionInteractionBlocked else {
+            return
+        }
         // A windowless session restore is in flight: dropping a new-window/tab
         // command here keeps its Chromium window from racing the restore's
         // per-profile commit (which would conclude the profile still has a

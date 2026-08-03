@@ -2417,7 +2417,7 @@ class BrowserState {
     ///   - identifier: The tab identifier to associate with
     ///   - chromeTabId: The Chromium tab ID (used by Chrome extension APIs) of the associated content tab
     func createAIChatTab(for identifier: String, chromeTabId: Int) {
-        guard LoginController.shared.isLoggedin() else {
+        guard ApplicationState.shared.isAuthenticated else {
             return
         }
         if aiChatTabs[identifier] != nil {

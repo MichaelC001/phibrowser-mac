@@ -147,16 +147,24 @@ final class AISettingsConnectorViewModel {
     }
 
     func loadConnectionsIfNeeded() {
-        guard LoginController.shared.isLoggedin() else { return }
+        guard ApplicationState.shared.isAuthenticated else { return }
         AppLogDebug("[AISettings] Starting to load OAuth connections...")
         loadConnections()
     }
 
     func refreshConnections() {
+        guard ApplicationState.shared.isAuthenticated else {
+            suspendForUnauthenticatedAccess()
+            return
+        }
         loadConnections()
     }
 
     func refreshConnection(for connector: ConnectorItemState) {
+        guard ApplicationState.shared.isAuthenticated else {
+            suspendForUnauthenticatedAccess()
+            return
+        }
         connector.errorMessage = nil
         connector.isLoading = true
         Task { @MainActor in
@@ -170,6 +178,10 @@ final class AISettingsConnectorViewModel {
     }
 
     func handleOAuthReturn(provider: String, result: String, error: String?) {
+        guard ApplicationState.shared.isAuthenticated else {
+            suspendForUnauthenticatedAccess()
+            return
+        }
         cancelPendingAuthorizationPoll(provider: provider)
         pendingAuthorizationTabGuids[provider] = nil
         removePendingAuthorizationTabIds(provider: provider)
@@ -188,7 +200,7 @@ final class AISettingsConnectorViewModel {
     }
 
     private func loadConnections(useCache: Bool = true) {
-        guard LoginController.shared.isLoggedin() else { return }
+        guard ApplicationState.shared.isAuthenticated else { return }
 
         if useCache, let cached = loadCachedConnections() {
             oauthConnections = cached
@@ -204,6 +216,7 @@ final class AISettingsConnectorViewModel {
     }
 
     private func reloadConnectionsFromNetwork() async {
+        guard ApplicationState.shared.isAuthenticated else { return }
         guard !isRefreshingConnections else { return }
         isRefreshingConnections = true
         defer {
@@ -213,6 +226,7 @@ final class AISettingsConnectorViewModel {
 
         do {
             let response = try await apiClient.getOAuthConnections()
+            guard ApplicationState.shared.isAuthenticated else { return }
             let connections = response.data.connections
             oauthConnections = connections
             cacheConnections(connections)
@@ -225,6 +239,10 @@ final class AISettingsConnectorViewModel {
     }
 
     func toggleConnection(for connector: ConnectorItemState) {
+        guard ApplicationState.shared.isAuthenticated else {
+            suspendForUnauthenticatedAccess()
+            return
+        }
         if connector.isLoading && !connector.isAuthorizationPending {
             return
         }
@@ -238,7 +256,7 @@ final class AISettingsConnectorViewModel {
     }
 
     private func connect(_ connector: ConnectorItemState) {
-        guard LoginController.shared.isLoggedin() else { return }
+        guard ApplicationState.shared.isAuthenticated else { return }
         let provider = connector.template.provider
         closePendingAuthorizationTab(provider: provider)
         cancelPendingAuthorizationPoll(provider: provider)
@@ -270,7 +288,7 @@ final class AISettingsConnectorViewModel {
     }
 
     private func disconnect(_ connector: ConnectorItemState) {
-        guard LoginController.shared.isLoggedin() else { return }
+        guard ApplicationState.shared.isAuthenticated else { return }
         cancelPendingAuthorizationPoll(provider: connector.template.provider)
         connector.isLoading = true
 
@@ -313,6 +331,7 @@ final class AISettingsConnectorViewModel {
     }
 
     private func openAuthorizationURL(_ authURLString: String, provider: String, tabGuid: String) -> Bool {
+        guard ApplicationState.shared.isAuthenticated else { return false }
         guard let authURL = URL(string: authURLString),
               let scheme = authURL.scheme?.lowercased(),
               scheme == "https" || scheme == "http" else {
@@ -339,15 +358,18 @@ final class AISettingsConnectorViewModel {
     }
 
     private func startPendingAuthorizationPoll(provider: String) {
+        guard ApplicationState.shared.isAuthenticated else { return }
         pendingAuthorizationPolls[provider]?.cancel()
         pendingAuthorizationPolls[provider] = nil
 
         pendingAuthorizationPolls[provider] = Task { @MainActor in
             let maxAttempts = 60
             for attempt in 1...maxAttempts {
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled,
+                      ApplicationState.shared.isAuthenticated else { return }
                 try? await Task.sleep(nanoseconds: 5 * 1_000_000_000)
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled,
+                      ApplicationState.shared.isAuthenticated else { return }
 
                 if let tabGuid = pendingAuthorizationTabGuids[provider] {
                     capturePendingAuthorizationTabId(provider: provider, tabGuid: tabGuid)
@@ -403,6 +425,7 @@ final class AISettingsConnectorViewModel {
     }
 
     private func handleBrowserTabClosed(tabId: Int, localGuid: String?, url: String?) {
+        guard ApplicationState.shared.isAuthenticated else { return }
         guard let provider = pendingAuthorizationProvider(tabId: tabId, localGuid: localGuid, url: url) else { return }
         AppLogInfo(
             "[AISettings] OAuth authorization tab closed " +
@@ -577,6 +600,10 @@ final class AISettingsConnectorViewModel {
     }
 
     func disconnectAll() {
+        guard ApplicationState.shared.isAuthenticated else {
+            suspendForUnauthenticatedAccess()
+            return
+        }
         cancelAllPendingAuthorizationPolls()
 
         let connectedProviders = connectors
@@ -601,14 +628,28 @@ final class AISettingsConnectorViewModel {
         }
     }
 
+    func suspendForUnauthenticatedAccess() {
+        cancelAllPendingAuthorizationPolls()
+        oauthConnections = []
+        isRefreshingConnections = false
+        for connector in connectors {
+            connector.updateConnection(nil)
+            connector.isLoading = false
+            connector.isAuthorizationPending = false
+            connector.errorMessage = nil
+        }
+    }
+
     // MARK: - Cache
 
     private func loadCachedConnections() -> [OAuthConnection]? {
+        guard ApplicationState.shared.isAuthenticated else { return nil }
         guard let userDefaults = AccountController.shared.account?.userDefaults else { return nil }
         return userDefaults.codableValue(forKey: AccountUserDefaults.DefaultsKey.cachedUserConnectors.rawValue)
     }
 
     private func cacheConnections(_ connections: [OAuthConnection]) {
+        guard ApplicationState.shared.isAuthenticated else { return }
         guard let userDefaults = AccountController.shared.account?.userDefaults else { return }
         userDefaults.set(connections, forCodableKey: AccountUserDefaults.DefaultsKey.cachedUserConnectors.rawValue)
     }

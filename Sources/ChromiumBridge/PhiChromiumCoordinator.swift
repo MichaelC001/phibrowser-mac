@@ -328,15 +328,38 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
     }
     
     func isUserLoggedIn() -> Bool {
-        let isLoggedIn = AuthManager.shared.checkLoginStatusOnChromiumLaunch()
-        AppLogDebug("🌐 [Chromium] isUserLoggedIn check: \(isLoggedIn)")
-        return isLoggedIn
+        // Kept under the existing ABI name for framework compatibility. The
+        // callback controls whether Chromium browser UI may be surfaced; real
+        // identity remains strict in getAuth0AccessTokenSyncly and
+        // getPhiAccountInfo.
+        if ApplicationState.shared.isGuest {
+            let canUseBrowser = ApplicationState.shared.canUseBrowser
+            AppLogDebug(
+                "🌐 [Chromium] persisted Guest browser access check: " +
+                "\(canUseBrowser)"
+            )
+            return canUseBrowser
+        }
+
+        let isAuthenticated = AuthManager.shared.checkLoginStatusOnChromiumLaunch()
+        ApplicationState.shared.resolveInitialAccess(
+            isAuthenticationBlocked: AuthManager.shared.isAccountDeletionInProgress,
+            hasRecoverableLoginSession: AuthManager.shared.hasRecoverableLoginSession(),
+            isAuthenticated: isAuthenticated
+        )
+        let canUseBrowser = ApplicationState.shared.canUseBrowser
+        AppLogDebug(
+            "🌐 [Chromium] browser access check: \(canUseBrowser), " +
+            "authenticated: \(ApplicationState.shared.isAuthenticated)"
+        )
+        return canUseBrowser
     }
 
     /// Returns the current Phi account identity from the same per-account
     /// profile cache used by the Mac account settings page. The ID-token
     /// identity covers the short window before the init prefetch completes.
     func getPhiAccountInfo() -> [String: Any]? {
+        guard ApplicationState.shared.isAuthenticated else { return nil }
         guard let account = AccountController.shared.account else { return nil }
         let profile: Profile? = account.userDefaults.codableValue(
             forKey: AccountUserDefaults.DefaultsKey.cachedProfile.rawValue
@@ -367,6 +390,13 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
     /// hop off this call is required: presenting from inside it would run a
     /// sheet while a Chromium message handler is still on the stack.
     func startPhiAccountDeletion() {
+        guard ApplicationState.shared.isAuthenticated else {
+            AppLogWarn(
+                "🌐 [Chromium] Ignoring account deletion without an " +
+                "authenticated browser session"
+            )
+            return
+        }
         AppLogInfo("🌐 [Chromium] startPhiAccountDeletion called by Chromium")
         Task { @MainActor in
             AccountDeletionController.shared.start()
@@ -374,6 +404,10 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
     }
     
     func getAuth0AccessTokenSyncly() -> String {
+        guard ApplicationState.shared.isAuthenticated else {
+            AppLogDebug("🌐 [Chromium] getAuth0AccessTokenSyncly called without an authenticated browser session")
+            return ""
+        }
         let token = AuthManager.shared.getAccessTokenSyncly() ?? ""
         let hasToken = !token.isEmpty
         AppLogDebug("🌐 [Chromium] getAuth0AccessTokenSyncly called - hasToken: \(hasToken)")
@@ -417,7 +451,7 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
         }
 
         // Check login status BEFORE creating window controller
-        let userLoggedIn = isUserLoggedIn()
+        let canUseBrowser = isUserLoggedIn()
 
         // Chromium has no concept of Spaces or slots. Resolve which slot
         // (i.e. which user-perceived browser window) this Chromium window
@@ -514,7 +548,8 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
             spaceId = SpaceManager.shared.persistedActiveSpaceId ?? LocalStore.defaultSpaceId
         }
 
-        if userLoggedIn, MainBrowserWindowControllersManager.shared.findControllerWith(window: window) == nil {
+        if canUseBrowser,
+           MainBrowserWindowControllersManager.shared.findControllerWith(window: window) == nil {
             // Restored sibling-Space windows must be concealed for the whole
             // restore burst — Chromium's post-construction Show()/re-orders
             // (and the startup activation of the last-used profile's browser)
@@ -587,9 +622,9 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
             } else {
                 AppLogInfo("🌐 Shadow window controller initialized but hidden.")
             }
-            AppLogInfo("🌐 [Chromium] ✅ Window controller created and displayed (user logged in)")
+            AppLogInfo("🌐 [Chromium] ✅ Window controller created with browser access")
         } else {
-            AppLogInfo("🌐 [Chromium] User not logged in, adding window as dangling window")
+            AppLogInfo("🌐 [Chromium] Browser access unavailable, adding dangling window")
             MainBrowserWindowControllersManager.shared.addDanglingWindow(
                 window,
                 windowId: Int(windowId),
@@ -599,14 +634,23 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
                 slot: resolvedSlot
             )
             
-            DispatchQueue.main.async {
-                LoginController.shared.showLoginWindow()
-                if let loginWindow = LoginController.shared.loginWindowController?.window {
-                    loginWindow.makeKeyAndOrderFront(nil)
-                    NSApp.activate(ignoringOtherApps: true)
+            if !ApplicationState.shared.isGuestMigrationRecoveryInProgress {
+                DispatchQueue.main.async {
+                    LoginController.shared.showLoginWindow()
+                    if let loginWindow = LoginController.shared.loginWindowController?.window {
+                        loginWindow.makeKeyAndOrderFront(nil)
+                        NSApp.activate(ignoringOtherApps: true)
+                    }
                 }
+                AppLogInfo("🌐 [Chromium] ✅ Window stored as dangling, login window will be shown")
+            } else {
+                // Launch recovery owns its identity-bound reauthentication
+                // presentation after the async credential refresh completes.
+                AppLogInfo(
+                    "🌐 [Chromium] ✅ Window stored as dangling; Guest migration " +
+                    "recovery owns login presentation"
+                )
             }
-            AppLogInfo("🌐 [Chromium] ✅ Window stored as dangling, login window will be shown")
         }
     }
     

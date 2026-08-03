@@ -400,6 +400,10 @@ extension BrowserState {
 
 extension MainBrowserWindowController: NSMenuItemValidation {
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if MainBrowserWindowControllersManager.shared
+            .isGuestTransitionInteractionBlocked {
+            return false
+        }
         if menuItem.action == #selector(closeOther(_:)) {
             guard let tab = menuItem.representedObject as? Tab else {
                 return false

@@ -1318,7 +1318,7 @@ struct SpacesStripView: View {
             format: NSLocalizedString("sidebar.deleteSpaceConfirmation.title", value: "Delete \u{201C}%@\u{201D}?", comment: "Title of the delete-Space confirmation"),
             space.name
         )
-        if AccountController.shared.account?.localStorage.pinnedTabScope() == .space {
+        if AccountController.shared.localDataAccount?.localStorage.pinnedTabScope() == .space {
             alert.informativeText = NSLocalizedString("sidebar.deleteSpaceConfirmation.spaceScopedMessage", value: "Bookmarks and pinned tabs belonging to this Space will also be removed. This action cannot be undone.",
                 comment: "Body of the delete-Space confirmation with Space-scoped pinned tabs"
             )

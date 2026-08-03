@@ -59,16 +59,75 @@ extension Account {
 
 class AccountController {
     static let shared = AccountController()
+    private var activatedAuthenticatedAccount: Account?
+    private var browserAccessObserver: NSObjectProtocol?
+
+    private init() {
+        browserAccessObserver = NotificationCenter.default.addObserver(
+            forName: .browserAccessStateDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.activateAuthenticatedAccountIfNeeded()
+        }
+    }
+
+    deinit {
+        if let browserAccessObserver {
+            NotificationCenter.default.removeObserver(browserAccessObserver)
+        }
+    }
+
+    /// The account whose Native local data is available to browser UI.
+    ///
+    /// `account` remains a real Phi identity only. Guest Mode deliberately
+    /// routes local Spaces, bookmarks, and pinned tabs through the stable
+    /// default account without publishing it as the signed-in account.
+    var localDataAccount: Account? {
+        guard ApplicationState.shared.canUseBrowser else { return nil }
+
+        switch ApplicationState.shared.browserAccessState {
+        case .loginRequired:
+            return nil
+        case .guest:
+            if ApplicationState.shared.isGuestAccountPromotionInProgress,
+               let account {
+                return account
+            }
+            return Self.defaultAccount
+        case .signedIn:
+            return account
+        }
+    }
+
     var account: Account? {
         didSet {
-            syncTelemetryIdentity(for: account)
+            if account == nil {
+                activatedAuthenticatedAccount = nil
+                syncTelemetryIdentity(for: nil)
+            }
             NotificationCenter.default.post(name: .mainAccountChanged, object: account)
             /// FIXME: Chromium builds the main menu before the account exists, but shortcut overrides
             /// are account-scoped. Reloading here works, but this probably deserves a cleaner hook.
             Shortcuts.reloadOverrides()
+            activateAuthenticatedAccountIfNeeded()
             AppLogInfo("account controller created: \(String(describing: account?.userID))")
-            prefetchProfile(for: account)
         }
+    }
+
+    /// Publishes identity-bound side effects only after the Guest promotion
+    /// fence has committed. The account object may exist earlier so Native
+    /// browser controllers can bind to its migrated local data, but telemetry
+    /// and account API prefetch must remain anonymous until then.
+    func activateAuthenticatedAccountIfNeeded() {
+        guard ApplicationState.shared.isAuthenticated,
+              let account,
+              activatedAuthenticatedAccount !== account else {
+            return
+        }
+        activatedAuthenticatedAccount = account
+        syncTelemetryIdentity(for: account)
+        prefetchProfile(for: account)
     }
 
     private func syncTelemetryIdentity(for account: Account?) {

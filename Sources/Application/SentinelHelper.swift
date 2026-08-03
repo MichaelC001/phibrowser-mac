@@ -186,6 +186,114 @@ struct SentinelAccountDeletedEvent: Equatable {
     }
 }
 
+enum AuthenticatedSentinelSessionPolicy {
+    static func shouldRun(
+        browserAccessState: BrowserAccessState,
+        isAuthenticated: Bool,
+        aiEnabled: Bool
+    ) -> Bool {
+        browserAccessState == .signedIn
+            && isAuthenticated
+            && aiEnabled
+    }
+
+    static func shouldRegisterAtLogin(
+        browserAccessState: BrowserAccessState,
+        isAuthenticated: Bool,
+        aiEnabled: Bool,
+        launchOnLogin: Bool
+    ) -> Bool {
+        shouldRun(
+            browserAccessState: browserAccessState,
+            isAuthenticated: isAuthenticated,
+            aiEnabled: aiEnabled
+        ) && launchOnLogin
+    }
+
+    static func shouldTerminate(
+        browserAccessState: BrowserAccessState,
+        isAuthenticated: Bool,
+        aiEnabled: Bool
+    ) -> Bool {
+        browserAccessState == .signedIn
+            && isAuthenticated
+            && !aiEnabled
+    }
+}
+
+@MainActor
+enum AuthenticatedSentinelSessionLifecycle {
+    static func reconcile(
+        aiEnabled: Bool =
+            PhiPreferences.AISettings.phiAIEnabled.loadValue(),
+        launchOnLogin: Bool =
+            PhiPreferences.AISettings.launchSentinelOnLogin.loadValue()
+    ) {
+        let browserAccessState =
+            ApplicationState.shared.browserAccessState
+        let isAuthenticated = ApplicationState.shared.isAuthenticated
+        guard AuthenticatedSentinelSessionPolicy.shouldRun(
+            browserAccessState: browserAccessState,
+            isAuthenticated: isAuthenticated,
+            aiEnabled: aiEnabled
+        ) else {
+            SentinelWatchdog.shared.stop()
+            if AuthenticatedSentinelSessionPolicy.shouldTerminate(
+                browserAccessState: browserAccessState,
+                isAuthenticated: isAuthenticated,
+                aiEnabled: aiEnabled
+            ) {
+                SentinelHelper.terminate()
+            }
+            return
+        }
+
+        if AuthenticatedSentinelSessionPolicy.shouldRegisterAtLogin(
+            browserAccessState: browserAccessState,
+            isAuthenticated: isAuthenticated,
+            aiEnabled: aiEnabled,
+            launchOnLogin: launchOnLogin
+        ) {
+            SentinelHelper.register()
+            schedulePhiReactivationAfterRegistration()
+        } else {
+            Task {
+                await SentinelHelper.unregister()
+            }
+        }
+        SentinelHelper.launch()
+        SentinelWatchdog.shared.start()
+    }
+
+    /// Stops Phi from supervising Sentinel while leaving an already running
+    /// helper alone. Guest and login-required sessions clear shared
+    /// authentication state separately, so Sentinel can safely remain idle.
+    static func suspendForUnauthenticatedSession() {
+        SentinelWatchdog.shared.stop()
+    }
+
+    /// Fails closed when Phi cannot prove that the cross-process credential
+    /// boundary was cleared. This is not part of ordinary Guest lifecycle:
+    /// the termination request is reserved for the exceptional case where an
+    /// already running Sentinel may still possess the previous account token.
+    static func containCredentialBoundaryFailure() {
+        SentinelWatchdog.shared.stop()
+        SentinelHelper.terminate()
+    }
+
+    private static func schedulePhiReactivationAfterRegistration() {
+        Task { @MainActor in
+            for _ in 0..<10 {
+                try? await Task.sleep(nanoseconds: 200_000_000)
+                if !NSApp.isActive {
+                    NSApp.activate()
+                    break
+                }
+            }
+        }
+    }
+}
+
 enum SentinelHelper {
     struct RunningInfo: Equatable {
         let bundleID: String

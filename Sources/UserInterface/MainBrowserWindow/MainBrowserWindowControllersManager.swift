@@ -10,8 +10,8 @@ protocol MainBrowserWindowLookup {
     func controller(for windowId: Int) -> MainBrowserWindowController?
 }
 
-/// Represents a browser window created before user login
-/// These windows are held temporarily and will be converted to MainBrowserWindowController after login
+/// Represents a browser window created before browser access is available.
+/// These windows are held until either Guest Mode or signed-in access is ready.
 struct DanglingWindow {
     let window: NSWindow
     let windowId: Int
@@ -23,17 +23,34 @@ struct DanglingWindow {
     /// without re-resolving — the slot already holds any pending spawn
     /// intent / frame for this windowId.
     weak var slot: SpaceWindowSlot?
-    /// Tabs created before login, will be processed after login
+    /// Tabs created before browser access, replayed once access is available.
     var pendingTabs: [Tab] = []
     /// Tab-group events emitted before the window's BrowserState exists
     /// (e.g., Chromium replays an existing-group state right after the
-    /// window is created but before login). Replayed after the pending
+    /// window is created but before browser access). Replayed after the pending
     /// tabs in `processDanglingWindow` so kCreated handlers find the
     /// already-arrived members.
     var pendingGroupActions: [TabGroupEvent.TabGroupAction] = []
 }
 
 class MainBrowserWindowControllersManager: MainBrowserWindowLookup {
+    private struct RebindGroupSnapshot {
+        let token: String
+        let title: String
+        let color: GroupColor
+        let isCollapsed: Bool
+        let tabIds: [Int]
+    }
+
+    private struct RebindWindowPresentation {
+        let frame: NSRect
+        let level: NSWindow.Level
+        let alphaValue: CGFloat
+        let wasVisible: Bool
+        let wasMiniaturized: Bool
+        let wasKey: Bool
+    }
+
     static let shared = MainBrowserWindowControllersManager()
     private(set) var activeWindowController: MainBrowserWindowController? {
         didSet {
@@ -46,8 +63,13 @@ class MainBrowserWindowControllersManager: MainBrowserWindowLookup {
     }
     private var windowControllers: Set<MainBrowserWindowController> = []
     
-    /// Windows created before user login, waiting to be converted to MainBrowserWindowController
+    /// Windows waiting to be converted to MainBrowserWindowController.
     private var danglingWindows: [DanglingWindow] = []
+
+    /// Original per-window interaction state captured while Guest-to-account
+    /// migration temporarily freezes browser input.
+    private var guestTransitionOriginalIgnoresMouseEvents: [ObjectIdentifier: Bool] = [:]
+    private(set) var isGuestTransitionInteractionBlocked = false
     
     private init() {
         // Listen for login completion to process dangling windows
@@ -57,10 +79,16 @@ class MainBrowserWindowControllersManager: MainBrowserWindowLookup {
             name: .loginCompleted,
             object: nil
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleBrowserAccessStateDidChange),
+            name: .browserAccessStateDidChange,
+            object: nil
+        )
     }
     
-    /// Add a window that was created before user login
-    /// The window will be hidden and stored until login is completed
+    /// Add a window created before browser access is available.
+    /// The window stays hidden until Guest or signed-in access is granted.
     /// - Parameters:
     ///   - window: The NSWindow created by Chromium
     ///   - windowId: The window identifier
@@ -74,7 +102,7 @@ class MainBrowserWindowControllersManager: MainBrowserWindowLookup {
         assert(Thread.isMainThread)
         AppLogInfo("🪟 [WindowManager] Adding dangling window - windowId: \(windowId), type: \(browserType.rawValue)")
 
-        // Hide the window to prevent it from showing before login
+        // Hide the window until browser access is available.
         hideDanglingWindow(window)
 
         let danglingWindow = DanglingWindow(window: window,
@@ -84,12 +112,13 @@ class MainBrowserWindowControllersManager: MainBrowserWindowLookup {
                                             spaceId: spaceId,
                                             slot: slot)
         danglingWindows.append(danglingWindow)
+        applyGuestTransitionInteractionBlockIfNeeded(to: window)
 
         AppLogInfo("🪟 [WindowManager] Dangling windows count: \(danglingWindows.count)")
     }
     
-    /// Add a pending tab to a dangling window
-    /// The tab will be processed after login when the window controller is created
+    /// Add a pending tab to a dangling window.
+    /// The tab is replayed when browser access creates the window controller.
     /// - Parameters:
     ///   - tab: The tab created by Chromium
     ///   - windowId: The window identifier to associate the tab with
@@ -147,11 +176,51 @@ class MainBrowserWindowControllersManager: MainBrowserWindowLookup {
         window.orderOut(nil)
     }
     
-    /// Process all dangling windows after login completion
+    /// Process all dangling windows after login or explicit Guest entry.
     @MainActor
     @objc private func handleLoginCompleted() {
+        processDanglingWindowsIfBrowserAccessIsAvailable()
+    }
+
+    /// Guest entry grants the same Native-window access without emitting a
+    /// semantically false login-completed event.
+    @MainActor
+    @objc private func handleBrowserAccessStateDidChange() {
+        // Crash recovery releases browser access while the promotion fence is
+        // still active. The receipt-aware rebind below owns those dangling
+        // windows so they cannot be constructed and shown once with Guest
+        // identifiers before immediately being rebuilt with target identifiers.
+        guard !ApplicationState.shared.isGuestAccountPromotionInProgress else {
+            return
+        }
+        // SpaceManager consumes the same notification to bind the new
+        // local-data owner. Defer one turn so correctness never depends on
+        // NotificationCenter observer registration order.
+        DispatchQueue.main.async { [weak self] in
+            self?.processDanglingWindowsIfBrowserAccessIsAvailable()
+        }
+    }
+
+    @MainActor
+    private func processDanglingWindowsIfBrowserAccessIsAvailable() {
         assert(Thread.isMainThread)
-        AppLogInfo("🪟 [WindowManager] Login completed - processing \(danglingWindows.count) dangling window(s)")
+        guard ApplicationState.shared.canUseBrowser,
+              let account = AccountController.shared.localDataAccount else {
+            return
+        }
+        materializeDanglingWindows(to: account, migrationReceipt: nil)
+    }
+
+    @MainActor
+    private func materializeDanglingWindows(
+        to account: Account,
+        migrationReceipt: GuestDataMigrationReceipt?
+    ) {
+        assert(Thread.isMainThread)
+        AppLogInfo(
+            "🪟 [WindowManager] Browser access granted - processing " +
+            "\(danglingWindows.count) dangling window(s)"
+        )
 
         var danglingSlots: [SpaceWindowSlot] = []
         for danglingWindow in danglingWindows {
@@ -163,7 +232,11 @@ class MainBrowserWindowControllersManager: MainBrowserWindowLookup {
         }
 
         for danglingWindow in danglingWindows {
-            processDanglingWindow(danglingWindow)
+            processDanglingWindow(
+                danglingWindow,
+                account: account,
+                migrationReceipt: migrationReceipt
+            )
         }
 
         // Clear dangling windows after processing
@@ -172,19 +245,45 @@ class MainBrowserWindowControllersManager: MainBrowserWindowLookup {
         AppLogInfo("🪟 [WindowManager] All dangling windows processed")
     }
     
-    /// Restore a dangling window, or close it if no tabs arrived before login.
+    /// Restore a dangling window, or close it if no tabs arrived before access.
     @MainActor
-    private func processDanglingWindow(_ danglingWindow: DanglingWindow) {
+    private func processDanglingWindow(
+        _ danglingWindow: DanglingWindow,
+        account: Account,
+        migrationReceipt: GuestDataMigrationReceipt?
+    ) {
         AppLogInfo("🪟 [WindowManager] Processing dangling window - windowId: \(danglingWindow.windowId), pending tabs: \(danglingWindow.pendingTabs.count)")
         guard !danglingWindow.pendingTabs.isEmpty else {
             closeEmptyDanglingWindow(danglingWindow)
             return
         }
-        guard let account = AccountController.shared.account else {
-            AppLogError("No available account")
-            return
+
+        let destinationProfileId =
+            migrationReceipt?.profileIDs[danglingWindow.profileId]
+            ?? danglingWindow.profileId
+        let destinationSpaceId =
+            migrationReceipt?.spaceIDs[danglingWindow.spaceId]
+            ?? danglingWindow.spaceId
+        let customValueUpdates: [(tab: Tab, guid: String)]
+        if let migrationReceipt {
+            danglingWindow.slot?.prepareAccountTransitionPendingWindow(
+                from: danglingWindow.spaceId,
+                to: destinationSpaceId
+            )
+            customValueUpdates = remapLiveLocalDataIdentifiers(
+                in: danglingWindow.pendingTabs,
+                destinationProfileId: destinationProfileId,
+                destinationSpaceId: destinationSpaceId,
+                receipt: migrationReceipt
+            )
+            for tab in danglingWindow.pendingTabs {
+                tab.profileId = destinationProfileId
+            }
+        } else {
+            customValueUpdates = []
         }
-        // Create the MainBrowserWindowController now that the user is logged in.
+
+        // Create the MainBrowserWindowController now that browser access is ready.
         // The slot was resolved at addDanglingWindow time; if it was dropped
         // by the manager in the meantime (unlikely pre-login but defensive),
         // fall back to a fresh slot for `.normal` windows so the new
@@ -192,7 +291,7 @@ class MainBrowserWindowControllersManager: MainBrowserWindowLookup {
         let slot: SpaceWindowSlot?
         if danglingWindow.browserType == .normal || danglingWindow.browserType == .agentSpace {
             slot = danglingWindow.slot
-                ?? SpaceManager.shared.createSlot(initialSpaceId: danglingWindow.spaceId)
+                ?? SpaceManager.shared.createSlot(initialSpaceId: destinationSpaceId)
         } else {
             slot = nil
         }
@@ -200,13 +299,13 @@ class MainBrowserWindowControllersManager: MainBrowserWindowLookup {
             window: danglingWindow.window,
             windowId: danglingWindow.windowId,
             browserType: danglingWindow.browserType,
-            profileId: danglingWindow.profileId,
-            spaceId: danglingWindow.spaceId,
+            profileId: destinationProfileId,
+            spaceId: destinationSpaceId,
             account: account,
             slot: slot
         )
         
-        // Process pending tabs that were created before login
+        // Process pending tabs that were created before browser access.
         for tab in danglingWindow.pendingTabs {
             AppLogInfo("🪟 [WindowManager] Processing pending tab - tabGuid: \(tab.guid)")
             if tab.url?.hasPrefix("chrome://newtab") ?? false {
@@ -233,6 +332,9 @@ class MainBrowserWindowControllersManager: MainBrowserWindowLookup {
         if windowController.browserState.focusingTab == nil,
             let last = danglingWindow.pendingTabs.last {
             windowController.browserState.focuseTab(last)
+        }
+        for update in customValueUpdates {
+            update.tab.webContentWrapper?.updateTabCustomValue(update.guid)
         }
         // Restore and show the window
         windowController.restoreAndShowWindow()
@@ -271,6 +373,7 @@ class MainBrowserWindowControllersManager: MainBrowserWindowLookup {
         }
         
         windowControllers.insert(windowController)
+        applyGuestTransitionInteractionBlockIfNeeded(to: window)
         
         NotificationCenter.default.addObserver(self,
                                                selector: #selector(windowWillClose(_:)),
@@ -280,6 +383,389 @@ class MainBrowserWindowControllersManager: MainBrowserWindowLookup {
                                                selector: #selector(windowDidBecomeKey(_:)),
                                                name: NSWindow.didBecomeKeyNotification,
                                                object: window)
+    }
+
+    /// Freezes or restores browser-window mouse interaction during the
+    /// Guest-to-account transaction. Each window's prior value is preserved,
+    /// including windows that arrive while the transaction is in progress.
+    @MainActor
+    func setGuestTransitionInteractionBlocked(_ blocked: Bool) {
+        assert(Thread.isMainThread)
+        guard blocked != isGuestTransitionInteractionBlocked else { return }
+        isGuestTransitionInteractionBlocked = blocked
+
+        let windows = trackedWindows()
+        if blocked {
+            for window in windows {
+                applyGuestTransitionInteractionBlockIfNeeded(to: window)
+            }
+            return
+        }
+
+        for window in windows {
+            let identifier = ObjectIdentifier(window)
+            guard let originalValue = guestTransitionOriginalIgnoresMouseEvents[identifier] else {
+                continue
+            }
+            window.ignoresMouseEvents = originalValue
+        }
+        guestTransitionOriginalIgnoresMouseEvents.removeAll()
+    }
+
+    /// Rebuilds Native browser controllers against a new local-data account
+    /// while preserving the existing NSWindows and Chromium WebContents.
+    ///
+    /// This is the commit seam for Guest-to-account migration: callers first
+    /// migrate local data, then invoke this method with the destination
+    /// account. No Chromium window is closed or recreated.
+    @MainActor
+    func rebindWindowControllers(to account: Account) {
+        performWindowControllerRebind(to: account, migrationReceipt: nil)
+    }
+
+    /// Guest migration variant of `rebindWindowControllers(to:)`. Identifier
+    /// mappings are applied to the Native controller configuration and to
+    /// every live Chromium tab's persisted custom value before replay.
+    @MainActor
+    func rebindWindowControllers(
+        to account: Account,
+        migrationReceipt: GuestDataMigrationReceipt
+    ) {
+        performWindowControllerRebind(
+            to: account,
+            migrationReceipt: migrationReceipt
+        )
+    }
+
+    @MainActor
+    private func performWindowControllerRebind(
+        to account: Account,
+        migrationReceipt: GuestDataMigrationReceipt?
+    ) {
+        assert(Thread.isMainThread)
+        let controllers = Array(windowControllers)
+            .filter { migrationReceipt != nil || $0.account !== account }
+            .sorted { $0.windowId < $1.windowId }
+        let shouldMaterializeDanglingWindows =
+            migrationReceipt != nil && !danglingWindows.isEmpty
+        guard !controllers.isEmpty || shouldMaterializeDanglingWindows else {
+            return
+        }
+
+        let wasAlreadyBlocked = isGuestTransitionInteractionBlocked
+        if !wasAlreadyBlocked {
+            setGuestTransitionInteractionBlocked(true)
+        }
+        defer {
+            if !wasAlreadyBlocked {
+                setGuestTransitionInteractionBlocked(false)
+            }
+        }
+
+        AppLogInfo(
+            "🪟 [WindowManager] Rebinding \(controllers.count) window controller(s) " +
+            "and materializing " +
+            "\(shouldMaterializeDanglingWindows ? danglingWindows.count : 0) " +
+            "dangling window(s) to account \(account.userID)"
+        )
+
+        for oldController in controllers {
+            rebindWindowController(
+                oldController,
+                to: account,
+                migrationReceipt: migrationReceipt
+            )
+        }
+        if let migrationReceipt {
+            // The promotion observer intentionally left recovery windows
+            // dangling. SpaceManager has now consumed the access notification
+            // and bound the target store, so map every identifier before the
+            // first controller construction and show each window only once.
+            materializeDanglingWindows(
+                to: account,
+                migrationReceipt: migrationReceipt
+            )
+        }
+    }
+
+    @MainActor
+    private func rebindWindowController(
+        _ oldController: MainBrowserWindowController,
+        to account: Account,
+        migrationReceipt: GuestDataMigrationReceipt?
+    ) {
+        guard let window = oldController.window else {
+            windowControllers.remove(oldController)
+            if activeWindowController === oldController {
+                activeWindowController = nil
+            }
+            return
+        }
+
+        let oldState = oldController.browserState
+        let tabs = oldState.tabs
+        let aiChatTabs = Array(oldState.aiChatTabs.values)
+        let activeTabId = oldState.focusingTab?.guid
+        let groups = oldState.groups.values
+            .map { info in
+                RebindGroupSnapshot(
+                    token: info.token,
+                    title: info.title,
+                    color: info.color,
+                    isCollapsed: info.isCollapsed,
+                    tabIds: tabs.filter { $0.groupToken == info.token }.map(\.guid)
+                )
+            }
+            .sorted { $0.token < $1.token }
+        let splits = oldState.splits
+        let selectedTabIds = oldState.multiSelection.guids
+        let selectedBookmarkGuids = Set(oldState.multiSelection.bookmarkGuids.map {
+            migrationReceipt?.mappings.bookmarkGUIDs[$0] ?? $0
+        })
+        let destinationProfileId =
+            migrationReceipt?.profileIDs[oldController.profileId]
+            ?? oldController.profileId
+        let destinationSpaceId =
+            migrationReceipt?.spaceIDs[oldController.spaceId]
+            ?? oldController.spaceId
+        let presentation = RebindWindowPresentation(
+            frame: window.frame,
+            level: window.level,
+            alphaValue: window.alphaValue,
+            wasVisible: window.isVisible,
+            wasMiniaturized: window.isMiniaturized,
+            wasKey: window.isKeyWindow
+        )
+        let wasActiveController = activeWindowController === oldController
+
+        // Eviction is deliberately side-effect-light: unlike unregisterWindow,
+        // it neither hands the slot to a sibling nor starts a close cascade.
+        if oldController.browserType == .normal
+            || oldController.browserType == .incognitoSpace
+            || oldController.browserType == .agentSpace {
+            _ = oldController.slot?.prepareAccountTransitionWindowReplacement(
+                oldController,
+                from: oldController.spaceId,
+                to: destinationSpaceId
+            )
+        }
+        detachWindowControllerForRebind(oldController, window: window)
+
+        let customValueUpdates: [(tab: Tab, guid: String)]
+        if let migrationReceipt {
+            customValueUpdates = remapLiveLocalDataIdentifiers(
+                in: tabs + aiChatTabs,
+                destinationProfileId: destinationProfileId,
+                destinationSpaceId: destinationSpaceId,
+                receipt: migrationReceipt
+            )
+        } else {
+            customValueUpdates = []
+        }
+        for tab in tabs + aiChatTabs {
+            tab.profileId = destinationProfileId
+        }
+
+        let replacement = MainBrowserWindowController(
+            window: window,
+            windowId: oldController.windowId,
+            browserType: oldController.browserType,
+            profileId: destinationProfileId,
+            spaceId: destinationSpaceId,
+            account: account,
+            slot: oldController.slot
+        )
+        let newState = replacement.browserState
+
+        for split in splits where split.isPinned {
+            newState.pendingPinnedSplitMarkByCreateId.insert(split.id)
+        }
+
+        var previousTabId: Int?
+        var restoredTabs: [(tab: Tab, context: NativeTabCreationContext)] = []
+        restoredTabs.reserveCapacity(tabs.count + aiChatTabs.count)
+        for tab in tabs {
+            restoredTabs.append((
+                tab: tab,
+                context: NativeTabCreationContext(
+                    isActiveAtCreation: tab.guid == activeTabId,
+                    creationKind: .restore,
+                    insertAfterTabId: previousTabId
+                )
+            ))
+            previousTabId = tab.guid
+        }
+        for tab in aiChatTabs {
+            restoredTabs.append((
+                tab: tab,
+                context: NativeTabCreationContext(creationKind: .restore)
+            ))
+        }
+
+        let splitActions = splits.map {
+            SplitEvent.SplitAction.created(
+                splitId: $0.id,
+                primaryTabId: $0.primaryTabId,
+                secondaryTabId: $0.secondaryTabId,
+                layout: $0.layout,
+                ratio: $0.ratio
+            )
+        }
+        newState.handleRestoredWindowSnapshot(
+            BrowserState.RestoredWindowSnapshot(
+                tabs: restoredTabs,
+                activeTabId: activeTabId,
+                splitActions: splitActions
+            )
+        )
+
+        for group in groups {
+            newState.handleTabGroupCreated(
+                token: group.token,
+                title: group.title,
+                color: group.color,
+                isCollapsed: group.isCollapsed,
+                initialTabIds: group.tabIds
+            )
+        }
+        _ = newState.replaceMultiSelection(
+            tabIds: selectedTabIds,
+            bookmarkGuids: selectedBookmarkGuids
+        )
+        for update in customValueUpdates {
+            update.tab.webContentWrapper?.updateTabCustomValue(update.guid)
+        }
+
+        window.setFrame(presentation.frame, display: true)
+        window.level = presentation.level
+        window.alphaValue = presentation.alphaValue
+        if presentation.wasMiniaturized {
+            window.miniaturize(nil)
+        } else if presentation.wasVisible {
+            if presentation.wasKey {
+                window.makeKeyAndOrderFront(nil)
+            } else {
+                window.orderFront(nil)
+            }
+        } else {
+            window.orderOut(nil)
+        }
+        if wasActiveController {
+            activeWindowController = replacement
+        }
+
+        AppLogInfo(
+            "🪟 [WindowManager] Rebound windowId=\(replacement.windowId) " +
+            "profileId=\(destinationProfileId) spaceId=\(destinationSpaceId) " +
+            "tabs=\(tabs.count) groups=\(groups.count) splits=\(splits.count)"
+        )
+    }
+
+    private func remapLiveLocalDataIdentifiers(
+        in tabs: [Tab],
+        destinationProfileId: String,
+        destinationSpaceId: String,
+        receipt: GuestDataMigrationReceipt
+    ) -> [(tab: Tab, guid: String)] {
+        var customValueUpdates: [(tab: Tab, guid: String)] = []
+        let targetScope =
+            PinnedTabScope(rawValue: receipt.mappings.targetPinnedTabScopeRawValue)
+            ?? .profile
+        let pinnedOwner: (profileId: String?, spaceId: String?)
+        switch targetScope {
+        case .space:
+            pinnedOwner = (destinationProfileId, destinationSpaceId)
+        case .profile:
+            pinnedOwner = (destinationProfileId, nil)
+        case .app:
+            pinnedOwner = (nil, nil)
+        }
+
+        for tab in tabs {
+            if let sourceLineageId = tab.pinnedLineageId,
+               let targetLineageId = receipt.mappings.pinLineageIDs[sourceLineageId] {
+                tab.pinnedLineageId = targetLineageId
+            }
+            guard let sourceGUID = tab.guidInLocalDB, !sourceGUID.isEmpty else {
+                continue
+            }
+
+            let pinnedTargets = receipt.mappings.pinnedTargets(for: sourceGUID)
+            let pinnedTarget = receipt.mappings.pinnedTarget(
+                for: sourceGUID,
+                profileID: pinnedOwner.profileId,
+                spaceID: pinnedOwner.spaceId
+            ) ?? (pinnedTargets.count == 1 ? pinnedTargets[0] : nil)
+            let targetGUID: String?
+            if let pinnedTarget {
+                targetGUID = pinnedTarget.targetGUID
+                tab.splitPartnerGuid = pinnedTarget.targetSplitPartnerGUID
+            } else if pinnedTargets.isEmpty {
+                targetGUID = receipt.mappings.bookmarkGUIDs[sourceGUID]
+            } else {
+                targetGUID = nil
+                AppLogError(
+                    "🪟 [WindowManager] Ambiguous pinned GUID migration for " +
+                    "source=\(sourceGUID) profile=\(destinationProfileId) " +
+                    "space=\(destinationSpaceId)"
+                )
+            }
+
+            guard let targetGUID, targetGUID != sourceGUID else { continue }
+            tab.guidInLocalDB = targetGUID
+            customValueUpdates.append((tab, targetGUID))
+        }
+        return customValueUpdates
+    }
+
+    private func detachWindowControllerForRebind(
+        _ controller: MainBrowserWindowController,
+        window: NSWindow
+    ) {
+        NotificationCenter.default.removeObserver(
+            self,
+            name: NSWindow.willCloseNotification,
+            object: window
+        )
+        NotificationCenter.default.removeObserver(
+            self,
+            name: NSWindow.didBecomeKeyNotification,
+            object: window
+        )
+        NotificationCenter.default.removeObserver(controller, name: nil, object: window)
+        controller.cancellables.removeAll()
+        WindowThemeMessageRouter.shared.stopObservingWindow(windowId: controller.windowId)
+        windowControllers.remove(controller)
+    }
+
+    private func trackedWindows() -> [NSWindow] {
+        var result: [NSWindow] = []
+        var identifiers = Set<ObjectIdentifier>()
+        let browserWindows = windowControllers.compactMap(\.window)
+            + danglingWindows.map(\.window)
+        let otherPhiWindows = NSApp.windows.filter { window in
+            // Recovery/onboarding remains usable; failure alerts are created
+            // after this snapshot and therefore are not frozen.
+            !(window.windowController is OnboardingWindowController)
+        }
+        for window in browserWindows + otherPhiWindows {
+            if identifiers.insert(ObjectIdentifier(window)).inserted {
+                result.append(window)
+            }
+        }
+        return result
+    }
+
+    private func applyGuestTransitionInteractionBlockIfNeeded(to window: NSWindow) {
+        guard isGuestTransitionInteractionBlocked else { return }
+        let identifier = ObjectIdentifier(window)
+        if guestTransitionOriginalIgnoresMouseEvents[identifier] == nil {
+            guestTransitionOriginalIgnoresMouseEvents[identifier] = window.ignoresMouseEvents
+        }
+        if window.isKeyWindow {
+            window.makeFirstResponder(nil)
+        }
+        window.ignoresMouseEvents = true
     }
     
     @objc private func windowWillClose(_ noti: NSNotification) {
@@ -341,14 +827,14 @@ class MainBrowserWindowControllersManager: MainBrowserWindowLookup {
     }
     
     /// Get the first available window ID, checking both active windows and dangling windows
-    /// This is useful for operations that need a window ID before login is completed
+    /// This is useful before Guest entry or login has completed.
     /// - Returns: The first available window ID, or nil if no windows exist
     func getFirstAvailableWindowId() -> Int? {
         // First try to get from active window controllers
         if let windowId = windowControllers.first?.windowId {
             return windowId
         }
-        // Fallback to dangling windows (windows created before login)
+        // Fall back to windows waiting for browser access.
         return danglingWindows.first?.windowId
     }
     

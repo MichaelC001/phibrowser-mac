@@ -190,6 +190,45 @@ final class AuthSessionGeneration {
     }
 }
 
+/// Keeps Guest-to-account authentication private until Native account data has
+/// committed. The Auth0 SDK keychain remains the crash-recovery source, while
+/// the cross-process store and background session activity stay unavailable.
+enum AuthenticatedSessionPublicationPolicy {
+    static func stagesCredentials(for browserAccessState: BrowserAccessState) -> Bool {
+        browserAccessState != .signedIn
+    }
+
+    static func canPublishSharedSession(
+        browserAccessState: BrowserAccessState
+    ) -> Bool {
+        browserAccessState == .signedIn
+    }
+}
+
+enum StagedOnboardingCredentialPolicy {
+    static func canUseToken(
+        browserAccessState: BrowserAccessState,
+        onboardingPhaseRawValue: Int,
+        loginPhaseRawValue: Int,
+        donePhaseRawValue: Int,
+        credentialUserID: String?,
+        onboardingAccountUserID: String?,
+        expectedUserID: String,
+        expiresAt: Date,
+        now: Date = Date()
+    ) -> Bool {
+        guard browserAccessState != .signedIn,
+              onboardingPhaseRawValue != loginPhaseRawValue,
+              onboardingPhaseRawValue != donePhaseRawValue,
+              credentialUserID == expectedUserID,
+              onboardingAccountUserID == expectedUserID,
+              expiresAt > now else {
+            return false
+        }
+        return true
+    }
+}
+
 /// A thread-safe credentials snapshot used only for one SDK renewal.
 ///
 /// Auth0 can retain a refresh token when the renew response omits one, while
@@ -453,22 +492,55 @@ class AuthManager {
                 _ = clearCredentialStores(postSharedTokenChange: false)
                 return .failure(CancellationError())
             }
+            let stagesCredentials =
+                AuthenticatedSessionPublicationPolicy.stagesCredentials(
+                    for: ApplicationState.shared.browserAccessState
+                )
             let loginCommit = authSessionGeneration.advance {
-                () -> (stored: Bool, sharedStorePersisted: Bool) in
+                () -> (
+                    stored: Bool,
+                    sharedStorePersisted: Bool,
+                    stagedSharedStoreCleared: Bool
+                ) in
                 guard storeCredentialsIfAllowed(results) else {
-                    return (false, false)
+                    return (false, false, false)
                 }
                 currentCredentials = results
                 isRenewing = false
-                return (true, syncSharedTokens(results))
+                if stagesCredentials {
+                    return (
+                        true,
+                        false,
+                        SharedAuthTokenStore.shared.clear(
+                            postChangeNotification: true
+                        )
+                    )
+                }
+                return (true, syncSharedTokens(results), true)
             }
-            guard loginCommit.stored else {
-                _ = clearCredentialStores(postSharedTokenChange: false)
+            guard loginCommit.stored,
+                  loginCommit.stagedSharedStoreCleared else {
+                discardUncommittedLoginCredentials()
                 return .failure(CancellationError())
             }
-            self.lastRenewAttemptAt = Date()
             self.reauthenticationState = .normal
             self.clearPersistedReauthenticationState()
+            if stagesCredentials {
+                // The local SDK keychain is intentionally retained so a crash
+                // can resume the identity-bound migration journal. Nothing
+                // cross-process becomes authenticated until markSignedIn().
+                self.lastRenewAttemptAt = nil
+                self.lastSuccessfulSyncAt = nil
+                stopRenewTimer()
+                stopHeartbeat()
+                recordTrace(
+                    "login-credentials-staged-for-guest-migration",
+                    details: credentialSnapshotDetails()
+                )
+                return .success(results)
+            }
+
+            self.lastRenewAttemptAt = Date()
             // Bump `lastSuccessfulSyncAt` only when shared store actually accepted
             // the new credentials. Otherwise launch-time recovery would think the
             // shared store is in sync with us and skip importing a token written
@@ -680,6 +752,10 @@ class AuthManager {
         stopRenewTimer()
         stopHeartbeat()
         AccountController.shared.clearCachedAccount()
+        if !storesCleared {
+            AuthenticatedSentinelSessionLifecycle
+                .containCredentialBoundaryFailure()
+        }
         return storesCleared
     }
 
@@ -824,6 +900,33 @@ class AuthManager {
             return
         }
         recordTrace("refresh-auth-status-started")
+
+        if ApplicationState.shared.isGuestMigrationRecoveryInProgress {
+            await MainActor.run {
+                // Recovery needs only the locally staged identity to resume
+                // the journal. Do not rotate its refresh token or publish it
+                // to Sentinel before the target account commits.
+                if currentCredentials == nil {
+                    currentCredentials = retrievePersistedCredentials()
+                }
+                stopRenewTimer()
+                stopHeartbeat()
+                let sharedStoreCleared = SharedAuthTokenStore.shared.clear(
+                    postChangeNotification: true
+                )
+                recordTrace(
+                    "refresh-auth-status-restored-staged-guest-login",
+                    details: [
+                        "hasLocalCredentials":
+                            boolString(currentCredentials != nil),
+                        "sharedStoreCleared":
+                            boolString(sharedStoreCleared),
+                    ]
+                )
+            }
+            return
+        }
+
         await MainActor.run {
             hydrateAccountForReauthenticationIfNeeded()
             restorePersistedReauthenticationStateIfNeeded(
@@ -861,6 +964,59 @@ class AuthManager {
         }
     }
 
+    /// Publishes credentials and starts authenticated background activity only
+    /// after LoginController has committed the account and called markSignedIn.
+    @MainActor
+    func activateAuthenticatedSessionAfterAccountCommit() async {
+        guard AuthenticatedSessionPublicationPolicy.canPublishSharedSession(
+            browserAccessState: ApplicationState.shared.browserAccessState
+        ) else {
+            recordTrace(
+                "authenticated-session-publication-skipped",
+                details: ["reason": "browser_access_not_signed_in"]
+            )
+            return
+        }
+
+        let session = authSessionGeneration.capture()
+        let credentials: Credentials?
+        if let currentCredentials,
+           currentCredentials.expiresIn.timeIntervalSinceNow > 0 {
+            credentials = currentCredentials
+        } else {
+            credentials = await getActiveCredentials(expectedSession: session)
+        }
+
+        guard authSessionGeneration.isCurrent(session),
+              ApplicationState.shared.isAuthenticated,
+              !isAccountDeletionInProgress,
+              let credentials else {
+            recordTrace(
+                "authenticated-session-publication-skipped",
+                details: ["reason": "credentials_unavailable"]
+            )
+            return
+        }
+
+        let sharedStorePersisted = syncSharedTokens(
+            credentials,
+            renewedBy: "phi-account-commit"
+        )
+        lastRenewAttemptAt = Date()
+        if sharedStorePersisted {
+            lastSuccessfulSyncAt = Date()
+        }
+        reauthenticationState = .normal
+        clearPersistedReauthenticationState()
+        startRenewTimer()
+        startHeartbeat()
+        writeSharedAuth0Config()
+        recordTrace(
+            "authenticated-session-published-after-account-commit",
+            details: credentialSnapshotDetails()
+        )
+    }
+
     /// Alwayws used to determin wheather the use has logged in
     func hasRecoverableLoginSession() -> Bool {
         guard !isAccountDeletionInProgress else {
@@ -884,6 +1040,13 @@ class AuthManager {
             return nil
         }
 #endif
+        guard !ApplicationState.shared.isGuest else {
+            recordTrace(
+                "active-credentials-skipped",
+                details: ["reason": "guest_account_not_committed"]
+            )
+            return nil
+        }
         let session = expectedSession ?? authSessionGeneration.capture()
         guard authSessionGeneration.isCurrent(session),
               !isAccountDeletionInProgress else {
@@ -989,6 +1152,9 @@ class AuthManager {
         guard !isAccountDeletionInProgress else {
             return false
         }
+        guard !ApplicationState.shared.isGuest else {
+            return false
+        }
         // Hot path: Chromium polls this on every page load / tab change. Once
         // login has finished and we have credentials in memory, the answer is
         // already settled — `transitionToLoggedOutState` clears
@@ -996,7 +1162,8 @@ class AuthManager {
         // on the main actor, so the (`phase == .done`, `currentCredentials != nil`)
         // pair is a reliable proxy for "user is logged in" without paying for
         // the keychain reads inside `canRenew()` / `credentialManager.user`.
-        if LoginController.shared.phase == .done,
+        if AccountController.shared.account != nil,
+           LoginController.shared.phase == .done,
            (currentCredentials != nil || hasReauthenticationGraceSession()) {
             return true
         }
@@ -1021,11 +1188,15 @@ class AuthManager {
             return false
         }
 
-        return LoginController.shared.phase == .done
+        return AccountController.shared.account != nil
+            && LoginController.shared.phase == .done
     }
     
     func getAccessTokenSyncly() -> String? {
         guard !isAccountDeletionInProgress else {
+            return nil
+        }
+        guard ApplicationState.shared.isAuthenticated else {
             return nil
         }
         if hasReauthenticationGraceSession() {
@@ -1067,6 +1238,47 @@ class AuthManager {
         recordTrace("access-token-syncly-no-valid-token")
         renewCredentials()
         return nil
+    }
+
+    /// Returns the locally staged bearer token only for account-profile calls
+    /// made by an active onboarding page. This deliberately does not renew,
+    /// consult the shared store, or relax the committed-session token getter.
+    @MainActor
+    func stagedOnboardingAccessToken(expectedUserID: String) -> String? {
+        guard let currentCredentials else {
+            recordTrace(
+                "staged-onboarding-token-skipped",
+                details: ["reason": "missing_credentials"]
+            )
+            return nil
+        }
+
+        let credentialUserID =
+            Self.retriveUserInfo(from: currentCredentials).sub
+        let accountUserID =
+            LoginController.shared.accountForOnboarding?.userID
+        let onboardingPhase = LoginController.shared.phase
+        guard StagedOnboardingCredentialPolicy.canUseToken(
+            browserAccessState:
+                ApplicationState.shared.browserAccessState,
+            onboardingPhaseRawValue: onboardingPhase.rawValue,
+            loginPhaseRawValue: LoginController.Phase.login.rawValue,
+            donePhaseRawValue: LoginController.Phase.done.rawValue,
+            credentialUserID: credentialUserID,
+            onboardingAccountUserID: accountUserID,
+            expectedUserID: expectedUserID,
+            expiresAt: currentCredentials.expiresIn
+        ) else {
+            recordTrace(
+                "staged-onboarding-token-skipped",
+                details: [
+                    "reason": "context_or_identity_mismatch",
+                    "expectedUserID": expectedUserID,
+                ]
+            )
+            return nil
+        }
+        return currentCredentials.accessToken
     }
     
     private func shouldRenewNow() -> Bool {
@@ -1129,6 +1341,13 @@ class AuthManager {
             }
             if isAccountDeletionInProgress {
                 recordTrace("renew-skipped", details: ["reason": "account_deletion"])
+                return .skip
+            }
+            if ApplicationState.shared.isGuest {
+                recordTrace(
+                    "renew-skipped",
+                    details: ["reason": "guest_account_not_committed"]
+                )
                 return .skip
             }
             if hasReauthenticationGraceSession() {
@@ -1581,6 +1800,7 @@ class AuthManager {
             AppLogInfo("transition auth state to login: clearing local credentials after unrecoverable session loss")
             self.clearLocalAccountData()
             LoginController.shared.phase = .login
+            ApplicationState.shared.requireLogin()
             MainBrowserWindowControllersManager.shared.closeAllWindows()
             LoginController.shared.showLoginWindow()
         }
@@ -1659,10 +1879,88 @@ class AuthManager {
     
     @MainActor
     func clearLocalCredentials() {
-        authSessionGeneration.advance {
-            _ = clearCredentialStores(postSharedTokenChange: true)
+        let storesCleared = authSessionGeneration.advance {
+            let cleared = clearCredentialStores(
+                postSharedTokenChange: true
+            )
             isRenewing = false
+            return cleared
         }
+        if !storesCleared {
+            AuthenticatedSentinelSessionLifecycle
+                .containCredentialBoundaryFailure()
+        }
+    }
+
+    /// Discards credentials produced by a login that could not be associated
+    /// with a valid account identity. Unlike a logout, this does not touch the
+    /// current local-data account or browser access state.
+    @MainActor
+    func discardUncommittedLoginCredentials() {
+        let storesCleared = authSessionGeneration.advance {
+            currentCredentials = nil
+            let cleared = clearCredentialStores(
+                postSharedTokenChange: true
+            )
+            isRenewing = false
+            return cleared
+        }
+        lastRenewAttemptAt = nil
+        lastSuccessfulSyncAt = nil
+        stopRenewTimer()
+        stopHeartbeat()
+        if !storesCleared {
+            AuthenticatedSentinelSessionLifecycle
+                .containCredentialBoundaryFailure()
+        }
+    }
+
+    /// Establishes the Guest authentication boundary before Chromium or
+    /// Sentinel can observe startup state. Recovery keeps the SDK credential
+    /// needed to prove the journal-bound identity; an ordinary Guest launch
+    /// discards it as an abandoned login.
+    ///
+    /// Returns false when the cross-process token could not be cleared, so the
+    /// caller can suppress Sentinel launch rather than expose a stale account.
+    @MainActor
+    func prepareGuestSessionBoundaryBeforeServiceLaunch(
+        preserveLocalRecoveryCredentials: Bool
+    ) -> Bool {
+        let sharedStoreCleared: Bool
+        if preserveLocalRecoveryCredentials {
+            sharedStoreCleared = authSessionGeneration.advance {
+                isRenewing = false
+                return SharedAuthTokenStore.shared.clear(
+                    postChangeNotification: true
+                )
+            }
+        } else {
+            sharedStoreCleared = authSessionGeneration.advance {
+                currentCredentials = nil
+                isRenewing = false
+                return clearCredentialStores(
+                    postSharedTokenChange: true
+                )
+            }
+        }
+
+        lastRenewAttemptAt = nil
+        lastSuccessfulSyncAt = nil
+        stopRenewTimer()
+        stopHeartbeat()
+        recordTrace(
+            "guest-session-boundary-prepared-before-service-launch",
+            details: [
+                "preservedLocalRecoveryCredentials":
+                    boolString(preserveLocalRecoveryCredentials),
+                "sharedStoreCleared": boolString(sharedStoreCleared),
+            ]
+        )
+        if !sharedStoreCleared {
+            AuthenticatedSentinelSessionLifecycle
+                .containCredentialBoundaryFailure()
+        }
+        return sharedStoreCleared
     }
 
     @MainActor
@@ -1680,24 +1978,56 @@ class AuthManager {
             return false
         }
 
+        let stagesCredentials =
+            AuthenticatedSessionPublicationPolicy.stagesCredentials(
+                for: ApplicationState.shared.browserAccessState
+            )
         let reauthenticationCommit = authSessionGeneration.advance {
-            () -> (stored: Bool, sharedStorePersisted: Bool) in
+            () -> (
+                stored: Bool,
+                sharedStorePersisted: Bool,
+                stagedSharedStoreCleared: Bool
+            ) in
             guard storeCredentialsIfAllowed(credentials) else {
-                return (false, false)
+                return (false, false, false)
             }
             currentCredentials = credentials
             isRenewing = false
+            if stagesCredentials {
+                return (
+                    true,
+                    false,
+                    SharedAuthTokenStore.shared.clear(
+                        postChangeNotification: true
+                    )
+                )
+            }
             return (
                 true,
                 syncSharedTokens(
                     credentials,
                     renewedBy: "phi-reauthentication"
-                )
+                ),
+                true
             )
         }
-        guard reauthenticationCommit.stored else {
+        guard reauthenticationCommit.stored,
+              reauthenticationCommit.stagedSharedStoreCleared else {
+            discardUncommittedLoginCredentials()
             return false
         }
+        if stagesCredentials {
+            lastRenewAttemptAt = nil
+            lastSuccessfulSyncAt = nil
+            stopRenewTimer()
+            stopHeartbeat()
+            recordTrace(
+                "reauthentication-credentials-staged-for-guest-migration",
+                details: credentialSnapshotDetails()
+            )
+            return true
+        }
+
         lastRenewAttemptAt = Date()
         if reauthenticationCommit.sharedStorePersisted {
             lastSuccessfulSyncAt = Date()
@@ -1726,12 +2056,8 @@ class AuthManager {
             return false
         }
 
-        if let currentUserID = AccountController.shared.account?.userID {
-            return currentUserID == newUserID
-        }
-
-        LoginController.shared.initAccountIfNeeded(credentials)
-        return AccountController.shared.account?.userID == newUserID
+        return LoginController.shared
+            .acceptsReauthenticatedAccount(userID: newUserID)
     }
 
     func recoverFromSharedStoreIfNeeded() async {
@@ -1996,6 +2322,18 @@ class AuthManager {
     @discardableResult
     private func syncSharedTokens(_ credentials: Credentials, renewedBy: String = "phi") -> Bool {
         guard !isAccountDeletionInProgress else {
+            return false
+        }
+        guard AuthenticatedSessionPublicationPolicy.canPublishSharedSession(
+            browserAccessState: ApplicationState.shared.browserAccessState
+        ) else {
+            recordTrace(
+                "shared-token-sync-skipped",
+                details: [
+                    "reason": "account_not_committed",
+                    "renewedBy": renewedBy,
+                ]
+            )
             return false
         }
         let auth0Sub = User(from: credentials.idToken).sub

@@ -895,12 +895,18 @@ extension LocalStore {
     /// V5→V6 migration, so this filter is total — no nil-equivalence rule.
     func bookmarksPublisher(profileId: String,
                             spaceId: String = LocalStore.defaultSpaceId) -> AnyPublisher<[TabDataModel], Never> {
-        guard let context = mainContext else {
+        guard mainContext != nil else {
             return Just([]).eraseToAnyPublisher()
         }
 
         let subject = CurrentValueSubject<[TabDataModel], Never>([])
-        let fetchBookmarks: () -> [TabDataModel] = {
+        let fetchBookmarks: () -> [TabDataModel]? = { [weak self] in
+            // Guest migration releases the source container before its window
+            // controllers are rebound. A save from the target account can
+            // still reach this global notification subscription in that gap.
+            // Resolve the context for every fetch instead of retaining the
+            // released source context.
+            guard let context = self?.mainContext else { return nil }
             do {
                 let bookmarkRaw = TabDataType.bookmark.rawValue
                 let folderRaw = TabDataType.bookmarkFolder.rawValue
@@ -920,7 +926,9 @@ extension LocalStore {
             }
         }
         
-        subject.send(fetchBookmarks())
+        if let bookmarks = fetchBookmarks() {
+            subject.send(bookmarks)
+        }
         
         let notificationCenter = NotificationCenter.default
         let cancellable = notificationCenter
@@ -931,7 +939,8 @@ extension LocalStore {
             }) }
             .receive(on: DispatchQueue.main)
             .sink { _ in
-                subject.send(fetchBookmarks())
+                guard let bookmarks = fetchBookmarks() else { return }
+                subject.send(bookmarks)
             }
         
         return subject

@@ -90,6 +90,10 @@ struct CommandDispatcher {
 
     @MainActor
     private static func dispatchCommand(_ command: CommandWrapper, to window: NSWindow) -> Bool {
+        if MainBrowserWindowControllersManager.shared
+            .isGuestTransitionInteractionBlocked {
+            return true
+        }
         guard let windowController = MainBrowserWindowControllersManager.shared.findControllerWith(window: window) else {
             return false
         }
@@ -263,12 +267,23 @@ struct CommandDispatcher {
 
     private static var spacesShortcutsEnabled: Bool {
         PhiPreferences.GeneralSettings.spacesFeatureEnabled.loadValue()
-        && LoginController.shared.isLoggedin()
+        && ApplicationState.shared.canUseBrowser
     }
     
     @MainActor
     static func handleKeyEquivalent(_ event: NSEvent, window: NSWindow) -> Bool {
         let modifiers = event.modifierFlags.intersection(shortcutModifierFlags)
+
+        if MainBrowserWindowControllersManager.shared
+            .isGuestTransitionInteractionBlocked {
+            // Keep application lifecycle shortcuts available while every
+            // browser command remains frozen behind the migration boundary.
+            if modifiers == [.command],
+               event.charactersIgnoringModifiers?.lowercased() == "q" {
+                return false
+            }
+            return true
+        }
 
         // Tab key may report different characters depending on Shift state.
         let isTabKey = event.keyCode == 48

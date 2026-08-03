@@ -531,7 +531,9 @@ class WebContentContainerViewController: NSViewController {
             .store(in: &cancellables)
 
         if lastKnownSidebarWidth <= 0 {
-            let cached = AccountController.shared.account?.userDefaults.lastKnownSidebarWidth ?? 0
+            let cached =
+                AccountController.shared.localDataAccount?.userDefaults.lastKnownSidebarWidth
+                ?? 0
             if cached > 0 {
                 lastKnownSidebarWidth = cached
             }

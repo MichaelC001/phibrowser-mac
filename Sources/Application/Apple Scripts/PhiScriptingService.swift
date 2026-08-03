@@ -572,6 +572,14 @@ extension PhiScriptingDependencies {
     private static func makeLiveSavedItemsSnapshot(
         targetSpaceId: String?
     ) -> PhiScriptingSavedItemsSnapshot {
+        guard let store = AccountController.shared.localDataAccount?.localStorage
+        else {
+            return PhiScriptingSavedItemsSnapshot(
+                pinnedTabs: [],
+                bookmarks: []
+            )
+        }
+
         let allSpaces = SpaceManager.shared.userSpaces
         let selectedSpaces: [SpaceModel]
         if let targetSpaceId {
@@ -579,7 +587,6 @@ extension PhiScriptingDependencies {
         } else {
             selectedSpaces = allSpaces
         }
-        let store = (AccountController.shared.account ?? AccountController.defaultAccount).localStorage
         return PhiScriptingSavedItemsSnapshot(
             pinnedTabs: makeLivePinnedTabSnapshots(
                 store: store,

@@ -16,6 +16,14 @@ class AccountSettingViewController: NSViewController, SettingsPane {
     private static let maxPaneTitleLength = 20
 
     var paneTitle: String {
+        if ApplicationState.shared.isGuest {
+            return NSLocalizedString(
+                "settings.account.guest.paneTitle",
+                value: "Guest",
+                comment: "Account settings - Pane title shown while using Phi in Guest Mode"
+            )
+        }
+
         let fullName: String
         if !accountViewModel.userName.isEmpty {
             fullName = accountViewModel.userName
@@ -49,6 +57,8 @@ class AccountSettingViewController: NSViewController, SettingsPane {
     private weak var avatarWindowController: AccountWebWindowController?
     private var cancellables = Set<AnyCancellable>()
     private var settingsWindowCloseObserver: NSObjectProtocol?
+    private var signedInRightContainerLeadingConstraint: Constraint?
+    private var guestRightContainerLeadingConstraint: Constraint?
 
     private var avatarEditURL: String {
         #if DEBUG
@@ -108,28 +118,26 @@ class AccountSettingViewController: NSViewController, SettingsPane {
         super.viewWillAppear()
         
         AppLogDebug("👁️ [AccountSettings] viewWillAppear called")
-        
-        // Check if user is logged in before loading data
-        let isLoggedIn = LoginController.shared.isLoggedin()
-        AppLogDebug("👁️ [AccountSettings] Login status check: \(isLoggedIn)")
-        updateReauthenticationWarning()
 
-        guard isLoggedIn else {
-            AppLogDebug("👁️ [AccountSettings] Not logged in, skipping data load")
+        updateAccessPresentation()
+        defaultBrowserViewModel.checkDefaultBrowser()
+
+        guard ApplicationState.shared.isAuthenticated else {
+            AppLogDebug("👁️ [AccountSettings] Account is not authenticated, skipping account data load")
             return
         }
-        
-        AppLogDebug("👁️ [AccountSettings] Starting data load...")
+
+        loadAuthenticatedAccountData()
+    }
+
+    private func loadAuthenticatedAccountData() {
+        AppLogDebug("👁️ [AccountSettings] Starting authenticated data load...")
         accountView.revalidateAvatar()
         Task {
-            // Load all data in parallel using async let
             async let userInfo: Profile? = accountViewModel.loadUserInfo()
 
-            // Start browser check immediately (it's not async)
-            defaultBrowserViewModel.checkDefaultBrowser()
             let profile = await userInfo
             profileCardView.userInfo = profile
-            // Revalidate avatar after user info is loaded (avatarURL may have been empty before)
             accountView.revalidateAvatar()
             AppLogDebug("👁️ [AccountSettings] Data load completed")
         }
@@ -149,12 +157,18 @@ class AccountSettingViewController: NSViewController, SettingsPane {
         view.addSubview(rightContainer)
 
         rightContainer.snp.makeConstraints { make in
-            make.left.equalTo(profileCardView.snp.right).offset(4)
+            signedInRightContainerLeadingConstraint =
+                make.left.equalTo(profileCardView.snp.right).offset(4).constraint
             make.top.equalToSuperview().offset(36)
             make.right.equalToSuperview().offset(-36)
             make.bottom.lessThanOrEqualToSuperview().offset(-36)
             make.width.greaterThanOrEqualTo(352)
         }
+        rightContainer.snp.makeConstraints { make in
+            guestRightContainerLeadingConstraint =
+                make.left.equalToSuperview().offset(36).constraint
+        }
+        guestRightContainerLeadingConstraint?.deactivate()
 
         // Account card (top)
         rightContainer.addSubview(accountView)
@@ -207,8 +221,13 @@ class AccountSettingViewController: NSViewController, SettingsPane {
                 await self?.accountViewModel.logout()
             }
         }
+        accountView.loginAction = {
+            Task { @MainActor in
+                LoginController.shared.showLoginWindow()
+            }
+        }
 
-        updateReauthenticationWarning()
+        updateAccessPresentation()
     }
 
     private func openAvatarEditor() {
@@ -256,7 +275,8 @@ class AccountSettingViewController: NSViewController, SettingsPane {
         shareViewModel.$shouldShowInvitation
             .receive(on: DispatchQueue.main)
             .sink { [weak self] shouldShow in
-                self?.shareView.isHidden = !shouldShow
+                guard let self else { return }
+                self.shareView.isHidden = ApplicationState.shared.isGuest || !shouldShow
             }
             .store(in: &cancellables)
         
@@ -276,12 +296,42 @@ class AccountSettingViewController: NSViewController, SettingsPane {
                 self?.updateReauthenticationWarning()
             }
             .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(for: .browserAccessStateDidChange)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                self.updateAccessPresentation()
+                if ApplicationState.shared.isAuthenticated {
+                    self.loadAuthenticatedAccountData()
+                }
+            }
+            .store(in: &cancellables)
     }
 
     private func updateReauthenticationWarning() {
         accountView.updateReauthenticationWarning(
-            isVisible: AuthManager.shared.requiresReauthentication
+            isVisible: ApplicationState.shared.isAuthenticated
+                && AuthManager.shared.requiresReauthentication
         )
+    }
+
+    private func updateAccessPresentation() {
+        let isGuest = ApplicationState.shared.isGuest
+        profileCardView.isHidden = isGuest
+        accountView.updateGuestPresentation(isGuest)
+        shareView.isHidden = isGuest || !shareViewModel.shouldShowInvitation
+
+        if isGuest {
+            signedInRightContainerLeadingConstraint?.deactivate()
+            guestRightContainerLeadingConstraint?.activate()
+        } else {
+            guestRightContainerLeadingConstraint?.deactivate()
+            signedInRightContainerLeadingConstraint?.activate()
+        }
+
+        updateReauthenticationWarning()
+        notifyPaneTitleDidChange()
     }
 
     private func registerSettingsWindowCloseObserverIfNeeded() {
@@ -408,6 +458,7 @@ class AccountViewModel: ObservableObject {
     }
 
     func loadUserInfo(showLoading: Bool = true) async -> Profile? {
+        guard ApplicationState.shared.isAuthenticated else { return nil }
         // Show cached data first while the fresh request is still pending.
         if let cachedProfile = loadCachedProfile() {
             await MainActor.run {
@@ -429,6 +480,7 @@ class AccountViewModel: ObservableObject {
         // Refresh the profile from the API.
         do {
             let resp = try await APIClient.shared.getAccountProfile()
+            guard ApplicationState.shared.isAuthenticated else { return nil }
             if resp.code == 0 {
                 let profile = resp.data
                 // Refresh the cached copy with the latest network response.
@@ -546,6 +598,7 @@ class AccountViewModel: ObservableObject {
         // Step 4: local account state — credentials, cached profile and avatar,
         // and the account reference — was cleared by `AuthManager.logOut()`.
         AppLogDebug("🚪 [Logout] Step 4: Local account state cleared")
+        ApplicationState.shared.requireLogin()
         
         // Step 5: close the settings window.
         AppLogDebug("🚪 [Logout] Step 5: Closing settings window")
@@ -610,6 +663,7 @@ class AccountViewModel: ObservableObject {
     }
 
     func updateUserName(_ newName: String) async {
+        guard ApplicationState.shared.isAuthenticated else { return }
         let oldName = userName
 
         // Optimistic update: reflect immediately in UI
@@ -621,6 +675,7 @@ class AccountViewModel: ObservableObject {
         do {
             let request = UpdateProfileRequest(name: newName)
             let resp = try await APIClient.shared.updateProfile(updates: request)
+            guard ApplicationState.shared.isAuthenticated else { return }
 
             if resp.code == 0 {
                 let updatedProfile = resp.data
@@ -983,6 +1038,18 @@ class AccountCardView: SettingItemBackgroundView {
         return btn
     }()
 
+    private let loginButton: NSButton = {
+        let btn = NSButton()
+        btn.title = NSLocalizedString(
+            "settings.account.guest.loginButton",
+            value: "Log In",
+            comment: "Account settings - Button shown in the Guest account card to open login"
+        )
+        btn.bezelStyle = .rounded
+        btn.isHidden = true
+        return btn
+    }()
+
     private let loadingIndicator: NSProgressIndicator = {
         let indicator = NSProgressIndicator()
         indicator.style = .spinning
@@ -996,10 +1063,12 @@ class AccountCardView: SettingItemBackgroundView {
     var onUserNameUpdated: ((String) -> Void)?
     var onAvatarEdit: (() -> Void)?
     var logoutAction: (() -> Void)?
+    var loginAction: (() -> Void)?
 
     private var isAvatarHovered = false
     private var isNameHovered = false
     private var canEdit = false
+    private var isGuestPresentation = false
     private var showsReauthenticationWarning = false
     private var isLogoutInProgress = false
     private var avatarRevalidateTask: DownloadTask?
@@ -1065,6 +1134,16 @@ class AccountCardView: SettingItemBackgroundView {
         logoutButton.setContentHuggingPriority(.defaultHigh, for: .horizontal)
         addSubview(logoutButton)
         logoutButton.snp.makeConstraints { make in
+            make.right.equalToSuperview().offset(-12)
+            make.centerY.equalToSuperview()
+        }
+
+        loginButton.target = self
+        loginButton.action = #selector(loginTapped)
+        loginButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        loginButton.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        addSubview(loginButton)
+        loginButton.snp.makeConstraints { make in
             make.right.equalToSuperview().offset(-12)
             make.centerY.equalToSuperview()
         }
@@ -1161,14 +1240,16 @@ class AccountCardView: SettingItemBackgroundView {
         viewModel.$userName
             .receive(on: DispatchQueue.main)
             .sink { [weak self] name in
-                self?.nameLabel.stringValue = name
+                guard let self, !self.isGuestPresentation else { return }
+                self.nameLabel.stringValue = name
             }
             .store(in: &cancellables)
 
         viewModel.$userEmail
             .receive(on: DispatchQueue.main)
             .sink { [weak self] email in
-                self?.emailLabel.stringValue = email
+                guard let self, !self.isGuestPresentation else { return }
+                self.emailLabel.stringValue = email
             }
             .store(in: &cancellables)
 
@@ -1176,7 +1257,10 @@ class AccountCardView: SettingItemBackgroundView {
             .removeDuplicates()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] urlString in
-                guard let self, let url = URL(string: urlString), !urlString.isEmpty else { return }
+                guard let self,
+                      !self.isGuestPresentation,
+                      let url = URL(string: urlString),
+                      !urlString.isEmpty else { return }
                 // Use the current image as placeholder so it stays visible on cache miss
                 let placeholder = self.avatarImageView.image
                     ?? NSImage(systemSymbolName: "person.crop.circle.fill", accessibilityDescription: "Avatar")?
@@ -1198,26 +1282,30 @@ class AccountCardView: SettingItemBackgroundView {
         viewModel.$isLoading
             .receive(on: DispatchQueue.main)
             .sink { [weak self] isLoading in
-                self?.updateLoadingState(isLoading)
+                guard let self, !self.isGuestPresentation else { return }
+                self.updateLoadingState(isLoading)
             }
             .store(in: &cancellables)
 
         viewModel.$canEditUserName
             .receive(on: DispatchQueue.main)
             .sink { [weak self] canEdit in
-                self?.canEdit = canEdit
+                guard let self, !self.isGuestPresentation else { return }
+                self.canEdit = canEdit
             }
             .store(in: &cancellables)
 
         viewModel.$isLogoutInProgress
             .receive(on: DispatchQueue.main)
             .sink { [weak self] isLogoutInProgress in
-                self?.updateLogoutButtonState(isLogoutInProgress)
+                guard let self, !self.isGuestPresentation else { return }
+                self.updateLogoutButtonState(isLogoutInProgress)
             }
             .store(in: &cancellables)
     }
 
     private func updateLoadingState(_ isLoading: Bool) {
+        guard !isGuestPresentation else { return }
         if isLoading {
             loadingIndicator.startAnimation(nil)
             loadingIndicator.isHidden = false
@@ -1230,6 +1318,7 @@ class AccountCardView: SettingItemBackgroundView {
             loadingIndicator.stopAnimation(nil)
             loadingIndicator.isHidden = true
             logoutButton.isHidden = false
+            loginButton.isHidden = true
             nameLabel.isHidden = false
             emailLabel.isHidden = false
             updateStatusLineVisibility()
@@ -1241,6 +1330,48 @@ class AccountCardView: SettingItemBackgroundView {
         updateStatusLineVisibility()
     }
 
+    func updateGuestPresentation(_ isGuest: Bool) {
+        guard isGuestPresentation != isGuest else { return }
+        isGuestPresentation = isGuest
+        avatarRevalidateTask?.cancel()
+        avatarRevalidateTask = nil
+        canEdit = isGuest ? false : viewModel.canEditUserName
+        avatarEditButton.alphaValue = 0
+        nameEditIconButton.alphaValue = 0
+
+        if isGuest {
+            loadingIndicator.stopAnimation(nil)
+            loadingIndicator.isHidden = true
+            logoutButton.isHidden = true
+            loginButton.isHidden = false
+            nameLabel.isHidden = false
+            emailLabel.isHidden = false
+            logoutStatusLabel.isHidden = true
+            reauthenticationWarningLabel.isHidden = true
+            nameLabel.stringValue = NSLocalizedString(
+                "settings.account.guest.title",
+                value: "Using Phi without an account",
+                comment: "Account settings - Title of the Guest account card"
+            )
+            emailLabel.stringValue = NSLocalizedString(
+                "settings.account.guest.detail",
+                value: "Your Phi browsing data is stored locally on this Mac.",
+                comment: "Account settings - Detail explaining Guest data storage"
+            )
+            avatarImageView.image = NSImage(
+                systemSymbolName: "person.crop.circle.fill",
+                accessibilityDescription: nil
+            )?.withSymbolConfiguration(.init(pointSize: 28, weight: .regular))
+            avatarImageView.contentTintColor = .secondaryLabelColor
+        } else {
+            loginButton.isHidden = true
+            nameLabel.stringValue = viewModel.userName
+            emailLabel.stringValue = viewModel.userEmail
+            updateLoadingState(viewModel.isLoading)
+            updateLogoutButtonState(viewModel.isLogoutInProgress)
+        }
+    }
+
     private func updateLogoutButtonState(_ isInProgress: Bool) {
         isLogoutInProgress = isInProgress
         logoutButton.isEnabled = !isInProgress
@@ -1249,6 +1380,11 @@ class AccountCardView: SettingItemBackgroundView {
     }
 
     private func updateStatusLineVisibility() {
+        guard !isGuestPresentation else {
+            logoutStatusLabel.isHidden = true
+            reauthenticationWarningLabel.isHidden = true
+            return
+        }
         let isLoading = !loadingIndicator.isHidden
         logoutStatusLabel.isHidden = isLoading || !isLogoutInProgress
         reauthenticationWarningLabel.isHidden = isLoading || isLogoutInProgress || !showsReauthenticationWarning
@@ -1257,6 +1393,7 @@ class AccountCardView: SettingItemBackgroundView {
     // MARK: Avatar revalidation
 
     func revalidateAvatar() {
+        guard !isGuestPresentation else { return }
         let urlString = viewModel.avatarURL
         guard let url = URL(string: urlString), !urlString.isEmpty else { return }
 
@@ -1282,6 +1419,7 @@ class AccountCardView: SettingItemBackgroundView {
     /// Instantly display a locally-provided avatar image (e.g. from the WKWebView editor),
     /// bypassing any network round-trip.
     func setAvatarImage(_ image: NSImage) {
+        guard !isGuestPresentation else { return }
         avatarRevalidateTask?.cancel()
         let size = image.size
         let circularImage = NSImage(size: size, flipped: false) { rect in
@@ -1409,6 +1547,10 @@ class AccountCardView: SettingItemBackgroundView {
     @objc private func logoutTapped() {
         guard !isLogoutInProgress else { return }
         logoutAction?()
+    }
+
+    @objc private func loginTapped() {
+        loginAction?()
     }
 }
 

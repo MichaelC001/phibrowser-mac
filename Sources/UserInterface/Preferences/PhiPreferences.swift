@@ -484,3 +484,31 @@ extension PhiPreferences {
         }
     }
 }
+
+/// Applies Guest Mode's one-time Cmd+T default without overriding a choice the
+/// user has already persisted. Kept with the preference definitions so login
+/// lifecycle code does not depend on the General Settings view.
+enum GuestNewTabPreference {
+    static let key = PhiPreferences.GeneralSettings.openNewTabPageOnCmdT.rawValue
+
+    @discardableResult
+    static func applyDefaultIfNeeded(
+        isGuest: Bool,
+        defaults: UserDefaults = .standard,
+        persistentDomainName: String? = Bundle.main.bundleIdentifier
+    ) -> Bool {
+        guard isGuest else { return false }
+
+        let hasPersistedValue: Bool
+        if let persistentDomainName {
+            hasPersistedValue =
+                defaults.persistentDomain(forName: persistentDomainName)?[key] != nil
+        } else {
+            hasPersistedValue = defaults.object(forKey: key) != nil
+        }
+
+        guard !hasPersistedValue else { return false }
+        defaults.set(false, forKey: key)
+        return true
+    }
+}

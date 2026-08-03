@@ -14,11 +14,14 @@ extension BrowserState {
             ChromiumLauncher.sharedInstance().bridge?.disablePhiExtensions(false)
         }
         if enabled {
-            UserDefaults.standard.set(true, forKey: PhiPreferences.GeneralSettings.openNewTabPageOnCmdT.rawValue)
+            if !ApplicationState.shared.isGuest {
+                UserDefaults.standard.set(true, forKey: PhiPreferences.GeneralSettings.openNewTabPageOnCmdT.rawValue)
+            }
             updateSentinelRegistration(sentinelOnLogin)
-            MainActor.assumeIsolated { SentinelWatchdog.shared.start() }
         } else {
-            UserDefaults.standard.set(false, forKey: PhiPreferences.GeneralSettings.openNewTabPageOnCmdT.rawValue)
+            if !ApplicationState.shared.isGuest {
+                UserDefaults.standard.set(false, forKey: PhiPreferences.GeneralSettings.openNewTabPageOnCmdT.rawValue)
+            }
             Task {
                 await SentinelHelper.unregister()
             }
@@ -33,27 +36,12 @@ extension BrowserState {
 
     /// Only called when AI is enabled.
     func updateSentinelRegistration(_ launchOnLogin: Bool) {
-        if launchOnLogin {
-            SentinelHelper.register()
-            SentinelHelper.launch()
-            // register() may steal focus. poll up to 2s and reactivate main app if needed
-            Task {
-                for _ in 0..<10 {
-                    try? await Task.sleep(nanoseconds: 200_000_000)
-                    if await !NSApp.isActive {
-                        await MainActor.run { NSApp.activate() }
-                        break
-                    }
-                }
-            }
-        } else {
-            let running = SentinelHelper.isRunning
-            Task {
-                await SentinelHelper.unregister()
-                if running || PhiPreferences.AISettings.phiAIEnabled.loadValue() {
-                    SentinelHelper.launch()
-                }
-            }
+        MainActor.assumeIsolated {
+            AuthenticatedSentinelSessionLifecycle.reconcile(
+                aiEnabled:
+                    PhiPreferences.AISettings.phiAIEnabled.loadValue(),
+                launchOnLogin: launchOnLogin
+            )
         }
     }
 

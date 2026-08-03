@@ -9,6 +9,7 @@ import PostHog
 struct AISettingView: View {
     @State private var connectorViewModel: AISettingsConnectorViewModel
     @State private var showDisableAIAlert = false
+    @State private var isGuest = ApplicationState.shared.isGuest
 
     @AppStorage(PhiPreferences.AISettings.phiAIEnabled.rawValue)
     private var phiAIEnabled: Bool = PhiPreferences.AISettings.phiAIEnabled.defaultValue
@@ -38,8 +39,14 @@ struct AISettingView: View {
                 PhiSentinelSectionView(enabled: phiAIEnabled)
                 NewTabPageSectionView(enabled: phiAIEnabled)
                 AISidebarSectionView(enabled: phiAIEnabled)
-                ExternalConnectorsSectionView(connectorViewModel: connectorViewModel,
-                                              enabled: phiAIEnabled)
+                if isGuest {
+                    GuestExternalConnectorsSectionView()
+                } else {
+                    ExternalConnectorsSectionView(
+                        connectorViewModel: connectorViewModel,
+                        enabled: phiAIEnabled
+                    )
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, 36)
@@ -56,6 +63,17 @@ struct AISettingView: View {
             PostHogSDK.shared.capture("ai_features_toggled", properties: [
                 "enabled": newValue,
             ])
+        }
+        .onReceive(
+            NotificationCenter.default.publisher(for: .browserAccessStateDidChange)
+                .receive(on: DispatchQueue.main)
+        ) { _ in
+            isGuest = ApplicationState.shared.isGuest
+            if ApplicationState.shared.isAuthenticated {
+                connectorViewModel.loadConnectionsIfNeeded()
+            } else {
+                connectorViewModel.suspendForUnauthenticatedAccess()
+            }
         }
         .alert(
             NSLocalizedString("settings.ai.disableFeatures.title", value: "Turn Off AI Features?",
@@ -215,6 +233,19 @@ private struct AISidebarSectionView: View {
 }
 
 // MARK: - External Data Connectors Section
+
+private struct GuestExternalConnectorsSectionView: View {
+    var body: some View {
+        AISectionView(
+            title: NSLocalizedString("settings.ai.connectors.sectionTitle", value: "External Data Connectors", comment: "AI settings - Section title for external data connectors"),
+            subtitle: NSLocalizedString("settings.ai.connectors.description", value: "External Data Connectors help to provide additional context for better AI experience", comment: "AI settings - Description explaining external data connectors purpose")
+        ) {
+            AIContainerView {
+                LoginRequiredPresentationView()
+            }
+        }
+    }
+}
 
 private struct ExternalConnectorsSectionView: View {
     @AppStorage(PhiPreferences.AISettings.enableConnectors.rawValue)

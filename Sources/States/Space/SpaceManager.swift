@@ -591,17 +591,20 @@ final class SpaceManager: ObservableObject {
         )
         NotificationCenter.default.addObserver(
             self,
+            selector: #selector(handleBrowserAccessStateDidChange),
+            name: .browserAccessStateDidChange,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
             selector: #selector(handleScreenParametersChanged),
             name: NSApplication.didChangeScreenParametersNotification,
             object: nil
         )
-        // Always bind eagerly so the persisted last-active Space is primed
-        // before the very first Chromium window arrives. In login flows
-        // where the real account isn't set yet, `defaultAccount` provides a
-        // stable plist to read from; if/when login completes the
-        // `.mainAccountChanged` observer re-binds to the real account.
-        let initialAccount = AccountController.shared.account ?? AccountController.defaultAccount
-        bind(to: initialAccount)
+        // Bind eagerly only when browser access has a local-data owner. Guest
+        // uses the stable default account; signed-in access uses the published
+        // identity. The login-required state must not expose either store.
+        refreshAccountBindingForBrowserAccess()
     }
 
     // MARK: - Public — read
@@ -3571,10 +3574,8 @@ final class SpaceManager: ObservableObject {
     // MARK: - Account / login binding
 
     @objc private func handleLoginCompleted() {
-        if let account = AccountController.shared.account {
-            bind(to: account)
-        }
-        // Re-run the reconcile skipped while logged out. Async so it lands after
+        refreshAccountBindingForBrowserAccess()
+        // Re-run the reconcile skipped before browser access. Async so it lands after
         // the window manager registers the dangling windows on this same
         // `.loginCompleted` post, so `activate` swaps instead of spawning.
         DispatchQueue.main.async { [weak self] in
@@ -3590,11 +3591,33 @@ final class SpaceManager: ObservableObject {
     }
 
     @objc private func handleAccountChanged(_ notification: Notification) {
-        if let account = notification.object as? Account {
-            bind(to: account)
-        } else {
+        refreshAccountBindingForBrowserAccess()
+    }
+
+    @objc private func handleBrowserAccessStateDidChange() {
+        refreshAccountBindingForBrowserAccess()
+    }
+
+    private func refreshAccountBindingForBrowserAccess() {
+        guard let account = AccountController.shared.localDataAccount else {
             unbind()
+            return
         }
+        bind(to: account)
+    }
+
+    /// Rebinds Space persistence after a pre-import Guest migration failure
+    /// replaces the terminal source Account object with a fresh default
+    /// account over the same intact directory. Browser access does not change
+    /// in this rollback, so its normal observers have no event to react to.
+    @MainActor
+    func refreshGuestAccountBindingAfterMigrationRollback() {
+        guard ApplicationState.shared.isGuest,
+              !ApplicationState.shared
+                .isGuestAccountPromotionInProgress else {
+            return
+        }
+        refreshAccountBindingForBrowserAccess()
     }
 
     /// Displays were added, removed, or re-configured. A slot parks its windows
@@ -3922,12 +3945,11 @@ final class SpaceManager: ObservableObject {
             return (updated.first(where: isAutomaticSwitchTarget) ?? updated.first)?.spaceId
         }()
 
-        // Gate on login: before login, windows are dangling and not yet in any
-        // slot's `windowsBySpaceId`, so `activate`'s spawn guard can't see them
-        // and would spawn a duplicate empty window for a Space that already owns
-        // one (stray windows after a User-Data reset + re-login).
-        // `handleLoginCompleted` re-runs this once windows are registered.
-        if AuthManager.shared.checkLoginStatusOnChromiumLaunch() {
+        // Gate on browser access: before Guest entry or login, windows are
+        // dangling and not yet in any slot's `windowsBySpaceId`, so `activate`'s
+        // spawn guard cannot see them and would spawn a duplicate empty window.
+        // Access-state changes re-run this once windows are registered.
+        if ApplicationState.shared.canUseBrowser {
             for slot in slots {
                 // A slot mid-cascade is on its way out: activating a fallback
                 // would respawn a window into it and fight the teardown. Hit
@@ -7769,6 +7791,62 @@ final class SpaceWindowSlot: ObservableObject {
             manager?.removeSlot(self)
         }
         return controller
+    }
+
+    /// Prepares one in-place Native controller replacement while Guest data
+    /// is promoted into an account whose migration may have remapped the
+    /// Space identifier.
+    ///
+    /// The old controller is removed from the registry without any close,
+    /// sibling handoff, or spawn. The replacement is expected to register
+    /// synchronously after this returns, using `destinationSpaceId`.
+    @discardableResult
+    func prepareAccountTransitionWindowReplacement(
+        _ controller: MainBrowserWindowController,
+        from sourceSpaceId: String,
+        to destinationSpaceId: String
+    ) -> Bool {
+        guard windowsBySpaceId[sourceSpaceId] === controller else {
+            return false
+        }
+
+        _ = evictWindow(for: sourceSpaceId, removeSlotIfEmpty: false)
+        if activeSpaceId == sourceSpaceId || visibleController === controller {
+            activeSpaceId = destinationSpaceId
+        }
+        manager?.pushSpaceStateToChromium()
+        manager?.persistSlotsSnapshot()
+        return true
+    }
+
+    /// Remaps an empty slot captured while browser access was fenced.
+    ///
+    /// Crash recovery owns a Chromium window before its Native controller can
+    /// be constructed. Apply the receipt's Space mapping to the slot and any
+    /// still-pending spawn bookkeeping first, so registering the target-bound
+    /// controller never publishes the retired Guest identifier.
+    func prepareAccountTransitionPendingWindow(
+        from sourceSpaceId: String,
+        to destinationSpaceId: String
+    ) {
+        guard sourceSpaceId != destinationSpaceId else { return }
+
+        if activeSpaceId == sourceSpaceId {
+            activeSpaceId = destinationSpaceId
+        }
+        if lastRegularSpaceId == sourceSpaceId {
+            lastRegularSpaceId = destinationSpaceId
+        }
+        if pendingSpawnSpaceIds.remove(sourceSpaceId) != nil {
+            pendingSpawnSpaceIds.insert(destinationSpaceId)
+        }
+        let pendingWindowIds = pendingSpawnSpaceIdByWindowId.compactMap {
+            windowId, spaceId in
+            spaceId == sourceSpaceId ? windowId : nil
+        }
+        for windowId in pendingWindowIds {
+            pendingSpawnSpaceIdByWindowId[windowId] = destinationSpaceId
+        }
     }
 
     /// Profile-change respawn: replaces this slot's window for `spaceId` in

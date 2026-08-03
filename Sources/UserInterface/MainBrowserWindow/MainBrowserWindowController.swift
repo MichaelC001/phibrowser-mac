@@ -142,6 +142,23 @@ class MainBrowserWindowController: NSWindowController {
         in window: NSWindow,
         browserState: BrowserState
     ) -> NSEvent? {
+        if event.type == .keyDown,
+           event.window === window,
+           MainBrowserWindowControllersManager.shared
+            .isGuestTransitionInteractionBlocked {
+            let modifiers = event.modifierFlags.intersection([
+                .command,
+                .option,
+                .shift,
+                .control,
+            ])
+            if modifiers == [.command],
+               event.charactersIgnoringModifiers?.lowercased() == "q" {
+                return event
+            }
+            return nil
+        }
+
         guard event.type == .keyDown,
               event.keyCode == 53,
               event.window === window,

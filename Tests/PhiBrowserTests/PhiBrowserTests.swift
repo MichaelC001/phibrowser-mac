@@ -771,6 +771,243 @@ final class PhiBrowserTests: XCTestCase {
         XCTAssertEqual(canonicalCredential, "new-session")
     }
 
+    func testAuthenticatedSessionPublicationStagesUntilSignedInCommit() {
+        XCTAssertTrue(
+            AuthenticatedSessionPublicationPolicy.stagesCredentials(
+                for: .guest
+            )
+        )
+        XCTAssertTrue(
+            AuthenticatedSessionPublicationPolicy.stagesCredentials(
+                for: .loginRequired
+            )
+        )
+        XCTAssertFalse(
+            AuthenticatedSessionPublicationPolicy.stagesCredentials(
+                for: .signedIn
+            )
+        )
+        XCTAssertFalse(
+            AuthenticatedSessionPublicationPolicy.canPublishSharedSession(
+                browserAccessState: .guest
+            )
+        )
+        XCTAssertTrue(
+            AuthenticatedSessionPublicationPolicy.canPublishSharedSession(
+                browserAccessState: .signedIn
+            )
+        )
+    }
+
+    func testStagedOnboardingCredentialRequiresMatchingActiveOnboardingAccount() {
+        let futureExpiry = Date().addingTimeInterval(300)
+
+        XCTAssertTrue(
+            StagedOnboardingCredentialPolicy.canUseToken(
+                browserAccessState: .guest,
+                onboardingPhaseRawValue:
+                    LoginController.Phase.setName.rawValue,
+                loginPhaseRawValue: LoginController.Phase.login.rawValue,
+                donePhaseRawValue: LoginController.Phase.done.rawValue,
+                credentialUserID: "auth0|target",
+                onboardingAccountUserID: "auth0|target",
+                expectedUserID: "auth0|target",
+                expiresAt: futureExpiry
+            )
+        )
+        XCTAssertFalse(
+            StagedOnboardingCredentialPolicy.canUseToken(
+                browserAccessState: .guest,
+                onboardingPhaseRawValue:
+                    LoginController.Phase.setName.rawValue,
+                loginPhaseRawValue: LoginController.Phase.login.rawValue,
+                donePhaseRawValue: LoginController.Phase.done.rawValue,
+                credentialUserID: "auth0|other",
+                onboardingAccountUserID: "auth0|target",
+                expectedUserID: "auth0|target",
+                expiresAt: futureExpiry
+            )
+        )
+        XCTAssertFalse(
+            StagedOnboardingCredentialPolicy.canUseToken(
+                browserAccessState: .signedIn,
+                onboardingPhaseRawValue:
+                    LoginController.Phase.setName.rawValue,
+                loginPhaseRawValue: LoginController.Phase.login.rawValue,
+                donePhaseRawValue: LoginController.Phase.done.rawValue,
+                credentialUserID: "auth0|target",
+                onboardingAccountUserID: "auth0|target",
+                expectedUserID: "auth0|target",
+                expiresAt: futureExpiry
+            )
+        )
+        XCTAssertFalse(
+            StagedOnboardingCredentialPolicy.canUseToken(
+                browserAccessState: .loginRequired,
+                onboardingPhaseRawValue:
+                    LoginController.Phase.done.rawValue,
+                loginPhaseRawValue: LoginController.Phase.login.rawValue,
+                donePhaseRawValue: LoginController.Phase.done.rawValue,
+                credentialUserID: "auth0|target",
+                onboardingAccountUserID: "auth0|target",
+                expectedUserID: "auth0|target",
+                expiresAt: futureExpiry
+            )
+        )
+    }
+
+    func testSentinelSessionRunsOnlyForCommittedAuthenticatedAccess() {
+        XCTAssertFalse(
+            AuthenticatedSentinelSessionPolicy.shouldRun(
+                browserAccessState: .guest,
+                isAuthenticated: false,
+                aiEnabled: true
+            )
+        )
+        XCTAssertFalse(
+            AuthenticatedSentinelSessionPolicy.shouldRun(
+                browserAccessState: .loginRequired,
+                isAuthenticated: false,
+                aiEnabled: true
+            )
+        )
+        XCTAssertFalse(
+            AuthenticatedSentinelSessionPolicy.shouldRun(
+                browserAccessState: .signedIn,
+                isAuthenticated: true,
+                aiEnabled: false
+            )
+        )
+        XCTAssertTrue(
+            AuthenticatedSentinelSessionPolicy.shouldRun(
+                browserAccessState: .signedIn,
+                isAuthenticated: true,
+                aiEnabled: true
+            )
+        )
+        XCTAssertFalse(
+            AuthenticatedSentinelSessionPolicy.shouldTerminate(
+                browserAccessState: .guest,
+                isAuthenticated: false,
+                aiEnabled: true
+            )
+        )
+        XCTAssertFalse(
+            AuthenticatedSentinelSessionPolicy.shouldTerminate(
+                browserAccessState: .loginRequired,
+                isAuthenticated: false,
+                aiEnabled: true
+            )
+        )
+        XCTAssertTrue(
+            AuthenticatedSentinelSessionPolicy.shouldTerminate(
+                browserAccessState: .signedIn,
+                isAuthenticated: true,
+                aiEnabled: false
+            )
+        )
+        XCTAssertTrue(
+            AuthenticatedSentinelSessionPolicy.shouldRegisterAtLogin(
+                browserAccessState: .signedIn,
+                isAuthenticated: true,
+                aiEnabled: true,
+                launchOnLogin: true
+            )
+        )
+        XCTAssertFalse(
+            AuthenticatedSentinelSessionPolicy.shouldRegisterAtLogin(
+                browserAccessState: .signedIn,
+                isAuthenticated: true,
+                aiEnabled: true,
+                launchOnLogin: false
+            )
+        )
+    }
+
+    func testDeferredGuestCleanupResumesOnlyMatchingStagedIdentity() {
+        XCTAssertTrue(
+            DeferredGuestMigrationRecoveryPolicy.shouldSuspendGuestAccess(
+                hasRecoverableCredentials: true,
+                storedCredentialUserID: "auth0|target",
+                journalTargetUserID: "auth0|target"
+            )
+        )
+        XCTAssertFalse(
+            DeferredGuestMigrationRecoveryPolicy.shouldSuspendGuestAccess(
+                hasRecoverableCredentials: true,
+                storedCredentialUserID: "auth0|other",
+                journalTargetUserID: "auth0|target"
+            )
+        )
+        XCTAssertFalse(
+            DeferredGuestMigrationRecoveryPolicy.shouldSuspendGuestAccess(
+                hasRecoverableCredentials: false,
+                storedCredentialUserID: "auth0|target",
+                journalTargetUserID: "auth0|target"
+            )
+        )
+    }
+
+    func testReauthenticationIdentityAcceptsOnlyJournalTargetDuringRecovery() {
+        XCTAssertTrue(
+            AuthenticatedAccountIdentityPolicy.accepts(
+                candidateUserID: "auth0|target",
+                publishedUserID: nil,
+                pendingUserID: nil,
+                recoveryTargetUserID: "auth0|target",
+                isGuestMigrationRecoveryInProgress: true
+            )
+        )
+        XCTAssertFalse(
+            AuthenticatedAccountIdentityPolicy.accepts(
+                candidateUserID: "auth0|other",
+                publishedUserID: nil,
+                pendingUserID: nil,
+                recoveryTargetUserID: "auth0|target",
+                isGuestMigrationRecoveryInProgress: true
+            )
+        )
+        XCTAssertFalse(
+            AuthenticatedAccountIdentityPolicy.accepts(
+                candidateUserID: "auth0|target",
+                publishedUserID: nil,
+                pendingUserID: "auth0|other",
+                recoveryTargetUserID: "auth0|target",
+                isGuestMigrationRecoveryInProgress: true
+            )
+        )
+    }
+
+    func testReauthenticationIdentityUsesPublishedOrPendingAccountNormally() {
+        XCTAssertTrue(
+            AuthenticatedAccountIdentityPolicy.accepts(
+                candidateUserID: "auth0|published",
+                publishedUserID: "auth0|published",
+                pendingUserID: nil,
+                recoveryTargetUserID: nil,
+                isGuestMigrationRecoveryInProgress: false
+            )
+        )
+        XCTAssertTrue(
+            AuthenticatedAccountIdentityPolicy.accepts(
+                candidateUserID: "auth0|pending",
+                publishedUserID: nil,
+                pendingUserID: "auth0|pending",
+                recoveryTargetUserID: nil,
+                isGuestMigrationRecoveryInProgress: false
+            )
+        )
+        XCTAssertFalse(
+            AuthenticatedAccountIdentityPolicy.accepts(
+                candidateUserID: "auth0|pending",
+                publishedUserID: "auth0|published",
+                pendingUserID: "auth0|pending",
+                recoveryTargetUserID: nil,
+                isGuestMigrationRecoveryInProgress: false
+            )
+        )
+    }
+
     func testAuthSessionGenerationSerializesRestoreAndRenewalCommits() {
         let state = AuthCredentialCommitTestState()
         let session = state.sessions.capture()

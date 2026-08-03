@@ -11,11 +11,21 @@ extension NSNotification.Name {
 }
 
 class OnboardingWindowController: NSWindowController {
+    private(set) var presentsGuestMigrationRecovery = false
+
     private lazy var loginViewController: LoginViewController = {
         let vc = LoginViewController()
+        vc.presentationMode = presentsGuestMigrationRecovery
+            ? .guestMigrationRecovery
+            : .standard
         vc.onLoginSuccess = { [weak self] credentials in
             guard let credentials, let self else { return }
             self.routeToCurrentPhase(using: credentials)
+        }
+        vc.onContinueAsGuest = {
+            Task { @MainActor in
+                LoginController.shared.continueAsGuest()
+            }
         }
         return vc
     }()
@@ -80,7 +90,7 @@ class OnboardingWindowController: NSWindowController {
         return vc
     }()
     
-    convenience init() {
+    convenience init(presentsGuestMigrationRecovery: Bool = false) {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 640, height: 800),
             styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
@@ -93,7 +103,8 @@ class OnboardingWindowController: NSWindowController {
         window.animationBehavior = .default
 
         
-        self.init(window: window)        
+        self.init(window: window)
+        self.presentsGuestMigrationRecovery = presentsGuestMigrationRecovery
         setupContentViewController()
     }
 
@@ -161,7 +172,7 @@ class OnboardingWindowController: NSWindowController {
                 let user = AuthManager.retriveUserInfo(from: credentials)
                 welcomeViewController.userName = user.name
             } else {
-                welcomeViewController.userName = AccountController.shared.account?.userInfo?.name
+                welcomeViewController.userName = LoginController.shared.accountForOnboarding?.userInfo?.name
             }
             return welcomeViewController
         case .layoutSelection:
@@ -184,14 +195,9 @@ class OnboardingWindowController: NSWindowController {
 
     private func finish() {
         LoginController.shared.phase = .done
-        close()
-        
-        if MainBrowserWindowControllersManager.shared.getFirstAvailableWindowId() == nil {
-            ChromiumLauncher.sharedInstance().bridge?.applicationShouldHandleReopen(NSApp, hasVisibleWindows: false)
-            NotificationCenter.default.post(name: .loginCompleted, object: nil)
-        } else {
-            ChromiumLauncher.sharedInstance().bridge?.notifyRebuildMenuAfterLogin()
-            NotificationCenter.default.post(name: .loginCompleted, object: nil)
+
+        Task { @MainActor in
+            await LoginController.shared.completeCurrentLogin()
         }
     }
 }

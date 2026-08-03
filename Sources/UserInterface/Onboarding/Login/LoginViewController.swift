@@ -14,8 +14,15 @@ class LoginViewController: NSViewController {
     enum Phase {
         case login, waiting
     }
+
+    enum PresentationMode: Equatable {
+        case standard
+        case guestMigrationRecovery
+    }
     
     var onLoginSuccess: ((Credentials?) -> Void)?
+    var onContinueAsGuest: (() -> Void)?
+    var presentationMode: PresentationMode = .standard
     private var player: AVPlayer?
     private var playerLayer: AVPlayerLayer?
     private var timeObserver: Any?
@@ -46,14 +53,27 @@ class LoginViewController: NSViewController {
         bg.wantsLayer = true
         bg.addSubview(loginImage)
         bg.addSubview(loginButton)
+        bg.addSubview(continueAsGuestButton)
+        bg.addSubview(guestMigrationRecoveryLabel)
         loginImage.snp.makeConstraints { make in
             make.centerX.equalToSuperview()
             make.top.equalToSuperview()
         }
         loginButton.snp.makeConstraints { make in
             make.centerX.equalToSuperview()
-            make.bottom.equalToSuperview()
+            make.bottom.equalTo(continueAsGuestButton.snp.top).offset(-12)
             make.size.equalTo(NSSize(width: 120, height: 40))
+        }
+        continueAsGuestButton.snp.makeConstraints { make in
+            make.centerX.equalToSuperview()
+            make.bottom.equalToSuperview()
+            make.height.equalTo(22)
+        }
+        guestMigrationRecoveryLabel.snp.makeConstraints { make in
+            make.centerX.equalToSuperview()
+            make.bottom.equalTo(loginButton.snp.top).offset(-18)
+            make.leading.greaterThanOrEqualToSuperview().offset(72)
+            make.trailing.lessThanOrEqualToSuperview().offset(-72)
         }
         bg.alphaValue = 0
         return bg
@@ -68,6 +88,42 @@ class LoginViewController: NSViewController {
             self?.loginAction()
         }
         return button
+    }()
+
+    private lazy var continueAsGuestButton: NSButton = {
+        let title = NSLocalizedString(
+            "oobe.login.continueAsGuestButton",
+            value: "Continue without an account",
+            comment: "Onboarding Login - Tertiary button that enters persistent Guest Mode"
+        )
+        let button = NSButton(title: title, target: self, action: #selector(continueAsGuestAction))
+        button.isBordered = false
+        button.font = .systemFont(ofSize: 13)
+        button.attributedTitle = NSAttributedString(
+            string: title,
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 13),
+                .foregroundColor: NSColor.white.withAlphaComponent(0.65)
+            ]
+        )
+        button.focusRingType = .default
+        button.setAccessibilityLabel(title)
+        return button
+    }()
+
+    private lazy var guestMigrationRecoveryLabel: NSTextField = {
+        let label = NSTextField(labelWithString: NSLocalizedString(
+            "oobe.guestMigration.recovery.loginMessage",
+            value: "Log in to the account you previously selected to finish moving your Guest data.",
+            comment: "Guest migration recovery - Guidance shown when the original target account must log in again"
+        ))
+        label.font = .systemFont(ofSize: 14)
+        label.textColor = .white.withAlphaComponent(0.78)
+        label.alignment = .center
+        label.lineBreakMode = .byWordWrapping
+        label.maximumNumberOfLines = 0
+        label.isHidden = true
+        return label
     }()
     
     private lazy var waitingView: NSView = {
@@ -206,6 +262,12 @@ class LoginViewController: NSViewController {
     }
     
     private func setupUI() {
+        let isRecoveringGuestMigration =
+            presentationMode == .guestMigrationRecovery
+        continueAsGuestButton.isHidden = isRecoveringGuestMigration
+        continueAsGuestButton.isEnabled = !isRecoveringGuestMigration
+        guestMigrationRecoveryLabel.isHidden = !isRecoveringGuestMigration
+
         view.snp.makeConstraints { make in
             make.size.equalTo(NSSize(width: 640, height: 800))
         }
@@ -306,6 +368,11 @@ class LoginViewController: NSViewController {
                 }
             }
         }
+    }
+
+    @objc func continueAsGuestAction() {
+        guard presentationMode == .standard else { return }
+        onContinueAsGuest?()
     }
     
     private func attachWebView(_ webView: WKWebView) {

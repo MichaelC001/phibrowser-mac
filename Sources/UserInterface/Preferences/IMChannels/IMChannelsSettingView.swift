@@ -9,6 +9,7 @@ import CoreImage.CIFilterBuiltins
 
 struct IMChannelsSettingView: View {
     @State private var vm = IMChannelsViewModel()
+    @State private var isGuest = ApplicationState.shared.isGuest
 
     var body: some View {
         ScrollView(.vertical) {
@@ -23,15 +24,21 @@ struct IMChannelsSettingView: View {
                     )
                 )
 
-                if !vm.topNoticeMessages.isEmpty {
-                    VStack(spacing: 10) {
-                        ForEach(vm.topNoticeMessages, id: \.self) { message in
-                            IMNoticeBanner(message: message)
+                if isGuest {
+                    IMContainerView {
+                        LoginRequiredPresentationView()
+                    }
+                } else {
+                    if !vm.topNoticeMessages.isEmpty {
+                        VStack(spacing: 10) {
+                            ForEach(vm.topNoticeMessages, id: \.self) { message in
+                                IMNoticeBanner(message: message)
+                            }
                         }
                     }
-                }
 
-                TelegramChannelsSection(vm: vm)
+                    TelegramChannelsSection(vm: vm)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, 36)
@@ -39,7 +46,19 @@ struct IMChannelsSettingView: View {
         }
         .themedBackground(PhiPreferences.fixedWindowBackground)
         .frame(width: 680, height: 561)
-        .task { await vm.loadAll() }
+        .task(id: isGuest) {
+            if isGuest {
+                await vm.stopPolling()
+            } else {
+                await vm.loadAll()
+            }
+        }
+        .onReceive(
+            NotificationCenter.default.publisher(for: .browserAccessStateDidChange)
+                .receive(on: DispatchQueue.main)
+        ) { _ in
+            isGuest = ApplicationState.shared.isGuest
+        }
         .onDisappear { Task { await vm.stopPolling() } }
     }
 }

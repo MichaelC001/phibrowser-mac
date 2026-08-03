@@ -332,15 +332,17 @@ class BrowserDataImporter {
             ChromiumLauncher.sharedInstance().bridge?.getAllBookmarks(withWindowId: windowId.int64Value)
         }
 
-        await AccountController.shared.account?.localStorage.saveChromiumBookmarksToLocalStore(
+        let account = LoginController.shared.accountForOnboarding
+
+        await account?.localStorage.saveChromiumBookmarksToLocalStore(
             bookmarkWrappers ?? [], profileId: targetProfileId, spaceId: targetSpaceId)
 
         if let arcSpaceRoot {
-            await AccountController.shared.account?.localStorage.saveArcBookmarksToLocalStore(
+            await account?.localStorage.saveArcBookmarksToLocalStore(
                 arcSpaceRoot, profileId: targetProfileId, spaceId: targetSpaceId)
         }
 
-        await AccountController.shared.account?.localStorage.reorderImportedBrowserFolders(
+        await account?.localStorage.reorderImportedBrowserFolders(
             profileId: targetProfileId, spaceId: targetSpaceId)
     }
 

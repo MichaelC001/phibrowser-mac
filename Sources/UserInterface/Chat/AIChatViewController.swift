@@ -9,6 +9,7 @@ import PostHog
 
 class AIChatViewController: NSViewController {
     private lazy var contentView = NSView()
+    private lazy var loginRequiredOverlayView = LoginRequiredOverlayView()
     private lazy var cancellables = Set<AnyCancellable>()
     let state: BrowserState
     private var isInitialized = false
@@ -42,6 +43,7 @@ class AIChatViewController: NSViewController {
         }
         
         setupObservers()
+        updateLoginRequiredPresentation()
     }
     
     override func viewWillAppear() {
@@ -50,6 +52,7 @@ class AIChatViewController: NSViewController {
     
     override func viewDidAppear() {
         super.viewDidAppear()
+        updateLoginRequiredPresentation()
         handleAIChatVisibilityChanged(collapsed: false)
         aiChatPageViewStart = Date()
         PostHogSDK.shared.capture("ai_chat_page_opened")
@@ -84,10 +87,22 @@ class AIChatViewController: NSViewController {
         state.$aiChatTabs
             .sink { [weak self] tabs in
                 guard let self,
+                      self.canLoadAIChat,
                       let identifier = self.currentIdentifier,
                       let newTab = tabs[identifier],
                       newTab !== self.currentAIChatTab else { return }
                 self.switchToAIChatTab(newTab, identifier: identifier)
+            }
+            .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(for: .browserAccessStateDidChange)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                self.updateLoginRequiredPresentation()
+                if self.canLoadAIChat {
+                    self.handleAIChatVisibilityChanged(collapsed: false)
+                }
             }
             .store(in: &cancellables)
     }
@@ -95,12 +110,20 @@ class AIChatViewController: NSViewController {
     /// Handles AI Chat panel visibility changes.
     private func handleAIChatVisibilityChanged(collapsed: Bool) {
         guard !collapsed, !state.isIncognito else { return }
+        guard canLoadAIChat else {
+            updateLoginRequiredPresentation()
+            return
+        }
         
         handleFocusingTabChanged(state.focusingTab)
     }
     
     /// Switches to or creates the AI Chat tab for the current focused tab.
     private func handleFocusingTabChanged(_ focusingTab: Tab?) {
+        guard canLoadAIChat else {
+            updateLoginRequiredPresentation()
+            return
+        }
         guard let focusingTab,
               state.isInPlaceholderMode == false else { return }
 
@@ -114,7 +137,7 @@ class AIChatViewController: NSViewController {
 
             let chromeTabId = focusingTab.guid
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-                guard let self else { return }
+                guard let self, self.canLoadAIChat else { return }
                 if self.state.aiChatTabs[identifier] == nil {
                     self.state.createAIChatTab(for: identifier, chromeTabId: chromeTabId)
                 }
@@ -124,6 +147,10 @@ class AIChatViewController: NSViewController {
     
     /// Switches the embedded view to the specified AI Chat tab.
     private func switchToAIChatTab(_ tab: Tab, identifier: String) {
+        guard canLoadAIChat else {
+            updateLoginRequiredPresentation()
+            return
+        }
         currentAIChatTab?.webContentView?.removeFromSuperview()
         
         if let native = tab.webContentView {
@@ -153,6 +180,12 @@ class AIChatViewController: NSViewController {
                 timer.invalidate()
                 return
             }
+
+            guard self.canLoadAIChat else {
+                timer.invalidate()
+                self.updateLoginRequiredPresentation()
+                return
+            }
             
             if let native = tab.webContentView {
                 timer.invalidate()
@@ -169,12 +202,57 @@ class AIChatViewController: NSViewController {
     }
     
     private func addWebContent(_ native: NSView) {
+        guard canLoadAIChat else {
+            updateLoginRequiredPresentation()
+            return
+        }
         contentView.subviews.forEach { $0.removeFromSuperview() }
         
         contentView.addSubview(native)
         native.snp.makeConstraints { make in
             make.edges.equalToSuperview()
         }
+    }
+
+    private var shouldPresentLoginRequired: Bool {
+        LoginRequiredPresentationPolicy.shouldPresent(
+            for: .aiChat,
+            isGuest: ApplicationState.shared.isGuest,
+            isPhiAIEnabled: PhiPreferences.AISettings.phiAIEnabled.loadValue()
+        )
+    }
+
+    private var canLoadAIChat: Bool {
+        ApplicationState.shared.isAuthenticated
+    }
+
+    private func updateLoginRequiredPresentation() {
+        guard !canLoadAIChat else {
+            loginRequiredOverlayView.removeFromSuperview()
+            return
+        }
+
+        currentAIChatTab?.webContentView?.removeFromSuperview()
+        currentAIChatTab = nil
+        currentIdentifier = nil
+        contentView.subviews
+            .filter { $0 !== loginRequiredOverlayView }
+            .forEach { $0.removeFromSuperview() }
+
+        guard shouldPresentLoginRequired else {
+            loginRequiredOverlayView.removeFromSuperview()
+            return
+        }
+
+        guard loginRequiredOverlayView.superview !== contentView else { return }
+        loginRequiredOverlayView.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(loginRequiredOverlayView)
+        NSLayoutConstraint.activate([
+            loginRequiredOverlayView.topAnchor.constraint(equalTo: contentView.topAnchor),
+            loginRequiredOverlayView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            loginRequiredOverlayView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            loginRequiredOverlayView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor)
+        ])
     }
     
     /// Reattaches the AI Chat view if another container moved it away.

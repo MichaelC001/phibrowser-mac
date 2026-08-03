@@ -28,6 +28,14 @@ final class CommonMessageRouter {
     }
     
     private func handleAuth0ProfileRequest(_ context: ExtensionMessageContext) {
+        guard ApplicationState.shared.isAuthenticated else {
+            messanger.sendError(
+                "Login required",
+                requestId: context.requestId
+            )
+            return
+        }
+
         func _handleResponse(_ user: User?) {
             guard let user else {
                 messanger.sendError("Retrive user info failed", requestId: context.requestId)

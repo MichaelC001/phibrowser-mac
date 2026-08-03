@@ -118,7 +118,14 @@ class OnboardingWelcomeViewController: ConchFrameAnimationBaseViewController {
     }
     
     private func requesetProfile() async {
-        let response = try? await APIClient.shared.getAccountProfile()
+        let accountUserID = await MainActor.run {
+            LoginController.shared.accountForOnboarding?.userID
+        }
+        guard let accountUserID else {
+            return
+        }
+        let response = try? await APIClient.shared
+            .getOnboardingAccountProfile(accountUserID: accountUserID)
         if let profile = response?.data {
             await MainActor.run {
                 let dateString = formatToLocalDate(profile.created_at)

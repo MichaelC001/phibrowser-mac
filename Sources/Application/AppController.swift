@@ -52,7 +52,7 @@ import PostHog
     private var coldOpenURLForwardWorkItem: DispatchWorkItem?
     private var coldOpenURLForwardAttempts = 0
     private var pendingColdOpenForwardURLs: [URL] = []
-    private var pendingOpenURLsAwaitingLoginStatus: [URL] = []
+    private var pendingOpenURLsAwaitingBrowserAccess: [URL] = []
     /// Cached in `applicationWillFinishLaunching`; weak — owned by `ChromiumLauncher`, not AppController.
     private weak var chromiumBridge: (any PhiChromiumBridgeProtocol)?
 
@@ -73,7 +73,23 @@ import PostHog
     }
     
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Chromium may query login state before launch completes, so refresh it first.
+        // Resolve the synchronous browser-access gate before Chromium asks
+        // whether its windows may be shown. The async refresh below can still
+        // recover a fresher shared credential snapshot afterwards.
+        resolveBrowserAccessFromAuthentication(checkChromiumLaunchStatus: true)
+        LoginController.shared.prepareGuestMigrationRecoveryBeforeChromiumLaunch()
+        let permitsSentinelLaunch: Bool
+        if ApplicationState.shared.isGuest {
+            permitsSentinelLaunch =
+                AuthManager.shared
+                    .prepareGuestSessionBoundaryBeforeServiceLaunch(
+                        preserveLocalRecoveryCredentials:
+                            ApplicationState.shared
+                                .isGuestMigrationRecoveryInProgress
+                    )
+        } else {
+            permitsSentinelLaunch = true
+        }
         LoginController.shared.refreshLoginStatusOnLaunching()
         
         //        ASWebAuthenticationSessionWebBrowserSessionManager.shared.sessionHandler = self
@@ -111,6 +127,14 @@ import PostHog
                                                name: .loginCompleted,
                                                object: nil)
         NotificationCenter.default.addObserver(self,
+                                               selector: #selector(browserAccessStateDidChange(_:)),
+                                               name: .browserAccessStateDidChange,
+                                               object: nil)
+        NotificationCenter.default.addObserver(self,
+                                               selector: #selector(mainAccountChanged(_:)),
+                                               name: .mainAccountChanged,
+                                               object: nil)
+        NotificationCenter.default.addObserver(self,
                                                selector: #selector(refreshSpacesMenuVisibility),
                                                name: .activeBrowserWindowDidChange,
                                                object: nil)
@@ -119,15 +143,21 @@ import PostHog
                                                name: .activeBrowserWindowDidChange,
                                                object: nil)
         
-        if PhiPreferences.AISettings.launchSentinelOnLogin.loadValue() {
-            SentinelHelper.register()
-        }
-        if PhiPreferences.AISettings.phiAIEnabled.loadValue() {
-            SentinelHelper.launch()
-            SentinelWatchdog.shared.start()
-        }
-        Task.detached(priority: .utility) {
-            await SentinelVersionGuard.shared.runStartupCheck()
+        if permitsSentinelLaunch,
+           ApplicationState.shared.isAuthenticated {
+            AuthenticatedSentinelSessionLifecycle.reconcile()
+            Task.detached(priority: .utility) {
+                await SentinelVersionGuard.shared.runStartupCheck()
+            }
+        } else {
+            AuthenticatedSentinelSessionLifecycle
+                .suspendForUnauthenticatedSession()
+            if !permitsSentinelLaunch {
+                AppLogError(
+                    "Sentinel launch suppressed because the Guest " +
+                    "shared-token boundary could not be established"
+                )
+            }
         }
     }
 
@@ -219,8 +249,10 @@ import PostHog
     }
     
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
-        if LoginController.shared.orderFrontLoginWindowIfNeeded() {
-            LoginController.shared.showLoginWindow()
+        if !ApplicationState.shared.canUseBrowser {
+            if !ApplicationState.shared.isGuestMigrationRecoveryInProgress {
+                LoginController.shared.showLoginWindow()
+            }
             return true
         } else {
             // Only renew on reopen when the access token is actually close to
@@ -229,10 +261,11 @@ import PostHog
             // amplified ferrt risk on stale RTs (see Auth0 incident
             // 2026-04-22). The periodic renew timer still handles long-term
             // freshness; this gate just removes the redundant burst on reopen.
-            if AuthManager.shared.shouldRenewOnReopen() {
+            if ApplicationState.shared.isAuthenticated,
+               AuthManager.shared.shouldRenewOnReopen() {
                 AuthManager.shared.renewCredentials()
             } else {
-                AppLogDebug("reopen: access token still fresh, skipping renew")
+                AppLogDebug("reopen: Guest Mode or fresh access token, skipping renew")
             }
             // With no surviving browser window, spawn the persisted
             // last-active Space ourselves instead of letting Chromium's
@@ -256,7 +289,7 @@ import PostHog
     }
     
     func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
-        guard LoginController.shared.isLoggedin() else {
+        guard ApplicationState.shared.canUseBrowser else {
             return nil
         }
         let menu = ChromiumLauncher.sharedInstance().bridge?.applicationDockMenu(sender)
@@ -268,11 +301,11 @@ import PostHog
             return
         }
 
-        if LoginController.shared.orderFrontLoginWindowIfNeeded() {
-            if AuthManager.shared.hasRecoverableLoginSession() {
-                pendingOpenURLsAwaitingLoginStatus.append(contentsOf: urls)
+        if !ApplicationState.shared.canUseBrowser {
+            pendingOpenURLsAwaitingBrowserAccess.append(contentsOf: urls)
+            if !ApplicationState.shared.isGuestMigrationRecoveryInProgress {
+                LoginController.shared.showLoginWindow()
             }
-            LoginController.shared.showLoginWindow()
         } else {
             if let url = urls.first, DeeplinkHandler.handle(url) {
                 return
@@ -367,15 +400,47 @@ import PostHog
     }
 
     @objc private func loginStatusRefreshCompleted(_ notification: Notification) {
+        resolveBrowserAccessFromAuthentication(checkChromiumLaunchStatus: false)
         Task { @MainActor in
-            self.flushPendingOpenURLsAwaitingLoginStatus()
+            self.flushPendingOpenURLsAwaitingBrowserAccess()
         }
     }
 
     @objc private func loginCompleted(_ notification: Notification) {
-        Task { @MainActor in
-            self.flushPendingOpenURLsAwaitingLoginStatus()
+        if LoginController.shared.isLoggedin() {
+            ApplicationState.shared.markSignedIn()
+        } else {
+            resolveBrowserAccessFromAuthentication(checkChromiumLaunchStatus: false)
         }
+        Task { @MainActor in
+            self.flushPendingOpenURLsAwaitingBrowserAccess()
+        }
+    }
+
+    @objc private func browserAccessStateDidChange(_ notification: Notification) {
+        Task { @MainActor in
+            AuthenticatedSentinelSessionLifecycle.reconcile()
+            guard ApplicationState.shared.canUseBrowser,
+                  !ApplicationState.shared
+                    .isGuestAccountPromotionInProgress else {
+                return
+            }
+
+            self.flushPendingOpenURLsAwaitingBrowserAccess()
+            ChromiumLauncher.sharedInstance().bridge?.notifyRebuildMenuAfterLogin()
+
+            // Guest entry can happen before Chromium has created a dangling
+            // window. Ask Chromium to create/reopen one only when neither a
+            // live nor a dangling browser already exists.
+            if MainBrowserWindowControllersManager.shared.getFirstAvailableWindowId() == nil {
+                ChromiumLauncher.sharedInstance().bridge?
+                    .applicationShouldHandleReopen(NSApp, hasVisibleWindows: false)
+            }
+        }
+    }
+
+    @objc private func mainAccountChanged(_ notification: Notification) {
+        resolveBrowserAccessFromAuthentication(checkChromiumLaunchStatus: false)
     }
 
     private func bindChromiumBridgeIfNeeded() {
@@ -385,26 +450,46 @@ import PostHog
     }
 
     @MainActor
-    private func flushPendingOpenURLsAwaitingLoginStatus() {
-        guard !pendingOpenURLsAwaitingLoginStatus.isEmpty else {
+    private func flushPendingOpenURLsAwaitingBrowserAccess() {
+        guard !pendingOpenURLsAwaitingBrowserAccess.isEmpty else {
             return
         }
 
-        guard AuthManager.shared.hasRecoverableLoginSession() else {
-            pendingOpenURLsAwaitingLoginStatus.removeAll()
+        guard ApplicationState.shared.canUseBrowser else {
             return
         }
 
-        guard !LoginController.shared.orderFrontLoginWindowIfNeeded() else {
-            return
-        }
-
-        let urls = pendingOpenURLsAwaitingLoginStatus
-        pendingOpenURLsAwaitingLoginStatus.removeAll()
+        let urls = pendingOpenURLsAwaitingBrowserAccess
+        pendingOpenURLsAwaitingBrowserAccess.removeAll()
         if let url = urls.first, DeeplinkHandler.handle(url) {
             return
         }
         scheduleForwardOpenURLsToChromium(application: NSApp, urls: urls)
+    }
+
+    private func resolveBrowserAccessFromAuthentication(
+        checkChromiumLaunchStatus: Bool
+    ) {
+        // A persisted Guest choice deliberately outranks credentials that were
+        // staged but never committed. LoginController performs the one
+        // identity-bound recovery when a migration journal exists; ordinary
+        // browser-access probes must not revive that session.
+        let isPersistedGuest = ApplicationState.shared.isGuest
+        let isAuthenticated: Bool
+        if isPersistedGuest {
+            isAuthenticated = false
+        } else {
+            isAuthenticated = checkChromiumLaunchStatus
+                ? AuthManager.shared.checkLoginStatusOnChromiumLaunch()
+                : LoginController.shared.isLoggedin()
+        }
+        ApplicationState.shared.resolveInitialAccess(
+            isAuthenticationBlocked: AuthManager.shared.isAccountDeletionInProgress,
+            hasRecoverableLoginSession: isPersistedGuest
+                ? false
+                : AuthManager.shared.hasRecoverableLoginSession(),
+            isAuthenticated: isAuthenticated
+        )
     }
 }
 

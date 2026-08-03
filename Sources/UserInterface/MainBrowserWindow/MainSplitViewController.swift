@@ -345,7 +345,7 @@ extension MainSplitViewController: NSSplitViewDelegate {
         guard width != Self.leftItemMinWidth else {
             return
         }
-        AccountController.shared.account?.userDefaults.setLastKnownSidebarWidth(width)
+        AccountController.shared.localDataAccount?.userDefaults.setLastKnownSidebarWidth(width)
     }
 }
 

@@ -71,6 +71,42 @@
         }
       }
     },
+    "accountRequired.phiAI.detail" : {
+      "comment" : "Account-required presentation - Detail shown when a Guest opens a Phi AI feature",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "This feature requires a Phi account."
+          }
+        }
+      }
+    },
+    "accountRequired.phiAI.loginButton" : {
+      "comment" : "Account-required presentation - Button that opens the Phi login window",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Log In"
+          }
+        }
+      }
+    },
+    "accountRequired.phiAI.title" : {
+      "comment" : "Account-required presentation - Title shown when a Guest opens a Phi AI feature",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Log in to use Phi AI"
+          }
+        }
+      }
+    },
     "accountDeletion.cancelButton" : {
       "comment" : "Account deletion - Button abandoning the deletion flow without deleting anything",
       "extractionState" : "extracted_with_value",
@@ -6083,6 +6119,18 @@
         }
       }
     },
+    "localData.bookmarks.importedFromGuestFolderTitle" : {
+      "comment" : "Bookmark folder - Container created when Guest bookmarks are moved into a signed-in account",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Imported from Guest"
+          }
+        }
+      }
+    },
     "localData.bookmarks.rootFolderTitle" : {
       "comment" : "Default root bookmarks folder title",
       "extractionState" : "extracted_with_value",
@@ -6175,6 +6223,186 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "Pop up"
+          }
+        }
+      }
+    },
+    "oobe.guestMode.credentialClearFailure.dismissButton" : {
+      "comment" : "Guest mode - Button that dismisses the credential cleanup failure alert",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "OK"
+          }
+        }
+      }
+    },
+    "oobe.guestMode.credentialClearFailure.message" : {
+      "comment" : "Guest mode - Alert message asking the user to retry after credential cleanup failed",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Phi couldn’t securely clear the previous session. Try again before continuing as Guest."
+          }
+        }
+      }
+    },
+    "oobe.guestMode.credentialClearFailure.title" : {
+      "comment" : "Guest mode - Alert title when authenticated credentials could not be cleared",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Couldn’t start Guest Mode"
+          }
+        }
+      }
+    },
+    "oobe.guestMigration.cleanupDeferred.dismissButton" : {
+      "comment" : "Guest migration - Button that dismisses the deferred cleanup alert",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "OK"
+          }
+        }
+      }
+    },
+    "oobe.guestMigration.cleanupDeferred.message" : {
+      "comment" : "Guest migration - Alert message for deferred deletion of the old Guest data directory",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Your account is ready and your data is safe. Phi will try to remove the old Guest data again the next time it starts."
+          }
+        }
+      }
+    },
+    "oobe.guestMigration.cleanupDeferred.title" : {
+      "comment" : "Guest migration - Alert title when account setup succeeded but the old Guest directory could not be removed",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Guest data cleanup is incomplete"
+          }
+        }
+      }
+    },
+    "oobe.guestMigration.failure.message" : {
+      "comment" : "Guest migration - Alert message explaining that Guest data remains safe and migration can be retried",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Phi couldn’t move your Guest data. Your data is safe, and you can try again."
+          }
+        }
+      }
+    },
+    "oobe.guestMigration.failure.notNowButton" : {
+      "comment" : "Guest migration - Button that keeps using Guest Mode after a failed migration",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Not Now"
+          }
+        }
+      }
+    },
+    "oobe.guestMigration.failure.retryButton" : {
+      "comment" : "Guest migration - Button that retries a failed Guest data migration",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Try Again"
+          }
+        }
+      }
+    },
+    "oobe.guestMigration.failure.title" : {
+      "comment" : "Guest migration - Alert title when Guest data could not be moved before account publication",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Couldn’t finish setting up your account"
+          }
+        }
+      }
+    },
+    "oobe.guestMigration.recovery.loginMessage" : {
+      "comment" : "Guest migration recovery - Guidance shown when the original target account must log in again",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Log in to the account you previously selected to finish moving your Guest data."
+          }
+        }
+      }
+    },
+    "oobe.guestMigration.targetRecovery.message" : {
+      "comment" : "Guest migration - Alert message explaining why the same account migration must be retried",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Some data has already been moved to this account. Phi must retry with the same account before Guest data can be used again."
+          }
+        }
+      }
+    },
+    "oobe.guestMigration.targetRecovery.cancelButton" : {
+      "comment" : "Guest migration - Button that returns to the recovery login while Guest data stays locked",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Cancel"
+          }
+        }
+      }
+    },
+    "oobe.guestMigration.targetRecovery.retryButton" : {
+      "comment" : "Guest migration - Button that retries migration for the journal-bound account",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Try Again"
+          }
+        }
+      }
+    },
+    "oobe.guestMigration.targetRecovery.title" : {
+      "comment" : "Guest migration - Alert title when imported target data requires retrying the same account",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Finish moving your Guest data"
           }
         }
       }
@@ -6523,6 +6751,18 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "Layout selection"
+          }
+        }
+      }
+    },
+    "oobe.login.continueAsGuestButton" : {
+      "comment" : "Onboarding Login - Tertiary button that enters persistent Guest Mode",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Continue without an account"
           }
         }
       }
@@ -6943,6 +7183,54 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "You"
+          }
+        }
+      }
+    },
+    "settings.account.guest.detail" : {
+      "comment" : "Account settings - Detail explaining Guest data storage",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Your Phi browsing data is stored locally on this Mac."
+          }
+        }
+      }
+    },
+    "settings.account.guest.loginButton" : {
+      "comment" : "Account settings - Button shown in the Guest account card to open login",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Log In"
+          }
+        }
+      }
+    },
+    "settings.account.guest.paneTitle" : {
+      "comment" : "Account settings - Pane title shown while using Phi in Guest Mode",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Guest"
+          }
+        }
+      }
+    },
+    "settings.account.guest.title" : {
+      "comment" : "Account settings - Title of the Guest account card",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Using Phi without an account"
           }
         }
       }

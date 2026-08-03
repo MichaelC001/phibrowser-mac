@@ -573,7 +573,8 @@ extension AppController {
         for profile in ProfileManager.shared.profiles {
             displayNames[profile.profileId] = profile.displayName
         }
-        AccountController.shared.account?.localStorage.upsertProfileDisplayNames(displayNames)
+        AccountController.shared.localDataAccount?.localStorage
+            .upsertProfileDisplayNames(displayNames)
     }
 
     private static func sanitizedBackupFileNameComponent(_ raw: String) -> String {

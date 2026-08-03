@@ -73,7 +73,8 @@ final class FeedbackViewModel: ObservableObject {
     }
 
     func enqueueFeedback(chromiumSystemLogsText: String? = nil) throws {
-        guard let account = AccountController.shared.account else {
+        guard ApplicationState.shared.isAuthenticated,
+              let account = AccountController.shared.account else {
             throw FeedbackOutboxError.missingAccount
         }
 
@@ -1233,6 +1234,7 @@ final class FeedbackOutboxUploader {
     static let shared = FeedbackOutboxUploader()
 
     private var accountObserver: NSObjectProtocol?
+    private var browserAccessObserver: NSObjectProtocol?
     private var runningUserIDs = Set<String>()
     private var delayedTasks: [String: Task<Void, Never>] = [:]
 
@@ -1249,11 +1251,19 @@ final class FeedbackOutboxUploader {
         ) { [weak self] _ in
             self?.scheduleCurrentAccountProcessing()
         }
+        browserAccessObserver = NotificationCenter.default.addObserver(
+            forName: .browserAccessStateDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.scheduleCurrentAccountProcessing()
+        }
         scheduleCurrentAccountProcessing()
     }
 
     func scheduleCurrentAccountProcessing(after delay: TimeInterval = 0) {
-        guard let account = AccountController.shared.account else {
+        guard ApplicationState.shared.isAuthenticated,
+              let account = AccountController.shared.account else {
             return
         }
 

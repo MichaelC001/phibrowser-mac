@@ -78,9 +78,29 @@ class APIClient {
     }
 
     func getAccountProfile() async throws -> Response<Profile> {
+        try await getAccountProfile(bearerToken: token)
+    }
+
+    /// Account-profile read used only while the matching Auth0 identity is
+    /// staged behind onboarding or Guest migration.
+    func getOnboardingAccountProfile(
+        accountUserID: String
+    ) async throws -> Response<Profile> {
+        let stagedToken = try await stagedOnboardingToken(
+            accountUserID: accountUserID
+        )
+        return try await getAccountProfile(bearerToken: stagedToken)
+    }
+
+    private func getAccountProfile(
+        bearerToken: String
+    ) async throws -> Response<Profile> {
         let url = URL(string: "\(accountBaseURL)/api/auth/profile")!
         var request = URLRequest(url: url)
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue(
+            "Bearer \(bearerToken)",
+            forHTTPHeaderField: "Authorization"
+        )
 
         let (data, response) = try await URLSession.shared.data(for: request)
 
@@ -96,10 +116,35 @@ class APIClient {
     }
 
     func updateProfile(updates: UpdateProfileRequest) async throws -> Response<UpdateProfileResponse> {
+        try await updateProfile(updates: updates, bearerToken: token)
+    }
+
+    /// Account-profile update used only while the matching Auth0 identity is
+    /// staged behind onboarding or Guest migration.
+    func updateOnboardingProfile(
+        updates: UpdateProfileRequest,
+        accountUserID: String
+    ) async throws -> Response<UpdateProfileResponse> {
+        let stagedToken = try await stagedOnboardingToken(
+            accountUserID: accountUserID
+        )
+        return try await updateProfile(
+            updates: updates,
+            bearerToken: stagedToken
+        )
+    }
+
+    private func updateProfile(
+        updates: UpdateProfileRequest,
+        bearerToken: String
+    ) async throws -> Response<UpdateProfileResponse> {
         let url = URL(string: "\(accountBaseURL)/api/auth/profile")!
         var request = URLRequest(url: url)
         request.httpMethod = "PUT"
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue(
+            "Bearer \(bearerToken)",
+            forHTTPHeaderField: "Authorization"
+        )
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         let encoder = JSONEncoder()
@@ -116,6 +161,22 @@ class APIClient {
         }
 
         return try JSONDecoder().decode(Response<UpdateProfileResponse>.self, from: data)
+    }
+
+    private func stagedOnboardingToken(
+        accountUserID: String
+    ) async throws -> String {
+        let stagedToken = await MainActor.run {
+            AuthManager.shared.stagedOnboardingAccessToken(
+                expectedUserID: accountUserID
+            )
+        }
+        guard let stagedToken, !stagedToken.isEmpty else {
+            throw APIError.invalidRequest(
+                message: "No staged onboarding credential is available."
+            )
+        }
+        return stagedToken
     }
 
     // MARK: - Agent Persona

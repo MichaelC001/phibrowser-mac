@@ -9,6 +9,7 @@ import Combine
 /// Embedded AI Chat controller hosted inside `WebContentViewController`.
 class EmbeddedChatViewController: NSViewController {
     private lazy var contentView = NSView()
+    private lazy var loginRequiredOverlayView = LoginRequiredOverlayView()
     private lazy var cancellables = Set<AnyCancellable>()
     /// Cancellables scoped to `associatedTab` — re-bound whenever the
     /// associated tab changes so observers always track the current tab.
@@ -55,6 +56,26 @@ class EmbeddedChatViewController: NSViewController {
             make.top.bottom.trailing.equalToSuperview().inset(WebContentConstant.contentEdgeSpacing)
             make.leading.equalToSuperview()
         }
+
+        NotificationCenter.default.publisher(for: .browserAccessStateDidChange)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                self.updateLoginRequiredPresentation()
+                if self.canLoadAIChat {
+                    let wasAlreadySetup = self.isSetup
+                    self.setupIfNeeded()
+                    if wasAlreadySetup,
+                       let state = self.browserState,
+                       let tab = self.associatedTab {
+                        self.tabIdentifier = state.chatIdentifier(for: tab)
+                        self.bindAssociatedTabObservers(tab)
+                        self.loadAIChatForCurrentTab()
+                    }
+                }
+            }
+            .store(in: &cancellables)
+        updateLoginRequiredPresentation()
     }
     
     override func viewWillAppear() {
@@ -64,6 +85,7 @@ class EmbeddedChatViewController: NSViewController {
     
     override func viewDidAppear() {
         super.viewDidAppear()
+        updateLoginRequiredPresentation()
         reattachAIChatViewIfNeeded()
     }
     
@@ -71,6 +93,10 @@ class EmbeddedChatViewController: NSViewController {
     
     /// Moves focus into the embedded AI Chat content.
     func focusAIChat() {
+        guard canLoadAIChat else {
+            updateLoginRequiredPresentation()
+            return
+        }
         guard let wrapper = currentAIChatTab?.webContentWrapper else { return }
         DispatchQueue.main.async { [weak self] in
             if let nativeView = self?.currentAIChatTab?.webContentView {
@@ -95,7 +121,11 @@ class EmbeddedChatViewController: NSViewController {
             let newIdentifier = state.chatIdentifier(for: tab)
             if newIdentifier != tabIdentifier {
                 tabIdentifier = newIdentifier
-                loadAIChatForCurrentTab()
+                if canLoadAIChat {
+                    loadAIChatForCurrentTab()
+                } else {
+                    updateLoginRequiredPresentation()
+                }
             }
         }
     }
@@ -120,6 +150,10 @@ class EmbeddedChatViewController: NSViewController {
     // MARK: - Private Methods
     
     private func setupIfNeeded() {
+        guard canLoadAIChat else {
+            updateLoginRequiredPresentation()
+            return
+        }
         guard !isSetup, let state = browserState, state.isIncognito == false else {
             return
         }
@@ -153,6 +187,10 @@ class EmbeddedChatViewController: NSViewController {
     
     /// Handles changes to the `aiChatTabs` lookup.
     private func handleAIChatTabsChanged(_ tabs: [String: Tab]) {
+        guard canLoadAIChat else {
+            updateLoginRequiredPresentation()
+            return
+        }
         guard let identifier = tabIdentifier else { return }
         
         if let aiChatTab = tabs[identifier], aiChatTab !== currentAIChatTab {
@@ -172,6 +210,10 @@ class EmbeddedChatViewController: NSViewController {
     /// Re-resolves the shared chat identifier when split membership/ownership
     /// changes, switching the displayed chat tab if the resolved key moved.
     private func refreshChatIdentifierIfNeeded() {
+        guard canLoadAIChat else {
+            updateLoginRequiredPresentation()
+            return
+        }
         guard let state = browserState, let tab = associatedTab else { return }
         let resolved = state.chatIdentifier(for: tab)
         guard resolved != tabIdentifier else { return }
@@ -181,6 +223,10 @@ class EmbeddedChatViewController: NSViewController {
 
     /// Loads or creates the AI Chat tab for the associated browser tab.
     private func loadAIChatForCurrentTab() {
+        guard canLoadAIChat else {
+            updateLoginRequiredPresentation()
+            return
+        }
         guard let state = browserState, let identifier = tabIdentifier, let tab = associatedTab else { return }
 
         if let existingTab = state.aiChatTabs[identifier] {
@@ -188,7 +234,10 @@ class EmbeddedChatViewController: NSViewController {
         } else {
             let chromeTabId = tab.guid
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self, weak state] in
-                guard let self, let state, let tab = self.associatedTab else { return }
+                guard let self,
+                      self.canLoadAIChat,
+                      let state,
+                      let tab = self.associatedTab else { return }
                 // Re-resolve at firing time: between the click and now, the
                 // other pane in a split may have created the shared chat —
                 // in which case we should adopt it, not create a duplicate.
@@ -205,6 +254,10 @@ class EmbeddedChatViewController: NSViewController {
     ///   - tab: AI Chat Tab to switch to
     ///   - isNewlyCreated: Whether to focus the chat after the content loads.
     private func switchToAIChatTab(_ tab: Tab, isNewlyCreated: Bool) {
+        guard canLoadAIChat else {
+            updateLoginRequiredPresentation()
+            return
+        }
         if currentAIChatTab !== tab {
             detachChatNativeIfHostedHere(currentAIChatTab?.webContentView)
             currentAIChatTab?.onFocusGained = nil
@@ -252,6 +305,12 @@ class EmbeddedChatViewController: NSViewController {
                 timer.invalidate()
                 return
             }
+
+            guard self.canLoadAIChat else {
+                timer.invalidate()
+                self.updateLoginRequiredPresentation()
+                return
+            }
             
             if let native = tab.webContentView {
                 timer.invalidate()
@@ -271,6 +330,10 @@ class EmbeddedChatViewController: NSViewController {
     }
 
     private func addWebContent(_ native: NSView) {
+        guard canLoadAIChat else {
+            updateLoginRequiredPresentation()
+            return
+        }
         // In a split both panes share one chat tab, but its single
         // webContentView can only live in one contentView. Both panes' chat
         // controllers receive viewDidAppear/observer callbacks (e.g. when the
@@ -299,6 +362,10 @@ class EmbeddedChatViewController: NSViewController {
     /// `BrowserState.createAIChatTab(for:chromeTabId:)` (`aiChatTabsBeingCreated`
     /// in-flight set) is what keeps Chromium from building duplicate AI tabs.
     func reattachAIChatViewIfNeeded() {
+        guard canLoadAIChat else {
+            updateLoginRequiredPresentation()
+            return
+        }
         if currentAIChatTab == nil {
             loadAIChatForCurrentTab()
             return
@@ -306,5 +373,47 @@ class EmbeddedChatViewController: NSViewController {
         guard let native = currentAIChatTab?.webContentView else { return }
         if native.superview === contentView { return }
         addWebContent(native)
+    }
+
+    private var shouldPresentLoginRequired: Bool {
+        LoginRequiredPresentationPolicy.shouldPresent(
+            for: .aiChat,
+            isGuest: ApplicationState.shared.isGuest,
+            isPhiAIEnabled: PhiPreferences.AISettings.phiAIEnabled.loadValue()
+        )
+    }
+
+    private var canLoadAIChat: Bool {
+        ApplicationState.shared.isAuthenticated
+    }
+
+    private func updateLoginRequiredPresentation() {
+        guard !canLoadAIChat else {
+            loginRequiredOverlayView.removeFromSuperview()
+            return
+        }
+
+        detachChatNativeIfHostedHere(currentAIChatTab?.webContentView)
+        currentAIChatTab?.onFocusGained = nil
+        currentAIChatTab = nil
+        tabIdentifier = nil
+        contentView.subviews
+            .filter { $0 !== loginRequiredOverlayView }
+            .forEach { $0.removeFromSuperview() }
+
+        guard shouldPresentLoginRequired else {
+            loginRequiredOverlayView.removeFromSuperview()
+            return
+        }
+
+        guard loginRequiredOverlayView.superview !== contentView else { return }
+        loginRequiredOverlayView.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(loginRequiredOverlayView)
+        NSLayoutConstraint.activate([
+            loginRequiredOverlayView.topAnchor.constraint(equalTo: contentView.topAnchor),
+            loginRequiredOverlayView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            loginRequiredOverlayView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            loginRequiredOverlayView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor)
+        ])
     }
 }
