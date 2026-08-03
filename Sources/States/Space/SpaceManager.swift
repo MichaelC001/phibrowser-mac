@@ -4797,7 +4797,17 @@ final class SpaceWindowSlot: ObservableObject {
                 if slotHasFullScreenWindow {
                     syncSlotTabGroup(selecting: previous?.window)
                 }
-                if animated {
+                // A minimized target can only come back via `deminiaturize` —
+                // `makeKeyAndOrderFront` leaves it in the Dock — and the
+                // slide/push-in machinery assumes an orderly hidden window.
+                // Restore it here, after the frame/sidebar sync above so the
+                // Dock fly-out lands on the slot's frame, and let that
+                // fly-out stand in for the switch animation.
+                let restoredFromDock = target.window?.isMiniaturized == true
+                if restoredFromDock {
+                    target.window?.deminiaturize(nil)
+                }
+                if animated && !restoredFromDock {
                     performSwap(
                         from: previous,
                         to: target,
@@ -4821,6 +4831,22 @@ final class SpaceWindowSlot: ObservableObject {
                     onSwapSettled?()
                 }
             } else {
+                // Re-activating the already-active Space is an explicit ask
+                // to surface it — the agent-handoff prompt's "Switch to
+                // Agent Space" lands here. The window can be minimized in
+                // the Dock, ordered out, or parked off the user's current
+                // desktop while `isVisible` still reads true, so don't
+                // gate on state probes: deminiaturize when needed, then
+                // always re-front — `.moveToActiveSpace` lands it on the
+                // desktop the user is actually looking at, and fronting an
+                // already-frontmost window is harmless.
+                if let targetWindow = target.window {
+                    AppLogInfo("[SpaceWindowSlot] activate same-space \(spaceId): miniaturized=\(targetWindow.isMiniaturized) visible=\(targetWindow.isVisible) key=\(targetWindow.isKeyWindow) onActiveSpace=\(targetWindow.isOnActiveSpace) occlusionVisible=\(targetWindow.occlusionState.contains(.visible)) windowNumber=\(targetWindow.windowNumber)")
+                    if targetWindow.isMiniaturized {
+                        targetWindow.deminiaturize(nil)
+                    }
+                    makeKeyAndOrderFrontHidingSlotTabBar(targetWindow)
+                }
                 onSwapSettled?()
             }
             return
