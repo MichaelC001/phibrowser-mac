@@ -23,6 +23,9 @@ class SidebarBottomBarState: ObservableObject {
     
     /// Whether the feedback button is icon-only.
     @Published var isFeedbackCompact: Bool = false
+
+    /// Whether the feedback button is hidden for the current access mode.
+    @Published var isFeedbackHidden: Bool = ApplicationState.shared.isGuest
     
     /// Current bar height.
     var currentHeight: CGFloat {
@@ -101,8 +104,13 @@ struct SidebarBottomBarSwiftUI: View {
 
             Spacer(minLength: 0)
 
-            FeedbackButtonSwiftUI(action: onFeedbackTap, isIconOnly: state.isFeedbackCompact)
+            if !state.isFeedbackHidden {
+                FeedbackButtonSwiftUI(
+                    action: onFeedbackTap,
+                    isIconOnly: state.isFeedbackCompact
+                )
                 .layoutPriority(1)
+            }
 
             if !state.isChatHidden {
                 ChatButton(action: onChatTap)
@@ -158,9 +166,11 @@ struct SidebarBottomBarSwiftUI: View {
             .frame(height: SidebarBottomBarState.singleRowHeight)
             .animation(showCardEntry ? .spring(response: 0.28, dampingFraction: 0.78) : nil, value: showCardEntry)
             
-            FeedbackButtonSwiftUI(action: onFeedbackTap, isIconOnly: false)
-                .padding(.leading, 8)
-                .frame(height: SidebarBottomBarState.singleRowHeight)
+            if !state.isFeedbackHidden {
+                FeedbackButtonSwiftUI(action: onFeedbackTap, isIconOnly: false)
+                    .padding(.leading, 8)
+                    .frame(height: SidebarBottomBarState.singleRowHeight)
+            }
         }
     }
 
@@ -447,6 +457,13 @@ class SidebarBottomBarSwiftUIView: NSView {
             .sink { [weak self] isCompact in
                 guard let self = self else { return }
                 self.onHeightChange?(self.state.height(for: isCompact))
+            }
+            .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(for: .browserAccessStateDidChange)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.state.isFeedbackHidden = ApplicationState.shared.isGuest
             }
             .store(in: &cancellables)
     }
