@@ -62,6 +62,15 @@
             AppLogWarn(@"Dropping unsupported argument: %@", arg);
             continue;
         }
+        if ([arg hasPrefix:@"--enable-automation"] ||
+            [arg hasPrefix:@"--headless"]) {
+            // Both switch Blink's AutomationControlled feature on, which makes
+            // navigator.webdriver report true to every page the user visits —
+            // a bot signal on their signed-in sessions that they never asked
+            // for. Phi drives pages over the app socket and needs neither.
+            AppLogWarn(@"Dropping automation argument: %@", arg);
+            continue;
+        }
         [arguments addObject:arg];
     }
 }
