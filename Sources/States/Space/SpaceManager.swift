@@ -6734,8 +6734,21 @@ final class SpaceWindowSlot: ObservableObject {
         window.alphaValue = 0
         window.ignoresMouseEvents = true
         window.tabbingMode = .disallowed
-        ChromiumLauncher.sharedInstance().bridge?
-            .setRestoredSiblingConcealed(true, windowId: Int64(windowId))
+        Self.setRestoredSiblingConcealedIfSupported(true, windowId: Int64(windowId))
+    }
+
+    /// The framework half of the bridge pair can lag this header during
+    /// development (it only re-syncs on a Chromium rebuild), and a hard call
+    /// into a framework that predates this selector raises
+    /// `doesNotRecognizeSelector` and takes the app down. Skipping is safe:
+    /// an old framework never marks a window, and both directions are
+    /// documented no-ops for unmarked windows — concealed restores just load
+    /// eagerly, the pre-feature behavior.
+    private static func setRestoredSiblingConcealedIfSupported(_ concealed: Bool, windowId: Int64) {
+        guard let bridge = ChromiumLauncher.sharedInstance().bridge,
+              bridge.responds(to: #selector(PhiChromiumBridgeProtocol.setRestoredSiblingConcealed(_:windowId:)))
+        else { return }
+        bridge.setRestoredSiblingConcealed(concealed, windowId: windowId)
     }
 
     /// Idempotent undo of `concealRestoredSiblingWindow`; safe on windows
@@ -6757,8 +6770,7 @@ final class SpaceWindowSlot: ObservableObject {
             AppLogWarn("[SpaceWindowSlot] revealConcealedWindow: window is not registered with this slot — Chromium keeps its restored-sibling mark")
             return
         }
-        ChromiumLauncher.sharedInstance().bridge?
-            .setRestoredSiblingConcealed(false, windowId: Int64(controller.windowId))
+        Self.setRestoredSiblingConcealedIfSupported(false, windowId: Int64(controller.windowId))
     }
 
     /// Catch-all for the reconcile's final pass: no restored window may stay
