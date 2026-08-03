@@ -128,16 +128,22 @@ struct AgentDenial: Codable, Equatable, Identifiable {
 }
 
 enum AgentPeerIdentity {
-    /// Interpreters and shells that merely *host* an agent — never the
-    /// identity we present. The walk skips past these to the real launcher.
-    /// Membership is checked through `canonicalToolName`, so versioned
-    /// binaries ("python3.11") match their base entry.
+    /// Tools that merely *carry* an agent's work — interpreters, shells,
+    /// process wrappers, and the transports an agent reaches the socket
+    /// through. Never the identity we present: the walk skips past these to
+    /// the real launcher. Membership is checked through `canonicalToolName`,
+    /// so versioned binaries ("python3.11") match their base entry.
+    ///
+    /// `curl` earns its place the hard way — being Apple-signed, it looked
+    /// like a perfectly good identity and every hand-run or scripted request
+    /// resolved to "com.apple.curl", naming the pipe instead of whoever was
+    /// on the other end of it.
     private static let passthroughNames: Set<String> = [
         "node", "deno", "bun", "npm", "npx", "pnpm", "yarn", "corepack",
         "tsx", "ts-node", "uv", "uvx",
         "python", "ruby", "perl", "php",
         "sh", "bash", "zsh", "fish", "dash", "ksh", "csh", "tcsh",
-        "env", "login", "sudo", "xargs", "timeout",
+        "env", "login", "sudo", "xargs", "timeout", "curl",
     ]
 
     /// The subset of `passthroughNames` that run a SCRIPT as their first real
@@ -163,7 +169,15 @@ enum AgentPeerIdentity {
     }
 
     private static func isPassthroughName(_ name: String) -> Bool {
-        passthroughNames.contains(canonicalToolName(name))
+        let canonical = canonicalToolName(name)
+        if passthroughNames.contains(canonical) { return true }
+        // Homebrew's coreutils installs the GNU builds under a "g" prefix
+        // (gtimeout, gxargs, genv), which no more identifies an agent than
+        // the BSD tool it shadows. Only a name whose de-prefixed form is
+        // ALREADY passthrough matches, so "git" ("it") and "go" ("o") — and
+        // any other agent that happens to start with g — are untouched.
+        guard canonical.hasPrefix("g") else { return false }
+        return passthroughNames.contains(String(canonical.dropFirst()))
     }
 
     private static func isScriptInterpreterName(_ name: String) -> Bool {
