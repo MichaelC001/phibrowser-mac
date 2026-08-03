@@ -450,8 +450,13 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
             return
         }
 
-        // Check login status BEFORE creating window controller
-        let canUseBrowser = isUserLoggedIn()
+        if browserType == .normal {
+            SpaceManager.shared
+                .observeNormalWindowProfileForDefaultSpace(profileId)
+        }
+
+        // Check Chromium window availability BEFORE creating a controller.
+        let canUseBrowser = canShowChromiumWindow()
 
         // Chromium has no concept of Spaces or slots. Resolve which slot
         // (i.e. which user-perceived browser window) this Chromium window

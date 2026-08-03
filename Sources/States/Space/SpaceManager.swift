@@ -195,6 +195,26 @@ private extension NSView {
 final class SpaceManager: ObservableObject {
     static let shared = SpaceManager()
 
+    /// Chooses the profile that owns a newly materialized default Space.
+    /// Signed-in access preserves the established `Default` binding. Guest
+    /// access has no account profile of its own, so it must wait for Chromium
+    /// to report the profile of the window that will use the Space.
+    static func profileIdForDefaultSpaceCreation(
+        isGuest: Bool,
+        isGuestAccountPromotionInProgress: Bool,
+        isBoundToDefaultAccount: Bool,
+        observedNormalWindowProfileId: String?
+    ) -> String? {
+        guard isGuest else { return LocalStore.defaultProfileId }
+        guard !isGuestAccountPromotionInProgress,
+              isBoundToDefaultAccount,
+              let observedNormalWindowProfileId,
+              !observedNormalWindowProfileId.isEmpty else {
+            return nil
+        }
+        return observedNormalWindowProfileId
+    }
+
     /// spaceId prefix shared by every Incognito Space. Their ids are minted
     /// at creation (`createIncognitoSpace`) and never persisted — each Space
     /// is a detached `SpaceModel` appended in `handleSpacesUpdate`, so store
@@ -395,6 +415,10 @@ final class SpaceManager: ObservableObject {
     }
 
     private weak var boundAccount: Account?
+    /// First normal Chromium profile observed this app session. Chromium can
+    /// report a dangling window before browser access is granted, so retain
+    /// the value independently of account binding for a later Guest entry.
+    private var observedNormalWindowProfileId: String?
     private var cancellables = Set<AnyCancellable>()
     private var spacesCancellable: AnyCancellable?
     private var rulesCancellable: AnyCancellable?
@@ -1398,6 +1422,18 @@ final class SpaceManager: ObservableObject {
         }
     }
 
+    /// Captures the concrete Chromium profile that a fresh Guest default
+    /// Space must belong to. The coordinator calls this only for normal
+    /// windows; Incognito and Agent profiles must never become its owner.
+    func observeNormalWindowProfileForDefaultSpace(_ profileId: String) {
+        guard !profileId.isEmpty,
+              observedNormalWindowProfileId == nil else { return }
+        observedNormalWindowProfileId = profileId
+        guard ApplicationState.shared.isGuest,
+              spacesCancellable != nil else { return }
+        ensureDefaultSpaceForCurrentAccountIfReady()
+    }
+
     /// Resolves the Space a normal window whose Chromium profile is
     /// `profileId` may be tagged with. A window must only be presented as a
     /// Space bound to its own profile: pinned tabs (and bookmarks) are
@@ -1453,6 +1489,23 @@ final class SpaceManager: ObservableObject {
         }
         AppLogWarn("[SpaceManager] Space \(preferred) is not bound to profile \(profileId); re-resolved to \(resolved)")
         return resolved
+    }
+
+    private func ensureDefaultSpaceForCurrentAccountIfReady() {
+        guard let account = boundAccount,
+              AccountController.shared.localDataAccount === account,
+              let profileId = Self.profileIdForDefaultSpaceCreation(
+                  isGuest: ApplicationState.shared.isGuest,
+                  isGuestAccountPromotionInProgress: ApplicationState
+                      .shared.isGuestAccountPromotionInProgress,
+                  isBoundToDefaultAccount:
+                      account === AccountController.defaultAccount,
+                  observedNormalWindowProfileId:
+                      observedNormalWindowProfileId
+              ) else { return }
+        MainActor.assumeIsolated {
+            account.localStorage.ensureDefaultSpace(profileId: profileId)
+        }
     }
 
     /// The Space a tab-restored window ("Reopen Closed Window") should come
@@ -3583,9 +3636,13 @@ final class SpaceManager: ObservableObject {
             // Read fresh from the bound account; `self.spaces` may still hold the
             // pre-login default-account emission (bind refreshes it async).
             let spaces = self.boundAccount?.localStorage.getAllSpaces() ?? self.spaces
-            // Empty while `ensureDefaultSpace` is still in flight; let the
-            // publisher emission reconcile once the store is populated.
-            guard !spaces.isEmpty else { return }
+            // A promotion can bind its target while default-Space creation is
+            // fenced. Once login commits, retry the idempotent initialization;
+            // its publisher emission will reconcile the populated store.
+            guard !spaces.isEmpty else {
+                self.ensureDefaultSpaceForCurrentAccountIfReady()
+                return
+            }
             self.handleSpacesUpdate(spaces)
         }
     }
@@ -3679,8 +3736,7 @@ final class SpaceManager: ObservableObject {
         }
 
         Task { @MainActor [weak self] in
-            guard let self else { return }
-            account.localStorage.ensureDefaultSpace(profileId: LocalStore.defaultProfileId)
+            guard let self, self.boundAccount === account else { return }
             // Agent Spaces are ephemeral — they should exist only while their
             // (in-memory) task runs. Any that were persisted and outlived their
             // task, e.g. across this relaunch, are orphans with no live task;
@@ -3702,6 +3758,7 @@ final class SpaceManager: ObservableObject {
                 .sink { [weak self] rules in
                     self?.handleURLRulesUpdate(rules)
                 }
+            self.ensureDefaultSpaceForCurrentAccountIfReady()
         }
     }
 
@@ -3864,7 +3921,11 @@ final class SpaceManager: ObservableObject {
     }
 
     private func unbind() {
+        let hadBoundAccount = boundAccount != nil
         boundAccount = nil
+        if hadBoundAccount {
+            observedNormalWindowProfileId = nil
+        }
         spacesCancellable?.cancel()
         spacesCancellable = nil
         rulesCancellable?.cancel()

@@ -23,13 +23,17 @@ extension LocalStore {
     func ensureDefaultSpace(profileId: String) {
         performBackgroundWrite { context in
             do {
-                let descriptor = FetchDescriptor<SpaceModel>(
+                let defaultSpaceId = Self.defaultSpaceId
+                let defaultSpaceDescriptor = FetchDescriptor<SpaceModel>(
+                    predicate: #Predicate { $0.spaceId == defaultSpaceId }
+                )
+                let profileSpacesDescriptor = FetchDescriptor<SpaceModel>(
                     predicate: #Predicate { $0.profileId == profileId }
                 )
                 let defaultSpace: SpaceModel
-                if let existing = try context.fetch(descriptor).first(where: { $0.spaceId == Self.defaultSpaceId }) {
+                if let existing = try context.fetch(defaultSpaceDescriptor).first {
                     defaultSpace = existing
-                } else if try context.fetchCount(descriptor) == 0 {
+                } else if try context.fetchCount(profileSpacesDescriptor) == 0 {
                     let created = SpaceModel(
                         spaceId: Self.defaultSpaceId,
                         profileId: profileId,
@@ -52,7 +56,11 @@ extension LocalStore {
                 // existing bookmarks remain reachable through the Space API
                 // without any data movement.
                 if defaultSpace.bookmarkRoot == nil,
-                   let profile = try self.profile(with: profileId, in: context, createIfNeeded: false),
+                   let profile = try self.profile(
+                       with: defaultSpace.profileId,
+                       in: context,
+                       createIfNeeded: false
+                   ),
                    let profileRoot = profile.bookmarkRoot {
                     defaultSpace.bookmarkRoot = profileRoot
                 }

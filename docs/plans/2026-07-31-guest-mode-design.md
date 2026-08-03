@@ -122,10 +122,12 @@ Chromium continues to own profiles, cookies, site sessions, history,
 extensions, and password data. Guest Mode does not create, delete, or switch a
 Chromium profile.
 
-The existing Chromium `isUserLoggedIn` callback is currently used only to
-decide whether Phi browser windows and the Tab, History, Window, and Dock menu
-items are available. Its native implementation therefore returns
-`canUseBrowser` for ABI compatibility.
+The Chromium `canShowChromiumWindow` callback decides whether Phi browser
+windows and the Tab, History, Window, and Dock menu items are available. Its
+native implementation returns `canUseBrowser` and does not represent account
+authentication. Chromium can query the independent `getSigninStatus`
+dictionary when it needs the actual Phi mode: `isSignnedIn` is a Boolean and
+`isGuestMode` is `0` or `1`.
 
 Real identity APIs remain strict:
 
