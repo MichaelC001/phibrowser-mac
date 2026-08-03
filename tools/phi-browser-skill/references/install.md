@@ -50,7 +50,15 @@ How it works, and why it's safe:
 
 ## 3. Verify
 
-Phi Browser just has to be running:
+Nothing needs to be running — the skill starts Phi itself when no browser is
+up. It launches the install it is linked to (the symlink from step 1 points
+inside a specific `Phi.app`), so the copy you installed from is the copy that
+opens; run from a repo checkout, which belongs to no install, it tries
+`com.phibrowser.canary.Mac` then `com.phibrowser.Mac`. The launch is
+backgrounded so it never steals focus. Set `PHI_NO_LAUNCH=1` to forbid it and
+have the skill fail instead.
+
+To watch it happen by hand, quit Phi first, then:
 
 ```bash
 # The app writes the socket's path here; only this Mac's processes can reach it.
@@ -152,11 +160,15 @@ needed): `node scripts/selftest-mirror.mjs`.
 
 ## Troubleshooting
 
-- **CDP endpoint not found**: no `CDPAgentSocket` pointer file exists for the
-  bundle id being looked at. Phi writes it at launch whether or not agent
-  control is on, so this means Phi Browser isn't running — or you're pointed at
-  the wrong install (canary vs release). Launch Phi, or set
-  `PHI_USER_DATA_DIR` to override the user-data-dir candidates.
+- **CDP endpoint not found**: the skill found no socket AND could not start
+  Phi. Either no Phi Browser is installed where it looked (a repo checkout
+  tries the canary and release bundle ids; an installed skill opens the app it
+  is linked to), or `PHI_NO_LAUNCH` is set. Installing the skill from the Phi
+  you actually run fixes the common case; `PHI_USER_DATA_DIR` overrides which
+  user-data dir is searched.
+- **Launched but never published its socket**: Phi started and 60s passed with
+  no endpoint. It is usually sitting at a login or session-restore prompt, or
+  is still starting on a cold machine — check the Phi window and retry.
 - **Wrong install answers (canary vs stable)**: endpoint discovery prefers
   Phi Canary over stable Phi when BOTH advertise a live endpoint (dead
   leftovers are probed and skipped). To target a specific install, set
