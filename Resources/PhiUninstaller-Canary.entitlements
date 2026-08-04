@@ -4,7 +4,7 @@
 <dict>
 	<key>keychain-access-groups</key>
 	<array>
-		<string>87DQ3HMK5G.com.phibrowser.Mac.webauthn</string>
+		<string>87DQ3HMK5G.com.phibrowser.canary.Mac.webauthn</string>
 	</array>
 </dict>
 </plist>
