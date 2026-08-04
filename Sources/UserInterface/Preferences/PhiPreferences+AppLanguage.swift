@@ -91,7 +91,7 @@ extension PhiPreferences.GeneralSettings {
     static func resolvedAppLanguage(
         for preference: AppLanguagePreference,
         from defaults: UserDefaults = .standard,
-        applicationDomainName: String? = Bundle.main.bundleIdentifier,
+        applicationDomainName: String? = nil,
         systemPreferredLanguages: [String] = Locale.preferredLanguages
     ) -> SupportedAppLanguage {
         if case .language(let language) = preference {
@@ -121,6 +121,22 @@ extension PhiPreferences.GeneralSettings {
     /// unchanged until Phi relaunches, even if the settings view is recreated.
     static let appLanguagePreferenceAtLaunch = loadAppLanguagePreference()
 
+    /// Reasserts Phi's explicit language before Chromium or AppKit loads
+    /// localized resources. macOS System Settings writes to the same
+    /// `AppleLanguages` key, so an app-specific language change can otherwise
+    /// replace Phi's explicit selection between launches.
+    @discardableResult
+    static func reconcileAppLanguagePreferenceBeforeLaunch(
+        from defaults: UserDefaults = .standard,
+        applicationDomainName: String? = nil
+    ) -> Bool {
+        saveAppLanguagePreference(
+            loadAppLanguagePreference(from: defaults),
+            to: defaults,
+            applicationDomainName: applicationDomainName
+        )
+    }
+
     /// Persists the language before the app quits so Foundation can select
     /// the matching localization during the next process launch.
     ///
@@ -131,7 +147,7 @@ extension PhiPreferences.GeneralSettings {
     static func saveAppLanguagePreference(
         _ preference: AppLanguagePreference,
         to defaults: UserDefaults = .standard,
-        applicationDomainName: String? = Bundle.main.bundleIdentifier
+        applicationDomainName: String? = nil
     ) -> Bool {
         let previousPreference = loadAppLanguagePreference(from: defaults)
         var didChange = previousPreference != preference
@@ -158,27 +174,33 @@ extension PhiPreferences.GeneralSettings {
             }
 
         case .language(let language):
-            if !defaults.bool(forKey: Self.hasSystemAppleLanguagesBackupKey) {
-                if let systemAppleLanguages = persistentAppleLanguages(
-                    from: defaults,
-                    applicationDomainName: applicationDomainName
-                ) {
-                    defaults.set(
-                        systemAppleLanguages,
-                        forKey: Self.systemAppleLanguagesBackupKey
-                    )
-                } else {
-                    defaults.removeObject(forKey: Self.systemAppleLanguagesBackupKey)
-                }
-                defaults.set(true, forKey: Self.hasSystemAppleLanguagesBackupKey)
+            let currentAppleLanguages = persistentAppleLanguages(
+                from: defaults,
+                applicationDomainName: applicationDomainName
+            )
+            let shouldCaptureSystemAppleLanguages: Bool
+            switch previousPreference {
+            case .system:
+                shouldCaptureSystemAppleLanguages = true
+            case .language(let previousLanguage):
+                let previousExplicitAppleLanguages = [
+                    previousLanguage.bundleLocalizationIdentifier,
+                ]
+                shouldCaptureSystemAppleLanguages =
+                    !defaults.bool(forKey: Self.hasSystemAppleLanguagesBackupKey)
+                    || currentAppleLanguages != previousExplicitAppleLanguages
+            }
+
+            if shouldCaptureSystemAppleLanguages {
+                storeSystemAppleLanguagesBackup(
+                    currentAppleLanguages,
+                    in: defaults
+                )
                 didChange = true
             }
 
             let explicitAppleLanguages = [language.bundleLocalizationIdentifier]
-            if persistentAppleLanguages(
-                from: defaults,
-                applicationDomainName: applicationDomainName
-            ) != explicitAppleLanguages {
+            if currentAppleLanguages != explicitAppleLanguages {
                 defaults.set(explicitAppleLanguages, forKey: Self.appleLanguagesKey)
                 didChange = true
             }
@@ -190,13 +212,44 @@ extension PhiPreferences.GeneralSettings {
         return didChange
     }
 
+    private static func storeSystemAppleLanguagesBackup(
+        _ languages: [String]?,
+        in defaults: UserDefaults
+    ) {
+        if let languages {
+            defaults.set(languages, forKey: Self.systemAppleLanguagesBackupKey)
+        } else {
+            defaults.removeObject(forKey: Self.systemAppleLanguagesBackupKey)
+        }
+        defaults.set(true, forKey: Self.hasSystemAppleLanguagesBackupKey)
+    }
+
+    private static func currentApplicationValue(forKey key: String) -> Any? {
+        CFPreferencesCopyValue(
+            key as CFString,
+            kCFPreferencesCurrentApplication,
+            kCFPreferencesCurrentUser,
+            kCFPreferencesAnyHost
+        )
+    }
+
     private static func persistentAppleLanguages(
         from defaults: UserDefaults,
         applicationDomainName: String?
     ) -> [String]? {
-        guard let applicationDomainName else { return nil }
+        guard let applicationDomainName else {
+            return currentApplicationValue(forKey: Self.appleLanguagesKey) as? [String]
+        }
         return defaults.persistentDomain(forName: applicationDomainName)?[
             Self.appleLanguagesKey
         ] as? [String]
+    }
+}
+
+/// Objective-C entry point for the pre-Chromium launch sequence in `main.m`.
+@objc(AppLanguageBootstrap)
+final class AppLanguageBootstrap: NSObject {
+    @objc static func reconcileBeforeBundleAccess() {
+        PhiPreferences.GeneralSettings.reconcileAppLanguagePreferenceBeforeLaunch()
     }
 }

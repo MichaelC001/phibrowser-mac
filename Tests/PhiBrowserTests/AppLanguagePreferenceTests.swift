@@ -73,6 +73,7 @@ final class AppLanguagePreferenceTests: XCTestCase {
             .german: "de",
             .dutch: "nl",
             .spanish: "es",
+            .korean: "ko",
         ]
 
         XCTAssertEqual(SupportedAppLanguage.allCases.count, expectedIdentifiers.count)
@@ -140,6 +141,57 @@ final class AppLanguagePreferenceTests: XCTestCase {
             )
         )
         XCTAssertEqual(persistentAppleLanguages, ["zh_CN"])
+    }
+
+    func testLaunchReconciliationPreservesLatestSystemPerAppLanguage() {
+        defaults.set(["fr"], forKey: "AppleLanguages")
+        PhiPreferences.GeneralSettings.saveAppLanguagePreference(
+            .language(.simplifiedChinese),
+            to: defaults,
+            applicationDomainName: defaultsSuiteName
+        )
+
+        // Simulate macOS System Settings changing Phi's app-specific language
+        // while Phi's explicit preference remains Simplified Chinese.
+        defaults.set(["ja"], forKey: "AppleLanguages")
+
+        XCTAssertTrue(
+            PhiPreferences.GeneralSettings.reconcileAppLanguagePreferenceBeforeLaunch(
+                from: defaults,
+                applicationDomainName: defaultsSuiteName
+            )
+        )
+        XCTAssertEqual(persistentAppleLanguages, ["zh_CN"])
+
+        PhiPreferences.GeneralSettings.saveAppLanguagePreference(
+            .system,
+            to: defaults,
+            applicationDomainName: defaultsSuiteName
+        )
+        XCTAssertEqual(persistentAppleLanguages, ["ja"])
+    }
+
+    func testSwitchingExplicitLanguagesKeepsSystemPerAppLanguageBackup() {
+        defaults.set(["ja"], forKey: "AppleLanguages")
+        PhiPreferences.GeneralSettings.saveAppLanguagePreference(
+            .language(.simplifiedChinese),
+            to: defaults,
+            applicationDomainName: defaultsSuiteName
+        )
+
+        PhiPreferences.GeneralSettings.saveAppLanguagePreference(
+            .language(.french),
+            to: defaults,
+            applicationDomainName: defaultsSuiteName
+        )
+        XCTAssertEqual(persistentAppleLanguages, ["fr"])
+
+        PhiPreferences.GeneralSettings.saveAppLanguagePreference(
+            .system,
+            to: defaults,
+            applicationDomainName: defaultsSuiteName
+        )
+        XCTAssertEqual(persistentAppleLanguages, ["ja"])
     }
 
     func testSavingConfiguredExplicitPreferenceReportsNoChange() {

@@ -13,6 +13,9 @@
 
 int main(int argc, const char * argv[]) {
     @try {
+        // Reassert Phi's explicit language before any code accesses Bundle.main.
+        [AppLanguageBootstrap reconcileBeforeBundleAccess];
+
         [PhiLoggingRuntime installSharedLogging];
         AppLogInfo(@"PhiBrowser starting with main entry point...");
         AppLogInfo(@"Command line arguments: argc=%d", argc);
@@ -40,6 +43,7 @@ int main(int argc, const char * argv[]) {
             AppLogInfo(@"Time Machine restore recovery is handling startup; exiting current process.");
             return 0;
         }
+
         [TimeMachineBootstrap prepareBackupIfNeeded];
         
         ChromiumLauncher *launcher = [ChromiumLauncher sharedInstance];
