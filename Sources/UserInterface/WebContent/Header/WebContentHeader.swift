@@ -13,6 +13,7 @@ class WebContentHeaderState: ObservableObject {
     @Published var showNavigationButtons: Bool = false
     @Published var showChatButton: Bool = false
     @Published var showFeedbackButton: Bool = false
+    @Published var isFeedbackIconOnly: Bool = false
     @Published var showDownloadButton: Bool = false
     @Published var showMemoryButton: Bool = false
     @Published var showSidebarButton: Bool = false
@@ -36,6 +37,7 @@ class WebContentHeaderState: ObservableObject {
         self.showMemoryButton = traditionalLayout && phiAIEnabled
         self.showFeedbackButton = traditionalLayout
             && !ApplicationState.shared.isGuest
+        self.isFeedbackIconOnly = traditionalLayout
         self.showChatButton = false
     }
 
@@ -360,6 +362,7 @@ class WebContentHeader: NSView {
                 (traditionalLayout || (navigationAtTop && isCollapsed))
                 && !isInPlaceholder
                 && !isGuest
+            self.state.isFeedbackIconOnly = traditionalLayout
             self.state.showDownloadButton = (traditionalLayout || (navigationAtTop && isCollapsed)) && !isInPlaceholder
             self.state.showMemoryButton = (traditionalLayout || (navigationAtTop && isCollapsed)) && phiAIEnabled && !isIncognito && !isInPlaceholder
             self.state.showSidebarButton = !traditionalLayout && navigationAtTop && isCollapsed

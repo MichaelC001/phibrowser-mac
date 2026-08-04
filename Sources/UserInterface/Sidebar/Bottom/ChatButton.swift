@@ -11,8 +11,16 @@ import AppKit
 /// Chat button that opens the AI Chat sidebar.
 struct ChatButton: View {
     let action: () -> Void
+    /// Minimum width for contexts that reserve a fixed toolbar slot.
     var contentWidth: CGFloat? = nil
     var contentHeight: CGFloat? = nil
+
+    static var preferredContentWidth: CGFloat {
+        let titleWidth = (localizedTitle as NSString).size(
+            withAttributes: [.font: NSFont.systemFont(ofSize: 11, weight: .medium)]
+        ).width
+        return ceil(titleWidth) + Constants.iconSize + Constants.spacing + Constants.trailingPadding
+    }
 
     @State private var isHovering = false
     @Environment(\.phiAppearance) private var appearance
@@ -41,6 +49,14 @@ struct ChatButton: View {
         /// Icon size.
         static let iconSize: CGFloat = 22
     }
+
+    private static var localizedTitle: String {
+        NSLocalizedString(
+            "sidebar.chatButton.title",
+            value: "Chat",
+            comment: "Sidebar bottom chat button title"
+        )
+    }
     
     var body: some View {
         Button(action: action) {
@@ -52,14 +68,20 @@ struct ChatButton: View {
                     .frame(width: Constants.iconSize, height: Constants.iconSize)
                     .foregroundColor(.white)
                 
-                Text(NSLocalizedString("sidebar.chatButton.title", value: "Chat", comment: "Sidebar bottom chat button title"))
+                Text(Self.localizedTitle)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(.white)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
             }
             .padding(.leading, Constants.leadingPadding)
             .padding(.trailing, Constants.trailingPadding)
             .padding(.vertical, Constants.verticalPadding)
-            .frame(width: contentWidth, height: contentHeight)
+            .frame(
+                minWidth: contentWidth,
+                minHeight: contentHeight,
+                maxHeight: contentHeight
+            )
             .themedBackground(isHovering ? Constants.hoveredBackgroundColor : Constants.backgroundColor)
             .clipShape(Capsule())
             .overlay(
@@ -70,6 +92,7 @@ struct ChatButton: View {
             .animation(.easeInOut(duration: 0.15), value: isHovering)
         }
         .buttonStyle(.plain)
+        .fixedSize(horizontal: true, vertical: false)
         .onHover { hovering in
             isHovering = hovering
         }
