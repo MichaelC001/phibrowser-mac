@@ -54544,6 +54544,546 @@
         }
       }
     },
+    "settings.shortcuts.command.closeTab" : {
+      "comment" : "Shortcuts settings - Command title for closing the current tab",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Close Tab"
+          }
+        }
+      }
+    },
+    "settings.shortcuts.command.closeWindow" : {
+      "comment" : "Shortcuts settings - Command title for closing the current window",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Close Window"
+          }
+        }
+      }
+    },
+    "settings.shortcuts.command.copyURL" : {
+      "comment" : "Shortcuts settings - Command title for copying the current URL",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Copy URL"
+          }
+        }
+      }
+    },
+    "settings.shortcuts.command.duplicateTab" : {
+      "comment" : "Shortcuts settings - Command title for duplicating the current tab",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Duplicate Tab"
+          }
+        }
+      }
+    },
+    "settings.shortcuts.command.findNextMatch" : {
+      "comment" : "Shortcuts settings - Command title for selecting the next match on the current page",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Find Next"
+          }
+        }
+      }
+    },
+    "settings.shortcuts.command.findOnPage" : {
+      "comment" : "Shortcuts settings - Command title for finding text on the current page",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Find"
+          }
+        }
+      }
+    },
+    "settings.shortcuts.command.findPreviousMatch" : {
+      "comment" : "Shortcuts settings - Command title for selecting the previous match on the current page",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Find Previous"
+          }
+        }
+      }
+    },
+    "settings.shortcuts.command.focusAddressBar" : {
+      "comment" : "Shortcuts settings - Command title for moving keyboard focus to the address bar",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Focus Address Bar"
+          }
+        }
+      }
+    },
+    "settings.shortcuts.command.goBack" : {
+      "comment" : "Shortcuts settings - Command title for navigating back",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Back"
+          }
+        }
+      }
+    },
+    "settings.shortcuts.command.goForward" : {
+      "comment" : "Shortcuts settings - Command title for navigating forward",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Forward"
+          }
+        }
+      }
+    },
+    "settings.shortcuts.command.goHome" : {
+      "comment" : "Shortcuts settings - Command title for opening the home page",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Home"
+          }
+        }
+      }
+    },
+    "settings.shortcuts.command.inspectWithDeveloperTools" : {
+      "comment" : "Shortcuts settings - Command title for inspecting the page with developer tools",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Dev Tools Inspect"
+          }
+        }
+      }
+    },
+    "settings.shortcuts.command.manageExtensions" : {
+      "comment" : "Shortcuts settings - Command title for managing browser extensions",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Extensions"
+          }
+        }
+      }
+    },
+    "settings.shortcuts.command.muteSite" : {
+      "comment" : "Shortcuts settings - Command title for muting audio from the current site",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Mute Site"
+          }
+        }
+      }
+    },
+    "settings.shortcuts.command.newConversation" : {
+      "comment" : "Shortcuts settings - Command title for starting a new conversation",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "New Conversation"
+          }
+        }
+      }
+    },
+    "settings.shortcuts.command.newIncognitoWindow" : {
+      "comment" : "Shortcuts settings - Command title for opening a new Incognito window",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "New Incognito Window"
+          }
+        }
+      }
+    },
+    "settings.shortcuts.command.newTab" : {
+      "comment" : "Shortcuts settings - Command title for opening a new tab",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "New Tab"
+          }
+        }
+      }
+    },
+    "settings.shortcuts.command.newTabToRight" : {
+      "comment" : "Shortcuts settings - Command title for opening a new tab to the right of the current tab",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "New Tab To Right"
+          }
+        }
+      }
+    },
+    "settings.shortcuts.command.newWindow" : {
+      "comment" : "Shortcuts settings - Command title for opening a new window",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "New Window"
+          }
+        }
+      }
+    },
+    "settings.shortcuts.command.openDeveloperConsole" : {
+      "comment" : "Shortcuts settings - Command title for opening the developer tools console",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Dev Tools Console"
+          }
+        }
+      }
+    },
+    "settings.shortcuts.command.openDeveloperTools" : {
+      "comment" : "Shortcuts settings - Command title for opening developer tools",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Open DevTools"
+          }
+        }
+      }
+    },
+    "settings.shortcuts.command.openSettings" : {
+      "comment" : "Shortcuts settings - Command title for opening Phi settings",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Settings"
+          }
+        }
+      }
+    },
+    "settings.shortcuts.command.organizeTabsWithAI" : {
+      "comment" : "Shortcuts settings - Command title for organizing tabs with AI",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Organize Tabs with AI"
+          }
+        }
+      }
+    },
+    "settings.shortcuts.command.printPage" : {
+      "comment" : "Shortcuts settings - Command title for printing the current page",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Print…"
+          }
+        }
+      }
+    },
+    "settings.shortcuts.command.reloadPage" : {
+      "comment" : "Shortcuts settings - Command title for reloading the current page",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Reload Page"
+          }
+        }
+      }
+    },
+    "settings.shortcuts.command.reopenClosedTab" : {
+      "comment" : "Shortcuts settings - Command title for reopening the most recently closed tab",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Reopen Closed Tab"
+          }
+        }
+      }
+    },
+    "settings.shortcuts.command.resetZoom" : {
+      "comment" : "Shortcuts settings - Command title for restoring the default page zoom level",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Zoom Normal"
+          }
+        }
+      }
+    },
+    "settings.shortcuts.command.searchTabs" : {
+      "comment" : "Shortcuts settings - Command title for searching open tabs",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Tab Search"
+          }
+        }
+      }
+    },
+    "settings.shortcuts.command.searchTheWeb" : {
+      "comment" : "Shortcuts settings - Command title for starting a web search",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Search the Web..."
+          }
+        }
+      }
+    },
+    "settings.shortcuts.command.selectLastTab" : {
+      "comment" : "Shortcuts settings - Command title for selecting the last tab",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Select Last Tab"
+          }
+        }
+      }
+    },
+    "settings.shortcuts.command.selectNextSpace" : {
+      "comment" : "Shortcuts settings - Command title for selecting the next Space",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Next Space"
+          }
+        }
+      }
+    },
+    "settings.shortcuts.command.selectNextTab" : {
+      "comment" : "Shortcuts settings - Command title for selecting the next tab",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Select Next Tab"
+          }
+        }
+      }
+    },
+    "settings.shortcuts.command.selectNumberedTab" : {
+      "comment" : "Shortcuts settings - Command title for selecting a numbered tab; %d is the tab position",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Select Tab %d"
+          }
+        }
+      }
+    },
+    "settings.shortcuts.command.selectPreviousSpace" : {
+      "comment" : "Shortcuts settings - Command title for selecting the previous Space",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Previous Space"
+          }
+        }
+      }
+    },
+    "settings.shortcuts.command.selectPreviousTab" : {
+      "comment" : "Shortcuts settings - Command title for selecting the previous tab",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Select Previous Tab"
+          }
+        }
+      }
+    },
+    "settings.shortcuts.command.showDownloads" : {
+      "comment" : "Shortcuts settings - Command title for showing downloads",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Downloads"
+          }
+        }
+      }
+    },
+    "settings.shortcuts.command.showHistory" : {
+      "comment" : "Shortcuts settings - Command title for showing browsing history",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Show History"
+          }
+        }
+      }
+    },
+    "settings.shortcuts.command.showTabSwitcher" : {
+      "comment" : "Shortcuts settings - Command title for showing the tab switcher in forward order",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Show Tab Switcher"
+          }
+        }
+      }
+    },
+    "settings.shortcuts.command.showTabSwitcherReverse" : {
+      "comment" : "Shortcuts settings - Command title for showing the tab switcher in reverse order",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Show Tab Switcher(Reverse)"
+          }
+        }
+      }
+    },
+    "settings.shortcuts.command.stopLoading" : {
+      "comment" : "Shortcuts settings - Command title for stopping the current page from loading",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Stop"
+          }
+        }
+      }
+    },
+    "settings.shortcuts.command.toggleChatbar" : {
+      "comment" : "Shortcuts settings - Command title for showing or hiding the Chatbar",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Toggle Chatbar"
+          }
+        }
+      }
+    },
+    "settings.shortcuts.command.toggleSidebar" : {
+      "comment" : "Shortcuts settings - Command title for showing or hiding the sidebar",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Toggle Sidebar"
+          }
+        }
+      }
+    },
+    "settings.shortcuts.command.viewPageSource" : {
+      "comment" : "Shortcuts settings - Command title for viewing the current page source",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "View Page Source"
+          }
+        }
+      }
+    },
+    "settings.shortcuts.command.zoomIn" : {
+      "comment" : "Shortcuts settings - Command title for increasing the page zoom level",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Zoom Plus"
+          }
+        }
+      }
+    },
+    "settings.shortcuts.command.zoomOut" : {
+      "comment" : "Shortcuts settings - Command title for decreasing the page zoom level",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Zoom Minus"
+          }
+        }
+      }
+    },
     "settings.shortcuts.conflictMessage" : {
       "comment" : "Shortcuts settings - Warning text showing conflicting shortcuts",
       "extractionState" : "extracted_with_value",
@@ -54600,6 +55140,126 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "與以下項目衝突：%@"
+          }
+        }
+      }
+    },
+    "settings.shortcuts.group.app" : {
+      "comment" : "Shortcuts settings - Section title for application commands",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "App"
+          }
+        }
+      }
+    },
+    "settings.shortcuts.group.bookmarks" : {
+      "comment" : "Shortcuts settings - Section title for bookmark commands",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Bookmarks"
+          }
+        }
+      }
+    },
+    "settings.shortcuts.group.edit" : {
+      "comment" : "Shortcuts settings - Section title for editing commands",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Edit"
+          }
+        }
+      }
+    },
+    "settings.shortcuts.group.file" : {
+      "comment" : "Shortcuts settings - Section title for file commands",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "File"
+          }
+        }
+      }
+    },
+    "settings.shortcuts.group.help" : {
+      "comment" : "Shortcuts settings - Section title for help commands",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Help"
+          }
+        }
+      }
+    },
+    "settings.shortcuts.group.history" : {
+      "comment" : "Shortcuts settings - Section title for browsing history commands",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "History"
+          }
+        }
+      }
+    },
+    "settings.shortcuts.group.spaces" : {
+      "comment" : "Shortcuts settings - Section title for Space commands",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Spaces"
+          }
+        }
+      }
+    },
+    "settings.shortcuts.group.tab" : {
+      "comment" : "Shortcuts settings - Section title for tab commands",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Tab"
+          }
+        }
+      }
+    },
+    "settings.shortcuts.group.view" : {
+      "comment" : "Shortcuts settings - Section title for view commands",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "View"
+          }
+        }
+      }
+    },
+    "settings.shortcuts.group.window" : {
+      "comment" : "Shortcuts settings - Section title for window commands",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Window"
           }
         }
       }
@@ -59345,7 +60005,7 @@
       }
     },
     "sidebar.feedbackButton.tooltip" : {
-      "comment" : "Feedback - Tooltip text for icon-only feedback button",
+      "comment" : "Feedback - Tooltip text for feedback button",
       "extractionState" : "extracted_with_value",
       "localizations" : {
         "de" : {
