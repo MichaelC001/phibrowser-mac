@@ -1042,6 +1042,15 @@ typedef NS_ENUM(NSInteger, PhiWindowCloseState) {
 /// created. Main thread only.
 - (NSString * _Nullable)getMetricsClientId;
 
+/// Flips the UMA metrics + crash reporting consent through the same runtime
+/// path as the chrome://settings toggle, so the persisted pref, the client
+/// id lifecycle (opting out clears it; re-enabling mints a fresh one), and
+/// the live start/stop of uploads all follow. `completion` runs once on the
+/// main thread with the state actually in effect afterwards — it can differ
+/// from `enabled` when the value is policy-managed. Main thread only.
+- (void)setMetricsReportingEnabled:(BOOL)enabled
+                        completion:(void (^)(BOOL effectiveEnabled))completion;
+
 /// The app-level "restore previous session" switch, held in Chromium local
 /// state (an absent key means on). The Mac settings toggle reads and writes it
 /// through these; the cold-start path reads the same pref directly, so the two
