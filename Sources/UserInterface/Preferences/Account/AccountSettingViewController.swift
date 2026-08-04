@@ -182,7 +182,6 @@ class AccountSettingViewController: NSViewController, SettingsPane {
         defaultBrowserView.snp.makeConstraints { make in
             make.top.equalTo(accountView.snp.bottom).offset(20)
             make.left.right.equalToSuperview()
-            make.height.equalTo(42)
         }
 
         // Share section
@@ -830,13 +829,96 @@ class ProfileCardView: NSView {
 
 // MARK: - Default Browser Section View
 
+private final class VerticallyCenteredTextFieldCell: NSTextFieldCell {
+    override func drawingRect(forBounds rect: NSRect) -> NSRect {
+        var drawingRect = super.drawingRect(forBounds: rect)
+        let contentHeight = min(
+            ceil(cellSize(forBounds: rect).height),
+            drawingRect.height
+        )
+        drawingRect.origin.y += (drawingRect.height - contentHeight) / 2
+        drawingRect.size.height = contentHeight
+        return drawingRect
+    }
+}
+
+private final class WrappingButtonCell: NSButtonCell {
+    func singleLineTitleRect(forBounds rect: NSRect) -> NSRect {
+        super.titleRect(forBounds: rect)
+    }
+
+    func wrappedTitle(_ title: NSAttributedString) -> NSAttributedString {
+        let result = NSMutableAttributedString(attributedString: title)
+        guard result.length > 0 else {
+            return result
+        }
+
+        let existingStyle = result.attribute(
+            .paragraphStyle,
+            at: 0,
+            effectiveRange: nil
+        ) as? NSParagraphStyle
+        let paragraphStyle = existingStyle?.mutableCopy() as? NSMutableParagraphStyle
+            ?? NSMutableParagraphStyle()
+        paragraphStyle.alignment = alignment
+        paragraphStyle.lineBreakMode = .byWordWrapping
+        result.addAttribute(
+            .paragraphStyle,
+            value: paragraphStyle,
+            range: NSRange(location: 0, length: result.length)
+        )
+        return result
+    }
+
+    override func titleRect(forBounds rect: NSRect) -> NSRect {
+        let singleLineRect = singleLineTitleRect(forBounds: rect)
+        guard attributedTitle.length > 0, singleLineRect.width > 0 else {
+            return singleLineRect
+        }
+
+        let measuredRect = wrappedTitle(attributedTitle).boundingRect(
+            with: NSSize(width: singleLineRect.width, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading]
+        )
+        let height = min(ceil(measuredRect.height), max(0, rect.height - 8))
+        return NSRect(
+            x: singleLineRect.minX,
+            y: rect.midY - height / 2,
+            width: singleLineRect.width,
+            height: height
+        )
+    }
+
+    override func drawTitle(
+        _ title: NSAttributedString,
+        withFrame frame: NSRect,
+        in controlView: NSView
+    ) -> NSRect {
+        wrappedTitle(title).draw(
+            with: frame,
+            options: [.usesLineFragmentOrigin, .usesFontLeading]
+        )
+        return frame
+    }
+}
+
 class DefaultBrowserSectionView: SettingItemBackgroundView {
+    private enum Layout {
+        static let horizontalPadding: CGFloat = 12
+        static let verticalPadding: CGFloat = 8
+        static let spacing: CGFloat = 8
+        static let buttonMaxWidth: CGFloat = 145
+        static let fallbackWidth: CGFloat = 352
+        static let minimumControlHeight: CGFloat = 24
+    }
+
     private let statusLabel = NSTextField(labelWithString: "")
     private let setDefaultButton = NSButton()
     private let loadingIndicator = NSProgressIndicator()
 
     private let viewModel: DefaultBrowserViewModel
     private var cancellables = Set<AnyCancellable>()
+    private var lastLayoutWidth: CGFloat = 0
 
     init(viewModel: DefaultBrowserViewModel) {
         self.viewModel = viewModel
@@ -849,10 +931,54 @@ class DefaultBrowserSectionView: SettingItemBackgroundView {
         fatalError("init(coder:) has not been implemented")
     }
 
+    override var intrinsicContentSize: NSSize {
+        let availableWidth = bounds.width > 0 ? bounds.width : Layout.fallbackWidth
+        let buttonWidth = min(setDefaultButton.intrinsicContentSize.width, Layout.buttonMaxWidth)
+        let statusWidth = max(
+            1,
+            availableWidth
+                - Layout.horizontalPadding * 2
+                - Layout.spacing
+                - buttonWidth
+        )
+        let statusHeight = statusLabel.attributedStringValue.boundingRect(
+            with: NSSize(width: statusWidth, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading]
+        ).height
+        let buttonHeight = wrappedButtonHeight(for: buttonWidth)
+        let controlHeight = max(
+            Layout.minimumControlHeight,
+            ceil(statusHeight),
+            buttonHeight
+        )
+        return NSSize(
+            width: NSView.noIntrinsicMetric,
+            height: controlHeight + Layout.verticalPadding * 2
+        )
+    }
+
+    override func layout() {
+        let width = bounds.width
+        if abs(width - lastLayoutWidth) > 0.5 {
+            lastLayoutWidth = width
+            invalidateIntrinsicContentSize()
+        }
+        super.layout()
+    }
+
     private func setupUI() {
+        statusLabel.cell = VerticallyCenteredTextFieldCell(textCell: "")
+        statusLabel.isEditable = false
+        statusLabel.isSelectable = false
+        statusLabel.isBezeled = false
+        statusLabel.drawsBackground = false
         statusLabel.font = .systemFont(ofSize: 13)
         statusLabel.textColor = .labelColor
-        statusLabel.lineBreakMode = .byTruncatingTail
+        statusLabel.lineBreakMode = .byWordWrapping
+        statusLabel.maximumNumberOfLines = 0
+        statusLabel.cell?.usesSingleLineMode = false
+        statusLabel.cell?.wraps = true
+        statusLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         addSubview(statusLabel)
 
         // Loading indicator
@@ -868,25 +994,36 @@ class DefaultBrowserSectionView: SettingItemBackgroundView {
         }
 
         let title = NSLocalizedString("settings.account.defaultBrowser.setDefaultButton", value: "Set as default", comment: "Account settings - Button to set Phi as default browser")
+        setDefaultButton.cell = WrappingButtonCell(textCell: title)
         setDefaultButton.title = title
         setDefaultButton.toolTip = title
-        setDefaultButton.bezelStyle = .rounded
+        setDefaultButton.bezelStyle = .regularSquare
+        setDefaultButton.cell?.usesSingleLineMode = false
+        setDefaultButton.cell?.wraps = true
+        setDefaultButton.cell?.lineBreakMode = .byWordWrapping
         setDefaultButton.image = NSImage(systemSymbolName: "heart.fill", accessibilityDescription: nil)
         setDefaultButton.imagePosition = .imageLeading
         setDefaultButton.target = self
         setDefaultButton.action = #selector(setDefaultTapped)
         addSubview(setDefaultButton)
 
+        let buttonWidth = min(
+            setDefaultButton.intrinsicContentSize.width,
+            Layout.buttonMaxWidth
+        )
         setDefaultButton.snp.makeConstraints { make in
-            make.right.equalToSuperview().offset(-12)
+            make.right.equalToSuperview().offset(-Layout.horizontalPadding)
             make.centerY.equalToSuperview()
-            make.width.lessThanOrEqualTo(125)
+            make.top.greaterThanOrEqualToSuperview().inset(Layout.verticalPadding)
+            make.bottom.lessThanOrEqualToSuperview().inset(Layout.verticalPadding)
+            make.width.lessThanOrEqualTo(Layout.buttonMaxWidth)
+            make.height.equalTo(wrappedButtonHeight(for: buttonWidth))
         }
         
         statusLabel.snp.makeConstraints { make in
-            make.left.equalToSuperview().offset(12)
-            make.centerY.equalToSuperview()
-            make.trailing.equalTo(setDefaultButton.snp.leading).inset(5)
+            make.left.equalToSuperview().offset(Layout.horizontalPadding)
+            make.top.bottom.equalToSuperview().inset(Layout.verticalPadding)
+            make.trailing.equalTo(setDefaultButton.snp.leading).offset(-Layout.spacing)
         }
         
         // Initial state: show loading
@@ -899,6 +1036,7 @@ class DefaultBrowserSectionView: SettingItemBackgroundView {
             .sink { [weak self] text in
                 self?.statusLabel.stringValue = text
                 self?.statusLabel.toolTip = text
+                self?.invalidateIntrinsicContentSize()
             }
             .store(in: &cancellables)
 
@@ -928,6 +1066,33 @@ class DefaultBrowserSectionView: SettingItemBackgroundView {
             loadingIndicator.isHidden = true
             setDefaultButton.isHidden = false
         }
+        invalidateIntrinsicContentSize()
+    }
+
+    private func wrappedButtonHeight(for width: CGFloat) -> CGFloat {
+        guard let cell = setDefaultButton.cell as? WrappingButtonCell else {
+            return setDefaultButton.intrinsicContentSize.height
+        }
+
+        let measurementBounds = NSRect(
+            x: 0,
+            y: 0,
+            width: width,
+            height: Layout.minimumControlHeight
+        )
+        let titleWidth = cell.singleLineTitleRect(forBounds: measurementBounds).width
+        guard titleWidth > 0 else {
+            return setDefaultButton.intrinsicContentSize.height
+        }
+
+        let titleHeight = cell.wrappedTitle(setDefaultButton.attributedTitle).boundingRect(
+            with: NSSize(width: titleWidth, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading]
+        ).height
+        return max(
+            setDefaultButton.intrinsicContentSize.height,
+            ceil(titleHeight) + 8
+        )
     }
 
     @MainActor
