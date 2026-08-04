@@ -16,6 +16,7 @@ enum SupportedAppLanguage: String, CaseIterable, Identifiable {
     case german = "de"
     case dutch = "nl"
     case spanish = "es"
+    case korean = "ko"
 
     var id: String { rawValue }
 

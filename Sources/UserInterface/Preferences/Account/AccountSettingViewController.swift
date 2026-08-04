@@ -852,11 +852,13 @@ class DefaultBrowserSectionView: SettingItemBackgroundView {
     private func setupUI() {
         statusLabel.font = .systemFont(ofSize: 13)
         statusLabel.textColor = .labelColor
+        statusLabel.lineBreakMode = .byTruncatingTail
         addSubview(statusLabel)
 
         statusLabel.snp.makeConstraints { make in
             make.left.equalToSuperview().offset(12)
             make.centerY.equalToSuperview()
+            make.width.left.lessThanOrEqualTo(225)
         }
 
         // Loading indicator
@@ -871,7 +873,9 @@ class DefaultBrowserSectionView: SettingItemBackgroundView {
             make.width.height.equalTo(16)
         }
 
-        setDefaultButton.title = NSLocalizedString("settings.account.defaultBrowser.setDefaultButton", value: "Set as default", comment: "Account settings - Button to set Phi as default browser")
+        let title = NSLocalizedString("settings.account.defaultBrowser.setDefaultButton", value: "Set as default", comment: "Account settings - Button to set Phi as default browser")
+        setDefaultButton.title = title
+        setDefaultButton.toolTip = title
         setDefaultButton.bezelStyle = .rounded
         setDefaultButton.image = NSImage(systemSymbolName: "heart.fill", accessibilityDescription: nil)
         setDefaultButton.imagePosition = .imageLeading
@@ -882,6 +886,7 @@ class DefaultBrowserSectionView: SettingItemBackgroundView {
         setDefaultButton.snp.makeConstraints { make in
             make.right.equalToSuperview().offset(-12)
             make.centerY.equalToSuperview()
+            make.width.lessThanOrEqualTo(95)
         }
         
         // Initial state: show loading
@@ -893,6 +898,7 @@ class DefaultBrowserSectionView: SettingItemBackgroundView {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] text in
                 self?.statusLabel.stringValue = text
+                self?.statusLabel.toolTip = text
             }
             .store(in: &cancellables)
 

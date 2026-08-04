@@ -205,6 +205,7 @@
 		7A5B00A02EF0000000000001 /* MemoryButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A5B00A02EF0000000000002 /* MemoryButton.swift */; };
 		7B00AAAA000000050000A5B5 /* PostHogEnv.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B00AAAA000000040000A4B4 /* PostHogEnv.swift */; };
 		7B00AAAA000000070000A7B7 /* PostHogConfig.generated.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B00AAAA000000060000A6B6 /* PostHogConfig.generated.swift */; };
+		7C0A10023041000100000002 /* SentinelTelemetryConsentSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C0A10013041000100000001 /* SentinelTelemetryConsentSync.swift */; };
 		897C09F42F6BEDA000E5CA9B /* IMChannelsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 897C09F22F6BEDA000E5CA9B /* IMChannelsViewModel.swift */; };
 		897C09F52F6BEDA000E5CA9B /* IMChannelAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 897C09EE2F6BEDA000E5CA9B /* IMChannelAPIClient.swift */; };
 		897C09F62F6BEDA000E5CA9B /* IMChannelsSettingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 897C09F02F6BEDA000E5CA9B /* IMChannelsSettingView.swift */; };
@@ -328,7 +329,6 @@
 		B17DE00000000000000000E4 /* Vendor/PhiBitwardenHelper-SOURCE-OFFER.txt in Copy Bitwarden GPL Notices */ = {isa = PBXBuildFile; fileRef = B17DE00000000000000000E6 /* Vendor/PhiBitwardenHelper-SOURCE-OFFER.txt */; };
 		B17DE0000000000000000B01 /* BitwardenSessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17DE0000000000000000B02 /* BitwardenSessionStore.swift */; };
 		B7A100013001000000000002 /* SentinelLanguagePreferenceSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7A100013001000000000001 /* SentinelLanguagePreferenceSync.swift */; };
-		7C0A10023041000100000002 /* SentinelTelemetryConsentSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C0A10013041000100000001 /* SentinelTelemetryConsentSync.swift */; };
 		C0D1D0022FEA000000000002 /* SidebarTabListViewController+MultiSelectionDragPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D1D0012FEA000000000001 /* SidebarTabListViewController+MultiSelectionDragPreview.swift */; };
 		C70000000000000000000011 /* CustomTooltipController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C70000000000000000000001 /* CustomTooltipController.swift */; };
 		C70000000000000000000012 /* CustomTooltip+Hosting.swift in Sources */ = {isa = PBXBuildFile; fileRef = C70000000000000000000002 /* CustomTooltip+Hosting.swift */; };
@@ -806,6 +806,7 @@
 		7A5B00A02EF0000000000002 /* MemoryButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemoryButton.swift; sourceTree = "<group>"; };
 		7B00AAAA000000040000A4B4 /* PostHogEnv.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PostHogEnv.swift; sourceTree = "<group>"; };
 		7B00AAAA000000060000A6B6 /* PostHogConfig.generated.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PostHogConfig.generated.swift; sourceTree = "<group>"; };
+		7C0A10013041000100000001 /* SentinelTelemetryConsentSync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SentinelTelemetryConsentSync.swift; sourceTree = "<group>"; };
 		8417101CC460A0D12720DE81 /* Cocoa.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Cocoa.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.sdk/System/Library/Frameworks/Cocoa.framework; sourceTree = DEVELOPER_DIR; };
 		897C09EE2F6BEDA000E5CA9B /* IMChannelAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IMChannelAPIClient.swift; sourceTree = "<group>"; };
 		897C09EF2F6BEDA000E5CA9B /* IMChannelsSettingHostingViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IMChannelsSettingHostingViewController.swift; sourceTree = "<group>"; };
@@ -936,7 +937,6 @@
 		B17DE00000000000000000E6 /* Vendor/PhiBitwardenHelper-SOURCE-OFFER.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Vendor/PhiBitwardenHelper-SOURCE-OFFER.txt"; sourceTree = SOURCE_ROOT; };
 		B17DE0000000000000000B02 /* BitwardenSessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BitwardenSessionStore.swift; sourceTree = "<group>"; };
 		B7A100013001000000000001 /* SentinelLanguagePreferenceSync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SentinelLanguagePreferenceSync.swift; sourceTree = "<group>"; };
-		7C0A10013041000100000001 /* SentinelTelemetryConsentSync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SentinelTelemetryConsentSync.swift; sourceTree = "<group>"; };
 		C0D1D0012FEA000000000001 /* SidebarTabListViewController+MultiSelectionDragPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SidebarTabListViewController+MultiSelectionDragPreview.swift"; sourceTree = "<group>"; };
 		C70000000000000000000001 /* CustomTooltipController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CustomTooltipController.swift; sourceTree = "<group>"; };
 		C70000000000000000000002 /* CustomTooltip+Hosting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "CustomTooltip+Hosting.swift"; sourceTree = "<group>"; };
@@ -2592,14 +2592,15 @@
 			hasScannedForEncodings = 0;
 			knownRegions = (
 				en,
-				zh_CN,
-				zh_TW,
 				ja,
 				fr,
 				de,
 				nl,
 				es,
 				Base,
+				ko,
+				"zh-Hans",
+				"zh-Hant",
 			);
 			mainGroup = B0C4693F2E3B10E1007F0C7A;
 			minimizedProjectReferenceProxies = 1;
