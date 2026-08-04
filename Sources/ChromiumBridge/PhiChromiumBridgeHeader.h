@@ -497,6 +497,21 @@ typedef NS_ENUM(NSInteger, PhiWindowCloseState) {
 /// and does not wait for a result. Called on the UI thread — return promptly
 /// and present asynchronously, never from inside this call.
 - (void)startPhiAccountDeletion;
+
+/// The effective UMA metrics + crash reporting consent changed. Carries the
+/// exact value isMetricsReportingEnabled returns at the same instant (the
+/// guest-mode carve-out applied), delivered synchronously on the browser
+/// main thread when the consent preference is written — from every source:
+/// the chrome://settings toggle, setMetricsReportingEnabled:completion:, or
+/// enterprise policy. Changes only: only real transitions of the effective
+/// value arrive — no baseline push at startup (read the initial state via
+/// isMetricsReportingEnabled) and no repeats of the last delivered value,
+/// so each call is itself a meaningful signal. A change initiated through
+/// the bridge setter echoes back here with the state actually in effect (a
+/// policy-refused change corrects itself through this channel). Guest-mode
+/// entry/exit alone does not fire this — no preference write happens, and
+/// the Mac client owns those transitions.
+- (void)metricsReportingEnabledChanged:(BOOL)enabled;
 @end
 
 @protocol PhiChromiumBridgeProtocol <NSObject>
