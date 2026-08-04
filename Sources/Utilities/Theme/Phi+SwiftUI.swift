@@ -449,7 +449,7 @@ struct ThemeSwatchView: View {
                         .font(.system(size: 11))
                         .themedForeground(.textPrimary)
                         .lineLimit(1)
-                        .minimumScaleFactor(0.8)
+                        .fixedSize(horizontal: true, vertical: false)
                         .opacity(selected ? 1 : 0)
                 }
             }

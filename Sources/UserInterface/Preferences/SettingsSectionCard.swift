@@ -65,11 +65,10 @@ struct SettingsDetailRow<Control: View>: View {
             Text(label)
                 .font(.system(size: 13))
                 .themedForeground(.textPrimary)
-                // Row labels are short by design; when a wide control leaves
-                // the label a sliver, keep it on one line instead of letting
-                // it wrap into a vertical letter stack.
-                .lineLimit(1)
-                .fixedSize()
+                // Localized labels may need multiple lines when the trailing
+                // control leaves less horizontal room. Preserve the resulting
+                // intrinsic height without forcing the row wider.
+                .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 12)
             control
         }
