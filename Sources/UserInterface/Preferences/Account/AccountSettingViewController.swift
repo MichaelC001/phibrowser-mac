@@ -855,12 +855,6 @@ class DefaultBrowserSectionView: SettingItemBackgroundView {
         statusLabel.lineBreakMode = .byTruncatingTail
         addSubview(statusLabel)
 
-        statusLabel.snp.makeConstraints { make in
-            make.left.equalToSuperview().offset(12)
-            make.centerY.equalToSuperview()
-            make.width.left.lessThanOrEqualTo(225)
-        }
-
         // Loading indicator
         loadingIndicator.style = .spinning
         loadingIndicator.controlSize = .small
@@ -886,7 +880,13 @@ class DefaultBrowserSectionView: SettingItemBackgroundView {
         setDefaultButton.snp.makeConstraints { make in
             make.right.equalToSuperview().offset(-12)
             make.centerY.equalToSuperview()
-            make.width.lessThanOrEqualTo(95)
+            make.width.lessThanOrEqualTo(125)
+        }
+        
+        statusLabel.snp.makeConstraints { make in
+            make.left.equalToSuperview().offset(12)
+            make.centerY.equalToSuperview()
+            make.trailing.equalTo(setDefaultButton.snp.leading).inset(5)
         }
         
         // Initial state: show loading

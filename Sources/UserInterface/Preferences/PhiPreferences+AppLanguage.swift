@@ -18,6 +18,19 @@ enum SupportedAppLanguage: String, CaseIterable, Identifiable {
     case spanish = "es"
     case korean = "ko"
 
+    /// Fixed alphabetical order by English language name for the language picker.
+    static let pickerOrder: [SupportedAppLanguage] = [
+        .simplifiedChinese,
+        .traditionalChinese,
+        .japanese,
+        .korean,
+        .english,
+        .french,
+        .german,
+        .dutch,
+        .spanish
+    ]
+
     var id: String { rawValue }
 
     /// The localization identifier emitted into the outer app bundle.

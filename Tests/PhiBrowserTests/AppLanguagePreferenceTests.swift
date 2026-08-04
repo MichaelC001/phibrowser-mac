@@ -85,6 +85,27 @@ final class AppLanguagePreferenceTests: XCTestCase {
         }
     }
 
+    func testLanguagePickerUsesFixedAlphabeticalOrder() {
+        XCTAssertEqual(
+            SupportedAppLanguage.pickerOrder,
+            [
+                .simplifiedChinese,
+                .traditionalChinese,
+                .dutch,
+                .english,
+                .french,
+                .german,
+                .japanese,
+                .korean,
+                .spanish,
+            ]
+        )
+        XCTAssertEqual(
+            Set(SupportedAppLanguage.pickerOrder),
+            Set(SupportedAppLanguage.allCases)
+        )
+    }
+
     func testExplicitLanguagePreservesAndRestoresSystemPerAppLanguage() {
         defaults.set(["fr"], forKey: "AppleLanguages")
 

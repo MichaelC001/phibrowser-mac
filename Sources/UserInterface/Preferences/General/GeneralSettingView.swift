@@ -373,7 +373,9 @@ private struct LanguageSectionView: View {
                         )
                         .tag(AppLanguagePreference.system)
 
-                        ForEach(SupportedAppLanguage.allCases) { language in
+                        Divider()
+
+                        ForEach(SupportedAppLanguage.pickerOrder) { language in
                             Text(language.displayName)
                                 .tag(AppLanguagePreference.language(language))
                         }
