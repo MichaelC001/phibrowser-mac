@@ -120,6 +120,12 @@ export function linkedAppPath() {
  *
  * Set PHI_NO_LAUNCH=1 to forbid it, for anyone who would rather an agent
  * never start their browser unasked.
+ *
+ * Launches with `-skip-onboarding`: on a fresh profile the app would
+ * otherwise sit at the onboarding window with no browser window for CDP to
+ * attach to; the flag makes Phi choose Guest Mode instead. A signed-in
+ * profile is unaffected, and builds without the flag ignore the unknown
+ * argument.
  */
 function launchPhi() {
   if (process.env.PHI_NO_LAUNCH) return null
@@ -129,7 +135,11 @@ function launchPhi() {
     : LAUNCH_BUNDLE_IDS.map((id) => ['-g', '-b', id])
   for (const args of attempts) {
     try {
-      execFileSync('/usr/bin/open', args, { stdio: 'ignore' })
+      execFileSync(
+        '/usr/bin/open',
+        [...args, '--args', '-skip-onboarding'],
+        { stdio: 'ignore' },
+      )
       return args[args.length - 1]
     } catch {
       // Not installed (open exits non-zero) — fall through to the next.
