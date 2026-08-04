@@ -1280,6 +1280,54 @@ final class PhiBrowserTests: XCTestCase {
         )
     }
 
+    func testSkipOnboardingLaunchPolicyChoosesGuestModeAtTheOnboardingGate() {
+        XCTAssertTrue(
+            SkipOnboardingLaunchPolicy.shouldEnterGuestMode(
+                hasLaunchArgument: true,
+                canUseBrowser: false,
+                isAccountDeletionInProgress: false,
+                presentsGuestMigrationRecovery: false
+            ),
+            "A request to present onboarding should be answered with Guest entry when the skip argument is passed."
+        )
+        XCTAssertFalse(
+            SkipOnboardingLaunchPolicy.shouldEnterGuestMode(
+                hasLaunchArgument: false,
+                canUseBrowser: false,
+                isAccountDeletionInProgress: false,
+                presentsGuestMigrationRecovery: false
+            ),
+            "Without the launch argument the onboarding window must be presented."
+        )
+        XCTAssertFalse(
+            SkipOnboardingLaunchPolicy.shouldEnterGuestMode(
+                hasLaunchArgument: true,
+                canUseBrowser: true,
+                isAccountDeletionInProgress: false,
+                presentsGuestMigrationRecovery: false
+            ),
+            "A presentation requested from an already usable browser is a deliberate sign-in and must show."
+        )
+        XCTAssertFalse(
+            SkipOnboardingLaunchPolicy.shouldEnterGuestMode(
+                hasLaunchArgument: true,
+                canUseBrowser: false,
+                isAccountDeletionInProgress: true,
+                presentsGuestMigrationRecovery: false
+            ),
+            "An account-deletion launch stays gated regardless of the skip argument."
+        )
+        XCTAssertFalse(
+            SkipOnboardingLaunchPolicy.shouldEnterGuestMode(
+                hasLaunchArgument: true,
+                canUseBrowser: false,
+                isAccountDeletionInProgress: false,
+                presentsGuestMigrationRecovery: true
+            ),
+            "Guest-migration recovery keeps its journal-bound login presentation."
+        )
+    }
+
     func testOmniBoxSearchCoordinatorSuppressesOnlyTheNextAutomaticSearchAfterPrefill() {
         let coordinator = OmniBoxSearchCoordinator()
 

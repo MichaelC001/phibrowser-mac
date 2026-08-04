@@ -119,6 +119,9 @@ class LoginController {
     @MainActor
     func showLoginWindow() {
         AppLogDebug("🔐 [Login] showLoginWindow called")
+        if enterGuestModeInsteadOfOnboardingIfRequested() {
+            return
+        }
 
         let presentsGuestMigrationRecovery =
             requiresGuestMigrationRecoveryPresentation
@@ -299,6 +302,26 @@ class LoginController {
             hasRecoverableSession: hasRecoverableSession,
             accountPhase: hasRecoverableSession ? phase : nil
         )
+    }
+
+    /// Answers a request to present onboarding with the ordinary "Continue as
+    /// Guest" flow when the app was launched with `-skip-onboarding`. Returns
+    /// `true` when Guest entry replaced the presentation. Guest-migration
+    /// recovery keeps its journal-bound login, and requests from an already
+    /// usable browser (a deliberate sign-in from Guest Mode) still present.
+    @MainActor
+    private func enterGuestModeInsteadOfOnboardingIfRequested() -> Bool {
+        guard SkipOnboardingLaunchPolicy.shouldEnterGuestMode(
+            hasLaunchArgument: ProcessInfo.processInfo.arguments
+                .contains(SkipOnboardingLaunchPolicy.launchArgument),
+            canUseBrowser: ApplicationState.shared.canUseBrowser,
+            isAccountDeletionInProgress:
+                auth0Manager.isAccountDeletionInProgress,
+            presentsGuestMigrationRecovery:
+                requiresGuestMigrationRecoveryPresentation
+        ) else { return false }
+        continueAsGuest()
+        return true
     }
     
     func isLoggedin() -> Bool {
@@ -1001,6 +1024,27 @@ struct LoginWindowGate {
             return true
         }
         return accountPhase != .done
+    }
+}
+
+/// Launch-argument override for automated and development runs: whenever the
+/// app is about to present onboarding, it chooses "Continue as Guest"
+/// instead. Deliberate sign-in presentations from an already usable browser,
+/// journal-bound Guest-migration recovery, and deletion-blocked launches keep
+/// their ordinary presentation.
+enum SkipOnboardingLaunchPolicy {
+    static let launchArgument = "-skip-onboarding"
+
+    static func shouldEnterGuestMode(
+        hasLaunchArgument: Bool,
+        canUseBrowser: Bool,
+        isAccountDeletionInProgress: Bool,
+        presentsGuestMigrationRecovery: Bool
+    ) -> Bool {
+        hasLaunchArgument
+            && !canUseBrowser
+            && !isAccountDeletionInProgress
+            && !presentsGuestMigrationRecovery
     }
 }
 
