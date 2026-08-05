@@ -35,6 +35,54 @@
     "•" : {
 
     },
+    "about.acknowledgements.chromiumProjectLink" : {
+      "comment" : "About window - Link text to the Chromium project home",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Chromium"
+          }
+        }
+      }
+    },
+    "about.acknowledgements.chromiumSourceLink" : {
+      "comment" : "About window - Link text to Chromium's open source software credits",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "open source software"
+          }
+        }
+      }
+    },
+    "about.acknowledgements.otherOpenSourceLink" : {
+      "comment" : "About window - Link text to the browser's other open source software credits",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "open source software"
+          }
+        }
+      }
+    },
+    "about.acknowledgements.text" : {
+      "comment" : "About window - Acknowledgements sentence; the three placeholders are, in order, the Chromium project name link, Chromium's open source software link, and other open source software link",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Phi is made possible by the %1$@ open source project, Chromium's %2$@, as well as other %3$@."
+          }
+        }
+      }
+    },
     "about.chromiumVersionLabel" : {
       "comment" : "About window - Chromium engine version label",
       "extractionState" : "extracted_with_value",

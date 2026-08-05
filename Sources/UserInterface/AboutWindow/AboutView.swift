@@ -31,6 +31,9 @@ struct AboutView: View {
     }()
 
     private static let acknowledgementsLayoutWidth: CGFloat = 250
+    private static let chromiumProjectLinkMarker = "__PHI_CHROMIUM_PROJECT_LINK__"
+    private static let chromiumSourceLinkMarker = "__PHI_CHROMIUM_SOURCE_LINK__"
+    private static let otherOpenSourceLinkMarker = "__PHI_OTHER_OPEN_SOURCE_LINK__"
 
     private var currentYear: Int {
         Calendar.current.component(.year, from: Date())
@@ -67,38 +70,50 @@ struct AboutView: View {
         return version
     }
 
-    /// Acknowledgements paragraph (English only); three links: Chromium name and two 'open source software' spans.
-    private var acknowledgementsAttributedString: AttributedString {
-        var result = AttributedString()
-        result.append(AttributedString("Phi is made possible by the "))
-
-        var chromiumLink = AttributedString("Chromium")
-        chromiumLink.link = Self.chromiumProjectURL
-        chromiumLink.underlineStyle = .single
-        result.append(chromiumLink)
-
-        result.append(AttributedString(" open source project, Chromium's "))
-
-        var chromiumOSSLink = AttributedString("open source software")
-        chromiumOSSLink.link = Self.chromiumSourceURL
-        chromiumOSSLink.underlineStyle = .single
-        result.append(chromiumOSSLink)
-
-        result.append(AttributedString(", as well as other "))
-
-        var otherOSSLink = AttributedString("open source software")
-        otherOSSLink.link = Self.phiCreditsURL
-        otherOSSLink.underlineStyle = .single
-        result.append(otherOSSLink)
-
-        result.append(AttributedString("."))
-        return result
-    }
-
     /// Attributed string for `NSTextView`: applies caption sizing and label color on plain runs; links use link styling from `linkTextAttributes`.
     private var acknowledgementsNSAttributedString: NSAttributedString {
-        let converted = NSAttributedString(acknowledgementsAttributedString)
-        let mutable = NSMutableAttributedString(attributedString: converted)
+        let format = NSLocalizedString(
+            "about.acknowledgements.text",
+            value: "Phi is made possible by the %1$@ open source project, Chromium's %2$@, as well as other %3$@.",
+            comment: "About window - Acknowledgements sentence; the three placeholders are, in order, the Chromium project name link, Chromium's open source software link, and other open source software link"
+        )
+        let title = String(
+            format: format,
+            Self.chromiumProjectLinkMarker,
+            Self.chromiumSourceLinkMarker,
+            Self.otherOpenSourceLinkMarker
+        )
+        let mutable = NSMutableAttributedString(string: title)
+        Self.replaceLinkMarker(
+            in: mutable,
+            marker: Self.chromiumProjectLinkMarker,
+            title: NSLocalizedString(
+                "about.acknowledgements.chromiumProjectLink",
+                value: "Chromium",
+                comment: "About window - Link text to the Chromium project home"
+            ),
+            url: Self.chromiumProjectURL
+        )
+        Self.replaceLinkMarker(
+            in: mutable,
+            marker: Self.chromiumSourceLinkMarker,
+            title: NSLocalizedString(
+                "about.acknowledgements.chromiumSourceLink",
+                value: "open source software",
+                comment: "About window - Link text to Chromium's open source software credits"
+            ),
+            url: Self.chromiumSourceURL
+        )
+        Self.replaceLinkMarker(
+            in: mutable,
+            marker: Self.otherOpenSourceLinkMarker,
+            title: NSLocalizedString(
+                "about.acknowledgements.otherOpenSourceLink",
+                value: "open source software",
+                comment: "About window - Link text to the browser's other open source software credits"
+            ),
+            url: Self.phiCreditsURL
+        )
         let font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
         let labelColor = NSColor.labelColor
         let fullRange = NSRange(location: 0, length: mutable.length)
@@ -109,6 +124,26 @@ struct AboutView: View {
             mutable.addAttribute(.foregroundColor, value: NSColor.linkColor, range: range)
         }
         return mutable
+    }
+
+    private static func replaceLinkMarker(
+        in attributedString: NSMutableAttributedString,
+        marker: String,
+        title: String,
+        url: URL
+    ) {
+        let markerRange = (attributedString.string as NSString).range(of: marker)
+        guard markerRange.location != NSNotFound else { return }
+
+        attributedString.replaceCharacters(in: markerRange, with: title)
+        attributedString.addAttributes(
+            [
+                .link: url,
+                .underlineStyle: NSUnderlineStyle.single.rawValue,
+                .cursor: NSCursor.pointingHand
+            ],
+            range: NSRange(location: markerRange.location, length: (title as NSString).length)
+        )
     }
 
     var body: some View {
