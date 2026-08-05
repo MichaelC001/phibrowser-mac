@@ -40024,6 +40024,18 @@
         }
       }
     },
+    "settings.ai.phiLink.sectionTitle" : {
+      "comment" : "Phi & AI settings - Section title for Phi Link messaging options",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Phi Link"
+          }
+        }
+      }
+    },
     "settings.ai.phiSentinel.autoLaunchToggle" : {
       "comment" : "AI settings - Toggle to auto-launch Phi Sentinel when signing in to the Mac",
       "extractionState" : "extracted_with_value",
@@ -40140,18 +40152,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Phi Sentinel 是輕量的背景輔助程式，讓 Phi 能完成排程的 AI 任務"
-          }
-        }
-      }
-    },
-    "settings.ai.phiLink.sectionTitle" : {
-      "comment" : "Phi & AI settings - Section title for Phi Link messaging options",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Phi Link"
           }
         }
       }
@@ -50178,7 +50178,7 @@
     },
     "settings.navigation.phiLinkTitle" : {
       "comment" : "Settings - Tab title for Phi Link settings",
-      "extractionState" : "extracted_with_value",
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -52818,7 +52818,7 @@
     },
     "settings.phiLink.sectionTitle" : {
       "comment" : "Phi Link - Section title",
-      "extractionState" : "extracted_with_value",
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {

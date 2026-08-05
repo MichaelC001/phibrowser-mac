@@ -10,6 +10,15 @@ import CoreImage.CIFilterBuiltins
 struct PhiLinkSettingsSectionView: View {
     @State private var vm = IMChannelsViewModel()
     @State private var isGuest = ApplicationState.shared.isGuest
+    let enabled: Bool
+
+    init(enabled: Bool = true) {
+        self.enabled = enabled
+    }
+
+    private var shouldLoadChannels: Bool {
+        enabled && !isGuest
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
@@ -40,16 +49,18 @@ struct PhiLinkSettingsSectionView: View {
                     }
                 }
 
-                TelegramChannelsSection(vm: vm)
+                TelegramChannelsSection(vm: vm, enabled: enabled)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .task(id: isGuest) {
-            if isGuest {
+        .opacity(enabled ? 1.0 : 0.4)
+        .disabled(!enabled)
+        .task(id: shouldLoadChannels) {
+            guard shouldLoadChannels else {
                 await vm.stopPolling()
-            } else {
-                await vm.loadAll()
+                return
             }
+            await vm.loadAll()
         }
         .onReceive(
             NotificationCenter.default.publisher(for: .browserAccessStateDidChange)
@@ -85,12 +96,13 @@ private struct IMSectionHeader: View {
 
 private struct TelegramChannelsSection: View {
     @Bindable var vm: IMChannelsViewModel
+    let enabled: Bool
 
     var body: some View {
         IMContainerView {
-            OfficialBotSection(vm: vm)
+            OfficialBotSection(vm: vm, enabled: enabled)
             Divider()
-            CustomBotSection(vm: vm)
+            CustomBotSection(vm: vm, enabled: enabled)
         }
     }
 }
@@ -99,6 +111,7 @@ private struct TelegramChannelsSection: View {
 
 private struct OfficialBotSection: View {
     @Bindable var vm: IMChannelsViewModel
+    let enabled: Bool
 
     var body: some View {
         DisclosureGroup(isExpanded: $vm.isOfficialBotExpanded) {
@@ -126,7 +139,7 @@ private struct OfficialBotSection: View {
                     .themedForeground(.textTertiary)
             }
             Spacer(minLength: 8)
-            if !vm.hasLoaded || vm.isOfficialBotLoading {
+            if enabled && (!vm.hasLoaded || vm.isOfficialBotLoading) {
                 ProgressView()
                     .controlSize(.mini)
             }
@@ -141,7 +154,7 @@ private struct OfficialBotSection: View {
 
     @ViewBuilder
     private var officialBotBody: some View {
-        if !vm.hasLoaded {
+        if enabled && !vm.hasLoaded {
             loadingRow
         } else if let pairing = vm.pairing, !vm.officialBotNeedsReconnect {
             connectedView(pairing: pairing)
@@ -203,7 +216,7 @@ private struct OfficialBotSection: View {
                 Task { await vm.disconnectOfficialBot() }
             } label: {
                 HStack(spacing: 4) {
-                    if vm.isOfficialBotLoading {
+                    if enabled && vm.isOfficialBotLoading {
                         ProgressView()
                             .controlSize(.mini)
                     }
@@ -320,7 +333,7 @@ private struct OfficialBotSection: View {
                 Task { await vm.connectOfficialBot() }
             } label: {
                 HStack(spacing: 4) {
-                    if vm.isOfficialBotLoading {
+                    if enabled && vm.isOfficialBotLoading {
                         ProgressView()
                             .controlSize(.mini)
                     }
@@ -365,6 +378,7 @@ private struct OfficialBotSection: View {
 
 private struct CustomBotSection: View {
     @Bindable var vm: IMChannelsViewModel
+    let enabled: Bool
 
     var body: some View {
         DisclosureGroup(isExpanded: $vm.isCustomBotExpanded) {
@@ -388,7 +402,7 @@ private struct CustomBotSection: View {
                     .themedForeground(.textTertiary)
             }
             Spacer(minLength: 8)
-            if !vm.hasLoaded || vm.isCustomBotSaving || vm.isVerifying {
+            if enabled && (!vm.hasLoaded || vm.isCustomBotSaving || vm.isVerifying) {
                 ProgressView()
                     .controlSize(.mini)
             }
@@ -403,7 +417,7 @@ private struct CustomBotSection: View {
 
     @ViewBuilder
     private var customBotBody: some View {
-        if !vm.hasLoaded {
+        if enabled && !vm.hasLoaded {
             HStack {
                 Spacer()
                 ProgressView()
@@ -463,7 +477,7 @@ private struct CustomBotSection: View {
                     Task { await vm.verifyCustomBot() }
                 } label: {
                     HStack(spacing: 4) {
-                        if vm.isVerifying {
+                        if enabled && vm.isVerifying {
                             ProgressView().controlSize(.mini)
                         }
                         Label(
@@ -480,7 +494,7 @@ private struct CustomBotSection: View {
                     Task { await vm.saveCustomBot() }
                 } label: {
                     HStack(spacing: 4) {
-                        if vm.isCustomBotSaving {
+                        if enabled && vm.isCustomBotSaving {
                             ProgressView().controlSize(.mini)
                         }
                         Label(
@@ -543,7 +557,7 @@ private struct CustomBotSection: View {
                     Task { await vm.verifyCustomBot() }
                 } label: {
                     HStack(spacing: 4) {
-                        if vm.isVerifying {
+                        if enabled && vm.isVerifying {
                             ProgressView().controlSize(.mini)
                         }
                         Label(
@@ -560,7 +574,7 @@ private struct CustomBotSection: View {
                     Task { await vm.removeCustomBot() }
                 } label: {
                     HStack(spacing: 4) {
-                        if vm.isCustomBotSaving {
+                        if enabled && vm.isCustomBotSaving {
                             ProgressView().controlSize(.mini)
                         }
                         Label(
