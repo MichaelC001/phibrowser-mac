@@ -34540,6 +34540,30 @@
         }
       }
     },
+    "oobe.nextSteps.enjoyPhi" : {
+      "comment" : "Onboarding next steps - Fourth guide step welcoming the user to Phi Browser",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Enjoy using Phi Browser 🎉"
+          }
+        }
+      }
+    },
+    "oobe.nextSteps.importBrowserData" : {
+      "comment" : "Onboarding next steps - Second guide step for importing browser data",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Import data from another browser"
+          }
+        }
+      }
+    },
     "oobe.nextSteps.legalAgreement" : {
       "comment" : "Onboarding next steps - Required legal agreement; first placeholder is the Privacy link and second is the Terms link",
       "extractionState" : "extracted_with_value",
@@ -34560,6 +34584,18 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "Help make Phi better by sharing usage metrics and crash reports"
+          }
+        }
+      }
+    },
+    "oobe.nextSteps.onboardAssistant" : {
+      "comment" : "Onboarding next steps - First guide step for setting up the AI assistant",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Onboard your AI assistant"
           }
         }
       }
@@ -34596,6 +34632,18 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "Next steps"
+          }
+        }
+      }
+    },
+    "oobe.nextSteps.understandFinePrint" : {
+      "comment" : "Onboarding next steps - Third guide step for using the AI assistant to understand detailed text",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Have your AI assistant help you understand the fine print 👇"
           }
         }
       }

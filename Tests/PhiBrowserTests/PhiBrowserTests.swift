@@ -5,6 +5,7 @@
 
 import XCTest
 import AppKit
+import SwiftUI
 @testable import Phi
 
 final class PhiBrowserTests: XCTestCase {
@@ -1325,6 +1326,181 @@ final class PhiBrowserTests: XCTestCase {
         )
         XCTAssertTrue(
             NextStepConsentState(locale: Locale(identifier: "zh_CN")).sharesUsageMetrics
+        )
+    }
+
+    @MainActor
+    func testNextStepGuideContentIntrinsicHeightGrowsForWrappedLocalizedCopy() {
+        let shortTitles = [
+            "Onboard your AI assistant",
+            "Import data from another browser",
+            "Have your AI assistant help you understand the fine print",
+            "Enjoy using Phi Browser 🎉"
+        ]
+        let longTitle = Array(
+            repeating: "A deliberately long localized onboarding instruction",
+            count: 10
+        ).joined(separator: " ")
+        let longTitles = [longTitle, shortTitles[1], longTitle, shortTitles[3]]
+        let shortController = NSHostingController(
+            rootView: NextStepGuideContentView(stepTitles: shortTitles)
+                .frame(width: NextStepGuideLayout.innerContentWidth)
+        )
+        let longController = NSHostingController(
+            rootView: NextStepGuideContentView(stepTitles: longTitles)
+                .frame(width: NextStepGuideLayout.innerContentWidth)
+        )
+        let fittingSize = CGSize(
+            width: NextStepGuideLayout.innerContentWidth,
+            height: .greatestFiniteMagnitude
+        )
+
+        let shortSize = shortController.sizeThatFits(in: fittingSize)
+        let longSize = longController.sizeThatFits(in: fittingSize)
+
+        XCTAssertGreaterThan(longSize.height, shortSize.height)
+    }
+
+    func testNextStepGuideOverflowIndicatorOnlyShowsWhileContentRemainsBelow() {
+        XCTAssertFalse(
+            NextStepGuideOverflow.shouldShowIndicator(
+                contentBottom: 450,
+                viewportHeight: 0
+            )
+        )
+        XCTAssertFalse(
+            NextStepGuideOverflow.shouldShowIndicator(
+                contentBottom: 350,
+                viewportHeight: 400
+            )
+        )
+        XCTAssertFalse(
+            NextStepGuideOverflow.shouldShowIndicator(
+                contentBottom: 400,
+                viewportHeight: 400
+            )
+        )
+        XCTAssertFalse(
+            NextStepGuideOverflow.shouldShowIndicator(
+                contentBottom: 401,
+                viewportHeight: 400
+            )
+        )
+        XCTAssertTrue(
+            NextStepGuideOverflow.shouldShowIndicator(
+                contentBottom: 450,
+                viewportHeight: 400
+            )
+        )
+    }
+
+    func testNextStepFinishButtonWidthExpandsForLongLocalizedTitles() {
+        let standardWidth = NextStepFinishButtonLayout.width(for: "Let's Begin")
+        let doubledWidth = NextStepFinishButtonLayout.width(
+            for: "Let's Begin Let's Begin"
+        )
+        let maximumWidth = NextStepFinishButtonLayout.width(
+            for: String(repeating: "A very long localized finish title ", count: 20)
+        )
+
+        XCTAssertEqual(standardWidth, NextStepFinishButtonLayout.minimumWidth)
+        XCTAssertGreaterThan(doubledWidth, standardWidth)
+        XCTAssertEqual(maximumWidth, NextStepFinishButtonLayout.maximumWidth)
+    }
+
+    @MainActor
+    func testNextStepPlainConsentCopyCannotBeSelected() throws {
+        let row = OnboardingCheckboxRow(
+            title: "Help make Phi better by sharing usage metrics and crash reports",
+            isChecked: true
+        )
+        let titleLabel = try XCTUnwrap(
+            row.subviews.compactMap { $0 as? NSTextField }.first
+        )
+
+        XCTAssertFalse(titleLabel.isSelectable)
+        XCTAssertFalse(titleLabel.isEditable)
+        XCTAssertEqual(titleLabel.maximumNumberOfLines, 0)
+        XCTAssertEqual(titleLabel.lineBreakMode, .byWordWrapping)
+    }
+
+    @MainActor
+    func testNextStepLinkGradientUsesSpecifiedEndpointColors() throws {
+        let title = NSMutableAttributedString(string: "Privacy")
+        let range = NSRange(location: 0, length: title.length)
+
+        NextStepLinkGradient.apply(to: title, range: range)
+
+        let startColor = try XCTUnwrap(
+            title.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor
+        ).usingColorSpace(.sRGB)
+        let endColor = try XCTUnwrap(
+            title.attribute(.foregroundColor, at: title.length - 1, effectiveRange: nil) as? NSColor
+        ).usingColorSpace(.sRGB)
+        let resolvedStartColor = try XCTUnwrap(startColor)
+        let resolvedEndColor = try XCTUnwrap(endColor)
+
+        XCTAssertEqual(resolvedStartColor.redComponent, 148.0 / 255.0, accuracy: 0.001)
+        XCTAssertEqual(resolvedStartColor.greenComponent, 82.0 / 255.0, accuracy: 0.001)
+        XCTAssertEqual(resolvedStartColor.blueComponent, 249.0 / 255.0, accuracy: 0.001)
+        XCTAssertEqual(resolvedEndColor.redComponent, 232.0 / 255.0, accuracy: 0.001)
+        XCTAssertEqual(resolvedEndColor.greenComponent, 192.0 / 255.0, accuracy: 0.001)
+        XCTAssertEqual(resolvedEndColor.blueComponent, 255.0 / 255.0, accuracy: 0.001)
+    }
+
+    @MainActor
+    func testNextStepLinkTextViewDoesNotOverrideGradientForegroundColors() throws {
+        let title = NSMutableAttributedString(
+            string: "Privacy",
+            attributes: [.font: NSFont.systemFont(ofSize: 15)]
+        )
+        let range = NSRange(location: 0, length: title.length)
+        title.addAttribute(
+            .link,
+            value: try XCTUnwrap(URL(string: "https://phibrowser.com/privacy/")),
+            range: range
+        )
+        NextStepLinkGradient.apply(to: title, range: range)
+
+        let textView = NextStepLinkTextView(
+            attributedString: title,
+            preferredLayoutWidth: 200
+        )
+
+        XCTAssertTrue(textView.isSelectable)
+        XCTAssertNil(textView.linkTextAttributes?[.foregroundColor])
+        let textStorage = try XCTUnwrap(textView.textStorage)
+        XCTAssertNotNil(textStorage.attribute(.foregroundColor, at: 0, effectiveRange: nil))
+        XCTAssertNotNil(
+            textStorage.attribute(
+                .foregroundColor,
+                at: textStorage.length - 1,
+                effectiveRange: nil
+            )
+        )
+    }
+
+    @MainActor
+    func testNextStepLinkTextViewIntrinsicHeightGrowsWhenTextWraps() {
+        let title = NSAttributedString(
+            string: Array(
+                repeating: "A deliberately long localized legal agreement",
+                count: 4
+            ).joined(separator: " "),
+            attributes: [.font: NSFont.systemFont(ofSize: 15)]
+        )
+        let narrowTextView = NextStepLinkTextView(
+            attributedString: title,
+            preferredLayoutWidth: 120
+        )
+        let wideTextView = NextStepLinkTextView(
+            attributedString: title,
+            preferredLayoutWidth: 396
+        )
+
+        XCTAssertGreaterThan(
+            narrowTextView.intrinsicContentSize.height,
+            wideTextView.intrinsicContentSize.height
         )
     }
 
