@@ -11820,7 +11820,7 @@
       }
     },
     "app.uninstall.failure.message" : {
-      "comment" : "Phi uninstall - Error alert message; the placeholder is the technical reason the uninstall could not start",
+      "comment" : "Phi uninstall - Error alert message after uninstall preparation fails; the placeholder is the technical reason and sign-in cleanup may have partially completed",
       "extractionState" : "extracted_with_value",
       "localizations" : {
         "de" : {
@@ -11832,7 +11832,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "No data was deleted. %@"
+            "value" : "Phi and its local files were not removed. Some sign-in data may already have been cleared. %@"
           }
         },
         "es" : {

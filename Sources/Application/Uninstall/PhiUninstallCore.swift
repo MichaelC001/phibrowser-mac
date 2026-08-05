@@ -46,20 +46,9 @@ enum PhiUninstallChannel: String, Codable, CaseIterable, Sendable {
             return "com.phibrowser.dev.Sentinel"
         }
     }
-
-    var bitwardenSessionAccount: String {
-        switch self {
-        case .stable:
-            return "vault-session"
-        case .canary, .dev:
-            return "vault-session-canary"
-        }
-    }
 }
 
 struct PhiUninstallPaths: Equatable, Sendable {
-    static let bitwardenSessionService = "com.phibrowser.bitwarden.session"
-
     let applicationSupport: URL
     let caches: URL
     let preferences: URL
@@ -198,6 +187,17 @@ struct PhiUninstallPlan: Codable, Equatable, Sendable {
         self.hostProcessID = hostProcessID
         self.channel = channel
         self.appBundleURL = appBundleURL
+    }
+}
+
+enum PhiUninstallReadiness {
+    static let readyToken = "PHI_UNINSTALLER_READY_V1\n"
+    static let commitToken = "PHI_UNINSTALLER_COMMIT_V1\n"
+    static let committedToken = "PHI_UNINSTALLER_COMMITTED_V1\n"
+    static let timeout: TimeInterval = 10
+
+    static func isValidCommitSignal(_ data: Data?) -> Bool {
+        data == Data(commitToken.utf8)
     }
 }
 
@@ -346,7 +346,6 @@ struct PhiUninstallPreparedWorkspace: Equatable, Sendable {
 enum PhiUninstallStep: Equatable, Sendable {
     case deleteTree(URL)
     case deletePreferences(domain: String, plistURL: URL)
-    case deleteKeychainItem(service: String, account: String)
 }
 
 struct PhiUninstallDeletionPlan: Equatable, Sendable {
@@ -383,10 +382,6 @@ struct PhiUninstallPlanner {
             .deleteTree(paths.sentinelLogs(.stable)),
             .deleteTree(paths.sentinelLogs(.canary)),
             .deleteTree(paths.sentinelLogs(.dev)),
-            .deleteKeychainItem(
-                service: PhiUninstallPaths.bitwardenSessionService,
-                account: channel.bitwardenSessionAccount
-            ),
         ])
     }
 
@@ -486,9 +481,6 @@ struct PhiUninstallPathAllowlist: Sendable {
             guard let expectedURL = preferencesTargets[domain] else { return false }
             return plistURL.standardizedFileURL == expectedURL.standardizedFileURL
                 && isAllowed(plistURL)
-        case .deleteKeychainItem(let service, let account):
-            return service == PhiUninstallPaths.bitwardenSessionService
-                && account == channel.bitwardenSessionAccount
         }
     }
 
@@ -502,10 +494,6 @@ struct PhiUninstallPathAllowlist: Sendable {
                 guard isAllowed(step) else {
                     throw PhiUninstallSafetyError.pathNotAllowed(plistURL.standardizedFileURL.path)
                 }
-            case .deleteKeychainItem(let service, let account):
-                guard isAllowed(step) else {
-                    throw PhiUninstallSafetyError.pathNotAllowed("keychain:\(service)/\(account)")
-                }
             }
         }
     }
@@ -518,8 +506,6 @@ struct PhiUninstallPathAllowlist: Sendable {
                 dataURL = url
             case .deletePreferences(_, let plistURL):
                 dataURL = plistURL
-            case .deleteKeychainItem:
-                continue
             }
 
             if pathsOverlap(appBundleURL, dataURL, resolveSymlinks: false)
@@ -592,21 +578,12 @@ struct PhiUninstallPathAllowlist: Sendable {
 struct PhiUninstallDeletionExecutor {
     typealias Logger = (String) -> Void
     typealias PreferencesDomainRemover = (String) -> Void
-    typealias KeychainItemDeleter = (_ service: String, _ account: String) -> OSStatus
 
     let allowlist: PhiUninstallPathAllowlist
     var fileManager: FileManager = .default
     var logger: Logger = { _ in }
     var preferencesDomainRemover: PreferencesDomainRemover = {
         UserDefaults.standard.removePersistentDomain(forName: $0)
-    }
-    var keychainItemDeleter: KeychainItemDeleter = { service, account in
-        SecItemDelete([
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecUseDataProtectionKeychain as String: true,
-        ] as CFDictionary)
     }
 
     func execute(_ plan: PhiUninstallDeletionPlan) -> [String] {
@@ -624,15 +601,6 @@ struct PhiUninstallDeletionExecutor {
                 preferencesDomainRemover(domain)
                 logger("Removed preferences domain \(domain)")
                 remove(plistURL, failures: &failures)
-            case .deleteKeychainItem(let service, let account):
-                let status = keychainItemDeleter(service, account)
-                if status == errSecSuccess || status == errSecItemNotFound {
-                    logger("Removed Bitwarden session for \(account)")
-                } else {
-                    failures.append(
-                        "Failed Bitwarden session deletion for \(account): OSStatus \(status)"
-                    )
-                }
             }
         }
         return failures

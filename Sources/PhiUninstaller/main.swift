@@ -14,6 +14,7 @@ enum PhiUninstallerMainError: Error, LocalizedError {
     case invalidAppSignature(URL)
     case browserStillRunning(String)
     case sentinelDidNotExit(String)
+    case invalidCommitSignal
     case unsafePlan(String)
     case deletionFailures([String])
 
@@ -33,6 +34,8 @@ enum PhiUninstallerMainError: Error, LocalizedError {
             return "A Phi process is still running for \(bundleID)."
         case .sentinelDidNotExit(let bundleID):
             return "Phi Sentinel did not exit for \(bundleID)."
+        case .invalidCommitSignal:
+            return "Phi exited before committing the uninstall operation."
         case .unsafePlan(let reason):
             return "The uninstall plan failed validation: \(reason)."
         case .deletionFailures(let failures):
@@ -81,19 +84,6 @@ enum PhiUninstallerMain {
             throw PhiUninstallerMainError.unsupportedPlanVersion(plan.schemaVersion)
         }
 
-        _ = PhiUninstallProcessWaiter.waitUntil(timeout: nil) {
-            PhiUninstallProcessWaiter.isProcessRunning(plan.hostProcessID)
-        }
-
-        guard runningApplications(bundleID: plan.channel.browserBundleID).isEmpty else {
-            throw PhiUninstallerMainError.browserStillRunning(plan.channel.browserBundleID)
-        }
-        guard PhiUninstallProcessWaiter.waitUntil(timeout: sentinelExitTimeout, isRunning: {
-            !runningApplications(bundleID: plan.channel.sentinelBundleID).isEmpty
-        }) else {
-            throw PhiUninstallerMainError.sentinelDidNotExit(plan.channel.sentinelBundleID)
-        }
-
         guard PhiUninstallSignatureVerifier.verifyAppBundle(
             at: plan.appBundleURL,
             expectedBundleID: plan.channel.browserBundleID
@@ -120,6 +110,38 @@ enum PhiUninstallerMain {
             try allowlist.validateAppBundleIsDisjoint(from: dataPlan)
         } catch {
             throw PhiUninstallerMainError.unsafePlan(String(describing: error))
+        }
+
+        try FileHandle.standardOutput.write(
+            contentsOf: Data(PhiUninstallReadiness.readyToken.utf8)
+        )
+
+        let commitSignal = try FileHandle.standardInput.readToEnd()
+        guard PhiUninstallReadiness.isValidCommitSignal(commitSignal) else {
+            throw PhiUninstallerMainError.invalidCommitSignal
+        }
+        try FileHandle.standardOutput.write(
+            contentsOf: Data(PhiUninstallReadiness.committedToken.utf8)
+        )
+
+        _ = PhiUninstallProcessWaiter.waitUntil(timeout: nil) {
+            PhiUninstallProcessWaiter.isProcessRunning(plan.hostProcessID)
+        }
+
+        guard runningApplications(bundleID: plan.channel.browserBundleID).isEmpty else {
+            throw PhiUninstallerMainError.browserStillRunning(plan.channel.browserBundleID)
+        }
+        guard PhiUninstallProcessWaiter.waitUntil(timeout: sentinelExitTimeout, isRunning: {
+            !runningApplications(bundleID: plan.channel.sentinelBundleID).isEmpty
+        }) else {
+            throw PhiUninstallerMainError.sentinelDidNotExit(plan.channel.sentinelBundleID)
+        }
+
+        guard PhiUninstallSignatureVerifier.verifyAppBundle(
+            at: plan.appBundleURL,
+            expectedBundleID: plan.channel.browserBundleID
+        ) else {
+            throw PhiUninstallerMainError.invalidAppSignature(plan.appBundleURL)
         }
 
         let executor = PhiUninstallDeletionExecutor(

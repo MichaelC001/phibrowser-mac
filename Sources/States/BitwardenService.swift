@@ -7,6 +7,38 @@ import Combine
 import Foundation
 import Security
 
+final class BitwardenSessionPersistenceGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var acceptsPersistence = true
+
+    func performIfEnabled<T>(_ operation: () -> T) -> T? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard acceptsPersistence else { return nil }
+        return operation()
+    }
+
+    /// Waits for an in-flight Keychain operation and prevents all later ones.
+    /// Callers must release this lock before waiting on the helper client queue.
+    func fence() {
+        lock.lock()
+        acceptsPersistence = false
+        lock.unlock()
+    }
+
+    func performExclusive<T>(_ operation: () throws -> T) rethrows -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return try operation()
+    }
+
+    func resume() {
+        lock.lock()
+        acceptsPersistence = true
+        lock.unlock()
+    }
+}
+
 /// App-scoped owner of the Bitwarden integration, sibling to `ProfileManager.shared`
 /// (per AGENTS.md: reuse the existing singleton pattern, do not add a new state
 /// hierarchy). Conforms to `CredentialProvider`, so onboarding, settings, and the
@@ -31,6 +63,7 @@ final class BitwardenService: ObservableObject, CredentialProvider {
     @Published private(set) var currentStatus: CredentialProviderStatus = .notInstalled
 
     private let client = BitwardenHelperClient()
+    private let sessionPersistenceGate = BitwardenSessionPersistenceGate()
 
     private init() {
         // System-lock timeout: the helper can't see the macOS screen lock, so the
@@ -48,25 +81,54 @@ final class BitwardenService: ObservableObject, CredentialProvider {
         // transport a `restore` built from that store — sent after every
         // handshake — and a sink for the helper's `persist` events. See
         // BitwardenSessionStore and docs/bitwarden-password-manager.md §7.
+        let persistenceGate = sessionPersistenceGate
         client.sessionRestoreProvider = {
-            BitwardenSessionStore.load().map(Self.restoreParams(for:))
+            persistenceGate.performIfEnabled {
+                BitwardenSessionStore.load().map(Self.restoreParams(for:))
+            } ?? nil
         }
         client.persistEventHandler = { session in
-            guard let session, let email = session["email"] as? String else {
-                BitwardenSessionStore.clear()
-                return
+            persistenceGate.performIfEnabled {
+                guard let session, let email = session["email"] as? String else {
+                    BitwardenSessionStore.clear()
+                    return
+                }
+                let server = session["server"] as? [String: Any]
+                BitwardenSessionStore.save(BitwardenPersistedSession(
+                    email: email,
+                    masterPassword: session["masterPassword"] as? String,
+                    twoFactorToken: session["twoFactorToken"] as? String,
+                    identityURL: server?["identityUrl"] as? String,
+                    apiURL: server?["apiUrl"] as? String))
             }
-            let server = session["server"] as? [String: Any]
-            BitwardenSessionStore.save(BitwardenPersistedSession(
-                email: email,
-                masterPassword: session["masterPassword"] as? String,
-                twoFactorToken: session["twoFactorToken"] as? String,
-                identityURL: server?["identityUrl"] as? String,
-                apiURL: server?["apiUrl"] as? String))
         }
         client.restoreFailureHandler = {
-            BitwardenSessionStore.clear()
+            persistenceGate.performIfEnabled {
+                BitwardenSessionStore.clear()
+            }
         }
+    }
+
+    /// Stops all helper activity and makes the session Keychain deletion the
+    /// final possible write. A failed strict clear resumes the integration so a
+    /// cancelled uninstall does not leave Bitwarden disabled until relaunch.
+    func prepareForUninstall() async throws {
+        sessionPersistenceGate.fence()
+        await client.shutdownForUninstall()
+        do {
+            try sessionPersistenceGate.performExclusive {
+                try BitwardenSessionStore.clearAndVerifyForUninstall()
+            }
+        } catch {
+            sessionPersistenceGate.resume()
+            await client.resumeAfterCancelledUninstall()
+            throw error
+        }
+    }
+
+    func resumeAfterCancelledUninstall() async {
+        sessionPersistenceGate.resume()
+        await client.resumeAfterCancelledUninstall()
     }
 
     /// Builds the `restore` params for a stored session, tagging on the current
@@ -292,6 +354,7 @@ final class BitwardenHelperClient: @unchecked Sendable {
         case frameTooLarge
         case invalidResponse
         case helperError(String)
+        case shuttingDown
 
         /// Without this, every case renders as Foundation's opaque
         /// "The operation couldn't be completed." — in particular swallowing
@@ -314,6 +377,8 @@ final class BitwardenHelperClient: @unchecked Sendable {
                 return "The Bitwarden helper sent an invalid response."
             case .helperError(let message):
                 return message
+            case .shuttingDown:
+                return "The Bitwarden helper is shutting down."
             }
         }
     }
@@ -339,6 +404,7 @@ final class BitwardenHelperClient: @unchecked Sendable {
     /// Serializes spawn and request writes; `connection` is only touched here.
     private let queue = DispatchQueue(label: "com.phibrowser.bitwarden-helper", qos: .userInitiated)
     private var connection: Connection?
+    private var isShutDown = false
 
     /// Sends one request, spawning the helper first if it is not already up. If
     /// the connection fails (the helper died or never came up), drops it and
@@ -363,6 +429,47 @@ final class BitwardenHelperClient: @unchecked Sendable {
         }
     }
 
+    func shutdownForUninstall() async {
+        await withCheckedContinuation { continuation in
+            queue.async { [self] in
+                isShutDown = true
+                let activeConnection = connection
+                connection = nil
+                activeConnection?.teardown(
+                    failingWith: ClientError.shuttingDown,
+                    waitForProcessExit: true
+                )
+                continuation.resume()
+            }
+        }
+    }
+
+    func resumeAfterCancelledUninstall() async {
+        await withCheckedContinuation { continuation in
+            queue.async { [self] in
+                isShutDown = false
+                continuation.resume()
+            }
+        }
+    }
+
+    static func terminateProcessForUninstall(
+        _ process: Process,
+        timeout: TimeInterval = 1
+    ) {
+        guard process.isRunning else { return }
+        process.terminate()
+
+        let deadline = Date().addingTimeInterval(max(0, timeout))
+        while process.isRunning, Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+        if process.isRunning {
+            _ = Darwin.kill(process.processIdentifier, SIGKILL)
+            process.waitUntilExit()
+        }
+    }
+
     private func attempt(
         method: String,
         params: [String: Any],
@@ -371,6 +478,7 @@ final class BitwardenHelperClient: @unchecked Sendable {
         let response: [String: Any] = try await withCheckedThrowingContinuation { continuation in
             queue.async { [self] in
                 do {
+                    guard !isShutDown else { throw ClientError.shuttingDown }
                     let connection = try ensureConnection()
                     let requestID = UUID().uuidString
                     let request: [String: Any] = [
@@ -466,6 +574,7 @@ final class BitwardenHelperClient: @unchecked Sendable {
     /// cannot guarantee is *which code* was spawned — that is the identity
     /// gate below (see `pinnedHelperRequirement`).
     private func ensureConnection() throws -> Connection {
+        guard !isShutDown else { throw ClientError.shuttingDown }
         if let connection, connection.isAlive { return connection }
         connection?.teardown()
         connection = nil
@@ -661,10 +770,18 @@ final class BitwardenHelperClient: @unchecked Sendable {
         /// Wakes the reader (which fails anything in flight) and reaps the
         /// helper. Idempotent; the fd itself closes in `deinit` once the reader
         /// thread has exited.
-        func teardown() {
+        func teardown(
+            failingWith error: Error = ClientError.ioFailed,
+            waitForProcessExit: Bool = false
+        ) {
             markDead()
+            failAll(with: error)
             _ = Darwin.shutdown(fd, SHUT_RDWR)
-            if process.isRunning { process.terminate() }
+            if waitForProcessExit {
+                BitwardenHelperClient.terminateProcessForUninstall(process)
+            } else if process.isRunning {
+                process.terminate()
+            }
         }
 
         // MARK: Reader

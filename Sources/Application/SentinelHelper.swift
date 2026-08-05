@@ -392,11 +392,12 @@ enum SentinelHelper {
         }
     }
 
-    static func requestTerminationForBrowserUpdate(timeout: TimeInterval = 8) {
+    @discardableResult
+    static func requestTerminationForBrowserUpdate(timeout: TimeInterval = 8) -> Bool {
         let identifier = loginItemIdentifier()
         guard runningApplication(identifier: identifier) != nil else {
             AppLogInfo("Sentinel is not running; no browser update termination request needed")
-            return
+            return true
         }
 
         let request = SentinelBrowserUpdateTerminationRequest.make(
@@ -415,12 +416,13 @@ enum SentinelHelper {
         while Date() < deadline {
             if runningApplication(identifier: identifier) == nil {
                 AppLogInfo("Sentinel exited before browser update installation (requestID \(request.requestID))")
-                return
+                return true
             }
             RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.1))
         }
 
         AppLogWarn("Timed out waiting for Sentinel to exit before browser update installation (requestID \(request.requestID))")
+        return false
     }
 
     static func openDashboard(section: String) {

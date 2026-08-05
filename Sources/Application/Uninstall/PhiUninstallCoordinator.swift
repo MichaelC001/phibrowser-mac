@@ -9,6 +9,8 @@ import Foundation
 enum PhiUninstallCoordinatorError: Error, LocalizedError {
     case unsupportedBundleIdentifier(String)
     case invalidAppSignature(URL)
+    case accountCredentialCleanupFailed
+    case sentinelDidNotExit
 
     var errorDescription: String? {
         switch self {
@@ -16,6 +18,10 @@ enum PhiUninstallCoordinatorError: Error, LocalizedError {
             return "The running Phi product is not supported for uninstall: \(bundleIdentifier)."
         case .invalidAppSignature(let url):
             return "The running Phi app failed signature verification at \(url.path)."
+        case .accountCredentialCleanupFailed:
+            return "Phi account credentials could not be removed."
+        case .sentinelDidNotExit:
+            return "Phi Sentinel did not exit before uninstall."
         }
     }
 }
@@ -35,9 +41,11 @@ final class PhiUninstallCoordinator {
         var prepareHelper: @MainActor (PhiUninstallPlan) throws -> PreparedPhiUninstaller
         var unregisterSentinel: @MainActor () async -> Void
         var stopSentinelWatchdog: @MainActor () -> Void
-        var requestSentinelTermination: @MainActor () -> Void
-        var launchHelper: @MainActor (PreparedPhiUninstaller) throws -> Void
+        var requestSentinelTermination: @MainActor () -> Bool
+        var launchHelper: @MainActor (PreparedPhiUninstaller) throws -> RunningPhiUninstaller
         var clearLocalAccountData: @MainActor (_ postSharedTokenChange: Bool) -> Bool
+        var clearBitwardenSession: @MainActor () async throws -> Void
+        var resumeBitwardenSession: @MainActor () async -> Void
         var cleanupHelper: @MainActor (PreparedPhiUninstaller) -> Void
         var restoreSentinel: @MainActor () -> Void
         var presentFailure: @MainActor (Error) -> Void
@@ -58,6 +66,12 @@ final class PhiUninstallCoordinator {
                     AuthManager.shared.clearLocalAccountData(
                         postSharedTokenChange: $0
                     )
+                },
+                clearBitwardenSession: {
+                    try await BitwardenService.shared.prepareForUninstall()
+                },
+                resumeBitwardenSession: {
+                    await BitwardenService.shared.resumeAfterCancelledUninstall()
                 },
                 cleanupHelper: { PhiUninstallHelperLauncher.cleanup($0) },
                 restoreSentinel: {
@@ -96,7 +110,9 @@ final class PhiUninstallCoordinator {
         state = .preparing
 
         var preparedHelper: PreparedPhiUninstaller?
+        var runningHelper: RunningPhiUninstaller?
         var sentinelShutdownStarted = false
+        var bitwardenPrepared = false
         do {
             let plan = try environment.makePlan()
             let prepared = try environment.prepareHelper(plan)
@@ -106,14 +122,28 @@ final class PhiUninstallCoordinator {
             sentinelShutdownStarted = true
             await environment.unregisterSentinel()
             environment.stopSentinelWatchdog()
-            environment.requestSentinelTermination()
+            guard environment.requestSentinelTermination() else {
+                throw PhiUninstallCoordinatorError.sentinelDidNotExit
+            }
 
-            try environment.launchHelper(prepared)
+            let helper = try environment.launchHelper(prepared)
+            runningHelper = helper
+            guard environment.clearLocalAccountData(false) else {
+                throw PhiUninstallCoordinatorError.accountCredentialCleanupFailed
+            }
+            try await environment.clearBitwardenSession()
+            bitwardenPrepared = true
+            try helper.commit()
+
             preparedHelper = nil
+            runningHelper = nil
             state = .committed
-            _ = environment.clearLocalAccountData(false)
             environment.quit()
         } catch {
+            runningHelper?.cancel()
+            if bitwardenPrepared {
+                await environment.resumeBitwardenSession()
+            }
             if let preparedHelper {
                 environment.cleanupHelper(preparedHelper)
             }
@@ -187,8 +217,8 @@ final class PhiUninstallCoordinator {
         alert.informativeText = String(
             format: NSLocalizedString(
                 "app.uninstall.failure.message",
-                value: "No data was deleted. %@",
-                comment: "Phi uninstall - Error alert message; the placeholder is the technical reason the uninstall could not start"
+                value: "Phi and its local files were not removed. Some sign-in data may already have been cleared. %@",
+                comment: "Phi uninstall - Error alert message after uninstall preparation fails; the placeholder is the technical reason and sign-in cleanup may have partially completed"
             ),
             error.localizedDescription
         )

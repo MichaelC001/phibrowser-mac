@@ -3,7 +3,7 @@
 // Use of this source code is governed by an Apache license that can be
 // found in the LICENSE file.
 
-import Security
+import Darwin
 import XCTest
 @testable import Phi
 
@@ -32,8 +32,6 @@ final class PhiUninstallCoreTests: XCTestCase {
         XCTAssertEqual(PhiUninstallChannel.canary.browserBundleID, "com.phibrowser.canary.Mac")
         XCTAssertEqual(PhiUninstallChannel.dev.browserBundleID, "com.phibrowser.dev.Mac")
         XCTAssertEqual(PhiUninstallChannel.canary.sentinelBundleID, "com.phibrowser.canary.Sentinel")
-        XCTAssertEqual(PhiUninstallChannel.stable.bitwardenSessionAccount, "vault-session")
-        XCTAssertEqual(PhiUninstallChannel.canary.bitwardenSessionAccount, "vault-session-canary")
     }
 
     func testChannelScopedRoots() {
@@ -118,10 +116,6 @@ final class PhiUninstallCoreTests: XCTestCase {
             .deleteTree(paths.sentinelLogs(.stable)),
             .deleteTree(paths.sentinelLogs(.canary)),
             .deleteTree(paths.sentinelLogs(.dev)),
-            .deleteKeychainItem(
-                service: PhiUninstallPaths.bitwardenSessionService,
-                account: PhiUninstallChannel.canary.bitwardenSessionAccount
-            ),
         ])
         XCTAssertEqual(
             planner.planAppBundleRemoval().steps,
@@ -202,15 +196,6 @@ final class PhiUninstallCoreTests: XCTestCase {
                 .dangerousPath(library.standardizedFileURL.path)
             )
         }
-
-        let foreignKeychainStep = PhiUninstallStep.deleteKeychainItem(
-            service: PhiUninstallPaths.bitwardenSessionService,
-            account: PhiUninstallChannel.stable.bitwardenSessionAccount
-        )
-        XCTAssertFalse(allowlist.isAllowed(foreignKeychainStep))
-        XCTAssertThrowsError(try allowlist.validate(
-            PhiUninstallDeletionPlan(steps: [foreignKeychainStep])
-        ))
     }
 
     func testAllowlistRejectsEscapingSymlink() throws {
@@ -366,14 +351,9 @@ final class PhiUninstallCoreTests: XCTestCase {
         XCTAssertNoThrow(try allowlist.validateAppBundleIsDisjoint(from: dataPlan))
 
         var removedPreferenceDomains: [String] = []
-        var deletedKeychainItems: [(service: String, account: String)] = []
         let executor = PhiUninstallDeletionExecutor(
             allowlist: allowlist,
-            preferencesDomainRemover: { removedPreferenceDomains.append($0) },
-            keychainItemDeleter: { service, account in
-                deletedKeychainItems.append((service, account))
-                return errSecSuccess
-            }
+            preferencesDomainRemover: { removedPreferenceDomains.append($0) }
         )
         let failures = executor.execute(dataPlan) + executor.execute(appBundlePlan)
 
@@ -385,31 +365,6 @@ final class PhiUninstallCoreTests: XCTestCase {
             PhiUninstallChannel.canary.browserBundleID,
             PhiUninstallChannel.canary.sentinelBundleID,
         ])
-        XCTAssertEqual(deletedKeychainItems.count, 1)
-        XCTAssertEqual(
-            deletedKeychainItems.first?.service,
-            PhiUninstallPaths.bitwardenSessionService
-        )
-        XCTAssertEqual(
-            deletedKeychainItems.first?.account,
-            PhiUninstallChannel.canary.bitwardenSessionAccount
-        )
-    }
-
-    func testExecutorReportsBitwardenKeychainFailure() {
-        let allowlist = makeAllowlist()
-        let step = PhiUninstallStep.deleteKeychainItem(
-            service: PhiUninstallPaths.bitwardenSessionService,
-            account: PhiUninstallChannel.canary.bitwardenSessionAccount
-        )
-
-        let failures = PhiUninstallDeletionExecutor(
-            allowlist: allowlist,
-            keychainItemDeleter: { _, _ in errSecAuthFailed }
-        ).execute(PhiUninstallDeletionPlan(steps: [step]))
-
-        XCTAssertEqual(failures.count, 1)
-        XCTAssertTrue(failures[0].contains("Bitwarden session deletion"))
     }
 
     func testExecutorRefusesSymlinkTarget() throws {
@@ -620,6 +575,200 @@ final class PhiUninstallHelperLauncherTests: XCTestCase {
                 return XCTFail("Unexpected error: \(error)")
             }
         }
+    }
+
+    func testLaunchAcceptsExactReadinessSignal() throws {
+        let fixture = try makeLaunchFixture(script: """
+        #!/bin/sh
+        printf 'PHI_UNINSTALLER_READY_V1\\n'
+        exec sleep 10
+        """)
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+
+        let running = try PhiUninstallHelperLauncher.launch(
+            fixture.prepared,
+            readinessTimeout: 1
+        )
+        running.cancel()
+    }
+
+    func testLaunchCommitsOnlyAfterTwoWayHandshake() throws {
+        let fixture = try makeLaunchFixture(script: """
+        #!/bin/sh
+        printf 'PHI_UNINSTALLER_READY_V1\\n'
+        IFS= read -r signal
+        [ "$signal" = 'PHI_UNINSTALLER_COMMIT_V1' ] || exit 3
+        printf 'PHI_UNINSTALLER_COMMITTED_V1\\n'
+        """)
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+
+        let running = try PhiUninstallHelperLauncher.launch(
+            fixture.prepared,
+            readinessTimeout: 1
+        )
+        XCTAssertNoThrow(try running.commit())
+    }
+
+    func testCommitRejectsHelperThatExitsAfterReadiness() throws {
+        let fixture = try makeLaunchFixture(script: """
+        #!/bin/sh
+        printf 'PHI_UNINSTALLER_READY_V1\\n'
+        exit 0
+        """)
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+
+        let running = try PhiUninstallHelperLauncher.launch(
+            fixture.prepared,
+            readinessTimeout: 1
+        )
+        XCTAssertThrowsError(try running.commit()) { error in
+            switch error {
+            case PhiUninstallHelperLauncherError.helperCommitWriteFailed,
+                 PhiUninstallHelperLauncherError.helperExitedBeforeCommit:
+                break
+            default:
+                XCTFail("Unexpected error: \(error)")
+            }
+        }
+    }
+
+    func testCommitRejectsInvalidAcknowledgement() throws {
+        let fixture = try makeLaunchFixture(script: """
+        #!/bin/sh
+        printf 'PHI_UNINSTALLER_READY_V1\\n'
+        IFS= read -r signal
+        printf 'WRONG\\n'
+        """)
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+
+        let running = try PhiUninstallHelperLauncher.launch(
+            fixture.prepared,
+            readinessTimeout: 1
+        )
+        XCTAssertThrowsError(try running.commit()) { error in
+            guard case PhiUninstallHelperLauncherError.invalidHelperCommitSignal = error else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+        }
+    }
+
+    func testCommitTimesOutAndReapsHelperWithoutAcknowledgement() throws {
+        let fixture = try makeLaunchFixture(script: """
+        #!/bin/sh
+        printf '%s' "$$" > "$2.pid"
+        printf 'PHI_UNINSTALLER_READY_V1\\n'
+        IFS= read -r signal
+        exec sleep 10
+        """)
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let pidURL = URL(fileURLWithPath: "\(fixture.prepared.planURL.path).pid")
+
+        let running = try PhiUninstallHelperLauncher.launch(
+            fixture.prepared,
+            readinessTimeout: 0.05
+        )
+        XCTAssertThrowsError(try running.commit()) { error in
+            guard case PhiUninstallHelperLauncherError.helperCommitTimedOut = error else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+        }
+
+        let pidString = try String(contentsOf: pidURL, encoding: .utf8)
+        let processID = try XCTUnwrap(Int32(pidString))
+        XCTAssertEqual(Darwin.kill(processID, 0), -1)
+        XCTAssertEqual(errno, ESRCH)
+    }
+
+    func testCommitSignalRejectsEOFAndExtraData() {
+        XCTAssertTrue(PhiUninstallReadiness.isValidCommitSignal(
+            Data(PhiUninstallReadiness.commitToken.utf8)
+        ))
+        XCTAssertFalse(PhiUninstallReadiness.isValidCommitSignal(nil))
+        XCTAssertFalse(PhiUninstallReadiness.isValidCommitSignal(Data()))
+        XCTAssertFalse(PhiUninstallReadiness.isValidCommitSignal(
+            Data("\(PhiUninstallReadiness.commitToken)extra".utf8)
+        ))
+    }
+
+    func testLaunchRejectsEarlyExitBeforeReadiness() throws {
+        let fixture = try makeLaunchFixture(script: """
+        #!/bin/sh
+        exit 2
+        """)
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+
+        XCTAssertThrowsError(try PhiUninstallHelperLauncher.launch(
+            fixture.prepared,
+            readinessTimeout: 1
+        )) { error in
+            guard case PhiUninstallHelperLauncherError.helperExitedBeforeReady = error else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+        }
+    }
+
+    func testLaunchRejectsInvalidReadinessSignal() throws {
+        let fixture = try makeLaunchFixture(script: """
+        #!/bin/sh
+        printf 'WRONG\\n'
+        exec sleep 10
+        """)
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+
+        XCTAssertThrowsError(try PhiUninstallHelperLauncher.launch(
+            fixture.prepared,
+            readinessTimeout: 1
+        )) { error in
+            guard case PhiUninstallHelperLauncherError.invalidHelperReadinessSignal = error else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+        }
+    }
+
+    func testLaunchTimesOutWithoutReadinessSignal() throws {
+        let fixture = try makeLaunchFixture(script: """
+        #!/bin/sh
+        exec sleep 10
+        """)
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+
+        XCTAssertThrowsError(try PhiUninstallHelperLauncher.launch(
+            fixture.prepared,
+            readinessTimeout: 0.05
+        )) { error in
+            guard case PhiUninstallHelperLauncherError.helperReadinessTimedOut = error else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+        }
+    }
+
+    private func makeLaunchFixture(
+        script: String
+    ) throws -> (root: URL, prepared: PreparedPhiUninstaller) {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory
+            .resolvingSymlinksInPath()
+            .appendingPathComponent(
+                "phi-uninstall-launch-tests-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        try fileManager.createDirectory(at: root, withIntermediateDirectories: false)
+        let executableURL = root.appendingPathComponent("PhiUninstaller", isDirectory: false)
+        try Data(script.utf8).write(to: executableURL)
+        try fileManager.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: executableURL.path
+        )
+        let planURL = root.appendingPathComponent("uninstall-plan.json", isDirectory: false)
+        try Data().write(to: planURL)
+        return (
+            root,
+            PreparedPhiUninstaller(
+                workingDirectoryURL: root,
+                executableURL: executableURL,
+                planURL: planURL
+            )
+        )
     }
 
     private func permissions(at url: URL) throws -> Int {

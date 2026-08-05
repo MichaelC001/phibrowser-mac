@@ -53,6 +53,8 @@ final class PhiUninstallCoordinatorTests: XCTestCase {
             "requestSentinelTermination",
             "launchHelper",
             "clearLocalAccountData:false",
+            "clearBitwardenSession",
+            "commitHelper",
             "quit",
         ])
         XCTAssertEqual(coordinator.state, .committed)
@@ -98,6 +100,123 @@ final class PhiUninstallCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.state, .idle)
     }
 
+    func testSentinelShutdownFailureStopsBeforeHelperLaunchOrCredentialCleanup() async {
+        let recorder = Recorder()
+        var environment = makeEnvironment(recorder: recorder)
+        environment.requestSentinelTermination = {
+            recorder.events.append("requestSentinelTermination")
+            return false
+        }
+        let coordinator = PhiUninstallCoordinator(environment: environment)
+
+        await coordinator.performConfirmedUninstall()
+
+        XCTAssertEqual(recorder.events, [
+            "makePlan",
+            "prepareHelper",
+            "unregisterSentinel",
+            "stopSentinelWatchdog",
+            "requestSentinelTermination",
+            "cleanupHelper",
+            "restoreSentinel",
+            "presentFailure",
+        ])
+        XCTAssertEqual(coordinator.state, .idle)
+    }
+
+    func testAccountCleanupFailureCancelsHelperAndDoesNotQuit() async {
+        let recorder = Recorder()
+        var environment = makeEnvironment(recorder: recorder)
+        environment.clearLocalAccountData = { postSharedTokenChange in
+            recorder.events.append("clearLocalAccountData:\(postSharedTokenChange)")
+            return false
+        }
+        let coordinator = PhiUninstallCoordinator(environment: environment)
+
+        await coordinator.performConfirmedUninstall()
+
+        XCTAssertEqual(recorder.events, [
+            "makePlan",
+            "prepareHelper",
+            "unregisterSentinel",
+            "stopSentinelWatchdog",
+            "requestSentinelTermination",
+            "launchHelper",
+            "clearLocalAccountData:false",
+            "cancelHelper",
+            "cleanupHelper",
+            "restoreSentinel",
+            "presentFailure",
+        ])
+        XCTAssertEqual(coordinator.state, .idle)
+    }
+
+    func testBitwardenCleanupFailureCancelsHelperAndDoesNotQuit() async {
+        let recorder = Recorder()
+        var environment = makeEnvironment(recorder: recorder)
+        environment.clearBitwardenSession = {
+            recorder.events.append("clearBitwardenSession")
+            throw TestError.expected
+        }
+        let coordinator = PhiUninstallCoordinator(environment: environment)
+
+        await coordinator.performConfirmedUninstall()
+
+        XCTAssertEqual(recorder.events, [
+            "makePlan",
+            "prepareHelper",
+            "unregisterSentinel",
+            "stopSentinelWatchdog",
+            "requestSentinelTermination",
+            "launchHelper",
+            "clearLocalAccountData:false",
+            "clearBitwardenSession",
+            "cancelHelper",
+            "cleanupHelper",
+            "restoreSentinel",
+            "presentFailure",
+        ])
+        XCTAssertEqual(coordinator.state, .idle)
+    }
+
+    func testCommitFailureCancelsHelperAndDoesNotQuit() async {
+        let recorder = Recorder()
+        var environment = makeEnvironment(recorder: recorder)
+        environment.launchHelper = { _ in
+            recorder.events.append("launchHelper")
+            return RunningPhiUninstaller(
+                commit: {
+                    recorder.events.append("commitHelper")
+                    throw TestError.expected
+                },
+                cancel: {
+                    recorder.events.append("cancelHelper")
+                }
+            )
+        }
+        let coordinator = PhiUninstallCoordinator(environment: environment)
+
+        await coordinator.performConfirmedUninstall()
+
+        XCTAssertEqual(recorder.events, [
+            "makePlan",
+            "prepareHelper",
+            "unregisterSentinel",
+            "stopSentinelWatchdog",
+            "requestSentinelTermination",
+            "launchHelper",
+            "clearLocalAccountData:false",
+            "clearBitwardenSession",
+            "commitHelper",
+            "cancelHelper",
+            "resumeBitwardenSession",
+            "cleanupHelper",
+            "restoreSentinel",
+            "presentFailure",
+        ])
+        XCTAssertEqual(coordinator.state, .idle)
+    }
+
     private func makeEnvironment(recorder: Recorder) -> PhiUninstallCoordinator.Environment {
         let appBundleURL = URL(fileURLWithPath: "/Applications/Phi Canary.app", isDirectory: true)
         let plan = PhiUninstallPlan(
@@ -129,14 +248,29 @@ final class PhiUninstallCoordinatorTests: XCTestCase {
             },
             requestSentinelTermination: {
                 recorder.events.append("requestSentinelTermination")
+                return true
             },
             launchHelper: { receivedPrepared in
                 recorder.events.append("launchHelper")
                 XCTAssertEqual(receivedPrepared, prepared)
+                return RunningPhiUninstaller(
+                    commit: {
+                        recorder.events.append("commitHelper")
+                    },
+                    cancel: {
+                        recorder.events.append("cancelHelper")
+                    }
+                )
             },
             clearLocalAccountData: { postSharedTokenChange in
                 recorder.events.append("clearLocalAccountData:\(postSharedTokenChange)")
                 return true
+            },
+            clearBitwardenSession: {
+                recorder.events.append("clearBitwardenSession")
+            },
+            resumeBitwardenSession: {
+                recorder.events.append("resumeBitwardenSession")
             },
             cleanupHelper: { receivedPrepared in
                 recorder.events.append("cleanupHelper")
