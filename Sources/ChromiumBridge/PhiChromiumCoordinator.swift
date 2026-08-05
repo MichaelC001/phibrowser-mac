@@ -419,6 +419,12 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
         }
     }
     
+    func metricsReportingEnabledChanged(_ enabled: Bool) {
+        SentinelTelemetryConsentPublisher.shared.metricsReportingEnabledChanged(
+            enabled
+        )
+    }
+
     func getAuth0AccessTokenSyncly() -> String {
         guard ApplicationState.shared.isAuthenticated else {
             AppLogDebug("🌐 [Chromium] getAuth0AccessTokenSyncly called without an authenticated browser session")

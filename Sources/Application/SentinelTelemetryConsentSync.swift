@@ -174,19 +174,16 @@ final class SentinelTelemetryConsentPublisher {
 
     private let store: SharedTelemetryConsentStore
     private let channel: SentinelTelemetryConsentChannel
-    private let pollInterval: TimeInterval
     private let readMetricsReportingEnabled: () -> Bool?
     private let makeRevision: () -> UUID
     private let now: () -> Date
     private let postNotification: (Notification.Name) -> Void
 
-    private var timer: Timer?
     private var lastPersistenceError: String?
 
     init(
         store: SharedTelemetryConsentStore,
         channel: SentinelTelemetryConsentChannel,
-        pollInterval: TimeInterval = 1,
         readMetricsReportingEnabled: @escaping () -> Bool?,
         makeRevision: @escaping () -> UUID = UUID.init,
         now: @escaping () -> Date = Date.init,
@@ -194,7 +191,6 @@ final class SentinelTelemetryConsentPublisher {
     ) {
         self.store = store
         self.channel = channel
-        self.pollInterval = pollInterval
         self.readMetricsReportingEnabled = readMetricsReportingEnabled
         self.makeRevision = makeRevision
         self.now = now
@@ -202,32 +198,27 @@ final class SentinelTelemetryConsentPublisher {
     }
 
     func start() {
-        guard timer == nil else { return }
-
-        refreshNow()
-        let timer = Timer(timeInterval: pollInterval, repeats: true) { [weak self] _ in
-            self?.refreshNow()
-        }
-        self.timer = timer
-        RunLoop.main.add(timer, forMode: .common)
+        synchronizeInitialState()
     }
 
-    func stop() {
-        // Capture a setting change made during the final polling interval while
-        // Chromium's bridge is still alive. Sentinel can outlive the browser,
-        // so leaving the previous enabled revision behind would violate opt-out.
-        refreshNow()
-        timer?.invalidate()
-        timer = nil
-    }
-
-    /// Returns whether this refresh durably changed the shared snapshot.
-    /// A temporarily unavailable bridge produces no write: an absent file is
-    /// fail-closed for consumers, while an existing revision remains intact.
+    /// Synchronizes the initial setting because Chromium only reports changes
+    /// after the bridge delegate has been installed.
     @discardableResult
-    func refreshNow() -> Bool {
+    func synchronizeInitialState() -> Bool {
         guard let enabled = readMetricsReportingEnabled() else { return false }
 
+        return synchronize(enabled: enabled)
+    }
+
+    /// Persists a Chromium consent transition reported by the bridge delegate.
+    @discardableResult
+    func metricsReportingEnabledChanged(_ enabled: Bool) -> Bool {
+        synchronize(enabled: enabled)
+    }
+
+    /// Returns whether this synchronization durably changed the shared
+    /// snapshot.
+    private func synchronize(enabled: Bool) -> Bool {
         do {
             let result = try store.synchronize(
                 enabled: enabled,

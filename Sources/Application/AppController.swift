@@ -212,7 +212,6 @@ import PostHog
     func applicationWillTerminate(_ notification: Notification) {
         coldOpenURLForwardWorkItem?.cancel()
         coldOpenURLForwardWorkItem = nil
-        SentinelTelemetryConsentPublisher.shared.stop()
         AppLogInfo("-------applicationWillTerminate----")
         MemoryUsageMonitor.shared.stop()
         AgentCDPListener.shared.stop()

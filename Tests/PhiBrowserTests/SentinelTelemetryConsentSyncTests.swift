@@ -139,7 +139,7 @@ final class SentinelTelemetryConsentSyncTests: XCTestCase {
         XCTAssertNotEqual(try Data(contentsOf: fileURL), firstBytes)
     }
 
-    func testPublisherWaitsForBridgeAndNotifiesOnlyAfterDurableChanges() throws {
+    func testPublisherSynchronizesInitialStateAndCallbackChanges() throws {
         let fileURL = temporaryDirectoryURL
             .appendingPathComponent("telemetry-consent.plist")
         let store = SharedTelemetryConsentStore(fileURL: fileURL)
@@ -165,23 +165,22 @@ final class SentinelTelemetryConsentSyncTests: XCTestCase {
             postNotification: { notifications.append($0) }
         )
 
-        XCTAssertFalse(publisher.refreshNow())
+        XCTAssertFalse(publisher.synchronizeInitialState())
         XCTAssertFalse(FileManager.default.fileExists(atPath: fileURL.path))
         XCTAssertTrue(notifications.isEmpty)
 
         enabled = true
-        XCTAssertTrue(publisher.refreshNow())
+        XCTAssertTrue(publisher.synchronizeInitialState())
         let firstConsent = try store.read()
         let firstBytes = try Data(contentsOf: fileURL)
         XCTAssertEqual(notifications, [channel.notificationName])
 
-        XCTAssertFalse(publisher.refreshNow())
+        XCTAssertFalse(publisher.synchronizeInitialState())
         XCTAssertEqual(try store.read(), firstConsent)
         XCTAssertEqual(try Data(contentsOf: fileURL), firstBytes)
         XCTAssertEqual(notifications, [channel.notificationName])
 
-        enabled = false
-        XCTAssertTrue(publisher.refreshNow())
+        XCTAssertTrue(publisher.metricsReportingEnabledChanged(false))
         XCTAssertFalse(try store.read().enabled)
         XCTAssertNotEqual(try store.read().revision, firstConsent.revision)
         XCTAssertEqual(
@@ -190,27 +189,32 @@ final class SentinelTelemetryConsentSyncTests: XCTestCase {
         )
     }
 
-    func testPublisherStopPersistsAChangeFromTheFinalPollingInterval() throws {
+    func testPublisherStartsWithTheCurrentStateAndUsesCallbackUpdates() throws {
         let fileURL = temporaryDirectoryURL
             .appendingPathComponent("telemetry-consent.plist")
         let store = SharedTelemetryConsentStore(fileURL: fileURL)
         var enabled: Bool? = true
+        var readCount = 0
         var notificationCount = 0
         let publisher = SentinelTelemetryConsentPublisher(
             store: store,
             channel: .make(browserBundleIdentifier: "com.phibrowser.Mac"),
-            pollInterval: 3_600,
-            readMetricsReportingEnabled: { enabled },
+            readMetricsReportingEnabled: {
+                readCount += 1
+                return enabled
+            },
             postNotification: { _ in notificationCount += 1 }
         )
 
         publisher.start()
         XCTAssertTrue(try store.read().enabled)
+        XCTAssertEqual(readCount, 1)
 
         enabled = false
-        publisher.stop()
+        XCTAssertTrue(publisher.metricsReportingEnabledChanged(false))
 
         XCTAssertFalse(try store.read().enabled)
+        XCTAssertEqual(readCount, 1)
         XCTAssertEqual(notificationCount, 2)
     }
 }
