@@ -24,10 +24,18 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+// PHI_BUNDLE_ID pins one channel: discovery and launch see only that bundle,
+// so a running build of the OTHER channel can never answer for it (the CLI's
+// --canary sets it). Without the pin, canary is preferred, stable is the
+// fallback.
 const CANDIDATE_DIRS = [
   process.env.PHI_USER_DATA_DIR,
-  join(homedir(), 'Library/Application Support/com.phibrowser.canary.Mac'),
-  join(homedir(), 'Library/Application Support/com.phibrowser.Mac'),
+  ...(process.env.PHI_BUNDLE_ID
+    ? [join(homedir(), 'Library/Application Support', process.env.PHI_BUNDLE_ID)]
+    : [
+        join(homedir(), 'Library/Application Support/com.phibrowser.canary.Mac'),
+        join(homedir(), 'Library/Application Support/com.phibrowser.Mac'),
+      ]),
 ].filter(Boolean)
 
 // The consent prompt can hold the very first connection open while the user
@@ -129,10 +137,16 @@ export function linkedAppPath() {
  */
 function launchPhi() {
   if (process.env.PHI_NO_LAUNCH) return null
+  // A linked app wins even under a PHI_BUNDLE_ID pin: the engine loads from
+  // the pinned bundle then, so `linked` IS the pinned app — and `-a <path>`
+  // names that exact copy where `-b` lets LaunchServices pick among every
+  // registered copy of the id.
   const linked = linkedAppPath()
   const attempts = linked
     ? [['-g', '-a', linked]]
-    : LAUNCH_BUNDLE_IDS.map((id) => ['-g', '-b', id])
+    : (process.env.PHI_BUNDLE_ID
+        ? [process.env.PHI_BUNDLE_ID]
+        : LAUNCH_BUNDLE_IDS).map((id) => ['-g', '-b', id])
   for (const args of attempts) {
     try {
       execFileSync(
