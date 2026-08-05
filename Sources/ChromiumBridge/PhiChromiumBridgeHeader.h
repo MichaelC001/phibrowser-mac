@@ -873,11 +873,10 @@ typedef NS_ENUM(NSInteger, PhiWindowCloseState) {
 - (void)installExtensionsWithIds:(NSArray<NSString *> *)extensionIds
                         windowId:(int64_t)windowId;
 
-/// Install one or more extensions from Chrome Web Store into a specific profile.
-/// Results are reported per-extension via extensionInstallResult:status: delegate callback.
-/// Status values: @"success", @"skipped", @"disabled", @"blocked", @"failed"
-/// @param extensionIds Array of Chrome Web Store extension IDs to install
-/// @param profileId The on-disk profile basename (must already be loaded)
+/// Install one or more Chrome Web Store extensions into a specific profile,
+/// resolved by its on-disk basename. The profile must already be loaded (call
+/// `ensureProfileLoaded:` first). Mirrors the OOBE iCloud Passwords choice onto
+/// newly created profiles. Results report via extensionInstallResult:status:.
 - (void)installExtensionsWithIds:(NSArray<NSString *> *)extensionIds
                        profileId:(NSString *)profileId;
 

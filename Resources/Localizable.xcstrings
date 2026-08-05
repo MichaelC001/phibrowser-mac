@@ -7787,6 +7787,18 @@
         }
       }
     },
+    "app.helpMenu.improveTranslations" : {
+      "comment" : "Help menu - Menu item below What's New that opens Phi's translation contribution website",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Improve Translations for Phi Browser"
+          }
+        }
+      }
+    },
     "app.helpMenu.manageUserData" : {
       "comment" : "Help menu - Parent menu item for exporting and importing Phi user data backup",
       "extractionState" : "extracted_with_value",

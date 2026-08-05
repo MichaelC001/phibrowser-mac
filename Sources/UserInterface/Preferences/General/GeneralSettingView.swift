@@ -28,11 +28,11 @@ struct GeneralSettingView: View {
     var body: some View {
         ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 24) {
+                LanguageSectionView()
                 if !settingsPresentation.openedFromIncognito {
                     ThemeSectionView()
                 }
                 AppearanceSectionView()
-                LanguageSectionView()
                 BrowsingSectionView()
                 ProfileSectionView()
                 DeveloperModeSectionView()

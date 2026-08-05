@@ -55,6 +55,7 @@ extension AppController {
     static let layoutModeTraditionalItemTag = 500007
     static let layoutModeTitleItemTag = 500008
     static let whatsNewItemTag = 500009
+    static let improveTranslationsItemTag = 500028
     static let bookmarksMenuItemTag = 500010
     static let bookmarksMenuIdentifier = NSUserInterfaceItemIdentifier("phi.bookmarks.menu")
     static let spacesNewProfileItemTag = 500015
@@ -319,6 +320,7 @@ extension AppController {
                     $0.tag == AppController.extensionInfoItemTag ||
                     $0.tag == AppController.exportLogsItemTag ||
                     $0.tag == AppController.whatsNewItemTag ||
+                    $0.tag == AppController.improveTranslationsItemTag ||
                     $0.tag == AppController.manageUserDataHelpSeparatorTag ||
                     $0.tag == AppController.timeMachineBackupsParentItemTag ||
                     $0.tag == AppController.manageUserDataParentItemTag ||
@@ -358,6 +360,25 @@ extension AppController {
                     subMenu.insertItem(whatsNewItem, at: reportIssueIndex + 1)
                 } else {
                     subMenu.addItem(whatsNewItem)
+                }
+
+                let improveTranslationsItem = NSMenuItem(
+                    title: NSLocalizedString(
+                        "app.helpMenu.improveTranslations",
+                        value: "Improve Translations for Phi Browser",
+                        comment: "Help menu - Menu item below What's New that opens Phi's translation contribution website"
+                    ),
+                    action: #selector(showImproveTranslations(_:)),
+                    keyEquivalent: ""
+                )
+                improveTranslationsItem.tag = AppController.improveTranslationsItemTag
+                improveTranslationsItem.target = self
+                if let whatsNewIndex = subMenu.items.firstIndex(where: {
+                    $0.tag == AppController.whatsNewItemTag
+                }) {
+                    subMenu.insertItem(improveTranslationsItem, at: whatsNewIndex + 1)
+                } else {
+                    subMenu.addItem(improveTranslationsItem)
                 }
 
                 let userDataSeparator = NSMenuItem.separator()
@@ -839,6 +860,13 @@ extension AppController {
 
     @objc func showWhatsNew(_ sender: Any?) {
         BrowserState.currentState()?.createTab("chrome://whats-new", focusAfterCreate: true)
+    }
+
+    @objc func showImproveTranslations(_ sender: Any?) {
+        BrowserState.currentState()?.createTab(
+            "https://i18n.phibrowser.com/",
+            focusAfterCreate: true
+        )
     }
 
     @objc func restoreTimeMachineBackup(_ sender: Any?) {
