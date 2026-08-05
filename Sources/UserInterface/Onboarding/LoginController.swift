@@ -44,6 +44,12 @@ struct PostLoginAIEnableIntent {
     }
 }
 
+enum GuestModeEntryResult {
+    case enteredGuestMode
+    case requiresAccountRecovery
+    case failed
+}
+
 class LoginController {
     /// Raw values are account-persisted. Values 0...2 and `done` stay stable;
     /// values 3...5 advance past the removed import step.
@@ -234,11 +240,17 @@ class LoginController {
     ///
     /// Guest Mode is a browser-access choice, not a synthetic login. Any
     /// uncommitted Auth0 result is discarded, the account reference stays nil,
-    /// and only the dedicated Guest marker is persisted.
+    /// and only the dedicated Guest marker is persisted. When the entry comes
+    /// from the privacy confirmation page, the selected metrics preference is
+    /// written after Guest state is active so Chromium refreshes its effective
+    /// upload permission through the Guest consent gate.
+    @discardableResult
     @MainActor
-    func continueAsGuest() {
+    func continueAsGuest(
+        metricsReportingPreference: Bool? = nil
+    ) -> GuestModeEntryResult {
         postLoginAIEnableIntent.cancel()
-        guard !auth0Manager.isAccountDeletionInProgress else { return }
+        guard !auth0Manager.isAccountDeletionInProgress else { return .failed }
 
         let pendingAccess: GuestDataMigrationGuestAccessDisposition
         do {
@@ -260,7 +272,7 @@ class LoginController {
                     "recovery still requires the journal-bound account"
                 )
                 showLoginWindow()
-                return
+                return .requiresAccountRecovery
             }
         case .deferredCleanup(let targetUserID):
             guestMigrationRecoveryTargetUserID = targetUserID
@@ -268,29 +280,41 @@ class LoginController {
         case .requiresTargetRecovery(let targetUserID):
             guard armGuestMigrationRecovery(targetUserID: targetUserID) else {
                 showLoginWindow()
-                return
+                return .requiresAccountRecovery
             }
             MainBrowserWindowControllersManager.shared
                 .setGuestTransitionInteractionBlocked(true)
             showLoginWindow()
-            return
+            return .requiresAccountRecovery
         }
 
         auth0Manager.cancelOngoingWebAuthentication()
         guard auth0Manager
             .prepareGuestSessionBoundaryBeforeServiceLaunch(
                 preserveLocalRecoveryCredentials: false
-            ) else {
+        ) else {
             showGuestModeCredentialClearFailureAlert()
-            return
+            return .failed
         }
         AccountController.shared.account = nil
         pendingAuthenticatedAccount = nil
         ApplicationState.shared.cancelGuestAccountPromotion()
         GuestModePreferences.disableAI()
         ApplicationState.shared.enterGuestMode()
+        if let metricsReportingPreference {
+            if let bridge = ChromiumLauncher.sharedInstance().bridge {
+                bridge.setMetricsReportingEnabled(
+                    metricsReportingPreference
+                ) { _ in }
+            } else {
+                AppLogError(
+                    "[GuestPrivacy] Unable to save metrics consent without the Chromium bridge"
+                )
+            }
+        }
         PostHogSDK.shared.capture("guest_mode_entered")
         closeLoginWindow()
+        return .enteredGuestMode
     }
 
     /// Returns `true` when onboarding still needs to be shown.

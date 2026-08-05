@@ -1504,6 +1504,138 @@ final class PhiBrowserTests: XCTestCase {
         )
     }
 
+    @MainActor
+    func testGuestPrivacyLegalAgreementUsesRequestedLinkTitlesAndURLs() throws {
+        let agreement = GuestPrivacyLegalAgreement.makeAttributedTitle(
+            format: "I agree to the %1$@ and %2$@",
+            privacyTitle: "Privacy Policy",
+            termsTitle: "Terms of Service"
+        )
+        let privacyRange = try XCTUnwrap(
+            agreement.string.range(of: "Privacy Policy")
+        )
+        let termsRange = try XCTUnwrap(
+            agreement.string.range(of: "Terms of Service")
+        )
+        let privacyLocation = NSRange(
+            privacyRange,
+            in: agreement.string
+        ).location
+        let termsLocation = NSRange(
+            termsRange,
+            in: agreement.string
+        ).location
+
+        XCTAssertEqual(
+            agreement.string,
+            "I agree to the Privacy Policy and Terms of Service"
+        )
+        XCTAssertEqual(
+            agreement.attribute(
+                .link,
+                at: privacyLocation,
+                effectiveRange: nil
+            ) as? URL,
+            URL(string: "http://phibrowser.com/privacy/")
+        )
+        XCTAssertEqual(
+            agreement.attribute(
+                .link,
+                at: termsLocation,
+                effectiveRange: nil
+            ) as? URL,
+            URL(string: "http://phibrowser.com/terms/")
+        )
+    }
+
+    @MainActor
+    func testGuestPrivacyGuideUsesPlainLargerNoticeText() {
+        let titles = [
+            "No AI features until you sign in",
+            "No Browser Memory either",
+            "Sign in whenever you're ready"
+        ]
+        let fittingSize = CGSize(
+            width: NextStepGuideLayout.contentWidth,
+            height: .greatestFiniteMagnitude
+        )
+        let guestGuide = NSHostingController(
+            rootView: GuestPrivacyGuideView(noticeTitles: titles)
+                .frame(width: NextStepGuideLayout.contentWidth, height: 260)
+        )
+
+        XCTAssertGreaterThan(guestGuide.sizeThatFits(in: fittingSize).height, 0)
+    }
+
+    @MainActor
+    func testGuestPrivacyPageRequiresLegalConsentBeforeBeginning() throws {
+        let controller = GuestPrivacyConfirmationViewController()
+
+        controller.loadView()
+
+        XCTAssertEqual(
+            controller.titleLabel.stringValue,
+            NSLocalizedString(
+                "oobe.guestPrivacy.title",
+                value: "Before we begin.",
+                comment: "Guest privacy confirmation - Page title shown before entering Guest Mode"
+            )
+        )
+        XCTAssertEqual(
+            controller.nextButton.title,
+            NSLocalizedString(
+                "oobe.guestPrivacy.beginButton",
+                value: "Let's Begin",
+                comment: "Guest privacy confirmation - Button that confirms the choices and enters Guest Mode"
+            )
+        )
+        XCTAssertFalse(controller.nextButton.isEnabled)
+
+        func checkboxRows(in view: NSView) -> [OnboardingCheckboxRow] {
+            view.subviews.flatMap { subview in
+                let current = (subview as? OnboardingCheckboxRow).map { [$0] }
+                    ?? []
+                return current + checkboxRows(in: subview)
+            }
+        }
+
+        let rows = checkboxRows(in: controller.view)
+        XCTAssertEqual(rows.count, 2)
+        let expectedStates = [false, NextStepConsentState().sharesUsageMetrics]
+        for (row, expectedState) in zip(rows, expectedStates) {
+            let checkbox = try XCTUnwrap(
+                row.subviews.compactMap { $0 as? NSButton }.first
+            )
+            XCTAssertEqual(
+                checkbox.accessibilityValue() as? Int,
+                expectedState
+                    ? NSControl.StateValue.on.rawValue
+                    : NSControl.StateValue.off.rawValue
+            )
+        }
+    }
+
+    @MainActor
+    func testOnboardingRoutesGuestIntentToPrivacyConfirmation() {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 640, height: 800),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        let windowController = OnboardingWindowController(window: window)
+        let loginViewController = windowController.loginViewController
+        loginViewController.isGuestModeActiveProvider = { false }
+        window.contentViewController = loginViewController
+
+        loginViewController.continueAsGuestAction()
+
+        XCTAssertTrue(
+            window.contentViewController
+                is GuestPrivacyConfirmationViewController
+        )
+    }
+
     func testSkipOnboardingLaunchPolicyChoosesGuestModeAtTheOnboardingGate() {
         XCTAssertTrue(
             SkipOnboardingLaunchPolicy.shouldEnterGuestMode(

@@ -13,7 +13,7 @@ extension NSNotification.Name {
 class OnboardingWindowController: NSWindowController {
     private(set) var presentsGuestMigrationRecovery = false
 
-    private lazy var loginViewController: LoginViewController = {
+    private(set) lazy var loginViewController: LoginViewController = {
         let vc = LoginViewController()
         vc.presentationMode = presentsGuestMigrationRecovery
             ? .guestMigrationRecovery
@@ -22,9 +22,36 @@ class OnboardingWindowController: NSWindowController {
             guard let credentials, let self else { return }
             self.routeToCurrentPhase(using: credentials)
         }
-        vc.onContinueAsGuest = {
-            Task { @MainActor in
-                LoginController.shared.continueAsGuest()
+        vc.onContinueAsGuest = { [weak self] in
+            self?.showGuestPrivacyConfirmation()
+        }
+        return vc
+    }()
+
+    private lazy var guestPrivacyConfirmationViewController: GuestPrivacyConfirmationViewController = {
+        let vc = GuestPrivacyConfirmationViewController()
+        vc.onConfirm = { [weak self, weak vc] sharesUsageMetrics in
+            Task { @MainActor [weak self, weak vc] in
+                guard ChromiumLauncher.sharedInstance().bridge != nil else {
+                    AppLogError(
+                        "[GuestPrivacy] Cannot enter Guest Mode before the Chromium bridge is ready"
+                    )
+                    vc?.resetAfterGuestEntryFailure()
+                    return
+                }
+
+                let result = LoginController.shared.continueAsGuest(
+                    metricsReportingPreference: sharesUsageMetrics
+                )
+                switch result {
+                case .enteredGuestMode:
+                    return
+                case .requiresAccountRecovery:
+                    guard let self else { return }
+                    self.setContent(self.loginViewController)
+                case .failed:
+                    vc?.resetAfterGuestEntryFailure()
+                }
             }
         }
         return vc
@@ -183,6 +210,10 @@ class OnboardingWindowController: NSWindowController {
     private func showNextStepPage() {
         LoginController.shared.phase = .nextStep
         setContent(nextStepViewController)
+    }
+
+    func showGuestPrivacyConfirmation() {
+        setContent(guestPrivacyConfirmationViewController)
     }
 
     private func finish() {

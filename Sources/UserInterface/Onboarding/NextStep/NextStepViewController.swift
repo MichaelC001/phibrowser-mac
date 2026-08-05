@@ -128,6 +128,10 @@ struct NextStepConsentState {
     var hasAcceptedLegalTerms = false
     var sharesUsageMetrics: Bool
 
+    init(sharesUsageMetrics: Bool) {
+        self.sharesUsageMetrics = sharesUsageMetrics
+    }
+
     init(locale: Locale = .current) {
         guard let region = locale.region else {
             sharesUsageMetrics = false
@@ -469,6 +473,12 @@ private struct NextStepGuideOverflowPreferenceKey: PreferenceKey {
 
 struct NextStepGuideContentView: View {
     let stepTitles: [String]
+    let illustrationStepIndex: Int?
+
+    init(stepTitles: [String], illustrationStepIndex: Int? = 1) {
+        self.stepTitles = stepTitles
+        self.illustrationStepIndex = illustrationStepIndex
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -508,7 +518,7 @@ struct NextStepGuideContentView: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .layoutPriority(1)
 
-                if index == 1 {
+                if index == illustrationStepIndex {
                     ImportHintIllustration()
                         .offset(x: -NextStepGuideLayout.illustrationVisibleLeadingInset)
                 }

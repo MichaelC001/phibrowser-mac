@@ -32368,6 +32368,114 @@
         }
       }
     },
+    "oobe.guestPrivacy.aiFeaturesUnavailable" : {
+      "comment" : "Guest privacy confirmation - Notice that AI features require signing in",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "No AI features until you sign in"
+          }
+        }
+      }
+    },
+    "oobe.guestPrivacy.beginButton" : {
+      "comment" : "Guest privacy confirmation - Button that confirms the choices and enters Guest Mode",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Let's Begin"
+          }
+        }
+      }
+    },
+    "oobe.guestPrivacy.browserMemoryUnavailable" : {
+      "comment" : "Guest privacy confirmation - Notice that Browser Memory is unavailable without signing in",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "No Browser Memory either"
+          }
+        }
+      }
+    },
+    "oobe.guestPrivacy.legalAgreement" : {
+      "comment" : "Guest privacy confirmation - Required legal agreement; first placeholder is the Privacy Policy link and second is the Terms of Service link",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "I agree to the %1$@ and %2$@"
+          }
+        }
+      }
+    },
+    "oobe.guestPrivacy.metricsConsent" : {
+      "comment" : "Guest privacy confirmation - Optional checkbox for sharing usage metrics and crash reports",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Help make Phi better by sharing usage metrics and crash reports"
+          }
+        }
+      }
+    },
+    "oobe.guestPrivacy.privacyPolicyLink" : {
+      "comment" : "Guest privacy confirmation - Link title for the Phi privacy policy",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Privacy Policy"
+          }
+        }
+      }
+    },
+    "oobe.guestPrivacy.signInAnytime" : {
+      "comment" : "Guest privacy confirmation - Notice that the user can sign in later",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Sign in whenever you're ready"
+          }
+        }
+      }
+    },
+    "oobe.guestPrivacy.termsOfServiceLink" : {
+      "comment" : "Guest privacy confirmation - Link title for the Phi terms of service",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Terms of Service"
+          }
+        }
+      }
+    },
+    "oobe.guestPrivacy.title" : {
+      "comment" : "Guest privacy confirmation - Page title shown before entering Guest Mode",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Before we begin"
+          }
+        }
+      }
+    },
     "oobe.importBrowserData.arc.untitledSpaceName" : {
       "comment" : "Arc import - fallback name for an Arc Space with no title",
       "extractionState" : "extracted_with_value",
@@ -48450,7 +48558,7 @@
     },
     "settings.general.newTabPage.aiRequiredHint" : {
       "comment" : "General settings - Hint shown when Phi AI is disabled explaining New Tab Page requires it",
-      "extractionState" : "extracted_with_value",
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {

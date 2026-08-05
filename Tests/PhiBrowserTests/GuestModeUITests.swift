@@ -23,23 +23,29 @@ final class GuestModeUITests: XCTestCase {
         super.tearDown()
     }
 
-    func testGuestModeDisablesAIAndUsesOmniboxForNewTabs() {
-        defaults.set(true, forKey: GuestModePreferences.aiEnabledKey)
-        defaults.set(true, forKey: GuestModePreferences.newTabPageKey)
+    func testGuestModeDisablesAIWhilePreservingNewTabBehavior() {
+        let newTabPageKey = PhiPreferences.GeneralSettings.openNewTabPageOnCmdT.rawValue
 
-        let didApply = GuestModePreferences.disableAI(defaults: defaults)
+        for openNewTabPage in [false, true] {
+            defaults.set(true, forKey: GuestModePreferences.aiEnabledKey)
+            defaults.set(openNewTabPage, forKey: newTabPageKey)
 
-        XCTAssertTrue(didApply)
-        XCTAssertFalse(defaults.bool(forKey: GuestModePreferences.aiEnabledKey))
-        XCTAssertFalse(defaults.bool(forKey: GuestModePreferences.newTabPageKey))
+            let didApply = GuestModePreferences.disableAI(defaults: defaults)
+
+            XCTAssertTrue(didApply)
+            XCTAssertFalse(defaults.bool(forKey: GuestModePreferences.aiEnabledKey))
+            XCTAssertEqual(defaults.bool(forKey: newTabPageKey), openNewTabPage)
+        }
     }
 
-    func testGuestModePersistsDisabledDefaultsWhenKeysWereUnset() {
+    func testGuestModePersistsDisabledAIWithoutCreatingNewTabPreference() {
+        let newTabPageKey = PhiPreferences.GeneralSettings.openNewTabPageOnCmdT.rawValue
+
         GuestModePreferences.disableAI(defaults: defaults)
 
         let domain = defaults.persistentDomain(forName: defaultsSuiteName)
         XCTAssertEqual(domain?[GuestModePreferences.aiEnabledKey] as? Bool, false)
-        XCTAssertEqual(domain?[GuestModePreferences.newTabPageKey] as? Bool, false)
+        XCTAssertNil(domain?[newTabPageKey])
     }
 
     func testDisablingGuestAIIsIdempotent() {
