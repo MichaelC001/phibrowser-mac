@@ -98,6 +98,13 @@ drains. Mirrorless sessions complete immediately, so SKILL.md's
 "deliver the result BEFORE completing" rule is the only thing standing
 between the user and an answerless console.
 
+The deferral follows the session's ONE mirror: binding a different task
+(`enterContext` for another Space) while a completion is still draining
+delivers that completion immediately — no further line could reach the old
+console anyway — so the old Space closes right then instead of waiting out
+the quiet window. Re-entering the SAME task while its completion drains
+cancels the pending completion: the task simply continues.
+
 The console mirrors the WHOLE session, not just browser steps: under all
 six supported agents — Claude Code, Codex, OpenClaw, Pi, Hermes, and
 Cursor —

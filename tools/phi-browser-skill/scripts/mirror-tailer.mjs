@@ -268,15 +268,28 @@ async function main() {
       if (sawTurnEndAfterComplete || quiet || capped) {
         try {
           // Any response settles it: ok means completed, not-ok means the
-          // task is already gone — either way the daemon's work is done.
+          // task is already gone — either way this completion is done.
           await (await ensureChannel()).send('agentSpace.complete', {
             taskId: ctl.taskId,
             status: ctl.completing.status === 'failure' ? 'failure' : 'success',
             ...(ctl.completing.message
               ? { message: String(ctl.completing.message) } : {}),
           })
-          clearDaemonControl(sessionKey)
-          return
+          // A round may have re-targeted the control file to ANOTHER task
+          // while this completion drained; the file — and this daemon — now
+          // serve that task, and deleting the file here would kill its
+          // mirror. Exit (clearing) only while the file still records the
+          // completed task as ours; on a re-target, reset the completion
+          // state and keep tailing for the new task.
+          const cur = readDaemonControl(sessionKey)
+          if (cur && cur.pid === process.pid && cur.taskId !== ctl.taskId) {
+            sawTurnEndAfterComplete = false
+          } else {
+            // Superseded by another daemon (pid mismatch): just exit —
+            // clearing would clobber the successor's claim.
+            if (!cur || cur.pid === process.pid) clearDaemonControl(sessionKey)
+            return
+          }
         } catch {
           dropChannel()  // transient (Phi restarting): retry next tick
         }

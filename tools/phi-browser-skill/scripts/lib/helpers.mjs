@@ -377,8 +377,9 @@ async function enterAgentContext(name, { profile = '', persistent = false } = {}
   state.userSpace = null  // task binding supersedes any user-space binding
   // Start (or re-target) the session mirror: the driving session's prompts
   // and prose flow into this Space's console, and console commands flow
-  // back into the session (see scripts/mirror-tailer.mjs).
-  spawnSessionMirror(task.taskId)
+  // back into the session (see scripts/mirror-tailer.mjs). Awaited: it also
+  // delivers any deferred completion the re-target would orphan.
+  await spawnSessionMirror(task.taskId)
   // `task.ownership` here is authoritative (fresh from list, or echoed on the
   // create reply), so seed the staleness clock and avoid a redundant
   // getOwnership on the first guarded action.
@@ -895,13 +896,31 @@ const ORPHANED_ROUND_MESSAGE =
   'agent session (e.g. Claude Code\'s run_in_background), or use the ' +
   'blocking handOffAndWait() — see SKILL.md "Hand-back watcher".'
 
-function spawnSessionMirror(taskId) {
+async function spawnSessionMirror(taskId) {
   if (process.env.PHI_NO_SESSION_MIRROR) return
   try {
     const agentPid = agentRootPid() ?? appProvidedAgentPid()
     const transcript = discoverSessionTranscript(taskId, agentPid)
     if (!transcript) return  // unknown driver: say() remains
     const prev = readDaemonControl(transcript.sessionKey)
+    // Re-targeting the control file to a NEW task silently drops a deferred
+    // completion still pending for the previous one — and once the file
+    // points elsewhere, the daemon (which serves only ctl.taskId) can never
+    // finish that task: its Space lingers as a stuck "running" pip until
+    // TTL expiry instead of closing (the multi-Space leak). No further
+    // mirror line can reach the old console after the re-target anyway, so
+    // deliver the completion NOW, best-effort. Same-task re-binds fall
+    // through: re-entering a completing task deliberately cancels its
+    // pending completion.
+    if (prev && prev.completing && prev.taskId && prev.taskId !== taskId) {
+      await phiSend('agentSpace.complete', {
+        taskId: prev.taskId,
+        status: prev.completing.status === 'failure' ? 'failure' : 'success',
+        ...(prev.completing.message
+          ? { message: String(prev.completing.message) } : {}),
+      }).catch(() => {})  // already gone settles it just as well
+      writeStoredViewport(prev.taskId, null)
+    }
     const livePid = prev && prev.pid && pidAlive(prev.pid) ? prev.pid : null
     const agentCapability = appProvidedAgentCapability()
     writeDaemonControl(transcript.sessionKey, {
