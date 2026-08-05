@@ -1409,6 +1409,18 @@ final class PhiBrowserTests: XCTestCase {
     }
 
     @MainActor
+    func testNextStepTitleProvidesEnoughHeightForDisplayFont() {
+        let controller = NextStepViewController()
+
+        controller.loadView()
+        controller.view.layoutSubtreeIfNeeded()
+
+        XCTAssertEqual(controller.titleLabel.bounds.height, 64, accuracy: 0.001)
+        XCTAssertEqual(controller.titleLabel.maximumNumberOfLines, 1)
+        XCTAssertTrue(controller.titleLabel.cell?.usesSingleLineMode == true)
+    }
+
+    @MainActor
     func testNextStepPlainConsentCopyCannotBeSelected() throws {
         let row = OnboardingCheckboxRow(
             title: "Help make Phi better by sharing usage metrics and crash reports",

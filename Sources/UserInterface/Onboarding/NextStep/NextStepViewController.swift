@@ -151,6 +151,9 @@ struct NextStepConsentState {
 
 final class NextStepViewController: OnboardingBaseViewController {
     private enum Metrics {
+        static let titleTopOffset: CGFloat = 89
+        static let titleHorizontalInset: CGFloat = 30
+        static let titleHeight: CGFloat = 64
         static let contentTopSpacing: CGFloat = 28
         static let dividerHeight: CGFloat = 1
         static let dividerToConsentSpacing: CGFloat = 28
@@ -294,6 +297,19 @@ final class NextStepViewController: OnboardingBaseViewController {
             value: "Next steps",
             comment: "Onboarding next steps - Page title"
         )
+        titleLabel.cell?.usesSingleLineMode = true
+        titleLabel.cell?.wraps = false
+        titleLabel.maximumNumberOfLines = 1
+        titleLabel.lineBreakMode = .byClipping
+        titleLabel.snp.updateConstraints { make in
+            make.top.equalToSuperview().offset(Metrics.titleTopOffset)
+        }
+        titleLabel.snp.makeConstraints { make in
+            make.leading.greaterThanOrEqualToSuperview().offset(Metrics.titleHorizontalInset)
+            make.trailing.lessThanOrEqualToSuperview().offset(-Metrics.titleHorizontalInset)
+            make.height.equalTo(Metrics.titleHeight)
+        }
+
         skipButton.isHidden = true
         let beginButtonTitle = NSLocalizedString(
             "oobe.nextSteps.beginButton",
