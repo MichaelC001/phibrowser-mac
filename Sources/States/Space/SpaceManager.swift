@@ -2062,12 +2062,12 @@ final class SpaceManager: ObservableObject {
         // which is what made "New Space" feel slow. The persisted row stays
         // authoritative: once its emission lands, `handleSpacesUpdate` replaces
         // this array wholesale with the context-attached models. We mirror
-        // `LocalStore.createSpace`'s per-profile max+1 sortOrder and reuse
-        // `getAllSpaces`'s (sortOrder, profileId, createdDate) ordering so the
-        // pill's position is identical before and after that reconciliation —
-        // no visible reposition.
-        let nextOrder = (spaces.filter { $0.profileId == profileId }
-            .map(\.sortOrder).max() ?? -1) + 1
+        // `LocalStore.createSpace`'s GLOBAL max+1 sortOrder (the strip is one
+        // combined list, so appending past the global max is what lands the
+        // new pill last) and reuse `getAllSpaces`'s (sortOrder, profileId,
+        // createdDate) ordering so the pill's position is identical before
+        // and after that reconciliation — no visible reposition.
+        let nextOrder = (spaces.map(\.sortOrder).max() ?? -1) + 1
         spaces.append(SpaceModel(spaceId: newSpaceId,
                                  profileId: profileId,
                                  name: name,

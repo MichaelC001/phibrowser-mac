@@ -77,10 +77,14 @@ extension LocalStore {
                      spaceId: String = UUID().uuidString) {
         performBackgroundWrite { context in
             do {
-                let descriptor = FetchDescriptor<SpaceModel>(
-                    predicate: #Predicate { $0.profileId == profileId }
-                )
-                let existing = try context.fetch(descriptor)
+                // Global max+1, not per-profile: the strip displays ALL
+                // profiles' Spaces in one (sortOrder, profileId, createdDate)
+                // order, so a per-profile ordinal would drop the new Space
+                // mid-strip whenever another profile holds higher sortOrders
+                // (more Spaces, or any manual reorder — which renumbers
+                // globally). Appending past the global max is what makes a
+                // new Space — agent Spaces included — land LAST in the strip.
+                let existing = try context.fetch(FetchDescriptor<SpaceModel>())
                 let nextOrder = (existing.map(\.sortOrder).max() ?? -1) + 1
                 let space = SpaceModel(
                     spaceId: spaceId,
@@ -277,10 +281,11 @@ extension LocalStore {
     func getAllSpaces(profileId: String? = nil) -> [SpaceModel] {
         guard let context = mainContext else { return [] }
         do {
-            // A manual reorder assigns globally-unique sortOrders, but
-            // `createSpace` appends with per-profile max+1 and
-            // `changeSpaceProfile` carries the old value into the new
-            // profile, so values can tie across (or within) profiles —
+            // A manual reorder assigns globally-unique sortOrders and
+            // `createSpace` appends with global max+1, but legacy rows
+            // (written when create numbered per-profile) and
+            // `changeSpaceProfile` — which carries the old value into the
+            // new profile — can still tie across (or within) profiles;
             // without stable tiebreaks the strip's interleave would
             // reshuffle between launches. profileId then createdDate makes
             // the combined order deterministic.
