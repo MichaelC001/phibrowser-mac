@@ -490,6 +490,7 @@ class BrowserState {
             }
             .store(in: &cancellables)
 
+        syncPhiExtensionsIfAIDisabled()
     }
     
     private func makePinnedTab(from model: TabDataModel) -> Tab {

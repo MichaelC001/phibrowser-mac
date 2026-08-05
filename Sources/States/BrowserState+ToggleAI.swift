@@ -32,6 +32,32 @@ extension BrowserState {
         }
     }
 
+    /// Re-asserts the disabled half of the AI toggle as a window comes up.
+    ///
+    /// `updateAISettings` only reacts to an edge, and `lastPhiAIEnabled` is
+    /// seeded from the preference the window is born with. Guest entry turns
+    /// AI off before the first window materializes, so that edge lands with no
+    /// BrowserState listening and the one created afterwards sees no change —
+    /// leaving the Phi extensions loaded for the whole session.
+    ///
+    /// Only the disabled half needs re-asserting: `ExtensionsProxy::Init`
+    /// already re-enables the Phi extensions when the Mac-side toggle is on.
+    /// The side effects of `onAIEnabledChanged` (Sentinel teardown, new tab
+    /// page preference, AI content teardown) belong to the toggle's edge and
+    /// are deliberately not repeated per window.
+    ///
+    /// Deferred one runloop turn: on the ordinary window path this runs inside
+    /// `Browser::Create`, before the owning window controller finished
+    /// construction and registered itself. Disabling extensions there would
+    /// re-enter the Mac side with registry change events for a window that is
+    /// not yet addressable.
+    func syncPhiExtensionsIfAIDisabled() {
+        guard !PhiPreferences.AISettings.phiAIEnabled.loadValue() else { return }
+        DispatchQueue.main.async {
+            ChromiumLauncher.sharedInstance().bridge?.disablePhiExtensions(false)
+        }
+    }
+
     /// Only called when AI is enabled.
     func updateSentinelRegistration(_ launchOnLogin: Bool) {
         MainActor.assumeIsolated {
