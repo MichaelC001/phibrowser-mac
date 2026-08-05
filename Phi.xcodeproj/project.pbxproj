@@ -53,6 +53,8 @@
 		3764F7392F1628DA00C1F4E3 /* FaviconProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3764F7382F1628DA00C1F4E3 /* FaviconProvider.swift */; };
 		3765817B2EE963AD00D3E031 /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 3765817A2EE9637F00D3E031 /* Localizable.xcstrings */; };
 		376581A32EE970B000D3E031 /* new-tab-reverse.json in Copy LottieFiles */ = {isa = PBXBuildFile; fileRef = 376581A22EE96FA200D3E031 /* new-tab-reverse.json */; };
+		37D011013010000100000001 /* refresh.json in Copy LottieFiles */ = {isa = PBXBuildFile; fileRef = 37D011043010000100000004 /* refresh.json */; };
+		37D011023010000100000002 /* memory.json in Copy LottieFiles */ = {isa = PBXBuildFile; fileRef = 37D011053010000100000005 /* memory.json */; };
 		376581F72EEA845700D3E031 /* BrowserState+Bookmark.swift in Sources */ = {isa = PBXBuildFile; fileRef = 376581F62EEA845700D3E031 /* BrowserState+Bookmark.swift */; };
 		376581F92EEA9BB200D3E031 /* BookmarkCellView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 376581F82EEA9BB200D3E031 /* BookmarkCellView.swift */; };
 		376581FB2EEA9D6200D3E031 /* BookmarkRowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 376581FA2EEA9D6200D3E031 /* BookmarkRowView.swift */; };
@@ -543,6 +545,8 @@
 			files = (
 				376581A32EE970B000D3E031 /* new-tab-reverse.json in Copy LottieFiles */,
 				37A4750630060D6100F7DC2E /* broom.json in Copy LottieFiles */,
+				37D011013010000100000001 /* refresh.json in Copy LottieFiles */,
+				37D011023010000100000002 /* memory.json in Copy LottieFiles */,
 				37C1B3082EE673C800DD4496 /* new-tab.json in Copy LottieFiles */,
 				37C1B3092EE673C800DD4496 /* extension-button.json in Copy LottieFiles */,
 				37C1B30A2EE673C800DD4496 /* download-button.json in Copy LottieFiles */,
@@ -695,6 +699,8 @@
 		378AFF612F78E5EA0016B334 /* BrowserThemeContext.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserThemeContext.swift; sourceTree = "<group>"; };
 		37A000012FEA000000000001 /* PhiSparkleUserDriver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhiSparkleUserDriver.swift; sourceTree = "<group>"; };
 		37A4750530060D5A00F7DC2E /* broom.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = broom.json; sourceTree = "<group>"; };
+		37D011043010000100000004 /* refresh.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = refresh.json; sourceTree = "<group>"; };
+		37D011053010000100000005 /* memory.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = memory.json; sourceTree = "<group>"; };
 		37B977D42EF3F62F007E0568 /* login-dot-bg.mp4 */ = {isa = PBXFileReference; lastKnownFileType = file; path = "login-dot-bg.mp4"; sourceTree = "<group>"; };
 		37B9780F2EF403AB007E0568 /* GradientBorderButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GradientBorderButton.swift; sourceTree = "<group>"; };
 		37BA3EA12F866864003A8A53 /* EdgeFogOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EdgeFogOverlayView.swift; sourceTree = "<group>"; };
@@ -1415,10 +1421,12 @@
 			isa = PBXGroup;
 			children = (
 				37A4750530060D5A00F7DC2E /* broom.json */,
+				37D011053010000100000005 /* memory.json */,
 				376581A22EE96FA200D3E031 /* new-tab-reverse.json */,
 				37C1B3002EE672FA00DD4496 /* new-tab.json */,
 				37C1B3022EE6732600DD4496 /* extension-button.json */,
 				37C1B3032EE6733200DD4496 /* download-button.json */,
+				37D011043010000100000004 /* refresh.json */,
 			);
 			path = LottieFiles;
 			sourceTree = "<group>";

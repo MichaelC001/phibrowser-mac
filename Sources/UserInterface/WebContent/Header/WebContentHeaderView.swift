@@ -171,16 +171,81 @@ struct WebContentHeaderView: View {
                     action: onForwardTap
                 )
 
-                NavigationButton(
-                    systemName: state.isProgressVisible ? "xmark" : "arrow.clockwise",
-                    accessibilityLabel: state.isProgressVisible
-                        ? NSLocalizedString("browser.webContentHeader.stopButton.accessibilityLabel", value: "Stop", comment: "Web content header - Accessibility description for stop loading button")
-                        : NSLocalizedString("browser.webContentHeader.refreshButton.accessibilityLabel", value: "Refresh", comment: "Web content header - Accessibility description for refresh page button"),
-                    hoverBackgroundOffsetY: state.isProgressVisible ? 0 : 1,
-                    action: state.isProgressVisible ? onStopLoadingTap : onRefreshTap
+                RefreshStopNavigationButton(
+                    isProgressVisible: state.isProgressVisible,
+                    onRefreshTap: onRefreshTap,
+                    onStopLoadingTap: onStopLoadingTap
                 )
             }
         }
+    }
+}
+
+private struct RefreshStopNavigationButton: View {
+    let isProgressVisible: Bool
+    let onRefreshTap: () -> Void
+    let onStopLoadingTap: () -> Void
+
+    @StateObject private var lottieState = LottieAnimationViewState()
+    @State private var isHovering = false
+    @State private var didPlayRefreshAnimationForCurrentHover = false
+
+    var body: some View {
+        ZStack {
+            RefreshNavigationButton(lottieState: lottieState, action: onRefreshTap)
+                .opacity(isProgressVisible ? 0 : 1)
+                .allowsHitTesting(!isProgressVisible)
+                .accessibilityHidden(isProgressVisible)
+
+            NavigationButton(
+                systemName: "xmark",
+                accessibilityLabel: NSLocalizedString("browser.webContentHeader.stopButton.accessibilityLabel", value: "Stop", comment: "Web content header - Accessibility description for stop loading button"),
+                action: onStopLoadingTap
+            )
+            .opacity(isProgressVisible ? 1 : 0)
+            .allowsHitTesting(isProgressVisible)
+            .accessibilityHidden(!isProgressVisible)
+        }
+        .frame(width: 24, height: 24)
+        .onHover(perform: handleHoverChange)
+    }
+
+    private func handleHoverChange(_ hovered: Bool) {
+        guard hovered != isHovering else { return }
+        isHovering = hovered
+
+        if hovered {
+            guard !isProgressVisible else { return }
+            didPlayRefreshAnimationForCurrentHover = true
+            lottieState.triggerAnimation()
+        } else if didPlayRefreshAnimationForCurrentHover {
+            didPlayRefreshAnimationForCurrentHover = false
+            lottieState.triggerReverseAnimation()
+        }
+    }
+}
+
+private struct RefreshNavigationButton: View {
+    @ObservedObject var lottieState: LottieAnimationViewState
+    let action: () -> Void
+
+    var body: some View {
+        let config = LottieAnimationViewConfig(
+            animationName: "refresh",
+            size: CGSize(width: 24, height: 24),
+            hoverBackgroundColor: Color(nsColor: .sidebarTabHovered),
+            cornerRadius: 999,
+            animationTrigger: .manual,
+            themedTintColor: .custom(light: .black, dark: .white),
+            reverseOnHoverExit: true
+        )
+
+        LottieAnimationView(config: config, state: lottieState, action: action)
+            .accessibilityLabel(NSLocalizedString(
+                "browser.webContentHeader.refreshButton.accessibilityLabel",
+                value: "Refresh",
+                comment: "Web content header - Accessibility description for refresh page button"
+            ))
     }
 }
 
