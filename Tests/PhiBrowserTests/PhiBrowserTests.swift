@@ -1280,6 +1280,54 @@ final class PhiBrowserTests: XCTestCase {
         )
     }
 
+    func testOnboardingPhaseRawValuesSkipLegacyImportDataWithoutChangingDone() {
+        XCTAssertEqual(LoginController.Phase.login.rawValue, 0)
+        XCTAssertEqual(LoginController.Phase.setName.rawValue, 1)
+        XCTAssertEqual(LoginController.Phase.setTheme.rawValue, 2)
+        XCTAssertEqual(LoginController.Phase.layoutSelection.rawValue, 3)
+        XCTAssertEqual(LoginController.Phase.passwordManager.rawValue, 4)
+        XCTAssertEqual(LoginController.Phase.nextStep.rawValue, 5)
+        XCTAssertEqual(LoginController.Phase.done.rawValue, 6)
+    }
+
+    func testNextStepConsentRequiresLegalAgreementToBegin() {
+        var state = NextStepConsentState(locale: Locale(identifier: "en_US"))
+
+        XCTAssertFalse(state.hasAcceptedLegalTerms)
+        XCTAssertTrue(state.sharesUsageMetrics)
+        XCTAssertFalse(state.canBegin)
+
+        state.hasAcceptedLegalTerms = true
+        XCTAssertTrue(state.canBegin)
+
+        state.sharesUsageMetrics = false
+        XCTAssertTrue(state.canBegin)
+    }
+
+    func testNextStepMetricsConsentDefaultsByLocaleRegion() {
+        XCTAssertFalse(
+            NextStepConsentState(locale: Locale(identifier: "fr_FR")).sharesUsageMetrics
+        )
+        XCTAssertFalse(
+            NextStepConsentState(locale: Locale(identifier: "en_GB")).sharesUsageMetrics
+        )
+        XCTAssertFalse(
+            NextStepConsentState(locale: Locale(identifier: "de_CH")).sharesUsageMetrics
+        )
+        XCTAssertFalse(
+            NextStepConsentState(locale: Locale(identifier: "el_CY")).sharesUsageMetrics
+        )
+        XCTAssertFalse(
+            NextStepConsentState(locale: Locale(identifier: "en")).sharesUsageMetrics
+        )
+        XCTAssertTrue(
+            NextStepConsentState(locale: Locale(identifier: "en_US")).sharesUsageMetrics
+        )
+        XCTAssertTrue(
+            NextStepConsentState(locale: Locale(identifier: "zh_CN")).sharesUsageMetrics
+        )
+    }
+
     func testSkipOnboardingLaunchPolicyChoosesGuestModeAtTheOnboardingGate() {
         XCTAssertTrue(
             SkipOnboardingLaunchPolicy.shouldEnterGuestMode(

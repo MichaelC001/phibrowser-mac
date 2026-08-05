@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A10500022FF1000000000002 /* NextStepViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10500012FF1000000000001 /* NextStepViewController.swift */; };
 		04FE4637EFE3A1396687DD63 /* AISettingsConnectorViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8FCAEAE328C802016D87943 /* AISettingsConnectorViewModel.swift */; };
 		15B618E574463D94C98AEA5F /* AISettingHostingViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1B584F695BF7833FAA99558 /* AISettingHostingViewController.swift */; };
 		2ABF91DB68C2445BAA58C9BA /* GroupTabsTableView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 457F461C0F164136A46FF641 /* GroupTabsTableView.swift */; };
@@ -486,8 +487,8 @@
 		DEBE00000000000000000007 /* DeveloperSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEBE00000000000000000004 /* DeveloperSettingsView.swift */; };
 		F01D3A000000000000000001 /* bookmark-folder-open.svg in Resources */ = {isa = PBXBuildFile; fileRef = F01D3A000000000000000011 /* bookmark-folder-open.svg */; };
 		F01D3A000000000000000002 /* bookmark-folder-closed.svg in Resources */ = {isa = PBXBuildFile; fileRef = F01D3A000000000000000012 /* bookmark-folder-closed.svg */; };
-		F9E478A224C44EA7BC0D85CC /* AccountDeletedEventAuthentication.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19B477B37CF44BC48335A032 /* AccountDeletedEventAuthentication.swift */; };
 		F7FD00000000000000000002 /* FullTitleDisplay.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7FD00000000000000000001 /* FullTitleDisplay.swift */; };
+		F9E478A224C44EA7BC0D85CC /* AccountDeletedEventAuthentication.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19B477B37CF44BC48335A032 /* AccountDeletedEventAuthentication.swift */; };
 		FBD200012FD0000000000001 /* FeedbackOutbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBD200012FD0000000000002 /* FeedbackOutbox.swift */; };
 		FBD200012FD0000000000003 /* FeedbackV2.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBD200012FD0000000000004 /* FeedbackV2.swift */; };
 /* End PBXBuildFile section */
@@ -614,6 +615,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		A10500012FF1000000000001 /* NextStepViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NextStepViewController.swift; sourceTree = "<group>"; };
 		11E8BEE1510290AB35D5C5AD /* SentinelBackupCoordination.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SentinelBackupCoordination.swift; sourceTree = "<group>"; };
 		19B477B37CF44BC48335A032 /* AccountDeletedEventAuthentication.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountDeletedEventAuthentication.swift; sourceTree = "<group>"; };
 		3703C88B2F68F78500E7CF6D /* AISettingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AISettingView.swift; sourceTree = "<group>"; };
@@ -1655,6 +1657,14 @@
 			path = PasswordManager;
 			sourceTree = "<group>";
 		};
+		A10500032FF1000000000003 /* NextStep */ = {
+			isa = PBXGroup;
+			children = (
+				A10500012FF1000000000001 /* NextStepViewController.swift */,
+			);
+			path = NextStep;
+			sourceTree = "<group>";
+		};
 		8E9E96A72F0F6E64002D0D21 /* Core */ = {
 			isa = PBXGroup;
 			children = (
@@ -2006,6 +2016,7 @@
 		CC24EEF32E8662AC00CE9DD7 /* Onboarding */ = {
 			isa = PBXGroup;
 			children = (
+				A10500032FF1000000000003 /* NextStep */,
 				8E9DAF412F765E83004EA160 /* PasswordManager */,
 				8E6145812F753114001919BA /* LayoutSelection */,
 				373D84022F3C801B00430BE6 /* AuthManagerExternalBrowserWebAuthUserAgent.swift */,
@@ -2713,6 +2724,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A10500022FF1000000000002 /* NextStepViewController.swift in Sources */,
 				F7FD00000000000000000002 /* FullTitleDisplay.swift in Sources */,
 				A8F100012FF0000000000001 /* PhiUninstallCore.swift in Sources */,
 				A8F100022FF0000000000002 /* PhiUninstallSignatureVerifier.swift in Sources */,

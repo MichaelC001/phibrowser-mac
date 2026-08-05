@@ -45,14 +45,16 @@ struct PostLoginAIEnableIntent {
 }
 
 class LoginController {
+    /// Raw values are account-persisted. Values 0...2 and `done` stay stable;
+    /// values 3...5 advance past the removed import step.
     enum Phase: Int {
         case login = 0
-        case setName
-        case setTheme
-        case importData
-        case layoutSelection
-        case passwordManager
-        case done
+        case setName = 1
+        case setTheme = 2
+        case layoutSelection = 3
+        case passwordManager = 4
+        case nextStep = 5
+        case done = 6
     }
 
     private let appPhaseKey = PhiPreferences.phiLoginPhase.rawValue

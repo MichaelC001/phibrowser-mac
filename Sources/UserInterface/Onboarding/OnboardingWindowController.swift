@@ -43,29 +43,9 @@ class OnboardingWindowController: NSWindowController {
 
     private lazy var layoutSelectionViewController: LayoutSelectionViewController = {
         let vc = LayoutSelectionViewController()
-        vc.nextClosure = { [weak self] next in
-            guard let self else { return }
-            if next {
-                LoginController.shared.phase = .importData
-                setContent(importViewController)
-            } else {
-                self.showPasswordManagerPage()
-            }
-        }
-        return vc
-    }()
-
-    private lazy var importViewController: ImportFromOtherBrowserViewController = {
-        let vc = ImportFromOtherBrowserViewController()
-        vc.onCompletion = { [weak self] in
+        vc.nextClosure = { [weak self] _ in
             guard let self else { return }
             self.showPasswordManagerPage()
-        }
-        vc.nextClosure = { [weak self] next in
-            guard let self else { return }
-            if !next {
-                self.showPasswordManagerPage()
-            }
         }
         return vc
     }()
@@ -73,8 +53,15 @@ class OnboardingWindowController: NSWindowController {
     private lazy var passwordManagerViewController: PasswordManagerViewController = {
         let vc = PasswordManagerViewController()
         vc.nextClosure = { [weak self] _ in
-            guard let self else { return }
-            self.finish()
+            self?.showNextStepPage()
+        }
+        return vc
+    }()
+
+    private lazy var nextStepViewController: NextStepViewController = {
+        let vc = NextStepViewController()
+        vc.nextClosure = { [weak self] _ in
+            self?.finish()
         }
         return vc
     }()
@@ -157,8 +144,8 @@ class OnboardingWindowController: NSWindowController {
 
     private func viewController(for phase: LoginController.Phase, credentials: Credentials?, isFirstPage: Bool) -> NSViewController {
         setNameViewController.isFisrtPage = false
-        importViewController.isFisrtPage = false
         passwordManagerViewController.isFisrtPage = false
+        nextStepViewController.isFisrtPage = false
 
         switch phase {
         case .login:
@@ -177,12 +164,12 @@ class OnboardingWindowController: NSWindowController {
             return welcomeViewController
         case .layoutSelection:
             return layoutSelectionViewController
-        case .importData:
-            importViewController.isFisrtPage = isFirstPage
-            return importViewController
         case .passwordManager:
             passwordManagerViewController.isFisrtPage = isFirstPage
             return passwordManagerViewController
+        case .nextStep:
+            nextStepViewController.isFisrtPage = isFirstPage
+            return nextStepViewController
         case .done:
             return loginViewController
         }
@@ -191,6 +178,11 @@ class OnboardingWindowController: NSWindowController {
     private func showPasswordManagerPage() {
         LoginController.shared.phase = .passwordManager
         setContent(passwordManagerViewController)
+    }
+
+    private func showNextStepPage() {
+        LoginController.shared.phase = .nextStep
+        setContent(nextStepViewController)
     }
 
     private func finish() {
