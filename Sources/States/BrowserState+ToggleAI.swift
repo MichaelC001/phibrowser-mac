@@ -14,12 +14,8 @@ extension BrowserState {
             ChromiumLauncher.sharedInstance().bridge?.disablePhiExtensions(false)
         }
         if enabled {
-            if !ApplicationState.shared.isGuest {
-                UserDefaults.standard.set(true, forKey: PhiPreferences.GeneralSettings.openNewTabPageOnCmdT.rawValue)
-            }
             updateSentinelRegistration(sentinelOnLogin)
         } else {
-            UserDefaults.standard.set(false, forKey: PhiPreferences.GeneralSettings.openNewTabPageOnCmdT.rawValue)
             Task {
                 await SentinelHelper.unregister()
             }
@@ -42,9 +38,9 @@ extension BrowserState {
     ///
     /// Only the disabled half needs re-asserting: `ExtensionsProxy::Init`
     /// already re-enables the Phi extensions when the Mac-side toggle is on.
-    /// The side effects of `onAIEnabledChanged` (Sentinel teardown, new tab
-    /// page preference, AI content teardown) belong to the toggle's edge and
-    /// are deliberately not repeated per window.
+    /// The side effects of `onAIEnabledChanged` (Sentinel teardown and AI
+    /// content teardown) belong to the toggle's edge and are deliberately not
+    /// repeated per window.
     ///
     /// Deferred one runloop turn: on the ordinary window path this runs inside
     /// `Browser::Create`, before the owning window controller finished

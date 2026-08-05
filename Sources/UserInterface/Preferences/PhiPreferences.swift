@@ -490,8 +490,6 @@ extension PhiPreferences {
 /// either settings view.
 enum GuestModePreferences {
     static let aiEnabledKey = PhiPreferences.AISettings.phiAIEnabled.rawValue
-    static let newTabPageKey =
-        PhiPreferences.GeneralSettings.openNewTabPageOnCmdT.rawValue
 
     @discardableResult
     static func disableAI(
@@ -500,13 +498,9 @@ enum GuestModePreferences {
         let didChange = defaults.bool(
             forKey: aiEnabledKey,
             default: PhiPreferences.AISettings.phiAIEnabled.defaultValue
-        ) || defaults.bool(
-            forKey: newTabPageKey,
-            default: PhiPreferences.GeneralSettings.openNewTabPageOnCmdT.defaultValue
         )
 
         defaults.set(false, forKey: aiEnabledKey)
-        defaults.set(false, forKey: newTabPageKey)
         return didChange
     }
 }
