@@ -651,6 +651,11 @@ struct SpacesStripView: View {
                         agentBadge(for: space.spaceId)
                             .offset(y: max(0, (rowHeight - Self.stripItemHeight) / 2))
                     }
+                    .overlay(alignment: .leading) {
+                        if isAgentGroupStart(index) {
+                            agentGroupDivider
+                        }
+                    }
                     .opacity(stripDraggingId == space.spaceId ? 0.5 : 1)
                     // `.clipped()` below is visual only — pips beyond the
                     // window would still swallow clicks/hovers aimed at the
@@ -713,6 +718,30 @@ struct SpacesStripView: View {
     /// Width of `count` uniform strip items plus the gaps between them.
     private func pipRowWidth(_ count: Int) -> CGFloat {
         count <= 0 ? 0 : CGFloat(count) * Self.stripItemWidth + CGFloat(count - 1) * Self.stripSpacing
+    }
+
+    /// True when the pip at `index` opens the agent-Space group — an agent pip
+    /// directly after a user pip — which draws the group divider on its
+    /// leading side. `SpaceManager` groups agent Spaces at the row's end, so
+    /// this holds for at most one pip in the settled order; mid-drag it tracks
+    /// the live rearrangement.
+    private func isAgentGroupStart(_ index: Int) -> Bool {
+        let spaces = stripOrderedSpaces
+        guard index > 0, index < spaces.count else { return false }
+        return spaces[index].isAnyAgentSpace && !spaces[index - 1].isAnyAgentSpace
+    }
+
+    /// Thin vertical rule splitting the strip into the user-Space and
+    /// agent-Space groups. Decorative only, drawn centered in the 4pt inter-pip
+    /// gap on the first agent pip's leading side — so the row's uniform-slot
+    /// arithmetic (`visiblePipCount`, viewport offsets, wheel steps) is
+    /// untouched.
+    private var agentGroupDivider: some View {
+        RoundedRectangle(cornerRadius: 0.5, style: .continuous)
+            .fill(Color(nsColor: .separatorColor))
+            .frame(width: 1, height: 14)
+            .offset(x: -(Self.stripSpacing + 1) / 2)
+            .allowsHitTesting(false)
     }
 
     /// `stripStartIndex` clamped so the window never runs past the end of the

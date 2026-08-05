@@ -1404,6 +1404,15 @@ extension SpaceModel {
         AgentSpaceManager.isAgentSpaceModel(
             name: name, iconName: iconName, colorHex: colorHex)
     }
+
+    /// True for any agent Space — ephemeral or persistent — matched by its
+    /// visual signature. The display-order grouping (agent Spaces after user
+    /// Spaces, with a divider between the groups) keys off this, so both kinds
+    /// land on the agent side of the divider.
+    var isAnyAgentSpace: Bool {
+        isAgentSpace || AgentSpaceManager.isPersistentAgentSpaceModel(
+            iconName: iconName, colorHex: colorHex)
+    }
 }
 
 // MARK: - Handoff prompt panel

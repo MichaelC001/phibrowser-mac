@@ -2075,6 +2075,11 @@ final class SpaceManager: ObservableObject {
                                  iconName: iconName,
                                  sortOrder: nextOrder))
         spaces.sort { lhs, rhs in
+            // Mirror `handleSpacesUpdate`'s agent-Space grouping first, so a
+            // user Space created while an agent Space lives appears before the
+            // agent group immediately — the same slot the reconciled emission
+            // puts it in.
+            if lhs.isAnyAgentSpace != rhs.isAnyAgentSpace { return !lhs.isAnyAgentSpace }
             if lhs.sortOrder != rhs.sortOrder { return lhs.sortOrder < rhs.sortOrder }
             if lhs.profileId != rhs.profileId { return lhs.profileId < rhs.profileId }
             return lhs.createdDate < rhs.createdDate
@@ -3968,6 +3973,16 @@ final class SpaceManager: ObservableObject {
         // row under an incognito id (never written by this code) from
         // shadowing a synthetic Space.
         var updated = storeSpaces.filter { !Self.isIncognitoSpaceId($0.spaceId) }
+        // Agent Spaces always trail user Spaces, whatever their stored
+        // sortOrder: agent Spaces are appended at the global max on creation,
+        // but a user Space created while one lives would otherwise land after
+        // it. Grouping here — the single point every surface's order flows
+        // through — keeps the strip, the switcher menus, and the ⌃-number
+        // bindings agreeing, and lets the strip draw one divider between the
+        // groups. Stable partition: each group keeps its stored order, and a
+        // reorder commit (which persists the displayed order) renumbers the
+        // store toward this arrangement rather than fighting it.
+        updated = updated.filter { !$0.isAnyAgentSpace } + updated.filter(\.isAnyAgentSpace)
         lastStoreSpaces = updated
         migrateLegacyFollowGlobalPinsIfNeeded(storeSpaces: updated)
         // Every live Incognito Space joins the list at its runtime position —
@@ -3980,7 +3995,12 @@ final class SpaceManager: ObservableObject {
         for descriptor in incognitoSpaces.sorted(by: {
             ($0.sortIndex ?? Int.max, $0.ordinal) < ($1.sortIndex ?? Int.max, $1.ordinal)
         }) {
-            let index = min(max(descriptor.sortIndex ?? updated.count, 0), updated.count)
+            // A new Incognito Space (no recorded position) joins after the
+            // user Spaces but before the agent group, so it never lands past
+            // the strip's agent divider. Recomputed per insert — an earlier
+            // default-positioned Incognito Space shifts the boundary.
+            let defaultIndex = updated.firstIndex(where: \.isAnyAgentSpace) ?? updated.count
+            let index = min(max(descriptor.sortIndex ?? defaultIndex, 0), updated.count)
             updated.insert(makeIncognitoSpace(descriptor: descriptor, sortOrder: index), at: index)
         }
         spaces = updated
