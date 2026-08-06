@@ -151,6 +151,10 @@ extension AuthManager {
 
     @MainActor
     func reauthenticateExpiredSession() async -> Bool {
+        if case .reauthenticating = reauthenticationState {
+            return false
+        }
+
         guard let details = reauthenticationState.requiredDetails else {
             return true
         }

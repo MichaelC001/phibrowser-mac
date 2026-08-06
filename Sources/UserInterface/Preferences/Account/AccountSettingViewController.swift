@@ -225,6 +225,11 @@ class AccountSettingViewController: NSViewController, SettingsPane {
                 LoginController.shared.showLoginWindow()
             }
         }
+        accountView.reauthenticationAction = {
+            Task { @MainActor in
+                _ = await AuthManager.shared.reauthenticateExpiredSession()
+            }
+        }
 
         updateAccessPresentation()
     }
@@ -1235,6 +1240,7 @@ class AccountCardView: SettingItemBackgroundView {
     var onAvatarEdit: (() -> Void)?
     var logoutAction: (() -> Void)?
     var loginAction: (() -> Void)?
+    var reauthenticationAction: (() -> Void)?
 
     private var isAvatarHovered = false
     private var isNameHovered = false
@@ -1481,6 +1487,7 @@ class AccountCardView: SettingItemBackgroundView {
             loadingIndicator.startAnimation(nil)
             loadingIndicator.isHidden = false
             logoutButton.isHidden = true
+            loginButton.isHidden = true
             nameLabel.isHidden = true
             emailLabel.isHidden = true
             logoutStatusLabel.isHidden = true
@@ -1488,8 +1495,7 @@ class AccountCardView: SettingItemBackgroundView {
         } else {
             loadingIndicator.stopAnimation(nil)
             loadingIndicator.isHidden = true
-            logoutButton.isHidden = false
-            loginButton.isHidden = true
+            updateActionButtonVisibility()
             nameLabel.isHidden = false
             emailLabel.isHidden = false
             updateStatusLineVisibility()
@@ -1498,6 +1504,7 @@ class AccountCardView: SettingItemBackgroundView {
 
     func updateReauthenticationWarning(isVisible: Bool) {
         showsReauthenticationWarning = isVisible
+        updateActionButtonVisibility()
         updateStatusLineVisibility()
     }
 
@@ -1566,6 +1573,12 @@ class AccountCardView: SettingItemBackgroundView {
         logoutButton.isEnabled = !isInProgress
         logoutButton.alphaValue = isInProgress ? 0.5 : 1.0
         updateStatusLineVisibility()
+    }
+
+    private func updateActionButtonVisibility() {
+        guard !isGuestPresentation, loadingIndicator.isHidden else { return }
+        logoutButton.isHidden = showsReauthenticationWarning
+        loginButton.isHidden = !showsReauthenticationWarning
     }
 
     private func updateStatusLineVisibility() {
@@ -1739,7 +1752,11 @@ class AccountCardView: SettingItemBackgroundView {
     }
 
     @objc private func loginTapped() {
-        loginAction?()
+        if showsReauthenticationWarning {
+            reauthenticationAction?()
+        } else {
+            loginAction?()
+        }
     }
 }
 
