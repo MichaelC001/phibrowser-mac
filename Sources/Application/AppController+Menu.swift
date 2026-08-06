@@ -42,6 +42,216 @@ enum ChromiumMainMenuRole: Int {
     }
 }
 
+private final class SpaceThemeEditorPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
+}
+
+private final class SpaceThemeEditorPanelDragView: NSView {
+    override func mouseDown(with event: NSEvent) {
+        window?.performDrag(with: event)
+    }
+}
+
+private enum SpaceThemeEditorPanelPlacement {
+    case nearTrigger(NSPoint)
+    case windowTop
+}
+
+private final class SpaceThemeEditorMenuContext {
+    weak var browserState: BrowserState?
+    let placement: SpaceThemeEditorPanelPlacement
+
+    init(browserState: BrowserState?, placement: SpaceThemeEditorPanelPlacement) {
+        self.browserState = browserState
+        self.placement = placement
+    }
+}
+
+@MainActor
+private final class SpaceThemeEditorPanelPresenter {
+    static let shared = SpaceThemeEditorPanelPresenter()
+
+    private weak var parentWindow: NSWindow?
+    private var panel: SpaceThemeEditorPanel?
+    private var localEventMonitor: Any?
+    private var resignActiveObserver: NSObjectProtocol?
+
+    func present(
+        spaceId: String,
+        from window: NSWindow,
+        placement: SpaceThemeEditorPanelPlacement,
+        themeSource: ThemeStateProvider
+    ) {
+        dismiss()
+
+        let contentSize = SpaceThemeEditorView.contentSize
+        let panel = SpaceThemeEditorPanel(
+            contentRect: NSRect(origin: .zero, size: contentSize),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
+        panel.isFloatingPanel = true
+        panel.hidesOnDeactivate = false
+        panel.becomesKeyOnlyIfNeeded = true
+        panel.isMovable = true
+        panel.isMovableByWindowBackground = true
+        panel.collectionBehavior = [.transient, .fullScreenAuxiliary]
+        panel.contentViewController = ThemedHostingController(
+            rootView: SpaceThemeEditorView(spaceId: spaceId) { [weak self] in
+                self?.dismiss()
+            },
+            themeSource: themeSource
+        )
+        panel.setContentSize(contentSize)
+        if let contentView = panel.contentView {
+            let dragView = SpaceThemeEditorPanelDragView()
+            dragView.translatesAutoresizingMaskIntoConstraints = false
+            contentView.addSubview(dragView)
+            NSLayoutConstraint.activate([
+                dragView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+                dragView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+                dragView.topAnchor.constraint(equalTo: contentView.topAnchor),
+                dragView.heightAnchor.constraint(equalToConstant: 8),
+            ])
+        }
+        self.panel = panel
+        parentWindow = window
+
+        // NSMenu actions run inside AppKit's modal event-tracking loop. Wait
+        // until the menu has closed before ordering the child panel above its
+        // browser window.
+        DispatchQueue.main.async { [weak self, weak window, weak panel] in
+            guard let self,
+                  let window,
+                  let panel,
+                  self.panel === panel,
+                  window.isVisible else { return }
+
+            let origin = self.initialOrigin(
+                panelSize: panel.frame.size,
+                placement: placement,
+                window: window
+            )
+            panel.setFrameOrigin(origin)
+            window.addChildWindow(panel, ordered: .above)
+            panel.orderFront(nil)
+            self.installDismissMonitors()
+        }
+    }
+
+    private func initialOrigin(
+        panelSize: NSSize,
+        placement: SpaceThemeEditorPanelPlacement,
+        window: NSWindow
+    ) -> NSPoint {
+        let margin: CGFloat = 8
+
+        switch placement {
+        case .windowTop:
+            let visibleFrame = window.screen?.visibleFrame ?? window.frame
+            let topInset: CGFloat = 12
+            let x = min(
+                max(
+                    window.frame.midX - panelSize.width / 2,
+                    visibleFrame.minX + margin
+                ),
+                visibleFrame.maxX - panelSize.width - margin
+            )
+            let y = min(
+                max(
+                    window.frame.maxY - panelSize.height - topInset,
+                    visibleFrame.minY + margin
+                ),
+                visibleFrame.maxY - panelSize.height - margin
+            )
+            return NSPoint(x: x, y: y)
+
+        case let .nearTrigger(triggerScreenPoint):
+            let screen = NSScreen.screens.first { $0.frame.contains(triggerScreenPoint) }
+                ?? window.screen
+            let visibleFrame = screen?.visibleFrame ?? window.frame
+            let gap: CGFloat = 12
+
+            var x = triggerScreenPoint.x + gap
+            if x + panelSize.width > visibleFrame.maxX - margin {
+                x = triggerScreenPoint.x - panelSize.width - gap
+            }
+
+            var y = triggerScreenPoint.y - panelSize.height - gap
+            if y < visibleFrame.minY + margin {
+                y = triggerScreenPoint.y + gap
+            }
+
+            x = min(
+                max(x, visibleFrame.minX + margin),
+                visibleFrame.maxX - panelSize.width - margin
+            )
+            y = min(
+                max(y, visibleFrame.minY + margin),
+                visibleFrame.maxY - panelSize.height - margin
+            )
+            return NSPoint(x: x, y: y)
+        }
+    }
+
+    func dismiss() {
+        removeDismissMonitors()
+        if let panel {
+            parentWindow?.removeChildWindow(panel)
+            panel.orderOut(nil)
+        }
+        panel = nil
+        parentWindow = nil
+    }
+
+    private func installDismissMonitors() {
+        let mouseEvents: NSEvent.EventTypeMask = [
+            .leftMouseDown,
+            .rightMouseDown,
+            .otherMouseDown,
+        ]
+        localEventMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: mouseEvents.union(.keyDown)
+        ) { [weak self] event in
+            guard let self, let panel = self.panel else { return event }
+            if event.type == .keyDown, event.keyCode == 53 {
+                self.dismiss()
+            } else if (event.type == .leftMouseDown
+                        || event.type == .rightMouseDown
+                        || event.type == .otherMouseDown),
+                      event.window !== panel {
+                self.dismiss()
+            }
+            return event
+        }
+        resignActiveObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didResignActiveNotification,
+            object: NSApp,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.dismiss()
+            }
+        }
+    }
+
+    private func removeDismissMonitors() {
+        if let localEventMonitor {
+            NSEvent.removeMonitor(localEventMonitor)
+            self.localEventMonitor = nil
+        }
+        if let resignActiveObserver {
+            NotificationCenter.default.removeObserver(resignActiveObserver)
+            self.resignActiveObserver = nil
+        }
+    }
+}
+
 extension AppController {
     static let extensionInfoItemTag = 500002
     static let exportLogsItemTag = 500011
@@ -1147,12 +1357,20 @@ extension AppController {
     /// `installOrUpdateSpacesMenu` after a main-menu swap and from
     /// `menuWillOpen` so each open reflects the current Spaces list and the
     /// active Space of the focused window.
-    /// Appends the active-Space actions (Rename, Change Icon, Edit Theme,
-    /// Change Profile) to `menu`, so other context menus — e.g. the sidebar /
-    /// tab-area menu — can offer the same Space controls as the Spaces menu.
+    /// Appends the active-Space actions (Rename, Edit Theme, Change Profile,
+    /// plus Change Icon when multiple Spaces exist) to `menu`, so other context
+    /// menus — e.g. the sidebar / tab-area menu — can offer the same Space
+    /// controls as the Spaces menu.
     /// Items target the controller and act on the currently active Space.
-    func appendActiveSpaceMenuItems(to menu: NSMenu) {
-        let activeSpace = currentActiveSpace()
+    func appendActiveSpaceMenuItems(
+        to menu: NSMenu,
+        browserState: BrowserState? = nil,
+        triggerScreenPoint: NSPoint? = nil
+    ) {
+        let targetSlot = browserState?.windowController?.slot ?? currentSpacesSlot()
+        let activeSpaceId = targetSlot?.activeSpaceId ?? SpaceManager.shared.activeSpaceId
+        let activeSpace = SpaceManager.shared.spaces.first { $0.spaceId == activeSpaceId }
+        let showsChangeIconItem = SpaceManager.shared.spaces.count > 1
 
         let newSpaceItem = NSMenuItem(
             title: NSLocalizedString("app.activeSpaceContextMenu.newSpaceAction", value: "New Space\u{2026}", comment: "Active Space context menu - Create a new Space"),
@@ -1170,21 +1388,32 @@ extension AppController {
         renameItem.target = self
         menu.addItem(renameItem)
 
-        let changeIconItem = NSMenuItem(
-            title: NSLocalizedString("app.tabAreaMenu.changeIcon", value: "Change Icon\u{2026}", comment: "Tab-area menu - opens the icon/emoji picker below the active Space's icon"),
-            action: #selector(requestActiveSpaceIconPicker(_:)),
-            keyEquivalent: ""
-        )
-        changeIconItem.target = self
-        menu.addItem(changeIconItem)
+        let changeIconItem: NSMenuItem?
+        if showsChangeIconItem {
+            let item = NSMenuItem(
+                title: NSLocalizedString("app.tabAreaMenu.changeIcon", value: "Change Icon\u{2026}", comment: "Tab-area menu - opens the icon/emoji picker below the active Space's icon"),
+                action: #selector(requestActiveSpaceIconPicker(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            menu.addItem(item)
+            changeIconItem = item
+        } else {
+            changeIconItem = nil
+        }
 
-        let editThemeParent = NSMenuItem(
-            title: NSLocalizedString("app.activeSpaceContextMenu.themeSubmenuTitle", value: "Edit Theme", comment: "Active Space context menu - Submenu to set a theme override for the active Space"),
-            action: nil,
+        let editThemeItem = NSMenuItem(
+            title: NSLocalizedString("app.activeSpaceContextMenu.themeSubmenuTitle", value: "Edit Theme", comment: "Active Space context menu - opens the theme editor for the active Space"),
+            action: #selector(requestActiveSpaceThemeEditor(_:)),
             keyEquivalent: ""
         )
-        editThemeParent.submenu = makeSpacesThemeSubmenu(for: activeSpace?.spaceId)
-        menu.addItem(editThemeParent)
+        editThemeItem.target = self
+        editThemeItem.representedObject = SpaceThemeEditorMenuContext(
+            browserState: browserState,
+            placement: triggerScreenPoint.map(SpaceThemeEditorPanelPlacement.nearTrigger)
+                ?? .windowTop
+        )
+        menu.addItem(editThemeItem)
 
         let changeProfileParent = NSMenuItem(
             title: NSLocalizedString("app.activeSpaceContextMenu.profileSubmenuTitle", value: "Change Profile", comment: "Active Space context menu - Submenu to re-bind the active Space to another profile"),
@@ -1221,7 +1450,8 @@ extension AppController {
         // mutate its workspace. New Space is left enabled (it doesn't touch the
         // agent Space).
         if focusedSpaceIsAgentControlled() {
-            [renameItem, changeIconItem, editThemeParent, changeProfileParent, deleteSpaceItem]
+            [renameItem, changeIconItem, editThemeItem, changeProfileParent, deleteSpaceItem]
+                .compactMap { $0 }
                 .forEach(Self.disableAgentLockedMenuItem)
         } else if focusedSpaceIsAgentSpace() {
             // The user took control, so most edits are allowed again — but
@@ -1354,6 +1584,7 @@ extension AppController {
         menu.removeAllItems()
         let activeSpace = currentActiveSpace()
         let activeSpaceId = activeSpace?.spaceId
+        let showsChangeIconItem = SpaceManager.shared.spaces.count > 1
 
         let newSpaceItem = NSMenuItem(
             title: NSLocalizedString("app.spacesMenu.newSpace", value: "New Space\u{2026}", comment: "Spaces menu - Create a new Space"),
@@ -1373,22 +1604,32 @@ extension AppController {
         renameItem.target = self
         menu.addItem(renameItem)
 
-        let changeIconItem = NSMenuItem(
-            title: NSLocalizedString("app.spacesMenu.changeIcon", value: "Change Icon\u{2026}", comment: "Spaces menu - opens the icon/emoji picker below the active Space's icon"),
-            action: #selector(requestActiveSpaceIconPicker(_:)),
-            keyEquivalent: ""
-        )
-        changeIconItem.target = self
-        menu.addItem(changeIconItem)
+        let changeIconItem: NSMenuItem?
+        if showsChangeIconItem {
+            let item = NSMenuItem(
+                title: NSLocalizedString("app.spacesMenu.changeIcon", value: "Change Icon\u{2026}", comment: "Spaces menu - opens the icon/emoji picker below the active Space's icon"),
+                action: #selector(requestActiveSpaceIconPicker(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            menu.addItem(item)
+            changeIconItem = item
+        } else {
+            changeIconItem = nil
+        }
 
-        let editThemeParent = NSMenuItem(
-            title: NSLocalizedString("app.spacesMenu.changeTheme", value: "Edit Theme", comment: "Spaces menu - Submenu to set a theme override for the active Space"),
-            action: nil,
+        let editThemeItem = NSMenuItem(
+            title: NSLocalizedString("app.spacesMenu.changeTheme", value: "Edit Theme", comment: "Spaces menu - opens the theme editor for the active Space"),
+            action: #selector(requestActiveSpaceThemeEditor(_:)),
             keyEquivalent: ""
         )
-        editThemeParent.tag = AppController.spacesChangeThemeParentTag
-        editThemeParent.submenu = makeSpacesThemeSubmenu(for: activeSpaceId)
-        menu.addItem(editThemeParent)
+        editThemeItem.tag = AppController.spacesChangeThemeParentTag
+        editThemeItem.target = self
+        editThemeItem.representedObject = SpaceThemeEditorMenuContext(
+            browserState: nil,
+            placement: .windowTop
+        )
+        menu.addItem(editThemeItem)
 
         let changeProfileParent = NSMenuItem(
             title: NSLocalizedString("app.spacesMenu.changeProfile", value: "Change Profile", comment: "Spaces menu - Submenu to re-bind the active Space to another profile"),
@@ -1412,7 +1653,8 @@ extension AppController {
         // mutate its workspace (mirrors the tab-area context menu). New Space
         // and the Next/Previous switchers below stay enabled.
         if focusedSpaceIsAgentControlled() {
-            [renameItem, changeIconItem, editThemeParent, changeProfileParent, deleteSpaceItem]
+            [renameItem, changeIconItem, editThemeItem, changeProfileParent, deleteSpaceItem]
+                .compactMap { $0 }
                 .forEach(Self.disableAgentLockedMenuItem)
         } else if focusedSpaceIsAgentSpace() {
             // Change Profile stays disabled for an agent Space even after the
@@ -1499,26 +1741,6 @@ extension AppController {
         deleteProfileParent.submenu = deleteSubmenu
         menu.addItem(deleteProfileParent)
         rebuildDeleteProfileSubmenu(deleteSubmenu)
-    }
-
-
-    private func makeSpacesThemeSubmenu(for spaceId: String?) -> NSMenu {
-        let menu = NSMenu(title: NSLocalizedString("app.spacesMenu.themeSubmenu.title", value: "Edit Theme", comment: "Spaces menu - Theme submenu title for the active Space"))
-        let pinnedId = spaceId.map { SpaceManager.shared.resolvedThemeId(forSpaceId: $0) }
-
-        for theme in ThemeManager.shared.orderedThemes {
-            let item = NSMenuItem(
-                title: theme.name,
-                action: #selector(selectSpaceTheme(_:)),
-                keyEquivalent: ""
-            )
-            item.target = self
-            item.representedObject = theme.id
-            item.state = (pinnedId == theme.id) ? .on : .off
-            item.image = .themeColorSwatch(for: theme)
-            menu.addItem(item)
-        }
-        return menu
     }
 
     private func makeSpacesProfileSubmenu(for space: SpaceModel?) -> NSMenu {
@@ -1639,11 +1861,22 @@ extension AppController {
         currentSpacesSlot()?.requestIconPicker()
     }
 
-    @objc func selectSpaceTheme(_ sender: Any?) {
-        guard let menuItem = sender as? NSMenuItem,
-              let space = currentActiveSpace(),
-              let themeId = menuItem.representedObject as? String else { return }
-        SpaceManager.shared.setTheme(forSpaceId: space.spaceId, themeId: themeId)
+    /// Opens the active Space's theme editor from the targeted browser window.
+    /// Presentation is deferred until menu tracking ends.
+    @MainActor @objc func requestActiveSpaceThemeEditor(_ sender: Any?) {
+        let context = (sender as? NSMenuItem)?.representedObject as? SpaceThemeEditorMenuContext
+        let browserState = context?.browserState
+        let slot = browserState?.windowController?.slot ?? currentSpacesSlot()
+        guard let spaceId = slot?.activeSpaceId,
+              let controller = browserState?.windowController ?? slot?.visibleController,
+              let window = controller.window else { return }
+
+        SpaceThemeEditorPanelPresenter.shared.present(
+            spaceId: spaceId,
+            from: window,
+            placement: context?.placement ?? .windowTop,
+            themeSource: controller.browserState.themeContext
+        )
     }
 
     @objc func selectSpaceProfile(_ sender: Any?) {
@@ -2014,7 +2247,7 @@ extension AppController {
             #selector(newSpaceFromMenu(_:)),
             #selector(renameActiveSpace(_:)),
             #selector(requestActiveSpaceIconPicker(_:)),
-            #selector(selectSpaceTheme(_:)),
+            #selector(requestActiveSpaceThemeEditor(_:)),
             #selector(selectSpaceProfile(_:)),
             #selector(deleteActiveSpace(_:)),
             #selector(closeIncognitoSpaceFromMenu(_:)),
@@ -2041,7 +2274,9 @@ extension AppController {
                SpaceManager.isIncognitoSpaceId(activeId) {
                 return false
             }
-            if action == #selector(renameActiveSpace(_:)) || action == #selector(requestActiveSpaceIconPicker(_:)) {
+            if action == #selector(renameActiveSpace(_:))
+                || action == #selector(requestActiveSpaceIconPicker(_:))
+                || action == #selector(requestActiveSpaceThemeEditor(_:)) {
                 return currentActiveSpace() != nil
             }
             if action == #selector(deleteActiveSpace(_:)) {
@@ -2049,17 +2284,6 @@ extension AppController {
                 // shared with the legacy per-profile root.
                 guard let space = currentActiveSpace() else { return false }
                 return space.spaceId != LocalStore.defaultSpaceId
-            }
-            if action == #selector(selectSpaceTheme(_:)) {
-                guard currentActiveSpace() != nil else { return false }
-                if let menuItem = item as? NSMenuItem {
-                    let pinnedId = currentActiveSpace().map {
-                        SpaceManager.shared.resolvedThemeId(forSpaceId: $0.spaceId)
-                    }
-                    let representedId = menuItem.representedObject as? String
-                    menuItem.state = (pinnedId == representedId) ? .on : .off
-                }
-                return true
             }
             if action == #selector(selectSpaceProfile(_:)) {
                 // The default space's profile can't change — its bookmark

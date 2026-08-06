@@ -55,6 +55,9 @@ import PostHog
     private var pendingOpenURLsAwaitingBrowserAccess: [URL] = []
     /// Cached in `applicationWillFinishLaunching`; weak — owned by `ChromiumLauncher`, not AppController.
     private weak var chromiumBridge: (any PhiChromiumBridgeProtocol)?
+    /// Tracks whether PostHog was initialized so the settings snapshot can be
+    /// captured after browser access resolves and account-scoped settings are available.
+    private var isPostHogConfigured = false
 
     override init() {
         super.init()
@@ -98,6 +101,9 @@ import PostHog
         //        ASWebAuthenticationSessionWebBrowserSessionManager.shared.sessionHandler = self
         
         ChromiumLauncher.sharedInstance().bridge?.applicationDidFinishLaunching(notification)
+        if isPostHogConfigured {
+            captureUserDefaultsSnapshot()
+        }
         SentinelTelemetryConsentPublisher.shared.start()
         
         //        ASWebAuthenticationSessionWebBrowserSessionManager.shared.sessionHandler = self
@@ -201,7 +207,7 @@ import PostHog
                 return event
             }
             PostHogSDK.shared.setup(postHogConfig)
-            captureUserDefaultsSnapshot()
+            isPostHogConfigured = true
         } else {
             AppLogInfo("PostHog: project token or host not set in PostHogConfig.generated.swift; skipping init")
         }

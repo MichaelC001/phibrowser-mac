@@ -1,6 +1,6 @@
 # Analytics
 
-Last updated: 2026-08-04
+Last updated: 2026-08-06
 
 Phi Browser emits product analytics to both [Countly](https://phi-browser-eaade70cfd902.flex.countly.com) (legacy) and [PostHog](https://us.posthog.com/project/385742) (current). Both pipelines run side-by-side; PostHog is the forward-looking source of truth.
 
@@ -96,7 +96,7 @@ All custom events are snake_case. Events prefixed `$` are auto-captured by the S
 | `connector_status` | Snapshot of each AI connector's connected/disconnected state, fired on refresh | `Preferences/AISettings/AISettingsConnectorViewModel.swift` |
 | `ai_chat_page_opened` | AI Chat page became visible | `Chat/AIChatViewController.swift` |
 | `ai_chat_page_viewed` | Fires on AI Chat page close, with `duration_seconds` dwell time | `Chat/AIChatViewController.swift` |
-| `user_defaults_snapshot` | Launch-time snapshot of new-tab behavior, layout mode, appearance, default browser, proactive suggestions, and automatic current-tab context | `Application/AppControlle+LaunchInfo.swift` |
+| `user_defaults_snapshot` | Launch-time snapshot of new-tab behavior, layout mode, appearance, active theme, pinned-tab scope, AI enablement, default browser, proactive suggestions, and automatic current-tab context | `Application/AppControlle+LaunchInfo.swift` |
 
 Naming rule: **don't reuse PostHog-reserved names** (anything starting with `$`, or that collides with SDK-auto events like "app installed"). For features that could be ambiguous with app-level concepts (e.g. downloads), prefix with the feature scope (`file_download_*`, not `download_*`).
 
