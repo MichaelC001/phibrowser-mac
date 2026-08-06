@@ -151,6 +151,112 @@ final class PhiAlertTests: XCTestCase {
         XCTAssertEqual(returnedResponse, .OK)
     }
 
+    func testNonModalPresentationAttachesThePanelToTheParentWindow() throws {
+        let parentWindow = makeParentWindow()
+
+        let presenter = presentNonModalAlert(over: parentWindow)
+
+        XCTAssertTrue(presenter.isPresented)
+        let panel = try XCTUnwrap(parentWindow.childWindows?.first)
+        XCTAssertTrue(panel.isVisible)
+
+        presenter.dismiss(.cancel)
+    }
+
+    func testNonModalPresentationLeavesTheParentWindowUnblocked() {
+        let parentWindow = makeParentWindow()
+
+        let presenter = presentNonModalAlert(over: parentWindow)
+
+        XCTAssertNil(parentWindow.attachedSheet)
+
+        presenter.dismiss(.cancel)
+    }
+
+    func testNonModalPanelIsCenteredOnTheParentContentArea() throws {
+        let parentWindow = makeParentWindow()
+        let contentRect = parentWindow.contentRect(
+            forFrameRect: parentWindow.frame
+        )
+
+        let presenter = presentNonModalAlert(over: parentWindow)
+
+        let panel = try XCTUnwrap(parentWindow.childWindows?.first)
+        XCTAssertEqual(panel.frame.midX, contentRect.midX, accuracy: 1)
+        XCTAssertEqual(panel.frame.midY, contentRect.midY, accuracy: 1)
+
+        presenter.dismiss(.cancel)
+    }
+
+    func testNonModalPanelKeepsTheAlertWidth() throws {
+        let parentWindow = makeParentWindow()
+
+        let presenter = presentNonModalAlert(over: parentWindow)
+
+        let panel = try XCTUnwrap(parentWindow.childWindows?.first)
+        XCTAssertEqual(panel.frame.width, PhiAlertLayout.width, accuracy: 0.5)
+
+        presenter.dismiss(.cancel)
+    }
+
+    func testNonModalDismissalDetachesThePanelAndReturnsTheResponse() {
+        let parentWindow = makeParentWindow()
+        var returnedResponse: NSApplication.ModalResponse?
+
+        let presenter = presentNonModalAlert(over: parentWindow) {
+            returnedResponse = $0
+        }
+        presenter.dismiss(.OK)
+
+        XCTAssertFalse(presenter.isPresented)
+        XCTAssertEqual(returnedResponse, .OK)
+        XCTAssertEqual(parentWindow.childWindows?.count ?? 0, 0)
+    }
+
+    func testClosingTheParentWindowRunsTheCompletionExactlyOnce() {
+        let parentWindow = makeParentWindow()
+        var dismissalCount = 0
+
+        let presenter = presentNonModalAlert(over: parentWindow) { _ in
+            dismissalCount += 1
+        }
+        parentWindow.close()
+
+        XCTAssertEqual(dismissalCount, 1)
+        XCTAssertFalse(presenter.isPresented)
+        XCTAssertEqual(parentWindow.childWindows?.count ?? 0, 0)
+    }
+
+    func testBringingToFrontDoesNothingWithoutAPresentedAlert() {
+        let parentWindow = makeParentWindow()
+        let presenter = presentNonModalAlert(over: parentWindow)
+        presenter.dismiss(.cancel)
+
+        presenter.bringToFront()
+
+        XCTAssertFalse(presenter.isPresented)
+        XCTAssertEqual(parentWindow.childWindows?.count ?? 0, 0)
+    }
+
+    /// Window ordering is asserted through visibility rather than
+    /// `NSApp.orderedWindows`, which depends on the test host being the
+    /// active application. Hiding the parent hides its panel with it, so a
+    /// visible panel afterwards is what recall has to deliver.
+    func testBringingToFrontRecallsAPanelHiddenWithItsParentWindow() throws {
+        let parentWindow = makeParentWindow()
+        let presenter = presentNonModalAlert(over: parentWindow)
+        let panel = try XCTUnwrap(parentWindow.childWindows?.first)
+        parentWindow.orderOut(nil)
+        XCTAssertFalse(panel.isVisible)
+
+        presenter.bringToFront()
+
+        XCTAssertTrue(parentWindow.isVisible)
+        XCTAssertTrue(panel.isVisible)
+
+        presenter.dismiss(.cancel)
+    }
+
     func testAppKitConfigurationModelsOneTwoAndThreeActionLayouts() {
         let icon = NSImage(size: NSSize(width: 30, height: 35))
         let leading = PhiAlertAppKitAction(
@@ -422,6 +528,30 @@ final class PhiAlertTests: XCTestCase {
         )
 
         XCTAssertEqual(response, expectedResponse)
+    }
+
+    private func makeParentWindow() -> NSWindow {
+        let window = NSWindow(
+            contentRect: CGRect(x: 100, y: 100, width: 800, height: 600),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        // These tests close the window themselves, so ARC keeps ownership.
+        window.isReleasedWhenClosed = false
+        return window
+    }
+
+    @discardableResult
+    private func presentNonModalAlert(
+        over parentWindow: NSWindow,
+        onDismiss: ((NSApplication.ModalResponse) -> Void)? = nil
+    ) -> PhiAlertPresenter {
+        parentWindow.presentPhiAlertNonModally(onDismiss: onDismiss) { dismiss in
+            makeAlert(message: "Non-modal") {
+                dismiss(.OK)
+            }
+        }
     }
 
     private func makeHostingController(

@@ -14,11 +14,11 @@ final class AccountDeletionController {
     static let shared = AccountDeletionController()
 
     private let coordinator = AccountDeletionCoordinator()
-    private var isPresentingWarning = false
+    private var warningPresenter: PhiAlertPresenter?
     private var flowPresenter: PhiAlertPresenter?
 
     var isFlowActive: Bool {
-        isPresentingWarning || flowPresenter != nil
+        warningPresenter != nil || flowPresenter != nil
     }
 
     private init() {}
@@ -27,16 +27,20 @@ final class AccountDeletionController {
     /// Confirming presents the flow dialog and sends the deletion request;
     /// cancelling leaves no trace, so the entry point stays usable.
     func start() {
-        guard !isPresentingWarning else {
-            AppLogInfo("🗑️ [AccountDeletion] Warning already on screen, ignoring request")
+        // The panels are non-modal, so one can end up behind another window.
+        // A second click recalls the panel rather than doing nothing.
+        if let warningPresenter {
+            AppLogInfo("🗑️ [AccountDeletion] Warning already on screen, bringing it forward")
+            warningPresenter.bringToFront()
             return
         }
 
         // One flow at a time: another settings tab (or a double click) must
         // not stack a second dialog. The coordinator additionally guards the
         // network side, but the first dialog keeps the screen.
-        guard flowPresenter == nil else {
-            AppLogInfo("🗑️ [AccountDeletion] Flow dialog already on screen, ignoring request")
+        if let flowPresenter {
+            AppLogInfo("🗑️ [AccountDeletion] Flow dialog already on screen, bringing it forward")
+            flowPresenter.bringToFront()
             return
         }
         guard !AccountDataExportController.shared.isFlowActive else {
@@ -56,9 +60,10 @@ final class AccountDeletionController {
             return
         }
 
-        isPresentingWarning = true
-        window.presentPhiAlert(warningConfiguration(email: email)) { [weak self] response in
-            self?.isPresentingWarning = false
+        warningPresenter = window.presentPhiAlertNonModally(
+            warningConfiguration(email: email)
+        ) { [weak self] response in
+            self?.warningPresenter = nil
             guard response == .alertFirstButtonReturn else {
                 AppLogInfo("🗑️ [AccountDeletion] Cancelled at the warning")
                 return
@@ -83,7 +88,7 @@ final class AccountDeletionController {
             viewState?.state = state
         }
 
-        flowPresenter = window.presentPhiAlert(onDismiss: { [weak self] _ in
+        flowPresenter = window.presentPhiAlertNonModally(onDismiss: { [weak self] _ in
             guard let self else { return }
             self.flowPresenter = nil
             self.coordinator.onStateChange = nil
@@ -144,9 +149,9 @@ final class AccountDeletionController {
     }
 
     /// The deletion entry point lives in a settings tab, so the browser window
-    /// hosting it is the sheet's parent. The active browser window comes
+    /// hosting it is the panel's parent. The active browser window comes
     /// first: at click time some floating panel can happen to be key, and the
-    /// sheet must not attach to it.
+    /// alert must not attach to it.
     private var alertParentWindow: NSWindow? {
         MainBrowserWindowControllersManager.shared.activeWindowController?.window
             ?? NSApp.keyWindow
