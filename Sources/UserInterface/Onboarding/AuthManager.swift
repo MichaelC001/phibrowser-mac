@@ -271,18 +271,38 @@ class AuthManager {
     private(set) var currentCredentials: Credentials?
 
     private let accountDeletionStateLock = NSLock()
-    private var accountDeletionInProgress = false
+    /// Set while `finalizeDeletion` runs in this process. The sequence always
+    /// ends in a force quit, so this is never observed after a relaunch.
+    private var accountDeletionFinalizationRunning = false
+    /// Mirrors the durable credential fence: armed at launch whenever the
+    /// marker outlived a deletion, cleared only by an explicit replacement
+    /// login. Unlike the flag above it can stay set indefinitely.
+    private var accountDeletionCredentialFenceArmed = false
     private var accountDeletionReplacementLoginToken: UUID?
     private var accountDeletionHoldsSharedTokenLock = false
     private let accountDeletionCredentialFence = AccountDeletionCredentialFence.currentProduct
     private var accountDeletionFenceAwaitingExplicitLogin = false
 
+    /// True whenever a credential path must stay fenced, for either reason.
     var isAccountDeletionInProgress: Bool {
         accountDeletionStateLock.lock()
         defer { accountDeletionStateLock.unlock() }
-        return accountDeletionInProgress
+        return isAccountDeletionFenceActiveLocked
     }
-    
+
+    /// Narrower gate for browser-access choices that write no credentials.
+    /// Only the running finalize blocks them: the durable fence outlives the
+    /// deletion, and Guest entry clears the fenced credentials on its own.
+    var blocksGuestModeEntry: Bool {
+        accountDeletionStateLock.lock()
+        defer { accountDeletionStateLock.unlock() }
+        return accountDeletionFinalizationRunning
+    }
+
+    private var isAccountDeletionFenceActiveLocked: Bool {
+        accountDeletionFinalizationRunning || accountDeletionCredentialFenceArmed
+    }
+
     let browserAuthCallbackQueue = DispatchQueue(label: "com.phi.auth.browser-callback")
     var pendingBrowserAuthCallback: ((URL) -> Void)?
     var pendingBrowserAuthCallbackToken: UUID?
@@ -414,7 +434,7 @@ class AuthManager {
             return
         }
 
-        setAccountDeletionInProgress(true)
+        setAccountDeletionCredentialFenceArmed(true)
         accountDeletionFenceAwaitingExplicitLogin = true
         let storesCleared = clearCredentialStores(postSharedTokenChange: true)
         if storesCleared {
@@ -485,7 +505,7 @@ class AuthManager {
                     return .failure(CancellationError())
                 }
                 accountDeletionFenceAwaitingExplicitLogin = false
-                setAccountDeletionInProgress(false)
+                setAccountDeletionCredentialFenceArmed(false)
             }
 
             guard !isAccountDeletionInProgress else {
@@ -621,24 +641,28 @@ class AuthManager {
     /// the account identity is still present, then performs the silent clear.
     @MainActor
     func beginAccountDeletionFinalization() -> Bool {
-        setAccountDeletionInProgress(true)
+        setAccountDeletionFinalizationRunning(true)
         clearAccountDeletionReplacementLoginToken()
         guard SharedTokenLock.shared.lockWithTimeout(5) else {
             // Roll back the in-progress flag: the preflight aborts before any
             // durable fence is written, and the coordinator restores its state
             // for a retry, so leaving the flag set would fence every credential
             // path (login/renew/token access) for the rest of the session.
-            setAccountDeletionInProgress(false)
+            setAccountDeletionFinalizationRunning(false)
             AppLogError("[AccountDeletion] Failed to acquire the shared-token lock")
             return false
         }
         let fenceActivated = accountDeletionCredentialFence.activate()
         guard fenceActivated else {
             SharedTokenLock.shared.unlock()
-            setAccountDeletionInProgress(false)
+            setAccountDeletionFinalizationRunning(false)
             AppLogError("[AccountDeletion] Failed to persist the credential fence")
             return false
         }
+        // Keep the in-memory mirror in step with the marker that was just
+        // written, so the fence survives in state even though this sequence
+        // normally ends in a force quit.
+        setAccountDeletionCredentialFenceArmed(true)
         accountDeletionHoldsSharedTokenLock = true
         return true
     }
@@ -759,9 +783,18 @@ class AuthManager {
         return storesCleared
     }
 
-    func setAccountDeletionInProgress(_ value: Bool) {
+    func setAccountDeletionFinalizationRunning(_ value: Bool) {
         accountDeletionStateLock.lock()
-        accountDeletionInProgress = value
+        accountDeletionFinalizationRunning = value
+        accountDeletionStateLock.unlock()
+    }
+
+    /// Production arms this from the launch-time fence check and disarms it
+    /// from a successful replacement login; nothing else should drive it,
+    /// because the durable marker is what the flag mirrors.
+    func setAccountDeletionCredentialFenceArmed(_ value: Bool) {
+        accountDeletionStateLock.lock()
+        accountDeletionCredentialFenceArmed = value
         accountDeletionStateLock.unlock()
     }
 
@@ -770,7 +803,7 @@ class AuthManager {
     ) -> Bool {
         accountDeletionStateLock.lock()
         defer { accountDeletionStateLock.unlock() }
-        guard accountDeletionInProgress else {
+        guard isAccountDeletionFenceActiveLocked else {
             return true
         }
         guard let token else {
