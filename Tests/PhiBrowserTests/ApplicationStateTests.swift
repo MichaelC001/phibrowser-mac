@@ -185,17 +185,56 @@ final class ApplicationStateTests: XCTestCase {
         XCTAssertEqual(makeState().browserAccessState, .guest)
     }
 
-    func testAuthenticationFenceClearsPersistedGuestChoice() {
+    // `hasRecoverableLoginSession` is false in every fenced launch:
+    // `AuthManager.hasRecoverableLoginSession()` returns false while a deletion
+    // fence is up, so both production call sites pass false here.
+    func testAuthenticationFenceRequiresLoginWithoutAPersistedGuestChoice() {
+        let state = makeState()
+
+        state.resolveInitialAccess(
+            isAuthenticationBlocked: true,
+            hasRecoverableLoginSession: false,
+            isAuthenticated: false
+        )
+
+        XCTAssertEqual(state.browserAccessState, .loginRequired)
+        XCTAssertEqual(makeState().browserAccessState, .loginRequired)
+    }
+
+    func testAuthenticationFenceKeepsAGuestChoiceMadeAfterTheDeletion() {
         let state = makeState()
         state.enterGuestMode()
 
         state.resolveInitialAccess(
             isAuthenticationBlocked: true,
-            hasRecoverableLoginSession: true,
+            hasRecoverableLoginSession: false,
             isAuthenticated: false
         )
 
-        XCTAssertEqual(state.browserAccessState, .loginRequired)
+        XCTAssertEqual(state.browserAccessState, .guest)
+        XCTAssertTrue(state.canUseBrowser)
+        XCTAssertFalse(
+            state.isAuthenticated,
+            "The fence still blocks authenticated capabilities"
+        )
+        XCTAssertEqual(
+            makeState().browserAccessState,
+            .guest,
+            "The choice must survive the relaunch the fence keeps triggering"
+        )
+    }
+
+    func testClearingThePersistedGuestChoiceLeavesTheCurrentStateAlone() {
+        let state = makeState()
+        state.enterGuestMode()
+
+        state.clearPersistedGuestChoice()
+
+        XCTAssertEqual(
+            state.browserAccessState,
+            .guest,
+            "The running session keeps its access until it is transitioned"
+        )
         XCTAssertEqual(makeState().browserAccessState, .loginRequired)
     }
 

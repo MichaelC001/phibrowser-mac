@@ -652,6 +652,12 @@ class AuthManager {
             AppLogError("[AccountDeletion] Failed to acquire the shared-token lock")
             return false
         }
+        // Drop any Guest choice from before the deletion in the same critical
+        // section that arms the fence, so a crash between the two cannot leave
+        // a stale choice granting browser access on the next launch. A deletion
+        // always runs from a signed-in session, where the choice is already
+        // cleared, so this is a backstop rather than a routine write.
+        ApplicationState.shared.clearPersistedGuestChoice()
         let fenceActivated = accountDeletionCredentialFence.activate()
         guard fenceActivated else {
             SharedTokenLock.shared.unlock()
