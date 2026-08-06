@@ -473,7 +473,26 @@ enum NativeTabDecisionEngine {
                 )
                 return anchorIndex + 1
             } else if context.creationKind == .restore {
-                return 0
+                if context.insertAfterTabId == nil {
+                    // No predecessor at all: this is the strip's first restored
+                    // tab, so it belongs at the head even when the window
+                    // already shows a placeholder tab.
+                    AppLogDebug("[NativeTab] insertionIndex restore without anchor, result=0")
+                    return 0
+                }
+                // The anchor is a real strip neighbour the Mac side hides
+                // (pinned- or bookmark-bound, or a payload the restored-window
+                // transaction never admitted). Fall through to nil so the
+                // caller appends at the tail rather than prepending, which
+                // would move this tab — and every tab restored after it —
+                // ahead of the ones already placed. Inside the restore
+                // transaction payloads arrive in strip order, so the tail is
+                // the correct slot; on the per-tab path it is a best effort
+                // that the next `tabIndicesUpdated` echo corrects.
+                AppLogDebug(
+                    "[NativeTab] insertionIndex restore anchor hidden, appending " +
+                    "insertAfterTabId=\(insertAfterText)"
+                )
             }
         }
 

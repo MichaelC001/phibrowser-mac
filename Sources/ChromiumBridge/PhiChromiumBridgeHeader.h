@@ -103,6 +103,14 @@ typedef NS_ENUM(NSInteger, PhiWindowCloseState) {
 - (void)tabWillBeRemove:(int64_t)tabId windowId:(int64_t)windowId;
 - (void)tabTitleUpdated:(int64_t)tabId title:(NSString *)title windowId:(int64_t)windowId;
 - (void)activeTabChanged:(int64_t)tabId index:(int)index windowId:(int64_t)windowId;
+/// Full-strip tab -> index map for one window, emitted on insert / move /
+/// remove. It is authoritative: the client re-sequences its visible order to
+/// match. `windowId` identifies the owning window; `0` means Chromium could
+/// not resolve one and the client falls back to the active window — a guess
+/// that silently drops the correction for whichever window actually moved, so
+/// senders should pass a real id whenever they have one. Suppressed while that
+/// window's restoredWindowSnapshot batch is open, because the snapshot payloads
+/// already carry final indices.
 - (void)tabIndicesUpdated:(NSDictionary<NSNumber *, NSNumber *> *)tabIndices windowId:(int64_t)windowId;
 
 // ==========================================================================
