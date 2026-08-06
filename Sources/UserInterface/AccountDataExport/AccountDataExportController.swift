@@ -12,13 +12,13 @@ final class AccountDataExportController {
     static let shared = AccountDataExportController()
 
     private var coordinator: AccountDataExportCoordinator?
-    private var isPresentingConfirmation = false
+    private var confirmationPresenter: PhiAlertPresenter?
     private var flowPresenter: PhiAlertPresenter?
     private var activeUserID: String?
     private var accountObserver: NSObjectProtocol?
 
     var isFlowActive: Bool {
-        isPresentingConfirmation || flowPresenter != nil
+        confirmationPresenter != nil || flowPresenter != nil
     }
 
     private init() {
@@ -34,8 +34,16 @@ final class AccountDataExportController {
     }
 
     func start() {
-        guard !isPresentingConfirmation, flowPresenter == nil else {
-            AppLogInfo("[AccountDataExport] Dialog already presented, ignoring request")
+        // The panels are non-modal, so one can end up behind another window.
+        // A second click recalls the panel rather than doing nothing.
+        if let confirmationPresenter {
+            AppLogInfo("[AccountDataExport] Confirmation already on screen, bringing it forward")
+            confirmationPresenter.bringToFront()
+            return
+        }
+        if let flowPresenter {
+            AppLogInfo("[AccountDataExport] Flow dialog already on screen, bringing it forward")
+            flowPresenter.bringToFront()
             return
         }
         guard !AccountDeletionController.shared.isFlowActive else {
@@ -57,10 +65,11 @@ final class AccountDataExportController {
             return
         }
 
-        isPresentingConfirmation = true
-        window.presentPhiAlert(confirmationConfiguration(email: account.email)) { [weak self] response in
+        confirmationPresenter = window.presentPhiAlertNonModally(
+            confirmationConfiguration(email: account.email)
+        ) { [weak self] response in
             guard let self else { return }
-            self.isPresentingConfirmation = false
+            self.confirmationPresenter = nil
             guard response == .alertFirstButtonReturn else {
                 AppLogInfo("[AccountDataExport] Cancelled before requesting a code")
                 return
@@ -124,7 +133,7 @@ final class AccountDataExportController {
             viewState?.state = state
         }
 
-        flowPresenter = window.presentPhiAlert(onDismiss: { [weak self] _ in
+        flowPresenter = window.presentPhiAlertNonModally(onDismiss: { [weak self] _ in
             guard let self else { return }
             self.flowPresenter = nil
             coordinator.onStateChange = nil
