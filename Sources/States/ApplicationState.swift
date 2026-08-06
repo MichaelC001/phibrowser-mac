@@ -95,7 +95,15 @@ final class ApplicationState {
         isAuthenticated: Bool
     ) {
         let transitionSnapshot = guestTransitionSnapshot()
-        if isAuthenticationBlocked {
+        if isAuthenticationBlocked && persistedGuestChoice {
+            // The fence blocks authenticated access, not local browsing. A
+            // Guest choice that survives to here was made after the deletion
+            // armed the fence — the deletion drops any earlier one as it arms
+            // — so it is an ordinary choice and must outlive a relaunch like
+            // any other. Clearing it on every fenced launch would strand the
+            // user on the login gate with no way to get past it.
+            transition(to: .guest)
+        } else if isAuthenticationBlocked {
             transition(
                 to: .loginRequired,
                 persistedGuestChoice: false,
@@ -265,6 +273,17 @@ final class ApplicationState {
             guestPromotionInProgress: false,
             guestMigrationRecoveryInProgress: false
         )
+    }
+
+    /// Drops the persisted Guest choice without touching browser access or
+    /// notifying observers. The account deletion calls this while arming its
+    /// durable credential fence, so a Guest choice made before the deletion
+    /// cannot outlive it even when the finalize crashes before the local-data
+    /// removal drops the whole preferences domain.
+    func clearPersistedGuestChoice() {
+        stateLock.lock()
+        defaults.set(false, forKey: Self.guestModeEnabledKey)
+        stateLock.unlock()
     }
 
     private var persistedGuestChoice: Bool {
