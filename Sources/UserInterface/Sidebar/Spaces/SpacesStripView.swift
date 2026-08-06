@@ -1406,9 +1406,11 @@ private struct SpacePickerPopup: View {
                             // Space can be deleted, and an Incognito Space's
                             // name is derived ("Incognito" / "Incognito N";
                             // it ends via Close Incognito Space instead).
-                            // Icon and theme remain user-changeable for it.
+                            // Its theme remains user-changeable; its icon is
+                            // editable when multiple Spaces exist.
                             isDeletable: space.spaceId != LocalStore.defaultSpaceId
                                 && !SpaceManager.isIncognitoSpaceId(space.spaceId),
+                            showsIconAction: manager.spaces.count > 1,
                             isRenamable: !SpaceManager.isIncognitoSpaceId(space.spaceId),
                             tint: iconColor(for: space),
                             profileName: profileDisplayName(for: space.profileId),
@@ -1658,11 +1660,12 @@ private struct SpacePickerRow: View {
     let space: SpaceModel
     let isActive: Bool
     let isDeletable: Bool
+    let showsIconAction: Bool
     /// False for Incognito Spaces, whose NAME is derived ("Incognito" /
     /// "Incognito N" — a rename would be a silent store no-op on their
-    /// runtime-only ids). Icon and theme stay editable everywhere —
-    /// `SpaceManager.changeIcon`/`setTheme` keep their choices outside
-    /// SwiftData.
+    /// runtime-only ids). Themes stay editable everywhere; the contextual icon
+    /// action is available when multiple Spaces exist. Both choices are kept
+    /// outside SwiftData by `SpaceManager.changeIcon`/`setTheme`.
     var isRenamable: Bool = true
     let tint: Color
     let profileName: String
@@ -1730,8 +1733,10 @@ private struct SpacePickerRow: View {
             if isRenamable {
                 Button(NSLocalizedString("sidebar.spacesContextMenu.renameAction", value: "Rename\u{2026}", comment: "Spaces context menu - Rename Space action")) { onRename() }
             }
-            Button(NSLocalizedString("sidebar.spacesContextMenu.changeIconAction", value: "Change Icon\u{2026}", comment: "Opens the icon/emoji picker for a Space")) {
-                showsIconPicker = true
+            if showsIconAction {
+                Button(NSLocalizedString("sidebar.spacesContextMenu.changeIconAction", value: "Change Icon\u{2026}", comment: "Opens the icon/emoji picker for a Space")) {
+                    showsIconPicker = true
+                }
             }
             Menu(NSLocalizedString("sidebar.spacesContextMenu.themeSubmenuTitle", value: "Change Theme", comment: "Spaces context menu - Change Theme submenu title")) {
                 Picker(NSLocalizedString("sidebar.spacesContextMenu.themePickerLabel", value: "Change Theme", comment: "Spaces context menu - Theme picker accessibility label"), selection: themeSelection) {

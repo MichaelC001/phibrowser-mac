@@ -178,13 +178,23 @@ extension AppController {
 
     // MARK: - Launch Preferences Analytics
 
-    /// Captures the user's current preference selections once per app launch.
+    /// Captures the user's current preference selections once per app launch,
+    /// after browser access has resolved account-scoped settings.
+    @MainActor
     func captureUserDefaultsSnapshot() {
         let defaultBrowser = Self.getDefaultBrowserInfo()
         let appearanceRawValue = UserDefaults.standard.integer(
             forKey: PhiPreferences.ThemeSettings.userAppearanceChoice.rawValue
         )
         let appearance = UserAppearanceChoice(rawValue: appearanceRawValue) ?? .system
+        let spaceManager = SpaceManager.shared
+        let activeThemeId = spaceManager.resolvedThemeId(
+            forSpaceId: spaceManager.activeSpaceId ?? LocalStore.defaultSpaceId
+        )
+        let pinnedTabScope = AccountController.shared.localDataAccount?
+            .localStorage
+            .pinnedTabScope()
+            .rawValue ?? "unavailable"
 
         PostHogSDK.shared.capture("user_defaults_snapshot", properties: [
             "new_tab_behavior": PhiPreferences.GeneralSettings.openNewTabPageOnCmdT.loadValue()
@@ -192,6 +202,9 @@ extension AppController {
                 : "omnibox",
             "layout_mode": PhiPreferences.GeneralSettings.loadLayoutMode().rawValue,
             "appearance": Self.analyticsValue(for: appearance),
+            "active_theme_id": activeThemeId,
+            "pinned_tab_scope": pinnedTabScope,
+            "ai_enabled": PhiPreferences.AISettings.phiAIEnabled.loadValue(),
             "default_browser_name": defaultBrowser.name,
             "default_browser_bundle_id": defaultBrowser.bundleIdentifier ?? "unknown",
             "is_phi_default_browser": defaultBrowser.isPhiDefault,
