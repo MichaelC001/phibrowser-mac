@@ -116,13 +116,58 @@ private enum SharedAppLanguagePreferenceStoreError: LocalizedError {
 }
 
 enum SentinelLanguagePreferenceSync {
-    /// Keeps a durable snapshot for Sentinel without emitting a change event.
-    /// This is used during Phi startup so Sentinel can recover missed events.
+    enum TerminationSyncResult: Equatable {
+        case unchanged
+        case metadataChanged
+        case languageChanged
+        case failed
+    }
+
+    /// Keeps a durable snapshot for Sentinel and emits a change event. The
+    /// startup event covers language changes made in macOS System Settings,
+    /// which do not pass through Phi's settings picker.
     static func persistCurrentPreference() {
         synchronize(
             PhiPreferences.GeneralSettings.loadAppLanguagePreference(),
-            notifySentinel: false
+            notifySentinel: true
         )
+    }
+
+    /// Reconciles the current language with the last snapshot before Phi
+    /// terminates. Sentinel is restarted only when its resolved language has
+    /// changed; a selection-only change does not require a UI restart.
+    @discardableResult
+    static func synchronizeCurrentPreferenceBeforeTermination(
+        store: SharedAppLanguagePreferenceStore = .shared,
+        defaults: UserDefaults = .standard,
+        applicationDomainName: String? = nil,
+        systemPreferredLanguages: [String] = Locale.preferredLanguages
+    ) -> TerminationSyncResult {
+        let preference = PhiPreferences.GeneralSettings.loadAppLanguagePreference(
+            from: defaults
+        )
+        let current = makeSharedPreference(
+            for: preference,
+            from: defaults,
+            applicationDomainName: applicationDomainName,
+            systemPreferredLanguages: systemPreferredLanguages
+        )
+
+        do {
+            let persisted = try store.read()
+            guard persisted != current else { return .unchanged }
+
+            try store.write(current)
+            return persisted.resolvedLanguage == current.resolvedLanguage
+                ? .metadataChanged
+                : .languageChanged
+        } catch {
+            AppLogWarn(
+                "Failed to synchronize shared app language preference before termination: " +
+                    error.localizedDescription
+            )
+            return .failed
+        }
     }
 
     /// Writes the new value and notifies the matching Sentinel channel. The
@@ -136,13 +181,7 @@ enum SentinelLanguagePreferenceSync {
         _ preference: AppLanguagePreference,
         notifySentinel: Bool
     ) {
-        let resolvedLanguage = PhiPreferences.GeneralSettings.resolvedAppLanguage(
-            for: preference
-        )
-        let sharedPreference = SharedAppLanguagePreference(
-            preference: preference,
-            resolvedLanguage: resolvedLanguage
-        )
+        let sharedPreference = makeSharedPreference(for: preference)
 
         do {
             try SharedAppLanguagePreferenceStore.shared.write(sharedPreference)
@@ -160,5 +199,56 @@ enum SentinelLanguagePreferenceSync {
             userInfo: sharedPreference.userInfo,
             deliverImmediately: true
         )
+    }
+
+    private static func makeSharedPreference(
+        for preference: AppLanguagePreference,
+        from defaults: UserDefaults = .standard,
+        applicationDomainName: String? = nil,
+        systemPreferredLanguages: [String] = Locale.preferredLanguages
+    ) -> SharedAppLanguagePreference {
+        let resolvedLanguage = PhiPreferences.GeneralSettings.resolvedAppLanguage(
+            for: preference,
+            from: defaults,
+            applicationDomainName: applicationDomainName,
+            systemPreferredLanguages: systemPreferredLanguages
+        )
+
+        return SharedAppLanguagePreference(
+            preference: preference,
+            resolvedLanguage: resolvedLanguage
+        )
+    }
+}
+
+@MainActor
+enum SentinelLanguagePreferenceTerminationCoordinator {
+    @discardableResult
+    static func prepareForPhiTermination() -> SentinelLanguagePreferenceSync.TerminationSyncResult {
+        prepareForPhiTermination(
+            synchronizePreference: {
+                SentinelLanguagePreferenceSync.synchronizeCurrentPreferenceBeforeTermination()
+            },
+            stopSentinelWatchdog: {
+                SentinelWatchdog.shared.stop()
+            },
+            terminateSentinel: {
+                SentinelHelper.requestTerminationForBrowserUpdate()
+            }
+        )
+    }
+
+    @discardableResult
+    static func prepareForPhiTermination(
+        synchronizePreference: () -> SentinelLanguagePreferenceSync.TerminationSyncResult,
+        stopSentinelWatchdog: () -> Void,
+        terminateSentinel: () -> Void
+    ) -> SentinelLanguagePreferenceSync.TerminationSyncResult {
+        let result = synchronizePreference()
+        guard result == .languageChanged else { return result }
+
+        stopSentinelWatchdog()
+        terminateSentinel()
+        return result
     }
 }
