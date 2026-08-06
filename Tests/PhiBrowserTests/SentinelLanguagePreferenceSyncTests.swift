@@ -68,6 +68,188 @@ final class SentinelLanguagePreferenceSyncTests: XCTestCase {
         )
     }
 
+    func testTerminationSyncUpdatesSnapshotWhenResolvedLanguageChanges() throws {
+        let defaultsSuiteName = "SentinelLanguagePreferenceSyncTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: defaultsSuiteName))
+        defer { defaults.removePersistentDomain(forName: defaultsSuiteName) }
+
+        defaults.set(
+            AppLanguagePreference.systemStorageValue,
+            forKey: PhiPreferences.GeneralSettings.appLanguagePreferenceKey
+        )
+        defaults.set(["fr"], forKey: "AppleLanguages")
+
+        let store = SharedAppLanguagePreferenceStore(
+            fileURL: temporaryDirectoryURL.appendingPathComponent("language.plist")
+        )
+        try store.write(
+            SharedAppLanguagePreference(
+                preference: .system,
+                resolvedLanguage: .english
+            )
+        )
+
+        XCTAssertEqual(
+            SentinelLanguagePreferenceSync.synchronizeCurrentPreferenceBeforeTermination(
+                store: store,
+                defaults: defaults,
+                applicationDomainName: defaultsSuiteName,
+                systemPreferredLanguages: ["en"]
+            ),
+            .languageChanged
+        )
+        XCTAssertEqual(
+            try store.read(),
+            SharedAppLanguagePreference(
+                preference: .system,
+                resolvedLanguage: .french
+            )
+        )
+    }
+
+    func testTerminationSyncDoesNotRestartSentinelForSelectionOnlyChange() throws {
+        let defaultsSuiteName = "SentinelLanguagePreferenceSyncTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: defaultsSuiteName))
+        defer { defaults.removePersistentDomain(forName: defaultsSuiteName) }
+
+        defaults.set(
+            SupportedAppLanguage.french.rawValue,
+            forKey: PhiPreferences.GeneralSettings.appLanguagePreferenceKey
+        )
+
+        let store = SharedAppLanguagePreferenceStore(
+            fileURL: temporaryDirectoryURL.appendingPathComponent("language.plist")
+        )
+        try store.write(
+            SharedAppLanguagePreference(
+                preference: .system,
+                resolvedLanguage: .french
+            )
+        )
+
+        XCTAssertEqual(
+            SentinelLanguagePreferenceSync.synchronizeCurrentPreferenceBeforeTermination(
+                store: store,
+                defaults: defaults,
+                applicationDomainName: defaultsSuiteName,
+                systemPreferredLanguages: ["en"]
+            ),
+            .metadataChanged
+        )
+        XCTAssertEqual(
+            try store.read(),
+            SharedAppLanguagePreference(
+                preference: .language(.french),
+                resolvedLanguage: .french
+            )
+        )
+    }
+
+    func testTerminationSyncReportsUnchangedForMatchingSnapshot() throws {
+        let defaultsSuiteName = "SentinelLanguagePreferenceSyncTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: defaultsSuiteName))
+        defer { defaults.removePersistentDomain(forName: defaultsSuiteName) }
+
+        defaults.set(
+            SupportedAppLanguage.french.rawValue,
+            forKey: PhiPreferences.GeneralSettings.appLanguagePreferenceKey
+        )
+
+        let preference = SharedAppLanguagePreference(
+            preference: .language(.french),
+            resolvedLanguage: .french
+        )
+        let store = SharedAppLanguagePreferenceStore(
+            fileURL: temporaryDirectoryURL.appendingPathComponent("language.plist")
+        )
+        try store.write(preference)
+
+        XCTAssertEqual(
+            SentinelLanguagePreferenceSync.synchronizeCurrentPreferenceBeforeTermination(
+                store: store,
+                defaults: defaults,
+                applicationDomainName: defaultsSuiteName,
+                systemPreferredLanguages: ["en"]
+            ),
+            .unchanged
+        )
+        XCTAssertEqual(try store.read(), preference)
+    }
+
+    func testTerminationSyncFailsClosedForCorruptSnapshot() throws {
+        let defaultsSuiteName = "SentinelLanguagePreferenceSyncTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: defaultsSuiteName))
+        defer { defaults.removePersistentDomain(forName: defaultsSuiteName) }
+
+        let fileURL = temporaryDirectoryURL.appendingPathComponent("language.plist")
+        try Data("not a property list".utf8).write(to: fileURL)
+        let store = SharedAppLanguagePreferenceStore(fileURL: fileURL)
+
+        XCTAssertEqual(
+            SentinelLanguagePreferenceSync.synchronizeCurrentPreferenceBeforeTermination(
+                store: store,
+                defaults: defaults,
+                applicationDomainName: defaultsSuiteName,
+                systemPreferredLanguages: ["en"]
+            ),
+            .failed
+        )
+    }
+
+    @MainActor
+    func testTerminationCoordinatorStopsWatchdogBeforeTerminatingSentinel() {
+        var events: [String] = []
+
+        XCTAssertEqual(
+            SentinelLanguagePreferenceTerminationCoordinator.prepareForPhiTermination(
+                synchronizePreference: {
+                    events.append("synchronize")
+                    return .languageChanged
+                },
+                stopSentinelWatchdog: {
+                    events.append("stopWatchdog")
+                },
+                terminateSentinel: {
+                    events.append("terminateSentinel")
+                }
+            ),
+            .languageChanged
+        )
+        XCTAssertEqual(
+            events,
+            ["synchronize", "stopWatchdog", "terminateSentinel"]
+        )
+    }
+
+    @MainActor
+    func testTerminationCoordinatorDoesNotStopSentinelForOtherResults() {
+        let results: [SentinelLanguagePreferenceSync.TerminationSyncResult] = [
+            .unchanged,
+            .metadataChanged,
+            .failed,
+        ]
+
+        for result in results {
+            var didStopWatchdog = false
+            var didTerminateSentinel = false
+
+            XCTAssertEqual(
+                SentinelLanguagePreferenceTerminationCoordinator.prepareForPhiTermination(
+                    synchronizePreference: { result },
+                    stopSentinelWatchdog: {
+                        didStopWatchdog = true
+                    },
+                    terminateSentinel: {
+                        didTerminateSentinel = true
+                    }
+                ),
+                result
+            )
+            XCTAssertFalse(didStopWatchdog)
+            XCTAssertFalse(didTerminateSentinel)
+        }
+    }
+
     func testChannelSeparatesCanaryAndRelease() {
         let canary = SentinelLanguagePreferenceChannel.make(
             browserBundleIdentifier: "com.phibrowser.canary.Mac"
