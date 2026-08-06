@@ -115,14 +115,19 @@ Stores the Mac-side computed selection target before a close operation:
 
 ### 4.2 New Tab Insertion
 
-`NativeTabDecisionEngine.insertionIndex(visibleNormalTabIds:context:relationGraph:splitPartnerByTabId:)` computes the insertion position:
+`NativeTabDecisionEngine.insertionIndex(visibleNormalTabIds:context:relationGraph:splitPartnerByTabId:hiddenOpenerTabIds:)` computes the insertion position:
 
 | `creationKind` | Logic |
 |----------------|-------|
 | `linkForeground` | Right after opener in visible order; fallback to `insertAfterTabId` |
 | `linkBackground` | After the opener's last visible descendant; fallback to `insertAfterTabId` |
 | `typedNewTab` / `typedNavigation` | Append to end |
-| `explicitInsert` / `restore` / others | Use `insertAfterTabId` if present; otherwise nil (caller appends) |
+| `restore` | `insertAfterTabId` + 1 when the anchor resolves in the visible list. No anchor at all → `0`, because that payload is the strip's first restored tab and belongs ahead of any placeholder the window already shows. Anchor present but **absent from the visible list** → nil (caller appends) |
+| `explicitInsert` / `moveFromOtherWindow` / `bridgeCreate` / `unknown` | Use `insertAfterTabId` if present; otherwise nil (caller appends) |
+
+A `restore` anchor can be missing from the visible list while still existing in Chromium's strip: the Mac side hides tabs bound to a pinned tab or an open bookmark, split-bookmark members, AI chat payloads (never added to `tabs`), and duplicate-guid payloads the restored-window transaction drops. Appending in that case keeps the surviving tabs in strip order — returning `0` would throw this tab, and every tab restored after it, ahead of the ones already placed.
+
+The head-insert fallback predates the feature that exposed it. `.restore` used to fire only on incidental paths (undo-close-tab, cross-window moves), where the `tabIndicesUpdated` echo that follows every insert re-sequenced the order anyway. Restoring the previous session replays a whole window through `.restore` on every cold start and window reopen, and the restored-window snapshot suppresses that echo while its batch is open — so a wrong order now survives until the next tab insert instead of being corrected immediately.
 
 Split-pair adjustment: if the opener is in a split with a partner at a higher tab-strip index, the insertion anchor shifts from the opener to the partner. This keeps the split pair contiguous — link clicks from a split tab land after the whole pair instead of between its two panes.
 

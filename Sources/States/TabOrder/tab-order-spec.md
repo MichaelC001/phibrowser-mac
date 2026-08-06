@@ -100,6 +100,22 @@ Result: A  B  C  NTP
                  ↑ NTP appended to the end
 ```
 
+### 2.3 Session Restore
+
+Restoring a window — cold start, reopening a closed window, or restoring the previous session — reproduces the tab order the window had when it closed.
+
+Some restored tabs are not shown in the normal tab list: a tab bound to a pinned tab or to an open bookmark is represented by its own sidebar section instead. Hiding a tab changes only what the list shows — it never changes the relative order of the tabs that stay visible.
+
+**Example**
+
+```
+Order before closing: A  B  P  C  D      (P is bound to a pinned tab)
+
+After restoring:      A  B  C  D
+                            ↑ P moves to the pinned section; C and D keep
+                              their place after B
+```
+
 ## 3. Tab Selection After Closing
 
 ### 3.1 Prerequisites

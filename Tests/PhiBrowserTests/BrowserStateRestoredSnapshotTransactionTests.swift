@@ -181,12 +181,47 @@ final class BrowserStateRestoredSnapshotTransactionTests: XCTestCase {
         // sidebar's normal list.
         XCTAssertEqual(transactional.pinnedTabs.first?.isOpenned, true)
         XCTAssertEqual(transactional.pinnedTabs.first?.guid, 21)
-        // [22, 20], not [20, 22]: the pinned-bound tab is filtered out of the
-        // projection as soon as it reattaches, so the next payload's anchor
-        // (21) misses and the `.restore` fallback inserts at the head. This
-        // is the per-tab path's long-standing behavior for a mid-strip
-        // pinned binding — the transaction must reproduce it, not fix it.
-        XCTAssertEqual(transactional.normalTabs.map(\.guid), [22, 20])
+        // The pinned-bound tab is filtered out of the projection as soon as it
+        // reattaches, which leaves the next payload's anchor (21) unresolvable.
+        // That must not move 22 ahead of 20: hiding a tab changes what the
+        // sidebar shows, never the relative order of what stays visible.
+        XCTAssertEqual(transactional.normalTabs.map(\.guid), [20, 22])
+    }
+
+    func testMidStripPinnedBindingKeepsFollowingTabsInStripOrder() throws {
+        let specs = [
+            RestoreTabSpec(guid: 100, url: "https://a.example"),
+            RestoreTabSpec(guid: 101, url: "https://b.example"),
+            RestoreTabSpec(guid: 102, url: "https://pinned.example", customGuid: "pinned-mid"),
+            RestoreTabSpec(guid: 103, url: "https://c.example"),
+            RestoreTabSpec(guid: 104, url: "https://d.example"),
+        ]
+        func seedPinnedRecord(_ state: BrowserState) {
+            let record = Tab(guid: 901,
+                             url: "https://pinned.example",
+                             isActive: false,
+                             index: 0,
+                             customGuid: "pinned-mid")
+            state.pinnedTabs = [record]
+        }
+
+        let reference = try makeBrowserState()
+        seedPinnedRecord(reference)
+        applyPerTabReference(state: reference, items: makeItems(specs), activeTabId: 100)
+
+        let transactional = try makeBrowserState()
+        seedPinnedRecord(transactional)
+        transactional.handleRestoredWindowSnapshot(
+            BrowserState.RestoredWindowSnapshot(tabs: makeItems(specs),
+                                               activeTabId: 100,
+                                               splitActions: []))
+
+        assertFinalStatesMatch(transactional, reference)
+        XCTAssertEqual(transactional.pinnedTabs.first?.isOpenned, true)
+        // Everything after the hidden tab keeps its strip order. Before the
+        // fix, 103 lost its anchor and was prepended, dragging 104 with it and
+        // producing [103, 104, 100, 101].
+        XCTAssertEqual(transactional.normalTabs.map(\.guid), [100, 101, 103, 104])
     }
 
     func testGroupedBatchMatchesPerTabPath_groupsPreCreated() throws {
@@ -278,6 +313,34 @@ final class BrowserStateRestoredSnapshotTransactionTests: XCTestCase {
         XCTAssertEqual(transactional.splits.first?.secondaryTabId, 52)
         // Split members stay adjacent in the normal order.
         XCTAssertEqual(transactional.normalTabs.map(\.guid), [50, 51, 52])
+    }
+
+    func testRestoredSplitPullsSecondaryNextToItsPrimary() throws {
+        // Chromium's strip keeps the split's two members apart; the Mac side
+        // deliberately pulls the secondary up next to its primary
+        // (`enforceSplitAdjacency`), so the restored visible order diverges
+        // from strip order on purpose.
+        let specs = [
+            RestoreTabSpec(guid: 110),
+            RestoreTabSpec(guid: 111),
+            RestoreTabSpec(guid: 112),
+            RestoreTabSpec(guid: 113),
+        ]
+        let splitActions: [SplitEvent.SplitAction] = [
+            .created(splitId: "split-apart",
+                     primaryTabId: 110,
+                     secondaryTabId: 112,
+                     layout: .vertical,
+                     ratio: 0.5),
+        ]
+
+        let state = try makeBrowserState()
+        state.handleRestoredWindowSnapshot(
+            BrowserState.RestoredWindowSnapshot(tabs: makeItems(specs),
+                                               activeTabId: 110,
+                                               splitActions: splitActions))
+
+        XCTAssertEqual(state.normalTabs.map(\.guid), [110, 112, 111, 113])
     }
 
     func testBufferedCrashAppliesDuringTransaction() throws {

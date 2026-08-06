@@ -1045,7 +1045,15 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
         if windowId != 0 {
             targetWindowId = windowId.intValue
         } else {
+            // Chromium could not resolve the owning window (or the embedded
+            // framework predates it sending one). Routing a full-strip map to
+            // the active window is a guess: it silently drops the correction
+            // for whichever window actually moved, so make it visible.
             targetWindowId = MainBrowserWindowControllersManager.shared.activeWindowController?.windowId
+            AppLogWarn(
+                "[NativeTab] tabIndices arrived without a windowId; " +
+                "falling back to the active window \(targetWindowId.map(String.init) ?? "nil")"
+            )
         }
         guard let targetWindowId else {
             return
