@@ -1030,6 +1030,34 @@ final class AccountDeletionCredentialFenceTests: XCTestCase {
     }
 }
 
+final class AccountDeletionGuestEntryGateTests: XCTestCase {
+    func testOnlyTheRunningFinalizeBlocksGuestEntry() {
+        let authManager = AuthManager()
+        defer {
+            authManager.setAccountDeletionFinalizationRunning(false)
+            authManager.setAccountDeletionCredentialFenceArmed(false)
+        }
+
+        authManager.setAccountDeletionFinalizationRunning(false)
+        authManager.setAccountDeletionCredentialFenceArmed(true)
+        XCTAssertTrue(
+            authManager.isAccountDeletionInProgress,
+            "The durable fence keeps every credential path blocked"
+        )
+        XCTAssertFalse(
+            authManager.blocksGuestModeEntry,
+            "Guest entry writes no credentials, so the durable fence must not strand it"
+        )
+
+        authManager.setAccountDeletionFinalizationRunning(true)
+        XCTAssertTrue(authManager.isAccountDeletionInProgress)
+        XCTAssertTrue(
+            authManager.blocksGuestModeEntry,
+            "A finalize in flight is racing the teardown and must block Guest entry"
+        )
+    }
+}
+
 final class AccountDeletionExternalBrowserAuthGateTests: XCTestCase {
     func testOnlyAuthorizedReplacementLoginCallbackPassesDeletionFence() {
         let authManager = AuthManager()
@@ -1037,12 +1065,12 @@ final class AccountDeletionExternalBrowserAuthGateTests: XCTestCase {
         let callbackURL = URL(string: "https://\(authManager.domain)/callback")!
         var receivedURL: URL?
 
-        authManager.setAccountDeletionInProgress(true)
+        authManager.setAccountDeletionCredentialFenceArmed(true)
         authManager.setAccountDeletionReplacementLoginToken(authorizedToken)
         defer {
             authManager.clearBrowserAuthCallbackListener()
             authManager.clearAccountDeletionReplacementLoginToken()
-            authManager.setAccountDeletionInProgress(false)
+            authManager.setAccountDeletionCredentialFenceArmed(false)
         }
 
         _ = authManager.registerBrowserAuthCallbackListener(

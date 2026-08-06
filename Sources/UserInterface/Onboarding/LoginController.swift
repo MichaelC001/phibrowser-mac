@@ -250,7 +250,16 @@ class LoginController {
         metricsReportingPreference: Bool? = nil
     ) -> GuestModeEntryResult {
         postLoginAIEnableIntent.cancel()
-        guard !auth0Manager.isAccountDeletionInProgress else { return .failed }
+        // Only the running finalize blocks Guest entry. The durable credential
+        // fence outlives it and must not: Guest writes no credentials, and the
+        // boundary below clears the fenced ones itself.
+        guard !auth0Manager.blocksGuestModeEntry else {
+            AppLogWarn(
+                "🗑️ [AccountDeletion] Ignoring Guest entry while the deletion " +
+                "finalize is running"
+            )
+            return .failed
+        }
 
         let pendingAccess: GuestDataMigrationGuestAccessDisposition
         do {
