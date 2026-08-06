@@ -272,7 +272,11 @@ extension LocalStore {
                     return
                 }
                 guard let profile = try self.profile(with: profileId, in: context, createIfNeeded: true),
-                      let root = try self.bookmarkRoot(profileId: profileId, spaceId: spaceId, in: context, createIfNeeded: true) else { return }
+                      let root = try self.bookmarkRoot(profileId: profileId, spaceId: spaceId, in: context, createIfNeeded: true) else {
+                    AppLogError("Skipping Arc bookmark import: no profile or bookmark root "
+                        + "for profile \(profileId) space \(spaceId)")
+                    return
+                }
 
                 let now = Date()
                 let importRoot = TabDataModel(
@@ -292,6 +296,7 @@ extension LocalStore {
                 context.insert(importRoot)
                 try self.insert(node: importRoot, to: root, at: nil, in: context)
 
+                var insertedCount = 0
                 func insertArcBookmark(_ arcBookmark: ArcDataParserTool.Bookmark, parent: TabDataModel, index: Int) throws {
                     let title = (arcBookmark.title?.isEmpty ?? true) ? "Untitled" : arcBookmark.title
                     let url = arcBookmark.isFolder ? Self.folderPlaceholderURL : self.normalizedURL(from: arcBookmark.url)
@@ -309,6 +314,7 @@ extension LocalStore {
                     node.profile = profile
                     context.insert(node)
                     try self.insert(node: node, to: parent, at: index, in: context)
+                    insertedCount += 1
                     for (childIndex, child) in arcBookmark.children.enumerated() {
                         try insertArcBookmark(child, parent: node, index: childIndex)
                     }
@@ -318,26 +324,54 @@ extension LocalStore {
                 for (index, child) in spaceRoot.children.enumerated() {
                     try insertArcBookmark(child, parent: importRoot, index: index)
                 }
+                AppLogInfo("Imported \(insertedCount) Arc bookmark node(s) "
+                    + "into profile \(profileId) space \(spaceId)")
             } catch {
                 AppLogError("Failed to save Arc bookmarks: \(error)")
             }
         }
     }
     
+    /// Chromium's permanent bookmark bar node is the model root's first child.
+    private static let chromiumBookmarkBarRootIndex = 0
+
     func saveChromiumBookmarksToLocalStore(_ bookmarks: [BookmarkWrapper], profileId: String, spaceId: String = LocalStore.defaultSpaceId) async {
         await performBackgroundWriteAndWait { [weak self] context in
             guard let self else { return }
             do {
+                // An empty tree is an ordinary outcome (nothing staged, or the
+                // window went away before the tree could be read), not the
+                // missing-bookmark-bar failure the guard below reports.
+                guard !bookmarks.isEmpty else {
+                    AppLogWarn("No Chromium bookmarks to import: the bridge returned an empty tree")
+                    return
+                }
                 guard try self.importTargetSpaceIsWritable(profileId: profileId, spaceId: spaceId, in: context) else {
                     AppLogWarn("Skipping Chromium bookmark import: space \(spaceId) no longer exists for profile \(profileId)")
                     return
                 }
                 guard let profile = try self.profile(with: profileId, in: context, createIfNeeded: true),
-                      let root = try self.bookmarkRoot(profileId: profileId, spaceId: spaceId, in: context, createIfNeeded: true) else { return }
-                guard let bookmarksBar = bookmarks.first(where: { $0.title == "Bookmarks Bar" }) else {
-                    AppLogError("Bookmarks Bar not found in Chromium bookmarks")
+                      let root = try self.bookmarkRoot(profileId: profileId, spaceId: spaceId, in: context, createIfNeeded: true) else {
+                    AppLogError("Skipping Chromium bookmark import: no profile or bookmark root "
+                        + "for profile \(profileId) space \(spaceId)")
                     return
                 }
+                // Chromium titles its permanent bookmark bar node in the UI
+                // language (`IDS_BOOKMARK_BAR_FOLDER_NAME`), so it cannot be found
+                // by an English title. Match the model position instead. Array
+                // position would not do — the bridge drops permanent nodes that
+                // are hidden while empty (the mobile node on desktop), so what it
+                // hands back is a filtered view, while `indexInParent` still
+                // carries each node's real index under the root.
+                guard let bookmarksBar = bookmarks.first(where: {
+                          $0.indexInParent == Self.chromiumBookmarkBarRootIndex
+                      }),
+                      bookmarksBar.isFolder else {
+                    AppLogError("Bookmark bar node not found in Chromium bookmarks "
+                        + "(\(bookmarks.count) root node(s)); nothing imported")
+                    return
+                }
+                var insertedCount = 0
                 
                 func insertChromiumBookmark(
                     _ wrapper: BookmarkWrapper,
@@ -378,6 +412,7 @@ extension LocalStore {
                     node.profile = profile
                     context.insert(node)
                     try self.insert(node: node, to: parent, at: index, in: context)
+                    insertedCount += 1
                     
                     let orderedChildren = wrapper.children.sorted { $0.indexInParent < $1.indexInParent }
                     for (childIndex, child) in orderedChildren.enumerated() {
@@ -389,6 +424,8 @@ extension LocalStore {
                 for (index, bookmark) in orderedRootChildren.enumerated() {
                     try insertChromiumBookmark(bookmark, parent: root, index: index)
                 }
+                AppLogInfo("Imported \(insertedCount) Chromium bookmark node(s) "
+                    + "into profile \(profileId) space \(spaceId)")
             } catch {
                 AppLogError("Failed to save Chromium bookmarks: \(error)")
             }
