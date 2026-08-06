@@ -37,7 +37,7 @@ public extension ThemedColor {
     /// Default window background color.
     static let windowBackground = ThemedColor(role: .windowBackground)
 
-    /// Opaque content overlay background shared by the address bar, bookmark bar, active tab, and split views.
+    /// Opaque content overlay background shared by the bookmark bar and split views.
     static let contentOverlayBackground = ThemedColor { theme, appearance in
         if appearance.isLight {
             return .white
