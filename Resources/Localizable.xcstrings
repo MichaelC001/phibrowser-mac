@@ -5,22 +5,22 @@
 
     },
     "・" : {
-
+      "shouldTranslate" : false
     },
     "·" : {
-
+      "shouldTranslate" : false
     },
     "· %@" : {
-
+      "shouldTranslate" : false
     },
     "❯" : {
-
+      "shouldTranslate" : false
     },
     "@%@" : {
-
+      "shouldTranslate" : false
     },
     "*" : {
-
+      "shouldTranslate" : false
     },
     "%lld/%lld" : {
       "localizations" : {
@@ -30,10 +30,11 @@
             "value" : "%1$lld/%2$lld"
           }
         }
-      }
+      },
+      "shouldTranslate" : false
     },
     "•" : {
-
+      "shouldTranslate" : false
     },
     "about.acknowledgements.chromiumProjectLink" : {
       "comment" : "About window - Link text to the Chromium project home",

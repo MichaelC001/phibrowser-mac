@@ -53,8 +53,6 @@
 		3764F7392F1628DA00C1F4E3 /* FaviconProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3764F7382F1628DA00C1F4E3 /* FaviconProvider.swift */; };
 		3765817B2EE963AD00D3E031 /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 3765817A2EE9637F00D3E031 /* Localizable.xcstrings */; };
 		376581A32EE970B000D3E031 /* new-tab-reverse.json in Copy LottieFiles */ = {isa = PBXBuildFile; fileRef = 376581A22EE96FA200D3E031 /* new-tab-reverse.json */; };
-		37D011013010000100000001 /* refresh.json in Copy LottieFiles */ = {isa = PBXBuildFile; fileRef = 37D011043010000100000004 /* refresh.json */; };
-		37D011023010000100000002 /* memory.json in Copy LottieFiles */ = {isa = PBXBuildFile; fileRef = 37D011053010000100000005 /* memory.json */; };
 		376581F72EEA845700D3E031 /* BrowserState+Bookmark.swift in Sources */ = {isa = PBXBuildFile; fileRef = 376581F62EEA845700D3E031 /* BrowserState+Bookmark.swift */; };
 		376581F92EEA9BB200D3E031 /* BookmarkCellView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 376581F82EEA9BB200D3E031 /* BookmarkCellView.swift */; };
 		376581FB2EEA9D6200D3E031 /* BookmarkRowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 376581FA2EEA9D6200D3E031 /* BookmarkRowView.swift */; };
@@ -87,6 +85,7 @@
 		378AFF622F78E5EA0016B334 /* BrowserThemeContext.swift in Sources */ = {isa = PBXBuildFile; fileRef = 378AFF612F78E5EA0016B334 /* BrowserThemeContext.swift */; };
 		37A000022FEA000000000001 /* PhiSparkleUserDriver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37A000012FEA000000000001 /* PhiSparkleUserDriver.swift */; };
 		37A4750630060D6100F7DC2E /* broom.json in Copy LottieFiles */ = {isa = PBXBuildFile; fileRef = 37A4750530060D5A00F7DC2E /* broom.json */; };
+		37B1C533302492FA00F46814 /* InfoPlist.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 37B1C532302492FA00F46814 /* InfoPlist.xcstrings */; };
 		37B977D52EF3F62F007E0568 /* login-dot-bg.mp4 in Resources */ = {isa = PBXBuildFile; fileRef = 37B977D42EF3F62F007E0568 /* login-dot-bg.mp4 */; };
 		37B978102EF403AB007E0568 /* GradientBorderButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37B9780F2EF403AB007E0568 /* GradientBorderButton.swift */; };
 		37BA3EA22F866864003A8A53 /* EdgeFogOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37BA3EA12F866864003A8A53 /* EdgeFogOverlayView.swift */; };
@@ -126,6 +125,8 @@
 		37C9E5A22F3EF7CD00353A03 /* AIChatSidebarStateStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37C9E5A12F3EF7CD00353A03 /* AIChatSidebarStateStore.swift */; };
 		37C9E68C2F3F322D00353A03 /* Shimmer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37C9E68A2F3F322D00353A03 /* Shimmer.swift */; };
 		37CC00022F9D000100000001 /* SentinelIPCClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37CC00012F9D000100000001 /* SentinelIPCClient.swift */; };
+		37D011013010000100000001 /* refresh.json in Copy LottieFiles */ = {isa = PBXBuildFile; fileRef = 37D011043010000100000004 /* refresh.json */; };
+		37D011023010000100000002 /* memory.json in Copy LottieFiles */ = {isa = PBXBuildFile; fileRef = 37D011053010000100000005 /* memory.json */; };
 		37D4F5122F6A5CB100F9E67D /* OverlayScrollView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37D4F5112F6A5CB100F9E67D /* OverlayScrollView.swift */; };
 		37D6E3672F18FDA700129557 /* WebContentContainerViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37D6E3662F18FDA700129557 /* WebContentContainerViewController.swift */; };
 		37DD11022F9D111100000001 /* BookmarkMenuContentBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37DD11012F9D111100000001 /* BookmarkMenuContentBuilder.swift */; };
@@ -699,8 +700,7 @@
 		378AFF612F78E5EA0016B334 /* BrowserThemeContext.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserThemeContext.swift; sourceTree = "<group>"; };
 		37A000012FEA000000000001 /* PhiSparkleUserDriver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhiSparkleUserDriver.swift; sourceTree = "<group>"; };
 		37A4750530060D5A00F7DC2E /* broom.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = broom.json; sourceTree = "<group>"; };
-		37D011043010000100000004 /* refresh.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = refresh.json; sourceTree = "<group>"; };
-		37D011053010000100000005 /* memory.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = memory.json; sourceTree = "<group>"; };
+		37B1C532302492FA00F46814 /* InfoPlist.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = InfoPlist.xcstrings; sourceTree = "<group>"; };
 		37B977D42EF3F62F007E0568 /* login-dot-bg.mp4 */ = {isa = PBXFileReference; lastKnownFileType = file; path = "login-dot-bg.mp4"; sourceTree = "<group>"; };
 		37B9780F2EF403AB007E0568 /* GradientBorderButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GradientBorderButton.swift; sourceTree = "<group>"; };
 		37BA3EA12F866864003A8A53 /* EdgeFogOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EdgeFogOverlayView.swift; sourceTree = "<group>"; };
@@ -745,6 +745,8 @@
 		37C9E68D2F3F323B00353A03 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
 		37C9E68E2F3F324200353A03 /* LICENSE */ = {isa = PBXFileReference; lastKnownFileType = text; path = LICENSE; sourceTree = "<group>"; };
 		37CC00012F9D000100000001 /* SentinelIPCClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SentinelIPCClient.swift; sourceTree = "<group>"; };
+		37D011043010000100000004 /* refresh.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = refresh.json; sourceTree = "<group>"; };
+		37D011053010000100000005 /* memory.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = memory.json; sourceTree = "<group>"; };
 		37D4F5112F6A5CB100F9E67D /* OverlayScrollView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayScrollView.swift; sourceTree = "<group>"; };
 		37D6E3662F18FDA700129557 /* WebContentContainerViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebContentContainerViewController.swift; sourceTree = "<group>"; };
 		37DD11012F9D111100000001 /* BookmarkMenuContentBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookmarkMenuContentBuilder.swift; sourceTree = "<group>"; };
@@ -1886,24 +1888,25 @@
 		B0C469752E3B158D007F0C7A /* Resources */ = {
 			isa = PBXGroup;
 			children = (
-				A11E00000000000000000013 /* Phi.sdef */,
-				F01D3A000000000000000011 /* bookmark-folder-open.svg */,
-				F01D3A000000000000000012 /* bookmark-folder-closed.svg */,
-				375C66372EFB923C00885D78 /* Fonts */,
-				3765817A2EE9637F00D3E031 /* Localizable.xcstrings */,
-				37C1B2FF2EE672D500DD4496 /* LottieFiles */,
-				CC8B35202E81618F00C8A380 /* PhiBrowser-Info.plist */,
-				B0C4694D2E3B10E2007F0C7A /* Assets.xcassets */,
-				CD11000A0000000000000001 /* Emoji/emoji-catalog.json */,
-				B0C469522E3B10E2007F0C7A /* PhiBrowser.entitlements */,
-				E10000000000000000000001 /* PhiBrowser-OpenSource.entitlements */,
 				37DEADB82F5FCDBC00129429 /* PhiBrowser-Canary.entitlements */,
-				CC4BFB922E9798ED00CC6162 /* Auth0.plist */,
+				E10000000000000000000001 /* PhiBrowser-OpenSource.entitlements */,
+				B0C469522E3B10E2007F0C7A /* PhiBrowser.entitlements */,
+				CC5C51F52FB5C5560044D255 /* credits.html */,
+				37F574472F7A7C5D00879867 /* PhiIcon.icon */,
+				CD11000A0000000000000001 /* Emoji/emoji-catalog.json */,
+				3787811E2FE942E40028969F /* TimeMachineRollbackPolicy.json */,
 				CC99097B2EBC9F090046BC81 /* login-bg.mp4 */,
 				37B977D42EF3F62F007E0568 /* login-dot-bg.mp4 */,
-				37F574472F7A7C5D00879867 /* PhiIcon.icon */,
-				CC5C51F52FB5C5560044D255 /* credits.html */,
-				3787811E2FE942E40028969F /* TimeMachineRollbackPolicy.json */,
+				CC4BFB922E9798ED00CC6162 /* Auth0.plist */,
+				CC8B35202E81618F00C8A380 /* PhiBrowser-Info.plist */,
+				A11E00000000000000000013 /* Phi.sdef */,
+				F01D3A000000000000000012 /* bookmark-folder-closed.svg */,
+				F01D3A000000000000000011 /* bookmark-folder-open.svg */,
+				B0C4694D2E3B10E2007F0C7A /* Assets.xcassets */,
+				37B1C532302492FA00F46814 /* InfoPlist.xcstrings */,
+				3765817A2EE9637F00D3E031 /* Localizable.xcstrings */,
+				375C66372EFB923C00885D78 /* Fonts */,
+				37C1B2FF2EE672D500DD4496 /* LottieFiles */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -2676,6 +2679,7 @@
 				B0C4694E2E3B10E2007F0C7A /* Assets.xcassets in Resources */,
 				3765817B2EE963AD00D3E031 /* Localizable.xcstrings in Resources */,
 				37B977D52EF3F62F007E0568 /* login-dot-bg.mp4 in Resources */,
+				37B1C533302492FA00F46814 /* InfoPlist.xcstrings in Resources */,
 				CC99097C2EBC9F090046BC81 /* login-bg.mp4 in Resources */,
 				CC5C51F62FB5C5560044D255 /* credits.html in Resources */,
 				3787811F2FE942E40028969F /* TimeMachineRollbackPolicy.json in Resources */,
@@ -3404,8 +3408,16 @@
 				INFOPLIST_FILE = "PhiBrowser-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = Phi;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Websites may use your bluetooth for features on their site.";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Websites may use your camera for features on their site.";
+				INFOPLIST_KEY_NSDesktopFolderUsageDescription = "Access to \"Desktop\" is required to make files accessible from Phi.";
+				INFOPLIST_KEY_NSDownloadsFolderUsageDescription = "Access to \"Downloads\" is required for downloading files from the web and to make files accessible from Phi.";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026 Phinomenon. All rights reserved.";
+				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "Websites may use your location for features on their site.";
+				INFOPLIST_KEY_NSLocationAlwaysUsageDescription = "Websites may use your location for features on their site.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Websites may use your location for features on their site.";
 				INFOPLIST_KEY_NSMainNibFile = "";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Websites may use your microphone for features on their site.";
 				INFOPLIST_KEY_NSPrincipalClass = PhiApplication;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -3548,8 +3560,16 @@
 				INFOPLIST_FILE = "PhiBrowser-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = Phi;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Websites may use your bluetooth for features on their site.";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Websites may use your camera for features on their site.";
+				INFOPLIST_KEY_NSDesktopFolderUsageDescription = "Access to \"Desktop\" is required to make files accessible from Phi.";
+				INFOPLIST_KEY_NSDownloadsFolderUsageDescription = "Access to \"Downloads\" is required for downloading files from the web and to make files accessible from Phi.";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026 Phinomenon. All rights reserved.";
+				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "Websites may use your location for features on their site.";
+				INFOPLIST_KEY_NSLocationAlwaysUsageDescription = "Websites may use your location for features on their site.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Websites may use your location for features on their site.";
 				INFOPLIST_KEY_NSMainNibFile = "";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Websites may use your microphone for features on their site.";
 				INFOPLIST_KEY_NSPrincipalClass = PhiApplication;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -3859,8 +3879,16 @@
 				INFOPLIST_FILE = "PhiBrowser-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = Phi;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Websites may use your bluetooth for features on their site.";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Websites may use your camera for features on their site.";
+				INFOPLIST_KEY_NSDesktopFolderUsageDescription = "Access to \"Desktop\" is required to make files accessible from Phi.";
+				INFOPLIST_KEY_NSDownloadsFolderUsageDescription = "Access to \"Downloads\" is required for downloading files from the web and to make files accessible from Phi.";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026 Phinomenon. All rights reserved.";
+				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "Websites may use your location for features on their site.";
+				INFOPLIST_KEY_NSLocationAlwaysUsageDescription = "Websites may use your location for features on their site.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Websites may use your location for features on their site.";
 				INFOPLIST_KEY_NSMainNibFile = "";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Websites may use your microphone for features on their site.";
 				INFOPLIST_KEY_NSPrincipalClass = PhiApplication;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -3908,8 +3936,16 @@
 				INFOPLIST_FILE = "PhiBrowser-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = Phi;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Websites may use your bluetooth for features on their site.";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Websites may use your camera for features on their site.";
+				INFOPLIST_KEY_NSDesktopFolderUsageDescription = "Access to \"Desktop\" is required to make files accessible from Phi.";
+				INFOPLIST_KEY_NSDownloadsFolderUsageDescription = "Access to \"Downloads\" is required for downloading files from the web and to make files accessible from Phi.";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026 Phinomenon. All rights reserved.";
+				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "Websites may use your location for features on their site.";
+				INFOPLIST_KEY_NSLocationAlwaysUsageDescription = "Websites may use your location for features on their site.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Websites may use your location for features on their site.";
 				INFOPLIST_KEY_NSMainNibFile = "";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Websites may use your microphone for features on their site.";
 				INFOPLIST_KEY_NSPrincipalClass = PhiApplication;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -4101,8 +4137,16 @@
 				INFOPLIST_FILE = "PhiBrowser-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = Phi;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Websites may use your bluetooth for features on their site.";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Websites may use your camera for features on their site.";
+				INFOPLIST_KEY_NSDesktopFolderUsageDescription = "Access to \"Desktop\" is required to make files accessible from Phi.";
+				INFOPLIST_KEY_NSDownloadsFolderUsageDescription = "Access to \"Downloads\" is required for downloading files from the web and to make files accessible from Phi.";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026 Phinomenon. All rights reserved.";
+				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "Websites may use your location for features on their site.";
+				INFOPLIST_KEY_NSLocationAlwaysUsageDescription = "Websites may use your location for features on their site.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Websites may use your location for features on their site.";
 				INFOPLIST_KEY_NSMainNibFile = "";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Websites may use your microphone for features on their site.";
 				INFOPLIST_KEY_NSPrincipalClass = PhiApplication;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",

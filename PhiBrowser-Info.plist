@@ -67,16 +67,16 @@
 		<key>NSAllowsArbitraryLoads</key>
 		<true/>
 	</dict>
-	<key>NSRequiresAquaSystemAppearance</key>
-	<false/>
 	<key>NSAppleScriptEnabled</key>
 	<true/>
-	<key>OSAScriptingDefinition</key>
-	<string>Phi.sdef</string>
+	<key>NSRequiresAquaSystemAppearance</key>
+	<false/>
 	<key>NSUserActivityTypes</key>
 	<array>
 		<string>NSUserActivityTypeBrowsingWeb</string>
 	</array>
+	<key>OSAScriptingDefinition</key>
+	<string>Phi.sdef</string>
 	<key>SUAutomaticallyUpdate</key>
 	<true/>
 	<key>SUEnableAutomaticChecks</key>
@@ -87,21 +87,5 @@
 	<string>eu4wYg6JQMROgPO7MjCHhVSZ+hcmjAEqmc1gecvGWSA=</string>
 	<key>SUScheduledCheckInterval</key>
 	<integer>7200</integer>
-	<key>NSBluetoothAlwaysUsageDescription</key>
-	<string>Websites may use your bluetooth for features on their site.</string>
-	<key>NSCameraUsageDescription</key>
-	<string>Websites may use your camera for features on their site.</string>
-	<key>NSDesktopFolderUsageDescription</key>
-	<string>Access to &quot;Desktop&quot; is required to make files accessible from Phi.</string>
-	<key>NSDownloadsFolderUsageDescription</key>
-	<string>Access to &quot;Downloads&quot; is required for downloading files from the web and to make files accessible from Phi.</string>
-	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Websites may use your location for features on their site.</string>
-	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-	<string>Websites may use your location for features on their site.</string>
-	<key>NSLocationAlwaysUsageDescription</key>
-	<string>Websites may use your location for features on their site.</string>
-	<key>NSMicrophoneUsageDescription</key>
-	<string>Websites may use your microphone for features on their site.</string>
 </dict>
 </plist>
