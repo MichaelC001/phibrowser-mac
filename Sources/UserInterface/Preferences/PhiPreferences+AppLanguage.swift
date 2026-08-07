@@ -48,9 +48,16 @@ enum SupportedAppLanguage: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Uses each language's own locale so the picker shows stable autonyms.
+    /// Uses each language's own locale so the picker shows stable autonyms,
+    /// title-cased for the picker's menu context.
     var displayName: String {
-        Locale(identifier: rawValue).localizedString(forIdentifier: rawValue) ?? rawValue
+        let locale = Locale(identifier: rawValue)
+        let localizedName = locale.localizedString(forIdentifier: rawValue) ?? rawValue
+        let firstWordEnd = localizedName.firstIndex(where: \.isWhitespace)
+            ?? localizedName.endIndex
+        let firstWord = String(localizedName[..<firstWordEnd]).capitalized(with: locale)
+
+        return firstWord + String(localizedName[firstWordEnd...])
     }
 }
 

@@ -106,6 +106,11 @@ final class AppLanguagePreferenceTests: XCTestCase {
         )
     }
 
+    func testLanguagePickerTitleCasesFrenchAndSpanishAutonyms() {
+        XCTAssertEqual(SupportedAppLanguage.french.displayName, "Français")
+        XCTAssertEqual(SupportedAppLanguage.spanish.displayName, "Español")
+    }
+
     func testExplicitLanguagePreservesAndRestoresSystemPerAppLanguage() {
         defaults.set(["fr"], forKey: "AppleLanguages")
 
