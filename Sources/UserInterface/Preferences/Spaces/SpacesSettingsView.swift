@@ -36,13 +36,18 @@ struct SpacesSettingsView: View {
     @State private var draggingSpaceId: String?
     @State private var orderedIds: [String] = []
 
+    private static let spaceListPanelWidth: CGFloat = 280
+    private static let detailPanelWidth: CGFloat = 312
+
     var body: some View {
         ScrollView(.vertical) {
             VStack(spacing: 16) {
                 HStack(alignment: .top, spacing: 16) {
                     spaceListPanel
+                        .frame(width: Self.spaceListPanelWidth)
                         .frame(maxHeight: .infinity)
                     detailPanel
+                        .frame(width: Self.detailPanelWidth)
                         .frame(maxHeight: .infinity, alignment: .top)
                 }
                 .frame(height: 431)
@@ -354,7 +359,7 @@ struct SpacesSettingsView: View {
                 SettingsDetailCard {
                     colorRow(space.spaceId)
                     SettingsRowDivider()
-                        SettingsDetailRow(NSLocalizedString("settings.spaces.theme.saturationLabel", value: "Saturation", comment: "Spaces settings - theme saturation row label for the per-Space window colors")) {
+                    SettingsDetailRow(NSLocalizedString("settings.spaces.theme.saturationLabel", value: "Saturation", comment: "Spaces settings - theme saturation row label for the per-Space window colors")) {
                         ThemeOpacitySliderView(
                             value: themeSliderBinding(space.spaceId),
                             trackColor: themeSliderTrackColor(space.spaceId),
@@ -581,7 +586,11 @@ struct SpacesSettingsView: View {
 
     // MARK: - Detail bindings
 
-    private static let themeSliderWidth: CGFloat = 220
+    private static let themeSliderWidth: CGFloat = 200
+    private static let themeSwatchDiameter: CGFloat = 16
+    private static let themeSwatchRingDiameter: CGFloat = 20
+    private static let themeSwatchSpacing: CGFloat = 10
+    private static let themeSwatchTitleFontSize: CGFloat = 10
 
     private var themeSliderTrackStyle: ThemeSliderTrackStyle {
         spaceThemeId == Theme.pure.id ? .pureBrightness(appearance) : .saturation
@@ -603,7 +612,7 @@ struct SpacesSettingsView: View {
 
             Spacer(minLength: 8)
 
-            HStack(alignment: .top, spacing: 3) {
+            HStack(alignment: .top, spacing: Self.themeSwatchSpacing) {
                 ForEach(ThemeManager.shared.orderedThemes, id: \.id) { theme in
                     ThemeSwatchView(
                         fillColor: theme == .pure
@@ -613,9 +622,12 @@ struct SpacesSettingsView: View {
                         selected: spaceThemeId == theme.id,
                         title: theme.name,
                         showsContrastBorder: theme == .pure,
+                        dotDiameter: Self.themeSwatchDiameter,
+                        ringDiameter: Self.themeSwatchRingDiameter,
+                        titleFontSize: Self.themeSwatchTitleFontSize,
                         action: { selectTheme(theme.id, for: spaceId) }
                     )
-                    .frame(width: 26)
+                    .frame(width: Self.themeSwatchDiameter)
                 }
             }
         }

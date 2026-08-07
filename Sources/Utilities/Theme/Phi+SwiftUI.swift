@@ -406,10 +406,8 @@ public struct ThemedText: View {
 
 /// A circular theme swatch with an optional selection ring and caption.
 ///
-/// Shared by the General-settings theme picker (`ThemeColorItemView`) and the
-/// Create-Space theme picker so both render pixel-identical dots. The caller
-/// owns layout width — settings pins each item to 30pt, the create form lets
-/// the dots share the row evenly.
+/// Shared by the theme pickers so their dot, ring, and caption treatment stays
+/// consistent. Each caller owns its surface-specific metrics and layout width.
 struct ThemeSwatchView: View {
     /// Dot fill color.
     let fillColor: Color
@@ -424,6 +422,7 @@ struct ThemeSwatchView: View {
     var showsContrastBorder: Bool = false
     var dotDiameter: CGFloat = 22
     var ringDiameter: CGFloat = 26
+    var titleFontSize: CGFloat = 11
     let action: () -> Void
 
     var body: some View {
@@ -446,7 +445,7 @@ struct ThemeSwatchView: View {
 
                 if let title {
                     Text(title)
-                        .font(.system(size: 11))
+                        .font(.system(size: titleFontSize))
                         .themedForeground(.textPrimary)
                         .lineLimit(1)
                         .fixedSize(horizontal: true, vertical: false)

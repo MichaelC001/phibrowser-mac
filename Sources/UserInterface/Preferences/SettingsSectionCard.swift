@@ -42,7 +42,9 @@ struct SettingsDetailCard<Content: View>: View {
 
 /// A labelled row inside a `SettingsDetailCard`: a label on the left and a
 /// trailing control (picker, button, …) on the right. Mirrors the General
-/// pane's `GeneralRowView` styling.
+/// pane's `GeneralRowView` styling. The card owns the fixed 12pt horizontal
+/// insets; the control keeps its preferred width and the label receives all
+/// remaining space, with 12pt between adjacent row elements.
 struct SettingsDetailRow<Control: View>: View {
     private let label: String
     private let systemImage: String?
@@ -65,12 +67,10 @@ struct SettingsDetailRow<Control: View>: View {
             Text(label)
                 .font(.system(size: 13))
                 .themedForeground(.textPrimary)
-                // Localized labels may need multiple lines when the trailing
-                // control leaves less horizontal room. Preserve the resulting
-                // intrinsic height without forcing the row wider.
                 .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 12)
+                .frame(maxWidth: .infinity, alignment: .leading)
             control
+                .layoutPriority(1)
         }
         .padding(.vertical, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
