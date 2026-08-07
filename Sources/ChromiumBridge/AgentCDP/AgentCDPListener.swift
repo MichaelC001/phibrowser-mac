@@ -30,6 +30,16 @@ import Foundation
 /// asking agent or for every agent. Those refusals (`AgentDenial`) outrank
 /// every grant and are checked before anything else.
 ///
+/// The allow side can be widened the same way — "Apply to all agents" turns
+/// Allow Once / Always Allow into a blanket grant that admits agents never seen
+/// before, session-scoped or persisted
+/// (`PhiPreferences.AgentSpaces.allAgentsGranted`). Settings ▸ Developer
+/// carries the same grant as a switch over the allowed-agent list, so it can be
+/// given and taken back without waiting for an agent to ask. It is the widest
+/// permission here and the one thing that makes the prompt stop appearing, so
+/// it is off by default, still bounded by the two master switches, and still
+/// outranked by every refusal.
+///
 /// Threading: the accept loop runs on `ioQueue`; each connection is
 /// authenticated on the serial `authQueue` (which also serializes consent
 /// prompts and caches their result, so the skill's back-to-back HTTP + WebSocket
@@ -50,6 +60,11 @@ final class AgentCDPListener {
     // "Allow once" decisions for this app session, keyed by AgentIdentity.key.
     // Persisted grants live in PhiPreferences.rememberedAgentGrants.
     private var sessionGrants = Set<String>()
+    // The same, widened to every agent: an "Allow Once" answered with "Apply
+    // to all agents". Its persisted counterpart is
+    // PhiPreferences.allAgentsGranted, which this mirrors once observed so the
+    // rest of the session needs no defaults read.
+    private var sessionAllAgentsGrant = false
     private let grantsLock = NSLock()
 
     private init() {}
@@ -120,21 +135,26 @@ final class AgentCDPListener {
     }
 
     /// Forgets every agent approval at once — the persisted "Always Allow"
-    /// grants and this session's "Allow Once" ones. The developer-mode
-    /// kill-switch calls it: turning developer mode off doesn't just close the
-    /// door, it forgets everyone who was ever let in, so each agent has to
-    /// pass consent from scratch afterwards. Denials are deliberately kept —
-    /// clearing approvals must never soften a refusal.
+    /// grants, this session's "Allow Once" ones, and the blanket "all agents"
+    /// grant in both flavors. The developer-mode kill-switch calls it: turning
+    /// developer mode off doesn't just close the door, it forgets everyone who
+    /// was ever let in, so each agent has to pass consent from scratch
+    /// afterwards. Denials are deliberately kept — clearing approvals must
+    /// never soften a refusal.
     func forgetAllGrants() {
         PhiPreferences.AgentSpaces.rememberedAgentGrants = []
+        PhiPreferences.AgentSpaces.allAgentsGranted = false
         grantsLock.lock()
         sessionGrants.removeAll()
+        sessionAllAgentsGrant = false
         grantsLock.unlock()
     }
 
-    /// Every agent currently allowed to connect: the persisted "Always Allow"
+    /// Every *named* agent allowed to connect: the persisted "Always Allow"
     /// grants plus this session's "Allow Once" grants. Backs the Developer
-    /// settings list. Safe to call from the main thread.
+    /// settings list. The blanket grant is deliberately absent — it is the
+    /// switch above this list, not a row in it (`allAgentsGranted`). Safe to
+    /// call from the main thread.
     func allowedGrants() -> [AgentGrant] {
         let remembered = PhiPreferences.AgentSpaces.rememberedAgentGrants
         grantsLock.lock()
@@ -148,6 +168,49 @@ final class AgentCDPListener {
             grants.append(AgentGrant(key: key, remembered: false))
         }
         return grants
+    }
+
+    // MARK: - Blanket grant
+
+    /// Whether a blanket "all agents" grant stands right now, in either
+    /// flavor: persisted from Settings or from "Always Allow" widened at the
+    /// prompt, and this session's from "Allow Once" widened the same way.
+    /// Backs the Settings switch, which reads on for both.
+    var allAgentsGranted: Bool {
+        grantsLock.lock()
+        let session = sessionAllAgentsGrant
+        grantsLock.unlock()
+        return session || PhiPreferences.AgentSpaces.allAgentsGranted
+    }
+
+    /// Whether the standing blanket grant lapses when the app quits — true
+    /// only for one widened at the prompt with "Allow Once". Settings shows it
+    /// as a "This session" pill, so a switch that reads on never implies a
+    /// permanence it doesn't have.
+    var allAgentsGrantIsSessionOnly: Bool {
+        allAgentsGranted && !PhiPreferences.AgentSpaces.allAgentsGranted
+    }
+
+    /// Applies the Settings ▸ Developer "Allow all agents" switch. A switch in
+    /// Settings is a durable setting, so ON always persists — including when
+    /// it merely confirms a session-only grant made at the prompt.
+    ///
+    /// Turning it on also lifts every standing refusal, for the same reason
+    /// the master switch does: "allow all agents" is the widest answer the
+    /// user can give, and leaving a refusal to silently outrank it would show
+    /// a switch that is on while agents are still turned away. Turning it off
+    /// only stops it deciding future connections — live connections persist
+    /// until they close, exactly like revoking one agent's grant.
+    func setAllAgentsGranted(_ granted: Bool) {
+        PhiPreferences.AgentSpaces.allAgentsGranted = granted
+        grantsLock.lock()
+        sessionAllAgentsGrant = granted
+        grantsLock.unlock()
+        if granted {
+            PhiPreferences.AgentSpaces.agentDenials = []
+        }
+        AppLogInfo("[AgentCDP] blanket all-agents grant "
+                   + (granted ? "enabled" : "revoked") + " from Settings")
     }
 
     // MARK: - Socket setup (ioQueue)
@@ -223,12 +286,14 @@ final class AgentCDPListener {
 
     /// Cuts every agent off immediately: both transports are severed
     /// (connections handed to Chromium and the app-served /phi-agent
-    /// channels) and this session's Allow-Once grants are dropped, so a
-    /// reconnecting agent has to pass consent again. Persisted "Always Allow"
-    /// grants survive — they are revoked from Settings, one agent at a time.
+    /// channels) and this session's Allow-Once grants are dropped — the
+    /// blanket one included — so a reconnecting agent has to pass consent
+    /// again. Persisted "Always Allow" grants survive: they are revoked from
+    /// Settings, one entry at a time.
     private func revokeActiveAccess() {
         grantsLock.lock()
         sessionGrants.removeAll()
+        sessionAllAgentsGrant = false
         grantsLock.unlock()
 
         AgentDirectChannelRegistry.shared.closeAll()
@@ -446,16 +511,17 @@ final class AgentCDPListener {
     }
 
     /// Returns true when `identity` may connect: a cached session grant, a
-    /// remembered grant, or a fresh Allow from the consent prompt.
+    /// remembered grant, a standing blanket grant, or a fresh Allow from the
+    /// consent prompt.
     ///
     /// While a master switch is off no grant stands on its own — every agent,
     /// remembered or not, goes to the prompt, which asks to turn the switches
     /// back on as part of allowing it. That is the only path that flips them
     /// from outside Settings, and it always costs the user an explicit Allow.
     private func evaluate(_ identity: AgentIdentity) -> Bool {
-        // A standing refusal wins over everything, including a remembered
-        // grant: "Never ask again" has to mean it even if the same agent was
-        // once allowed.
+        // A standing refusal wins over everything, including a remembered or
+        // blanket grant: "Never ask again" has to mean it even if the same
+        // agent — or every agent — was once allowed.
         if let denial = Self.liveDenials().first(where: { $0.covers(identity.key) }) {
             AppLogInfo("[AgentCDP] refused \(identity.displayName) — standing denial"
                        + (denial.isPermanent ? " (never ask again)" : " (until \(denial.expires!))"))
@@ -463,38 +529,62 @@ final class AgentCDPListener {
         }
 
         grantsLock.lock()
-        let granted = sessionGrants.contains(identity.key)
+        let granted = sessionGrants.contains(identity.key) || sessionAllAgentsGrant
         grantsLock.unlock()
 
         let gatesOpen = Self.accessGatesOpen
         if gatesOpen {
             if granted { return true }
+            if PhiPreferences.AgentSpaces.allAgentsGranted {
+                grantsLock.lock(); sessionAllAgentsGrant = true; grantsLock.unlock()
+                return true
+            }
             if PhiPreferences.AgentSpaces.rememberedAgentGrants.contains(identity.key) {
                 grantsLock.lock(); sessionGrants.insert(identity.key); grantsLock.unlock()
                 return true
             }
         }
 
-        let choice = promptForConsent(identity, opensGates: !gatesOpen)
-        if case .deny(let scope, let allAgents) = choice {
+        switch promptForConsent(identity, opensGates: !gatesOpen) {
+        case .deny(let scope, let allAgents):
             if scope.isRemembered {
                 recordDenial(AgentDenial(key: allAgents ? nil : identity.key,
                                          expires: scope.expiry))
             }
             return false
-        }
 
-        // Open the gates before the caller hands the connection on, so the
-        // browser is never driven while Settings still reads "off".
-        if !gatesOpen { openAccessGates() }
+        case .allow(let remembered, let allAgents):
+            // Open the gates before the caller hands the connection on, so the
+            // browser is never driven while Settings still reads "off".
+            if !gatesOpen { openAccessGates() }
 
-        grantsLock.lock(); sessionGrants.insert(identity.key); grantsLock.unlock()
-        if choice == .allowAlways {
-            var remembered = PhiPreferences.AgentSpaces.rememberedAgentGrants
-            remembered.insert(identity.key)
-            PhiPreferences.AgentSpaces.rememberedAgentGrants = remembered
+            // A widened answer is recorded ONLY as the blanket grant: adding
+            // the asking agent's own key underneath would outlive the blanket
+            // one and quietly keep it connecting after the user revokes
+            // "All agents".
+            grantsLock.lock()
+            if allAgents {
+                sessionAllAgentsGrant = true
+            } else {
+                sessionGrants.insert(identity.key)
+            }
+            grantsLock.unlock()
+
+            if remembered {
+                if allAgents {
+                    PhiPreferences.AgentSpaces.allAgentsGranted = true
+                } else {
+                    var grants = PhiPreferences.AgentSpaces.rememberedAgentGrants
+                    grants.insert(identity.key)
+                    PhiPreferences.AgentSpaces.rememberedAgentGrants = grants
+                }
+            }
+            if allAgents {
+                AppLogInfo("[AgentCDP] granted access to all agents"
+                           + (remembered ? " (always)" : " (this session)"))
+            }
+            return true
         }
-        return true
     }
 
     // MARK: - Standing refusals

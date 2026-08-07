@@ -5316,6 +5316,42 @@
         }
       }
     },
+    "agentControl.connectionApproval.allAgentsScope.allowWarning" : {
+      "comment" : "CDP consent - warning shown when the answer is widened to every agent, naming what that means on the allow side",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "If you allow, every agent that connects gets full control without asking you. Reverse it anytime in Settings ▸ Developer."
+          }
+        }
+      }
+    },
+    "agentControl.connectionApproval.allAgentsScope.description" : {
+      "comment" : "CDP consent - explanation of the all-agents switch; %@ is the name of the agent asking for access",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Your answer covers every agent, not just “%@”."
+          }
+        }
+      }
+    },
+    "agentControl.connectionApproval.allAgentsScope.title" : {
+      "comment" : "CDP consent - title of the switch that widens the answer from the asking agent to every agent",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Apply to all agents"
+          }
+        }
+      }
+    },
     "agentControl.connectionApproval.agentLabel" : {
       "comment" : "CDP consent - agent row label",
       "extractionState" : "extracted_with_value",
@@ -5556,6 +5592,18 @@
         }
       }
     },
+    "agentControl.connectionApproval.backButton" : {
+      "comment" : "CDP consent - return from the deny scope step to the allow-or-deny decision",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Back"
+          }
+        }
+      }
+    },
     "agentControl.connectionApproval.denyButton" : {
       "comment" : "CDP consent - deny",
       "extractionState" : "extracted_with_value",
@@ -5612,126 +5660,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "拒絕"
-          }
-        }
-      }
-    },
-    "agentControl.connectionApproval.denyScope.allAgentsDescription" : {
-      "comment" : "CDP consent - all-agents deny row explanation",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Jeden Agenten abweisen, nicht nur „%@“."
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Turn away every agent, not just “%@”."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Rechaza a todos los agentes, no solo a «%@»."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Refuse tous les agents, pas seulement « %@ »."
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "“%@”だけでなく、すべてのエージェントを拒否します。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "“%@”만이 아니라 모든 에이전트를 거부해요."
-          }
-        },
-        "nl" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Wijs elke agent af, niet alleen “%@”."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "拒绝所有智能体，而不仅限于「%@」。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "拒絕所有 AI 代理，而不僅限於「%@」。"
-          }
-        }
-      }
-    },
-    "agentControl.connectionApproval.denyScope.allAgentsTitle" : {
-      "comment" : "CDP consent - all-agents deny row title",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Auf alle Agenten anwenden"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Apply to all agents"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Aplicar a todos los agentes"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Appliquer à tous les agents"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "すべてのエージェントに適用"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "모든 에이전트에 적용"
-          }
-        },
-        "nl" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Toepassen op alle agents"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "应用于所有智能体"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "套用到所有 AI 代理"
           }
         }
       }
@@ -5797,7 +5725,7 @@
       }
     },
     "agentControl.connectionApproval.denyScope.label" : {
-      "comment" : "CDP consent - label over the picker that scopes the Deny button",
+      "comment" : "CDP consent - label over the picker that scopes the refusal, shown after the user presses Deny",
       "extractionState" : "extracted_with_value",
       "localizations" : {
         "de" : {
@@ -5809,7 +5737,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "If you deny:"
+            "value" : "How long should Phi refuse?"
           }
         },
         "es" : {
@@ -44161,6 +44089,42 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "允許 AI 代理操作你的空間"
+          }
+        }
+      }
+    },
+    "settings.developer.agentControl.allowAllAgents.description" : {
+      "comment" : "Developer settings - Security note for the blanket all-agents grant toggle",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Lets every agent connect without asking you, including ones Phi has never seen. The approval prompt stops appearing while this is on, and turning it on lifts any standing refusal. Applies immediately."
+          }
+        }
+      }
+    },
+    "settings.developer.agentControl.allowAllAgents.title" : {
+      "comment" : "Developer settings - Toggle title for the blanket grant that lets every agent connect",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Allow all agents"
+          }
+        }
+      }
+    },
+    "settings.developer.agentControl.allowedAgents.allAllowedMessage" : {
+      "comment" : "Developer settings - Empty state for the allowed CDP agent list while the blanket all-agents grant is on",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Every agent is allowed, so none is approved individually."
           }
         }
       }

@@ -56,6 +56,11 @@ struct AgentIdentity: Equatable {
 /// One entry in the Developer settings "Allowed agents" list: an identity the
 /// user has granted CDP access, either persisted ("Always Allow") or for this
 /// session only ("Allow Once").
+///
+/// Unlike `AgentDenial` this never carries the "all agents" scope: a blanket
+/// grant is not one entry among many but the switch above the whole list
+/// (`AgentCDPListener.allAgentsGranted`), because while it stands the entries
+/// below decide nothing.
 struct AgentGrant: Identifiable {
     let key: String
     let remembered: Bool
