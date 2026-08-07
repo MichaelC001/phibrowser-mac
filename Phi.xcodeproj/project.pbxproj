@@ -3406,7 +3406,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				GPD_COMMON = "NIGHTLY_BUILD=$(NIGHTLY_BUILD)";
 				INFOPLIST_FILE = "PhiBrowser-Info.plist";
-				INFOPLIST_KEY_CFBundleDisplayName = Phi;
+				INFOPLIST_KEY_CFBundleDisplayName = "$(PRODUCT_NAME)";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Websites may use your bluetooth for features on their site.";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Websites may use your camera for features on their site.";
@@ -3558,7 +3558,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				GPD_COMMON = "NIGHTLY_BUILD=$(NIGHTLY_BUILD)";
 				INFOPLIST_FILE = "PhiBrowser-Info.plist";
-				INFOPLIST_KEY_CFBundleDisplayName = Phi;
+				INFOPLIST_KEY_CFBundleDisplayName = "$(PRODUCT_NAME)";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Websites may use your bluetooth for features on their site.";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Websites may use your camera for features on their site.";
@@ -3877,7 +3877,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				GPD_COMMON = "NIGHTLY_BUILD=$(NIGHTLY_BUILD)";
 				INFOPLIST_FILE = "PhiBrowser-Info.plist";
-				INFOPLIST_KEY_CFBundleDisplayName = Phi;
+				INFOPLIST_KEY_CFBundleDisplayName = "$(PRODUCT_NAME)";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Websites may use your bluetooth for features on their site.";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Websites may use your camera for features on their site.";
@@ -3934,7 +3934,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				GPD_COMMON = "NIGHTLY_BUILD=$(NIGHTLY_BUILD)";
 				INFOPLIST_FILE = "PhiBrowser-Info.plist";
-				INFOPLIST_KEY_CFBundleDisplayName = Phi;
+				INFOPLIST_KEY_CFBundleDisplayName = "$(PRODUCT_NAME)";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Websites may use your bluetooth for features on their site.";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Websites may use your camera for features on their site.";
@@ -4135,7 +4135,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				GPD_COMMON = "NIGHTLY_BUILD=$(NIGHTLY_BUILD)";
 				INFOPLIST_FILE = "PhiBrowser-Info.plist";
-				INFOPLIST_KEY_CFBundleDisplayName = Phi;
+				INFOPLIST_KEY_CFBundleDisplayName = "$(PRODUCT_NAME)";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Websites may use your bluetooth for features on their site.";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Websites may use your camera for features on their site.";
