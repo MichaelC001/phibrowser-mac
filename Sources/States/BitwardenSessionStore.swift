@@ -3,8 +3,26 @@
 // Use of this source code is governed by an Apache license that can be
 // found in the LICENSE file.
 
+import Darwin
 import Foundation
 import Security
+
+enum BitwardenSessionStoreUninstallError: Error, Equatable, LocalizedError {
+    case deletionFailed(OSStatus)
+    case verificationFailed(OSStatus)
+    case itemStillPresent
+
+    var errorDescription: String? {
+        switch self {
+        case .deletionFailed(let status):
+            return "The Bitwarden session could not be removed from Keychain (OSStatus \(status))."
+        case .verificationFailed(let status):
+            return "The Bitwarden Keychain cleanup could not be verified (OSStatus \(status))."
+        case .itemStillPresent:
+            return "The Bitwarden session is still present in Keychain after cleanup."
+        }
+    }
+}
 
 /// The Bitwarden session record the *app* persists so a browser restart can
 /// re-establish the vault without a fresh login. Mirrors the helper's wire
@@ -126,6 +144,66 @@ enum BitwardenSessionStore {
         if status != errSecSuccess && status != errSecItemNotFound {
             AppLogError("[BitwardenSessionStore] clear failed: \(describe(status))")
         }
+    }
+
+    /// Strict uninstall-only removal. Unlike the best-effort logout path above,
+    /// this verifies absence directly and distinguishes a missing item from an
+    /// unreadable Keychain or another Security.framework failure.
+    static func clearAndVerifyForUninstall() throws {
+        var query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        query.merge(useDataProtection) { current, _ in current }
+        try clearAndVerifyForUninstall(
+            deleteItem: { SecItemDelete(query as CFDictionary) },
+            itemStatus: { SecItemCopyMatching(query as CFDictionary, nil) },
+            retryDelay: { usleep(150_000) }
+        )
+    }
+
+    static func clearAndVerifyForUninstall(
+        deleteItem: () -> OSStatus,
+        itemStatus: () -> OSStatus,
+        retryDelay: () -> Void
+    ) throws {
+        let firstDelete = deleteWithRetry(deleteItem, retryDelay: retryDelay)
+        guard firstDelete == errSecSuccess || firstDelete == errSecItemNotFound else {
+            throw BitwardenSessionStoreUninstallError.deletionFailed(firstDelete)
+        }
+
+        let firstStatus = itemStatus()
+        if firstStatus == errSecItemNotFound { return }
+        guard firstStatus == errSecSuccess else {
+            throw BitwardenSessionStoreUninstallError.verificationFailed(firstStatus)
+        }
+
+        // A writer may have won immediately before the persistence fence. With
+        // future writes disabled, one final delete must make absence stable.
+        let secondDelete = deleteWithRetry(deleteItem, retryDelay: retryDelay)
+        guard secondDelete == errSecSuccess || secondDelete == errSecItemNotFound else {
+            throw BitwardenSessionStoreUninstallError.deletionFailed(secondDelete)
+        }
+        let secondStatus = itemStatus()
+        if secondStatus == errSecItemNotFound { return }
+        if secondStatus == errSecSuccess {
+            throw BitwardenSessionStoreUninstallError.itemStillPresent
+        }
+        throw BitwardenSessionStoreUninstallError.verificationFailed(secondStatus)
+    }
+
+    private static func deleteWithRetry(
+        _ deleteItem: () -> OSStatus,
+        retryDelay: () -> Void
+    ) -> OSStatus {
+        let first = deleteItem()
+        if first == errSecSuccess || first == errSecItemNotFound {
+            return first
+        }
+        retryDelay()
+        return deleteItem()
     }
 
     private static func describe(_ status: OSStatus) -> String {

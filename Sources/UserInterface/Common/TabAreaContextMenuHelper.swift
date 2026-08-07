@@ -70,9 +70,14 @@ final class TabAreaContextMenuHelper: NSObject {
         // participates in Spaces — standalone incognito windows expose none;
         // the Incognito Space's window does.
         if PhiPreferences.GeneralSettings.spacesFeatureEnabled.loadValue(),
-           browserState?.participatesInSpaces == true {
+           let browserState,
+           browserState.participatesInSpaces == true {
             menu.addItem(.separator())
-            AppController.shared?.appendActiveSpaceMenuItems(to: menu)
+            AppController.shared?.appendActiveSpaceMenuItems(
+                to: menu,
+                browserState: browserState,
+                triggerScreenPoint: NSEvent.mouseLocation
+            )
         }
     }
 

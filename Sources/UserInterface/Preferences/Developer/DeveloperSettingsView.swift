@@ -35,6 +35,12 @@ struct DeveloperSettingsView: View {
             .padding(.horizontal, 36)
             .animation(.easeInOut(duration: 0.2), value: agentAccessEnabled)
         }
+        // Approving an agent's consent prompt can switch access on while this
+        // pane is already open; follow the preference rather than only the
+        // toggle's own edits.
+        .onReceive(NotificationCenter.default.publisher(for: .agentCDPAccessDidChange)) { _ in
+            agentAccessEnabled = PhiPreferences.AgentSpaces.cdpAgentAccessEnabled
+        }
         .themedBackground(PhiPreferences.fixedWindowBackground)
         .frame(width: 680, height: 561)
     }
@@ -66,6 +72,11 @@ private struct AgentControlSectionView: View {
     // session's "Allow Once"). Read live from the listener on appear.
     @State private var allowedGrants: [AgentGrant] =
         AgentCDPListener.shared.allowedGrants()
+    // Standing refusals from the consent prompt ("For 30 min" / "Never ask
+    // again"). Listed even with agent access off — a permanent block has to be
+    // reversible somewhere the user can find it.
+    @State private var blockedAgents: [AgentDenial] =
+        AgentCDPListener.shared.blockedAgents()
     @State private var userSpaceOperationsEnabled: Bool =
         PhiPreferences.AgentSpaces.userSpaceOperationsEnabled
     @ObservedObject private var profileManager = ProfileManager.shared
@@ -81,12 +92,20 @@ private struct AgentControlSectionView: View {
                 accessCard
                 if agentAccessEnabled {
                     allowedAgentsCard
+                }
+                // Outside the access gate: a block recorded before the switch
+                // was turned off must stay visible and liftable.
+                if !blockedAgents.isEmpty {
+                    blockedAgentsCard
+                }
+                if agentAccessEnabled {
                     permissionsCard
                 }
             }
         }
         .onAppear {
             allowedGrants = AgentCDPListener.shared.allowedGrants()
+            blockedAgents = AgentCDPListener.shared.blockedAgents()
             profileManager.refresh()
         }
     }
@@ -112,7 +131,7 @@ private struct AgentControlSectionView: View {
                 Text(NSLocalizedString("settings.developer.agentControl.enableToggle", value: "Allow agents to control Phi (CDP)", comment: "Developer settings - Toggle title for the Chrome DevTools Protocol endpoint"))
                     .font(.system(size: 13))
                     .themedForeground(.textPrimary)
-                Text(NSLocalizedString("settings.developer.agentControl.enableDescription", value: "Lets agent tools (Claude Code, Codex) drive Phi over the DevTools Protocol through a private socket only this Mac’s processes can reach. Each agent asks for your approval the first time it connects. Applies immediately.", comment: "Developer settings - Security note for the agent CDP toggle"))
+                Text(NSLocalizedString("settings.developer.agentControl.enableDescription", value: "Lets agent tools (Claude Code, Codex) drive Phi over the DevTools Protocol through a private socket only this Mac’s processes can reach. Each agent asks for your approval the first time it connects. Turning this off disconnects them right away; the next agent that connects asks you to turn it back on. Applies immediately.", comment: "Developer settings - Security note for the agent CDP toggle"))
                     .font(.system(size: 11))
                     .themedForeground(.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -123,8 +142,10 @@ private struct AgentControlSectionView: View {
                 set: { newValue in
                     agentAccessEnabled = newValue
                     AgentCDPListener.shared.setEnabled(newValue)
-                    // Turning off clears the session grants; reflect it.
+                    // Turning off clears the session grants, turning on lifts
+                    // every standing refusal; reflect both.
                     allowedGrants = AgentCDPListener.shared.allowedGrants()
+                    blockedAgents = AgentCDPListener.shared.blockedAgents()
                 }
             ))
             .labelsHidden()
@@ -187,7 +208,7 @@ private struct AgentControlSectionView: View {
 
     private func grantRow(_ grant: AgentGrant) -> some View {
         HStack(spacing: 12) {
-            AgentBrandIcon(assetName: Self.brandAsset(for: grant))
+            AgentBrandIcon(assetName: Self.brandAsset(forName: grant.displayName))
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(grant.displayName)
@@ -246,10 +267,11 @@ private struct AgentControlSectionView: View {
         }
     }
 
-    /// The bundled brand icon for a grant whose display name identifies a
-    /// known agent, nil for anything else (shown with a generic glyph).
-    private static func brandAsset(for grant: AgentGrant) -> String? {
-        let name = grant.displayName.lowercased()
+    /// The bundled brand icon for a display name that identifies a known
+    /// agent, nil for anything else (shown with a generic glyph). Shared by
+    /// the allowed and blocked lists so one agent looks the same in both.
+    private static func brandAsset(forName displayName: String) -> String? {
+        let name = displayName.lowercased()
         if name.contains("claude") { return "agent-claude" }
         if name.contains("codex") || name.contains("openai") { return "agent-openai" }
         if name.contains("cursor") { return "agent-cursor" }
@@ -258,6 +280,98 @@ private struct AgentControlSectionView: View {
         if name == "pi" { return "agent-pi" }
         return nil
     }
+
+    // MARK: Blocked agents card — the standing refusals, and the way back.
+
+    private var blockedAgentsCard: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .top, spacing: 12) {
+                SettingsIconChip(systemName: "nosign", color: .red)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(NSLocalizedString("settings.developer.agentControl.blockedAgents.title", value: "Blocked agents", comment: "Developer settings - Title for the list of agents refused at the consent prompt"))
+                        .font(.system(size: 13))
+                        .themedForeground(.textPrimary)
+                    Text(NSLocalizedString("settings.developer.agentControl.blockedAgents.description", value: "Turned away without asking you, from a “Never ask again” or “For 30 min” denial. Unblocking one makes it ask again next time it connects.", comment: "Developer settings - Explanation for the blocked agent list"))
+                        .font(.system(size: 11))
+                        .themedForeground(.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.vertical, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Divider()
+            ForEach(blockedAgents) { denial in
+                blockedRow(denial)
+                if denial.id != blockedAgents.last?.id {
+                    Divider().padding(.leading, 36)
+                }
+            }
+        }
+        .padding(.horizontal, 12)
+        .settingsCardChrome()
+    }
+
+    private func blockedRow(_ denial: AgentDenial) -> some View {
+        HStack(spacing: 12) {
+            AgentBrandIcon(assetName: denial.appliesToAllAgents
+                           ? nil : Self.brandAsset(forName: denial.displayName))
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(denial.displayName)
+                        .font(.system(size: 13, weight: .medium))
+                        .themedForeground(.textPrimary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    blockScopePill(denial)
+                }
+                Text(blockSubtitle(denial))
+                    .font(.system(size: 11))
+                    .themedForeground(.textTertiary)
+            }
+            Spacer(minLength: 12)
+            Button(NSLocalizedString("settings.developer.agentControl.blockedAgents.removeButton", value: "Unblock", comment: "Developer settings - Lift a standing refusal")) {
+                AgentCDPListener.shared.forgetDenial(id: denial.id)
+                blockedAgents = AgentCDPListener.shared.blockedAgents()
+            }
+            .controlSize(.small)
+        }
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func blockScopePill(_ denial: AgentDenial) -> some View {
+        let label = denial.isPermanent
+            ? NSLocalizedString("settings.developer.agentControl.block.permanentStatus", value: "Never", comment: "Developer settings - permanent block pill")
+            : NSLocalizedString("settings.developer.agentControl.block.temporaryStatus", value: "Paused", comment: "Developer settings - temporary block pill")
+        let color: Color = denial.isPermanent ? .red : .orange
+        return Text(label)
+            .font(.system(size: 10, weight: .medium))
+            .foregroundStyle(color)
+            .lineLimit(1)
+            .fixedSize()
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(color.opacity(0.15), in: Capsule())
+    }
+
+    private func blockSubtitle(_ denial: AgentDenial) -> String {
+        guard let expires = denial.expires else {
+            return denial.appliesToAllAgents
+                ? NSLocalizedString("settings.developer.agentControl.block.allAgentsForeverSubtitle", value: "No agent is asked for approval", comment: "Developer settings - subtitle for a permanent all-agents block")
+                : NSLocalizedString("settings.developer.agentControl.block.foreverSubtitle", value: "Refused without asking", comment: "Developer settings - subtitle for a permanent single-agent block")
+        }
+        return String(
+            format: NSLocalizedString("settings.developer.agentControl.block.untilSubtitle", value: "Until %@", comment: "Developer settings - subtitle for a timed block; %@ is a time of day"),
+            Self.timeFormatter.string(from: expires))
+    }
+
+    private static let timeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.timeStyle = .short
+        formatter.dateStyle = .none
+        return formatter
+    }()
 
     // MARK: Permissions card — what approved agents may touch.
 

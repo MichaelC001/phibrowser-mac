@@ -48,6 +48,7 @@ final class SpaceTests: XCTestCase {
     // Menu titles (verbatim, including the real ellipsis glyph U+2026).
     private static let spacesMenuTitle = "Spaces"
     private static let newSpaceItem = "New Space\u{2026}"
+    private static let changeIconItem = "Change Icon\u{2026}"
     private static let deleteSpaceItem = "Delete Space\u{2026}"
     private static let newProfileItem = "New Profile\u{2026}"
     private static let deleteProfileSubmenu = "Delete Profile"
@@ -123,6 +124,25 @@ final class SpaceTests: XCTestCase {
         XCTAssertTrue(waitUntilSpacesMenu(contains: spaceName, timeout: 15),
                       "The new Space '\(spaceName)' should be listed in the Spaces menu")
         attachDiagnostics(label: "after-create-space")
+    }
+
+    @MainActor
+    func test_changeIconMenuItemRequiresMultipleSpaces() throws {
+        XCTAssertFalse(
+            spacesMenuContains(Self.changeIconItem, timeout: 1),
+            "Change Icon should be hidden when the current Space is the only Space"
+        )
+
+        let spaceName = "IconSpace-\(Self.token())"
+        try createSpace(named: spaceName)
+        XCTAssertTrue(
+            waitUntilSpacesMenu(contains: spaceName, timeout: 15),
+            "The new Space should be listed before Change Icon is shown"
+        )
+        XCTAssertTrue(
+            spacesMenuContains(Self.changeIconItem, timeout: 5),
+            "Change Icon should be shown when more than one Space exists"
+        )
     }
 
     @MainActor

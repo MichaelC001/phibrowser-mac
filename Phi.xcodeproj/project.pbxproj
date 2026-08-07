@@ -14,7 +14,6 @@
 		3703C9822F69558C00E7CF6D /* BrowserState+ToggleAI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3703C9812F69558C00E7CF6D /* BrowserState+ToggleAI.swift */; };
 		3703C9842F6956E600E7CF6D /* SentinelHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3703C9832F6956E600E7CF6D /* SentinelHelper.swift */; };
 		3703C9862F6956E600E7CF6D /* SentinelVersionGuard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3703C9852F6956E600E7CF6D /* SentinelVersionGuard.swift */; };
-		793C1DDEA1022CC850FEFFF9 /* SentinelWatchdog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A44C5FF60DF6F7860A061D4 /* SentinelWatchdog.swift */; };
 		370D03AC2F0E463B0087A1C9 /* Mapper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 370D03A32F0E463B0087A1C9 /* Mapper.swift */; };
 		370D03AD2F0E463B0087A1C9 /* ThemedColor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 370D03A82F0E463B0087A1C9 /* ThemedColor.swift */; };
 		370D03AE2F0E463B0087A1C9 /* Key.swift in Sources */ = {isa = PBXBuildFile; fileRef = 370D03A22F0E463B0087A1C9 /* Key.swift */; };
@@ -54,6 +53,8 @@
 		3764F7392F1628DA00C1F4E3 /* FaviconProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3764F7382F1628DA00C1F4E3 /* FaviconProvider.swift */; };
 		3765817B2EE963AD00D3E031 /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 3765817A2EE9637F00D3E031 /* Localizable.xcstrings */; };
 		376581A32EE970B000D3E031 /* new-tab-reverse.json in Copy LottieFiles */ = {isa = PBXBuildFile; fileRef = 376581A22EE96FA200D3E031 /* new-tab-reverse.json */; };
+		37D011013010000100000001 /* refresh.json in Copy LottieFiles */ = {isa = PBXBuildFile; fileRef = 37D011043010000100000004 /* refresh.json */; };
+		37D011023010000100000002 /* memory.json in Copy LottieFiles */ = {isa = PBXBuildFile; fileRef = 37D011053010000100000005 /* memory.json */; };
 		376581F72EEA845700D3E031 /* BrowserState+Bookmark.swift in Sources */ = {isa = PBXBuildFile; fileRef = 376581F62EEA845700D3E031 /* BrowserState+Bookmark.swift */; };
 		376581F92EEA9BB200D3E031 /* BookmarkCellView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 376581F82EEA9BB200D3E031 /* BookmarkCellView.swift */; };
 		376581FB2EEA9D6200D3E031 /* BookmarkRowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 376581FA2EEA9D6200D3E031 /* BookmarkRowView.swift */; };
@@ -181,8 +182,8 @@
 		5ACE0000000000000000000E /* ProfilesSettingViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ACE0000000000000000000B /* ProfilesSettingViewController.swift */; };
 		5ACE0000000000000000000F /* ProfilesSettingHostingViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ACE0000000000000000000C /* ProfilesSettingHostingViewController.swift */; };
 		5ACE00000000000000000010 /* ProfilesSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ACE0000000000000000000D /* ProfilesSettingsView.swift */; };
-		5ACE00000000000000000A22 /* ProfileDetailSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ACE00000000000000000A21 /* ProfileDetailSettingsView.swift */; };
 		5ACE00000000000000000012 /* ThemeOpacitySlider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ACE00000000000000000011 /* ThemeOpacitySlider.swift */; };
+		5ACE00000000000000000A22 /* ProfileDetailSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ACE00000000000000000A21 /* ProfileDetailSettingsView.swift */; };
 		5EA17ABC0000000000000100 /* SearchTabsModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5EA17ABC0000000000000110 /* SearchTabsModels.swift */; };
 		5EA17ABC0000000000000101 /* SearchTabsQueryMatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5EA17ABC0000000000000111 /* SearchTabsQueryMatcher.swift */; };
 		5EA17ABC0000000000000102 /* SearchTabsChromiumProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5EA17ABC0000000000000112 /* SearchTabsChromiumProvider.swift */; };
@@ -200,15 +201,16 @@
 		5F1A5A11AC1D000000000001 /* BrowserState+Split.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F1A5A11AC1D000000000002 /* BrowserState+Split.swift */; };
 		5F1A5A11AC1D000000000003 /* SplitPaneHostView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F1A5A11AC1D000000000004 /* SplitPaneHostView.swift */; };
 		5F1A5A11AC1D000000000005 /* SplitTabDropContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F1A5A11AC1D000000000006 /* SplitTabDropContainer.swift */; };
+		6A4750013B12345600000002 /* LoginRequiredPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A4750013B12345600000001 /* LoginRequiredPresentation.swift */; };
+		6A4750023B12345600000002 /* GuestDataMigration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A4750023B12345600000001 /* GuestDataMigration.swift */; };
 		793C1DDEA1022CC850FEFFF9 /* SentinelWatchdog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A44C5FF60DF6F7860A061D4 /* SentinelWatchdog.swift */; };
 		7A5B00A02EF0000000000001 /* MemoryButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A5B00A02EF0000000000002 /* MemoryButton.swift */; };
 		7B00AAAA000000050000A5B5 /* PostHogEnv.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B00AAAA000000040000A4B4 /* PostHogEnv.swift */; };
 		7B00AAAA000000070000A7B7 /* PostHogConfig.generated.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B00AAAA000000060000A6B6 /* PostHogConfig.generated.swift */; };
+		7C0A10023041000100000002 /* SentinelTelemetryConsentSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C0A10013041000100000001 /* SentinelTelemetryConsentSync.swift */; };
 		897C09F42F6BEDA000E5CA9B /* IMChannelsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 897C09F22F6BEDA000E5CA9B /* IMChannelsViewModel.swift */; };
 		897C09F52F6BEDA000E5CA9B /* IMChannelAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 897C09EE2F6BEDA000E5CA9B /* IMChannelAPIClient.swift */; };
 		897C09F62F6BEDA000E5CA9B /* IMChannelsSettingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 897C09F02F6BEDA000E5CA9B /* IMChannelsSettingView.swift */; };
-		897C09F72F6BEDA000E5CA9B /* IMChannelsSettingHostingViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 897C09EF2F6BEDA000E5CA9B /* IMChannelsSettingHostingViewController.swift */; };
-		897C09F82F6BEDA000E5CA9B /* IMChannelsSettingViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 897C09F12F6BEDA000E5CA9B /* IMChannelsSettingViewController.swift */; };
 		8E0A10052FEA000000000001 /* OverlayToastModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E0A10012FEA000000000001 /* OverlayToastModels.swift */; };
 		8E0A10062FEA000000000001 /* OverlayToastCenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E0A10022FEA000000000001 /* OverlayToastCenter.swift */; };
 		8E0A10072FEA000000000001 /* OverlayToastView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E0A10032FEA000000000001 /* OverlayToastView.swift */; };
@@ -225,6 +227,7 @@
 		8E4C949A2F10D01500B09A80 /* TabStripLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E4C94992F10D01500B09A80 /* TabStripLayout.swift */; };
 		8E4C949C2F10DA5800B09A80 /* NewTabButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E4C949B2F10DA5800B09A80 /* NewTabButton.swift */; };
 		8E4FD9BF2EF7D98C007D97A4 /* ZeroSafeAreaHostingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E4FD9BE2EF7D98C007D97A4 /* ZeroSafeAreaHostingView.swift */; };
+		8E571D5030131FEF00E3FBE7 /* SessionRestorePreference.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E571D4F30131FEF00E3FBE7 /* SessionRestorePreference.swift */; };
 		8E5D8B012FDFFAD30039CBE3 /* WebContentSnapshotter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E5D8B002FDFFAD30039CBE3 /* WebContentSnapshotter.swift */; };
 		8E6145822F753114001919BA /* LayoutSelectionViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E6145802F753114001919BA /* LayoutSelectionViewController.swift */; };
 		8E6145BE2F753469001919BA /* ImportDataTypeViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E6145BD2F753469001919BA /* ImportDataTypeViewController.swift */; };
@@ -251,6 +254,11 @@
 		8EB01BE93010BCED0043E59D /* AccountDeletionFakeResponses.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EB01BE83010BCED0043E59D /* AccountDeletionFakeResponses.swift */; };
 		8EB01BEB3010BCED0043E59D /* UserDataRemoval.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EB01BEA3010BCED0043E59D /* UserDataRemoval.swift */; };
 		8EB01BED3010BCED0043E59D /* AccountDeletionLocalDataRemoval.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EB01BEC3010BCED0043E59D /* AccountDeletionLocalDataRemoval.swift */; };
+		8EB020013020000000000001 /* AccountDataExportController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EB020113020000000000011 /* AccountDataExportController.swift */; };
+		8EB020023020000000000002 /* AccountDataExportCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EB020123020000000000012 /* AccountDataExportCoordinator.swift */; };
+		8EB020033020000000000003 /* AccountDataExportFlowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EB020133020000000000013 /* AccountDataExportFlowView.swift */; };
+		8EB020043020000000000004 /* OblivionDataExportAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EB020143020000000000014 /* OblivionDataExportAPI.swift */; };
+		8EB020263020000000000026 /* AccountVerificationCodeEntry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EB020253020000000000025 /* AccountVerificationCodeEntry.swift */; };
 		8EC502132F67AE2300CE7338 /* DownloadSafetyTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EC502122F67AE2300CE7338 /* DownloadSafetyTypes.swift */; };
 		8EC70DB52F0A5E04009FE2CD /* BookmarkBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EC70DB42F0A5DFD009FE2CD /* BookmarkBar.swift */; };
 		8EC70E162F0BBF3D009FE2CD /* BookmarkItemView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EC70E152F0BBF3D009FE2CD /* BookmarkItemView.swift */; };
@@ -263,14 +271,24 @@
 		8EF36C032F4E9E7000FCC91E /* TabViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EF36C012F4E9E7000FCC91E /* TabViewModel.swift */; };
 		8EF36C062F4E9EC100FCC91E /* TabContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EF36C052F4E9EC100FCC91E /* TabContentView.swift */; };
 		8EF36C082F4EA95B00FCC91E /* SideTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EF36C072F4EA95B00FCC91E /* SideTabView.swift */; };
+		A10500022FF1000000000002 /* NextStepViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10500012FF1000000000001 /* NextStepViewController.swift */; };
+		A10600022FF2000000000002 /* GuestPrivacyConfirmationViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10600012FF2000000000001 /* GuestPrivacyConfirmationViewController.swift */; };
 		A11E00000000000000000001 /* PhiScriptingService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11E00000000000000000011 /* PhiScriptingService.swift */; };
 		A11E00000000000000000002 /* PhiScriptCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11E00000000000000000012 /* PhiScriptCommands.swift */; };
 		A11E00000000000000000003 /* Phi.sdef in Resources */ = {isa = PBXBuildFile; fileRef = A11E00000000000000000013 /* Phi.sdef */; };
 		A1B2C3D4E5F60718293A4B56 /* SharedAuthTokenStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60718293A4B55 /* SharedAuthTokenStore.swift */; };
 		A71E00000000000000000002 /* PhiAlert.swift in Sources */ = {isa = PBXBuildFile; fileRef = A71E00000000000000000001 /* PhiAlert.swift */; };
 		A71E00000000000000000004 /* CredentialApprovalAlert.swift in Sources */ = {isa = PBXBuildFile; fileRef = A71E00000000000000000003 /* CredentialApprovalAlert.swift */; };
-		D12800000000000000000001 /* PhiSegmentedPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = D12800000000000000000002 /* PhiSegmentedPicker.swift */; };
+		A71E00000000000000000006 /* AgentAccessApprovalAlert.swift in Sources */ = {isa = PBXBuildFile; fileRef = A71E00000000000000000005 /* AgentAccessApprovalAlert.swift */; };
 		A7C021022FFD000000000002 /* ContextMenuEvent.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7C021012FFD000000000001 /* ContextMenuEvent.swift */; };
+		A8F100012FF0000000000001 /* PhiUninstallCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8F100112FF0000000000011 /* PhiUninstallCore.swift */; };
+		A8F100022FF0000000000002 /* PhiUninstallSignatureVerifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8F100122FF0000000000012 /* PhiUninstallSignatureVerifier.swift */; };
+		A8F100032FF0000000000003 /* PhiUninstallHelperLauncher.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8F100132FF0000000000013 /* PhiUninstallHelperLauncher.swift */; };
+		A8F100042FF0000000000004 /* PhiUninstallCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8F100142FF0000000000014 /* PhiUninstallCoordinator.swift */; };
+		A8F100052FF0000000000005 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8F100152FF0000000000015 /* main.swift */; };
+		A8F100062FF0000000000006 /* PhiUninstallCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8F100112FF0000000000011 /* PhiUninstallCore.swift */; };
+		A8F100072FF0000000000007 /* PhiUninstallSignatureVerifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8F100122FF0000000000012 /* PhiUninstallSignatureVerifier.swift */; };
+		A8F100082FF0000000000008 /* PhiUninstaller in Copy Uninstall Helper */ = {isa = PBXBuildFile; fileRef = A8F100162FF0000000000016 /* PhiUninstaller */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		AA10000000000000000000B1 /* TabSwitchMetrics.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA10000000000000000000F1 /* TabSwitchMetrics.swift */; };
 		AA10000000000000000000B2 /* TabSwitchItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA10000000000000000000F2 /* TabSwitchItem.swift */; };
 		AA10000000000000000000B3 /* TabSwitchCellView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA10000000000000000000F3 /* TabSwitchCellView.swift */; };
@@ -317,6 +335,7 @@
 		B17DE00000000000000000E3 /* Vendor/PhiBitwardenHelper-LICENSE.txt in Copy Bitwarden GPL Notices */ = {isa = PBXBuildFile; fileRef = B17DE00000000000000000E5 /* Vendor/PhiBitwardenHelper-LICENSE.txt */; };
 		B17DE00000000000000000E4 /* Vendor/PhiBitwardenHelper-SOURCE-OFFER.txt in Copy Bitwarden GPL Notices */ = {isa = PBXBuildFile; fileRef = B17DE00000000000000000E6 /* Vendor/PhiBitwardenHelper-SOURCE-OFFER.txt */; };
 		B17DE0000000000000000B01 /* BitwardenSessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17DE0000000000000000B02 /* BitwardenSessionStore.swift */; };
+		B7A100013001000000000002 /* SentinelLanguagePreferenceSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7A100013001000000000001 /* SentinelLanguagePreferenceSync.swift */; };
 		C0D1D0022FEA000000000002 /* SidebarTabListViewController+MultiSelectionDragPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D1D0012FEA000000000001 /* SidebarTabListViewController+MultiSelectionDragPreview.swift */; };
 		C70000000000000000000011 /* CustomTooltipController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C70000000000000000000001 /* CustomTooltipController.swift */; };
 		C70000000000000000000012 /* CustomTooltip+Hosting.swift in Sources */ = {isa = PBXBuildFile; fileRef = C70000000000000000000002 /* CustomTooltip+Hosting.swift */; };
@@ -391,6 +410,7 @@
 		CC98F8A22E8BCE0900DAD237 /* AppController+Settings.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC98F8A12E8BCE0900DAD237 /* AppController+Settings.swift */; };
 		CC98F8A82E8BEB4F00DAD237 /* SidebarViewController+UpdateReminder.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC98F8A72E8BEB4F00DAD237 /* SidebarViewController+UpdateReminder.swift */; };
 		CC99096D2EBC86940046BC81 /* PhiPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC99096C2EBC86940046BC81 /* PhiPreferences.swift */; };
+		CC99096F3000000000000001 /* PhiPreferences+AppLanguage.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC99096E3000000000000001 /* PhiPreferences+AppLanguage.swift */; };
 		CC99097C2EBC9F090046BC81 /* login-bg.mp4 in Resources */ = {isa = PBXBuildFile; fileRef = CC99097B2EBC9F090046BC81 /* login-bg.mp4 */; };
 		CC9AF3442EC192BC00C27C98 /* AppControlle+LaunchInfo.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC9AF3432EC192BC00C27C98 /* AppControlle+LaunchInfo.swift */; };
 		CCAA00012F00010000000001 /* PinnedSplitItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCAA00012F00010000000002 /* PinnedSplitItem.swift */; };
@@ -458,6 +478,7 @@
 		D10000000000000000000007 /* ImagePreviewOverlayViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000017 /* ImagePreviewOverlayViewController.swift */; };
 		D10000000000000000000008 /* ExtensionDialogManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000031 /* ExtensionDialogManager.swift */; };
 		D10000000000000000000009 /* ExtensionDialogViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000032 /* ExtensionDialogViewController.swift */; };
+		D12800000000000000000001 /* PhiSegmentedPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = D12800000000000000000002 /* PhiSegmentedPicker.swift */; };
 		D1F600022FD6000000000002 /* DiffableOutlineSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1F600012FD6000000000001 /* DiffableOutlineSnapshot.swift */; };
 		D1F600042FD6000000000004 /* DiffableOutlineDiffPlanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1F600032FD6000000000003 /* DiffableOutlineDiffPlanner.swift */; };
 		D1F600062FD6000000000006 /* DiffableOutlineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1F600052FD6000000000005 /* DiffableOutlineView.swift */; };
@@ -467,6 +488,7 @@
 		DEBE00000000000000000007 /* DeveloperSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEBE00000000000000000004 /* DeveloperSettingsView.swift */; };
 		F01D3A000000000000000001 /* bookmark-folder-open.svg in Resources */ = {isa = PBXBuildFile; fileRef = F01D3A000000000000000011 /* bookmark-folder-open.svg */; };
 		F01D3A000000000000000002 /* bookmark-folder-closed.svg in Resources */ = {isa = PBXBuildFile; fileRef = F01D3A000000000000000012 /* bookmark-folder-closed.svg */; };
+		F7FD00000000000000000002 /* FullTitleDisplay.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7FD00000000000000000001 /* FullTitleDisplay.swift */; };
 		F9E478A224C44EA7BC0D85CC /* AccountDeletedEventAuthentication.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19B477B37CF44BC48335A032 /* AccountDeletedEventAuthentication.swift */; };
 		FBD200012FD0000000000001 /* FeedbackOutbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBD200012FD0000000000002 /* FeedbackOutbox.swift */; };
 		FBD200012FD0000000000003 /* FeedbackV2.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBD200012FD0000000000004 /* FeedbackV2.swift */; };
@@ -479,6 +501,13 @@
 			proxyType = 1;
 			remoteGlobalIDString = 54A200402FE1000000000040;
 			remoteInfo = PhiTimeMachineInstaller;
+		};
+		A8F100302FF0000000000030 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = B0C469402E3B10E1007F0C7A /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A8F100402FF0000000000040;
+			remoteInfo = PhiUninstaller;
 		};
 		B0C469582E3B10E2007F0C7A /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -516,6 +545,8 @@
 			files = (
 				376581A32EE970B000D3E031 /* new-tab-reverse.json in Copy LottieFiles */,
 				37A4750630060D6100F7DC2E /* broom.json in Copy LottieFiles */,
+				37D011013010000100000001 /* refresh.json in Copy LottieFiles */,
+				37D011023010000100000002 /* memory.json in Copy LottieFiles */,
 				37C1B3082EE673C800DD4496 /* new-tab.json in Copy LottieFiles */,
 				37C1B3092EE673C800DD4496 /* extension-button.json in Copy LottieFiles */,
 				37C1B30A2EE673C800DD4496 /* download-button.json in Copy LottieFiles */,
@@ -532,6 +563,17 @@
 				54A200072FE1000000000007 /* PhiTimeMachineInstaller in Copy Time Machine Helpers */,
 			);
 			name = "Copy Time Machine Helpers";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A8F100312FF0000000000031 /* Copy Uninstall Helper */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = Contents/Helpers;
+			dstSubfolderSpec = 1;
+			files = (
+				A8F100082FF0000000000008 /* PhiUninstaller in Copy Uninstall Helper */,
+			);
+			name = "Copy Uninstall Helper";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		B17DE00000000000000000E2 /* Copy Bitwarden Helper */ = {
@@ -582,7 +624,6 @@
 		3703C9812F69558C00E7CF6D /* BrowserState+ToggleAI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "BrowserState+ToggleAI.swift"; sourceTree = "<group>"; };
 		3703C9832F6956E600E7CF6D /* SentinelHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SentinelHelper.swift; sourceTree = "<group>"; };
 		3703C9852F6956E600E7CF6D /* SentinelVersionGuard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SentinelVersionGuard.swift; sourceTree = "<group>"; };
-		6A44C5FF60DF6F7860A061D4 /* SentinelWatchdog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SentinelWatchdog.swift; sourceTree = "<group>"; };
 		370D039F2F0E463B0087A1C9 /* Appearance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Appearance.swift; sourceTree = "<group>"; };
 		370D03A02F0E463B0087A1C9 /* Bags.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Bags.swift; sourceTree = "<group>"; };
 		370D03A12F0E463B0087A1C9 /* ColorRole.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColorRole.swift; sourceTree = "<group>"; };
@@ -658,6 +699,8 @@
 		378AFF612F78E5EA0016B334 /* BrowserThemeContext.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserThemeContext.swift; sourceTree = "<group>"; };
 		37A000012FEA000000000001 /* PhiSparkleUserDriver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhiSparkleUserDriver.swift; sourceTree = "<group>"; };
 		37A4750530060D5A00F7DC2E /* broom.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = broom.json; sourceTree = "<group>"; };
+		37D011043010000100000004 /* refresh.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = refresh.json; sourceTree = "<group>"; };
+		37D011053010000100000005 /* memory.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = memory.json; sourceTree = "<group>"; };
 		37B977D42EF3F62F007E0568 /* login-dot-bg.mp4 */ = {isa = PBXFileReference; lastKnownFileType = file; path = "login-dot-bg.mp4"; sourceTree = "<group>"; };
 		37B9780F2EF403AB007E0568 /* GradientBorderButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GradientBorderButton.swift; sourceTree = "<group>"; };
 		37BA3EA12F866864003A8A53 /* EdgeFogOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EdgeFogOverlayView.swift; sourceTree = "<group>"; };
@@ -750,8 +793,8 @@
 		5ACE0000000000000000000B /* ProfilesSettingViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfilesSettingViewController.swift; sourceTree = "<group>"; };
 		5ACE0000000000000000000C /* ProfilesSettingHostingViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfilesSettingHostingViewController.swift; sourceTree = "<group>"; };
 		5ACE0000000000000000000D /* ProfilesSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfilesSettingsView.swift; sourceTree = "<group>"; };
-		5ACE00000000000000000A21 /* ProfileDetailSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileDetailSettingsView.swift; sourceTree = "<group>"; };
 		5ACE00000000000000000011 /* ThemeOpacitySlider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThemeOpacitySlider.swift; sourceTree = "<group>"; };
+		5ACE00000000000000000A21 /* ProfileDetailSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileDetailSettingsView.swift; sourceTree = "<group>"; };
 		5EA17ABC0000000000000110 /* SearchTabsModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchTabsModels.swift; sourceTree = "<group>"; };
 		5EA17ABC0000000000000111 /* SearchTabsQueryMatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchTabsQueryMatcher.swift; sourceTree = "<group>"; };
 		5EA17ABC0000000000000112 /* SearchTabsChromiumProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchTabsChromiumProvider.swift; sourceTree = "<group>"; };
@@ -770,14 +813,15 @@
 		5F1A5A11AC1D000000000004 /* SplitPaneHostView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SplitPaneHostView.swift; sourceTree = "<group>"; };
 		5F1A5A11AC1D000000000006 /* SplitTabDropContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SplitTabDropContainer.swift; sourceTree = "<group>"; };
 		6A44C5FF60DF6F7860A061D4 /* SentinelWatchdog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SentinelWatchdog.swift; sourceTree = "<group>"; };
+		6A4750013B12345600000001 /* LoginRequiredPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginRequiredPresentation.swift; sourceTree = "<group>"; };
+		6A4750023B12345600000001 /* GuestDataMigration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuestDataMigration.swift; sourceTree = "<group>"; };
 		7A5B00A02EF0000000000002 /* MemoryButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemoryButton.swift; sourceTree = "<group>"; };
 		7B00AAAA000000040000A4B4 /* PostHogEnv.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PostHogEnv.swift; sourceTree = "<group>"; };
 		7B00AAAA000000060000A6B6 /* PostHogConfig.generated.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PostHogConfig.generated.swift; sourceTree = "<group>"; };
+		7C0A10013041000100000001 /* SentinelTelemetryConsentSync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SentinelTelemetryConsentSync.swift; sourceTree = "<group>"; };
 		8417101CC460A0D12720DE81 /* Cocoa.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Cocoa.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.sdk/System/Library/Frameworks/Cocoa.framework; sourceTree = DEVELOPER_DIR; };
 		897C09EE2F6BEDA000E5CA9B /* IMChannelAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IMChannelAPIClient.swift; sourceTree = "<group>"; };
-		897C09EF2F6BEDA000E5CA9B /* IMChannelsSettingHostingViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IMChannelsSettingHostingViewController.swift; sourceTree = "<group>"; };
 		897C09F02F6BEDA000E5CA9B /* IMChannelsSettingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IMChannelsSettingView.swift; sourceTree = "<group>"; };
-		897C09F12F6BEDA000E5CA9B /* IMChannelsSettingViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IMChannelsSettingViewController.swift; sourceTree = "<group>"; };
 		897C09F22F6BEDA000E5CA9B /* IMChannelsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IMChannelsViewModel.swift; sourceTree = "<group>"; };
 		8E0A10012FEA000000000001 /* OverlayToastModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayToastModels.swift; sourceTree = "<group>"; };
 		8E0A10022FEA000000000001 /* OverlayToastCenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayToastCenter.swift; sourceTree = "<group>"; };
@@ -795,6 +839,7 @@
 		8E4C94992F10D01500B09A80 /* TabStripLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabStripLayout.swift; sourceTree = "<group>"; };
 		8E4C949B2F10DA5800B09A80 /* NewTabButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewTabButton.swift; sourceTree = "<group>"; };
 		8E4FD9BE2EF7D98C007D97A4 /* ZeroSafeAreaHostingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZeroSafeAreaHostingView.swift; sourceTree = "<group>"; };
+		8E571D4F30131FEF00E3FBE7 /* SessionRestorePreference.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionRestorePreference.swift; sourceTree = "<group>"; };
 		8E5D8B002FDFFAD30039CBE3 /* WebContentSnapshotter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebContentSnapshotter.swift; sourceTree = "<group>"; };
 		8E6145802F753114001919BA /* LayoutSelectionViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LayoutSelectionViewController.swift; sourceTree = "<group>"; };
 		8E6145BD2F753469001919BA /* ImportDataTypeViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImportDataTypeViewController.swift; sourceTree = "<group>"; };
@@ -821,6 +866,11 @@
 		8EB01BE83010BCED0043E59D /* AccountDeletionFakeResponses.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountDeletionFakeResponses.swift; sourceTree = "<group>"; };
 		8EB01BEA3010BCED0043E59D /* UserDataRemoval.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserDataRemoval.swift; sourceTree = "<group>"; };
 		8EB01BEC3010BCED0043E59D /* AccountDeletionLocalDataRemoval.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountDeletionLocalDataRemoval.swift; sourceTree = "<group>"; };
+		8EB020113020000000000011 /* AccountDataExportController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountDataExportController.swift; sourceTree = "<group>"; };
+		8EB020123020000000000012 /* AccountDataExportCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountDataExportCoordinator.swift; sourceTree = "<group>"; };
+		8EB020133020000000000013 /* AccountDataExportFlowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountDataExportFlowView.swift; sourceTree = "<group>"; };
+		8EB020143020000000000014 /* OblivionDataExportAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OblivionDataExportAPI.swift; sourceTree = "<group>"; };
+		8EB020253020000000000025 /* AccountVerificationCodeEntry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountVerificationCodeEntry.swift; sourceTree = "<group>"; };
 		8EC502122F67AE2300CE7338 /* DownloadSafetyTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadSafetyTypes.swift; sourceTree = "<group>"; };
 		8EC70DB42F0A5DFD009FE2CD /* BookmarkBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookmarkBar.swift; sourceTree = "<group>"; };
 		8EC70E152F0BBF3D009FE2CD /* BookmarkItemView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookmarkItemView.swift; sourceTree = "<group>"; };
@@ -833,14 +883,22 @@
 		8EF36C012F4E9E7000FCC91E /* TabViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabViewModel.swift; sourceTree = "<group>"; };
 		8EF36C052F4E9EC100FCC91E /* TabContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabContentView.swift; sourceTree = "<group>"; };
 		8EF36C072F4EA95B00FCC91E /* SideTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SideTabView.swift; sourceTree = "<group>"; };
+		A10500012FF1000000000001 /* NextStepViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; lineEnding = 0; path = NextStepViewController.swift; sourceTree = "<group>"; };
+		A10600012FF2000000000001 /* GuestPrivacyConfirmationViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuestPrivacyConfirmationViewController.swift; sourceTree = "<group>"; };
 		A11E00000000000000000011 /* PhiScriptingService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhiScriptingService.swift; sourceTree = "<group>"; };
 		A11E00000000000000000012 /* PhiScriptCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhiScriptCommands.swift; sourceTree = "<group>"; };
 		A11E00000000000000000013 /* Phi.sdef */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = Phi.sdef; sourceTree = "<group>"; };
 		A1B2C3D4E5F60718293A4B55 /* SharedAuthTokenStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedAuthTokenStore.swift; sourceTree = "<group>"; };
 		A71E00000000000000000001 /* PhiAlert.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhiAlert.swift; sourceTree = "<group>"; };
 		A71E00000000000000000003 /* CredentialApprovalAlert.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CredentialApprovalAlert.swift; sourceTree = "<group>"; };
-		D12800000000000000000002 /* PhiSegmentedPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhiSegmentedPicker.swift; sourceTree = "<group>"; };
+		A71E00000000000000000005 /* AgentAccessApprovalAlert.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentAccessApprovalAlert.swift; sourceTree = "<group>"; };
 		A7C021012FFD000000000001 /* ContextMenuEvent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextMenuEvent.swift; sourceTree = "<group>"; };
+		A8F100112FF0000000000011 /* PhiUninstallCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhiUninstallCore.swift; sourceTree = "<group>"; };
+		A8F100122FF0000000000012 /* PhiUninstallSignatureVerifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhiUninstallSignatureVerifier.swift; sourceTree = "<group>"; };
+		A8F100132FF0000000000013 /* PhiUninstallHelperLauncher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhiUninstallHelperLauncher.swift; sourceTree = "<group>"; };
+		A8F100142FF0000000000014 /* PhiUninstallCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhiUninstallCoordinator.swift; sourceTree = "<group>"; };
+		A8F100152FF0000000000015 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
+		A8F100162FF0000000000016 /* PhiUninstaller */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = PhiUninstaller; sourceTree = BUILT_PRODUCTS_DIR; };
 		AA10000000000000000000F1 /* TabSwitchMetrics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabSwitchMetrics.swift; sourceTree = "<group>"; };
 		AA10000000000000000000F2 /* TabSwitchItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabSwitchItem.swift; sourceTree = "<group>"; };
 		AA10000000000000000000F3 /* TabSwitchCellView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabSwitchCellView.swift; sourceTree = "<group>"; };
@@ -895,6 +953,7 @@
 		B17DE00000000000000000E5 /* Vendor/PhiBitwardenHelper-LICENSE.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Vendor/PhiBitwardenHelper-LICENSE.txt"; sourceTree = SOURCE_ROOT; };
 		B17DE00000000000000000E6 /* Vendor/PhiBitwardenHelper-SOURCE-OFFER.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Vendor/PhiBitwardenHelper-SOURCE-OFFER.txt"; sourceTree = SOURCE_ROOT; };
 		B17DE0000000000000000B02 /* BitwardenSessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BitwardenSessionStore.swift; sourceTree = "<group>"; };
+		B7A100013001000000000001 /* SentinelLanguagePreferenceSync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SentinelLanguagePreferenceSync.swift; sourceTree = "<group>"; };
 		C0D1D0012FEA000000000001 /* SidebarTabListViewController+MultiSelectionDragPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SidebarTabListViewController+MultiSelectionDragPreview.swift"; sourceTree = "<group>"; };
 		C70000000000000000000001 /* CustomTooltipController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CustomTooltipController.swift; sourceTree = "<group>"; };
 		C70000000000000000000002 /* CustomTooltip+Hosting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "CustomTooltip+Hosting.swift"; sourceTree = "<group>"; };
@@ -973,6 +1032,7 @@
 		CC98F8A12E8BCE0900DAD237 /* AppController+Settings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppController+Settings.swift"; sourceTree = "<group>"; };
 		CC98F8A72E8BEB4F00DAD237 /* SidebarViewController+UpdateReminder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SidebarViewController+UpdateReminder.swift"; sourceTree = "<group>"; };
 		CC99096C2EBC86940046BC81 /* PhiPreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhiPreferences.swift; sourceTree = "<group>"; };
+		CC99096E3000000000000001 /* PhiPreferences+AppLanguage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "PhiPreferences+AppLanguage.swift"; sourceTree = "<group>"; };
 		CC99097B2EBC9F090046BC81 /* login-bg.mp4 */ = {isa = PBXFileReference; lastKnownFileType = file; path = "login-bg.mp4"; sourceTree = "<group>"; };
 		CC9AF3432EC192BC00C27C98 /* AppControlle+LaunchInfo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppControlle+LaunchInfo.swift"; sourceTree = "<group>"; };
 		CCAA00012F00010000000002 /* PinnedSplitItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PinnedSplitItem.swift; sourceTree = "<group>"; };
@@ -1041,6 +1101,7 @@
 		D10000000000000000000017 /* ImagePreviewOverlayViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImagePreviewOverlayViewController.swift; sourceTree = "<group>"; };
 		D10000000000000000000031 /* ExtensionDialogManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtensionDialogManager.swift; sourceTree = "<group>"; };
 		D10000000000000000000032 /* ExtensionDialogViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtensionDialogViewController.swift; sourceTree = "<group>"; };
+		D12800000000000000000002 /* PhiSegmentedPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhiSegmentedPicker.swift; sourceTree = "<group>"; };
 		D1B584F695BF7833FAA99558 /* AISettingHostingViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AISettingHostingViewController.swift; sourceTree = "<group>"; };
 		D1F600012FD6000000000001 /* DiffableOutlineSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiffableOutlineSnapshot.swift; sourceTree = "<group>"; };
 		D1F600032FD6000000000003 /* DiffableOutlineDiffPlanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiffableOutlineDiffPlanner.swift; sourceTree = "<group>"; };
@@ -1053,6 +1114,7 @@
 		E10000000000000000000001 /* PhiBrowser-OpenSource.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "PhiBrowser-OpenSource.entitlements"; sourceTree = "<group>"; };
 		F01D3A000000000000000011 /* bookmark-folder-open.svg */ = {isa = PBXFileReference; lastKnownFileType = image.svg; path = "bookmark-folder-open.svg"; sourceTree = "<group>"; };
 		F01D3A000000000000000012 /* bookmark-folder-closed.svg */ = {isa = PBXFileReference; lastKnownFileType = image.svg; path = "bookmark-folder-closed.svg"; sourceTree = "<group>"; };
+		F7FD00000000000000000001 /* FullTitleDisplay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FullTitleDisplay.swift; sourceTree = "<group>"; };
 		FBD200012FD0000000000002 /* FeedbackOutbox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedbackOutbox.swift; sourceTree = "<group>"; };
 		FBD200012FD0000000000004 /* FeedbackV2.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedbackV2.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -1077,6 +1139,13 @@
 
 /* Begin PBXFrameworksBuildPhase section */
 		54A200322FE1000000000032 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A8F100322FF0000000000032 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -1233,6 +1302,7 @@
 			children = (
 				376CE40F2F2897D30093D937 /* Models */,
 				376CE4102F2897D30093D937 /* APIClient.swift */,
+				8EB020143020000000000014 /* OblivionDataExportAPI.swift */,
 				8EB01BE23010BCED0043E59D /* OblivionDeletionAPI.swift */,
 				54A1001B2FE000000000001B /* TimeMachinePackageDownloader.swift */,
 				AE00FFFE0000000000000001 /* PhiAgentEndpointResolver.swift */,
@@ -1351,10 +1421,12 @@
 			isa = PBXGroup;
 			children = (
 				37A4750530060D5A00F7DC2E /* broom.json */,
+				37D011053010000100000005 /* memory.json */,
 				376581A22EE96FA200D3E031 /* new-tab-reverse.json */,
 				37C1B3002EE672FA00DD4496 /* new-tab.json */,
 				37C1B3022EE6732600DD4496 /* extension-button.json */,
 				37C1B3032EE6733200DD4496 /* download-button.json */,
+				37D011043010000100000004 /* refresh.json */,
 			);
 			path = LottieFiles;
 			sourceTree = "<group>";
@@ -1537,9 +1609,7 @@
 			isa = PBXGroup;
 			children = (
 				897C09EE2F6BEDA000E5CA9B /* IMChannelAPIClient.swift */,
-				897C09EF2F6BEDA000E5CA9B /* IMChannelsSettingHostingViewController.swift */,
 				897C09F02F6BEDA000E5CA9B /* IMChannelsSettingView.swift */,
-				897C09F12F6BEDA000E5CA9B /* IMChannelsSettingViewController.swift */,
 				897C09F22F6BEDA000E5CA9B /* IMChannelsViewModel.swift */,
 			);
 			path = IMChannels;
@@ -1643,6 +1713,16 @@
 			path = AccountDeletion;
 			sourceTree = "<group>";
 		};
+		8EB020203020000000000020 /* AccountDataExport */ = {
+			isa = PBXGroup;
+			children = (
+				8EB020113020000000000011 /* AccountDataExportController.swift */,
+				8EB020123020000000000012 /* AccountDataExportCoordinator.swift */,
+				8EB020133020000000000013 /* AccountDataExportFlowView.swift */,
+			);
+			path = AccountDataExport;
+			sourceTree = "<group>";
+		};
 		8EC70DAD2F0A5CFD009FE2CD /* HorizontalBar */ = {
 			isa = PBXGroup;
 			children = (
@@ -1665,6 +1745,33 @@
 				AB1000000000000000000FB2 /* TabMultiSelectionMenu.swift */,
 			);
 			path = Tabs;
+			sourceTree = "<group>";
+		};
+		A10500032FF1000000000003 /* NextStep */ = {
+			isa = PBXGroup;
+			children = (
+				A10500012FF1000000000001 /* NextStepViewController.swift */,
+			);
+			path = NextStep;
+			sourceTree = "<group>";
+		};
+		A8F100202FF0000000000020 /* Uninstall */ = {
+			isa = PBXGroup;
+			children = (
+				A8F100112FF0000000000011 /* PhiUninstallCore.swift */,
+				A8F100122FF0000000000012 /* PhiUninstallSignatureVerifier.swift */,
+				A8F100132FF0000000000013 /* PhiUninstallHelperLauncher.swift */,
+				A8F100142FF0000000000014 /* PhiUninstallCoordinator.swift */,
+			);
+			path = Uninstall;
+			sourceTree = "<group>";
+		};
+		A8F100212FF0000000000021 /* PhiUninstaller */ = {
+			isa = PBXGroup;
+			children = (
+				A8F100152FF0000000000015 /* main.swift */,
+			);
+			path = PhiUninstaller;
 			sourceTree = "<group>";
 		};
 		AA10000000000000000000G1 /* TabSwitch */ = {
@@ -1719,6 +1826,7 @@
 				B17DE00000000000000000E5 /* Vendor/PhiBitwardenHelper-LICENSE.txt */,
 				B17DE00000000000000000E6 /* Vendor/PhiBitwardenHelper-SOURCE-OFFER.txt */,
 				54A200202FE1000000000020 /* TimeMachineInstaller */,
+				A8F100212FF0000000000021 /* PhiUninstaller */,
 				B0F370CC2E432646000B51F9 /* UserInterface */,
 				B0F370CD2E4326DC000B51F9 /* Utilities */,
 				37F574C32F7A83DF00879867 /* Other */,
@@ -1729,6 +1837,7 @@
 		B02586F92E42FDA9001B08FC /* ChromiumBridge */ = {
 			isa = PBXGroup;
 			children = (
+				8E571D4F30131FEF00E3FBE7 /* SessionRestorePreference.swift */,
 				ACDC00000000000000000C01 /* AgentCDP */,
 				B00179592E49CF84007B4635 /* PhiChromiumCoordinator.swift */,
 				CC288AA82E55824A004A6C1C /* PhiChromiumBridgeHeader.h */,
@@ -1767,6 +1876,7 @@
 			children = (
 				B0C469482E3B10E1007F0C7A /* Phi.app */,
 				54A200122FE1000000000012 /* PhiTimeMachineInstaller */,
+				A8F100162FF0000000000016 /* PhiUninstaller */,
 				B0C469572E3B10E2007F0C7A /* PhiBrowserTests.xctest */,
 				B0C469612E3B10E2007F0C7A /* PhiBrowserUITests.xctest */,
 			);
@@ -1810,6 +1920,7 @@
 		B0F370CC2E432646000B51F9 /* UserInterface */ = {
 			isa = PBXGroup;
 			children = (
+				8EB020203020000000000020 /* AccountDataExport */,
 				8EB01BE03010BCED0043E59D /* AccountDeletion */,
 				CC6B000D2E77E03000D4F133 /* AboutWindow */,
 				CCB53DC42E6EBF6E004BF233 /* AddressBar */,
@@ -1884,11 +1995,14 @@
 				CCBF0F9F2ECEC1AE005E729B /* AppController+Deeplink.swift */,
 				19B477B37CF44BC48335A032 /* AccountDeletedEventAuthentication.swift */,
 				3703C9832F6956E600E7CF6D /* SentinelHelper.swift */,
+				B7A100013001000000000001 /* SentinelLanguagePreferenceSync.swift */,
+				7C0A10013041000100000001 /* SentinelTelemetryConsentSync.swift */,
 				3703C9852F6956E600E7CF6D /* SentinelVersionGuard.swift */,
 				11E8BEE1510290AB35D5C5AD /* SentinelBackupCoordination.swift */,
 				6A44C5FF60DF6F7860A061D4 /* SentinelWatchdog.swift */,
 				37CC00012F9D000100000001 /* SentinelIPCClient.swift */,
 				54A100202FE0000000000020 /* TimeMachine */,
+				A8F100202FF0000000000020 /* Uninstall */,
 			);
 			path = Application;
 			sourceTree = "<group>";
@@ -1906,6 +2020,7 @@
 		CC24EEF32E8662AC00CE9DD7 /* Onboarding */ = {
 			isa = PBXGroup;
 			children = (
+				A10500032FF1000000000003 /* NextStep */,
 				8E9DAF412F765E83004EA160 /* PasswordManager */,
 				8E6145812F753114001919BA /* LayoutSelection */,
 				373D84022F3C801B00430BE6 /* AuthManagerExternalBrowserWebAuthUserAgent.swift */,
@@ -1954,6 +2069,7 @@
 			isa = PBXGroup;
 			children = (
 				CC2708A22E7A65E500B65AB8 /* LocalStore.swift */,
+				6A4750023B12345600000001 /* GuestDataMigration.swift */,
 				CCAA000B2F00010000000002 /* LocalStore+PinnedTabScope.swift */,
 				CCAA000D2F00010000000002 /* LocalStore+PinnedTabTransfer.swift */,
 				CCD87CC32EC2E7E000148E3F /* LocalStore+Bookmark.swift */,
@@ -2089,6 +2205,7 @@
 				37686A9B2F10D61E00DC3990 /* UserDefaultsRegistration.swift */,
 				CC98F89B2E8BC71800DAD237 /* Settings.swift */,
 				CC99096C2EBC86940046BC81 /* PhiPreferences.swift */,
+				CC99096E3000000000000001 /* PhiPreferences+AppLanguage.swift */,
 				CC376CF92EC6D3F900270B93 /* SettingItemBackgroundView.swift */,
 				37C1B0E52ED8515C00DD4496 /* AISettings */,
 				37C1B0E42ED8515400DD4496 /* Account */,
@@ -2152,6 +2269,7 @@
 		CCBF0C9D2ECB2CA0005E729B /* Login */ = {
 			isa = PBXGroup;
 			children = (
+				A10600012FF2000000000001 /* GuestPrivacyConfirmationViewController.swift */,
 				CCBF0C9B2ECB2C90005E729B /* LoginViewController.swift */,
 			);
 			path = Login;
@@ -2187,9 +2305,12 @@
 		CCBF8F362E653A4200B9A99E /* Common */ = {
 			isa = PBXGroup;
 			children = (
+				F7FD00000000000000000001 /* FullTitleDisplay.swift */,
 				A7C021012FFD000000000001 /* ContextMenuEvent.swift */,
+				6A4750013B12345600000001 /* LoginRequiredPresentation.swift */,
 				A71E00000000000000000001 /* PhiAlert.swift */,
 				A71E00000000000000000003 /* CredentialApprovalAlert.swift */,
+				A71E00000000000000000005 /* AgentAccessApprovalAlert.swift */,
 				D12800000000000000000002 /* PhiSegmentedPicker.swift */,
 				C70000000000000000000020 /* Tooltip */,
 				CD1100050000000000000001 /* IconPicker */,
@@ -2209,6 +2330,7 @@
 				37C1B3312EE691E700DD4496 /* LottieAnimationView.swift */,
 				3769C6B22EFA540300A94DE0 /* GradientColorLabel.swift */,
 				3769C6EC2EFA6CBE00A94DE0 /* GaussianEffectView.swift */,
+				8EB020253020000000000025 /* AccountVerificationCodeEntry.swift */,
 				8E4FD9BE2EF7D98C007D97A4 /* ZeroSafeAreaHostingView.swift */,
 				37289F4C2EFE8A9B0003624E /* EditPinnedTabView.swift */,
 			);
@@ -2385,6 +2507,22 @@
 			productReference = 54A200122FE1000000000012 /* PhiTimeMachineInstaller */;
 			productType = "com.apple.product-type.tool";
 		};
+		A8F100402FF0000000000040 /* PhiUninstaller */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A8F100502FF0000000000050 /* Build configuration list for PBXNativeTarget "PhiUninstaller" */;
+			buildPhases = (
+				A8F100332FF0000000000033 /* Sources */,
+				A8F100322FF0000000000032 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = PhiUninstaller;
+			productName = PhiUninstaller;
+			productReference = A8F100162FF0000000000016 /* PhiUninstaller */;
+			productType = "com.apple.product-type.tool";
+		};
 		B0C469472E3B10E1007F0C7A /* PhiBrowser */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = B0C4696B2E3B10E2007F0C7A /* Build configuration list for PBXNativeTarget "PhiBrowser" */;
@@ -2396,6 +2534,7 @@
 				37C1B3072EE6739C00DD4496 /* Copy LottieFiles */,
 				37C1B28D2EE0504100DD4496 /* Embed Frameworks */,
 				54A200312FE1000000000031 /* Copy Time Machine Helpers */,
+				A8F100312FF0000000000031 /* Copy Uninstall Helper */,
 				B17DE00000000000000000E2 /* Copy Bitwarden Helper */,
 				B17DE00000000000000000E7 /* Copy Bitwarden GPL Notices */,
 			);
@@ -2403,6 +2542,7 @@
 			);
 			dependencies = (
 				54A200342FE1000000000034 /* PBXTargetDependency */,
+				A8F100342FF0000000000034 /* PBXTargetDependency */,
 			);
 			name = PhiBrowser;
 			packageProductDependencies = (
@@ -2472,6 +2612,9 @@
 					54A200402FE1000000000040 = {
 						CreatedOnToolsVersion = 16.2;
 					};
+					A8F100402FF0000000000040 = {
+						CreatedOnToolsVersion = 16.2;
+					};
 					B0C469472E3B10E1007F0C7A = {
 						CreatedOnToolsVersion = 16.2;
 						LastSwiftMigration = 1620;
@@ -2491,7 +2634,15 @@
 			hasScannedForEncodings = 0;
 			knownRegions = (
 				en,
+				ja,
+				fr,
+				de,
+				nl,
+				es,
 				Base,
+				ko,
+				"zh-Hans",
+				"zh-Hant",
 			);
 			mainGroup = B0C4693F2E3B10E1007F0C7A;
 			minimizedProjectReferenceProxies = 1;
@@ -2505,6 +2656,7 @@
 			targets = (
 				B0C469472E3B10E1007F0C7A /* PhiBrowser */,
 				54A200402FE1000000000040 /* PhiTimeMachineInstaller */,
+				A8F100402FF0000000000040 /* PhiUninstaller */,
 				B0C469562E3B10E2007F0C7A /* PhiBrowserTests */,
 				B0C469602E3B10E2007F0C7A /* PhiBrowserUITests */,
 			);
@@ -2563,14 +2715,33 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A8F100332FF0000000000033 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A8F100052FF0000000000005 /* main.swift in Sources */,
+				A8F100062FF0000000000006 /* PhiUninstallCore.swift in Sources */,
+				A8F100072FF0000000000007 /* PhiUninstallSignatureVerifier.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		B0C469442E3B10E1007F0C7A /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A10500022FF1000000000002 /* NextStepViewController.swift in Sources */,
+				A10600022FF2000000000002 /* GuestPrivacyConfirmationViewController.swift in Sources */,
+				F7FD00000000000000000002 /* FullTitleDisplay.swift in Sources */,
+				A8F100012FF0000000000001 /* PhiUninstallCore.swift in Sources */,
+				A8F100022FF0000000000002 /* PhiUninstallSignatureVerifier.swift in Sources */,
+				A8F100032FF0000000000003 /* PhiUninstallHelperLauncher.swift in Sources */,
+				A8F100042FF0000000000004 /* PhiUninstallCoordinator.swift in Sources */,
 				A11E00000000000000000001 /* PhiScriptingService.swift in Sources */,
 				A11E00000000000000000002 /* PhiScriptCommands.swift in Sources */,
+				6A4750013B12345600000002 /* LoginRequiredPresentation.swift in Sources */,
 				A71E00000000000000000002 /* PhiAlert.swift in Sources */,
 				A71E00000000000000000004 /* CredentialApprovalAlert.swift in Sources */,
+				A71E00000000000000000006 /* AgentAccessApprovalAlert.swift in Sources */,
 				D12800000000000000000001 /* PhiSegmentedPicker.swift in Sources */,
 				B17DE0000000000000000005 /* CredentialProvider.swift in Sources */,
 				B17DE0000000000000000006 /* BitwardenService.swift in Sources */,
@@ -2603,6 +2774,7 @@
 				D1F600042FD6000000000004 /* DiffableOutlineDiffPlanner.swift in Sources */,
 				D1F600062FD6000000000006 /* DiffableOutlineView.swift in Sources */,
 				D1F600082FD6000000000008 /* SidebarDiffableSnapshotBuilder.swift in Sources */,
+				8E571D5030131FEF00E3FBE7 /* SessionRestorePreference.swift in Sources */,
 				CCEB64CB2E98DD520036C763 /* InsetTableRowView.swift in Sources */,
 				37C1B1E42EDEA03400DD4496 /* FeedbackView.swift in Sources */,
 				FBD200012FD0000000000001 /* FeedbackOutbox.swift in Sources */,
@@ -2618,6 +2790,8 @@
 				37C1B28A2EE0457F00DD4496 /* LivingDownloadsListView.swift in Sources */,
 				F9E478A224C44EA7BC0D85CC /* AccountDeletedEventAuthentication.swift in Sources */,
 				3703C9842F6956E600E7CF6D /* SentinelHelper.swift in Sources */,
+				B7A100013001000000000002 /* SentinelLanguagePreferenceSync.swift in Sources */,
+				7C0A10023041000100000002 /* SentinelTelemetryConsentSync.swift in Sources */,
 				3703C9862F6956E600E7CF6D /* SentinelVersionGuard.swift in Sources */,
 				3AC6117E11925E637EB4711A /* SentinelBackupCoordination.swift in Sources */,
 				793C1DDEA1022CC850FEFFF9 /* SentinelWatchdog.swift in Sources */,
@@ -2653,8 +2827,6 @@
 				897C09F42F6BEDA000E5CA9B /* IMChannelsViewModel.swift in Sources */,
 				897C09F52F6BEDA000E5CA9B /* IMChannelAPIClient.swift in Sources */,
 				897C09F62F6BEDA000E5CA9B /* IMChannelsSettingView.swift in Sources */,
-				897C09F72F6BEDA000E5CA9B /* IMChannelsSettingHostingViewController.swift in Sources */,
-				897C09F82F6BEDA000E5CA9B /* IMChannelsSettingViewController.swift in Sources */,
 				CC8B74C02EA8BF490075F58C /* CrashSample.swift in Sources */,
 				37289F122EFE602F0003624E /* EventTracker.swift in Sources */,
 				37289F132EFE602F0003624E /* ExperimentConfigProvider.swift in Sources */,
@@ -2768,6 +2940,10 @@
 				8EB01BE93010BCED0043E59D /* AccountDeletionFakeResponses.swift in Sources */,
 				8EB01BE73010BCED0043E59D /* AccountDeletionFlowView.swift in Sources */,
 				8EB01BED3010BCED0043E59D /* AccountDeletionLocalDataRemoval.swift in Sources */,
+				8EB020013020000000000001 /* AccountDataExportController.swift in Sources */,
+				8EB020023020000000000002 /* AccountDataExportCoordinator.swift in Sources */,
+				8EB020033020000000000003 /* AccountDataExportFlowView.swift in Sources */,
+				8EB020263020000000000026 /* AccountVerificationCodeEntry.swift in Sources */,
 				CC4F00040000000000000001 /* CreateSpacePanel.swift in Sources */,
 				CC4F00050000000000000001 /* SpaceChooserView.swift in Sources */,
 				8E762C1A2F15F5AE00631087 /* TabStripDragController.swift in Sources */,
@@ -2792,6 +2968,7 @@
 				8E762CC62F16531A00631087 /* TabStripAnimation.swift in Sources */,
 				37C1B0DE2ED8081400DD4496 /* ShortcutsSettingsView.swift in Sources */,
 				CC2708A52E7A65E500B65AB8 /* LocalStore.swift in Sources */,
+				6A4750023B12345600000002 /* GuestDataMigration.swift in Sources */,
 				CCAA000B2F00010000000001 /* LocalStore+PinnedTabScope.swift in Sources */,
 				CCAA000D2F00010000000001 /* LocalStore+PinnedTabTransfer.swift in Sources */,
 				37FA01022FDA000100000002 /* LocalStoreBackupPolicy.swift in Sources */,
@@ -2811,6 +2988,7 @@
 				54A1000C2FE000000000000C /* TimeMachineInstallerCore.swift in Sources */,
 				54A1000D2FE000000000000D /* TimeMachineMenuPresenter.swift in Sources */,
 				CC99096D2EBC86940046BC81 /* PhiPreferences.swift in Sources */,
+				CC99096F3000000000000001 /* PhiPreferences+AppLanguage.swift in Sources */,
 				CC2708A62E7A65E500B65AB8 /* TabDataModel.swift in Sources */,
 				CC6335F92E4DF65700A176DA /* PhiLogFormatter.swift in Sources */,
 				8E486A752F3ED68600078DEC /* StatusURLView.swift in Sources */,
@@ -2983,6 +3161,7 @@
 				376CE4162F2897D30093D937 /* Response.swift in Sources */,
 				8EF36C032F4E9E7000FCC91E /* TabViewModel.swift in Sources */,
 				376CE4172F2897D30093D937 /* APIClient.swift in Sources */,
+				8EB020043020000000000004 /* OblivionDataExportAPI.swift in Sources */,
 				8EB01BE33010BCED0043E59D /* OblivionDeletionAPI.swift in Sources */,
 				54A1000B2FE000000000000B /* TimeMachinePackageDownloader.swift in Sources */,
 				FBD200012FD0000000000003 /* FeedbackV2.swift in Sources */,
@@ -3013,6 +3192,11 @@
 			isa = PBXTargetDependency;
 			target = 54A200402FE1000000000040 /* PhiTimeMachineInstaller */;
 			targetProxy = 54A200302FE1000000000030 /* PBXContainerItemProxy */;
+		};
+		A8F100342FF0000000000034 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A8F100402FF0000000000040 /* PhiUninstaller */;
+			targetProxy = A8F100302FF0000000000030 /* PBXContainerItemProxy */;
 		};
 		B0C469592E3B10E2007F0C7A /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
@@ -3426,6 +3610,107 @@
 			};
 			name = "Release-Canary";
 		};
+		A8F100512FF0000000000051 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 87DQ3HMK5G;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.phibrowser.PhiUninstaller;
+				PRODUCT_MODULE_NAME = PhiUninstaller;
+				PRODUCT_NAME = PhiUninstaller;
+				SKIP_INSTALL = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = PHI_UNINSTALLER;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		A8F100522FF0000000000052 /* Debug-Canary */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 87DQ3HMK5G;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.phibrowser.canary.PhiUninstaller;
+				PRODUCT_MODULE_NAME = PhiUninstaller;
+				PRODUCT_NAME = PhiUninstaller;
+				SKIP_INSTALL = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = PHI_UNINSTALLER;
+				SWIFT_VERSION = 5.0;
+			};
+			name = "Debug-Canary";
+		};
+		A8F100532FF0000000000053 /* OpenSource */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_HARDENED_RUNTIME = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.phibrowser.canary.PhiUninstaller;
+				PRODUCT_MODULE_NAME = PhiUninstaller;
+				PRODUCT_NAME = PhiUninstaller;
+				SKIP_INSTALL = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = PHI_UNINSTALLER;
+				SWIFT_VERSION = 5.0;
+			};
+			name = OpenSource;
+		};
+		A8F100542FF0000000000054 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 87DQ3HMK5G;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.phibrowser.PhiUninstaller;
+				PRODUCT_MODULE_NAME = PhiUninstaller;
+				PRODUCT_NAME = PhiUninstaller;
+				SKIP_INSTALL = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = PHI_UNINSTALLER;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		A8F100552FF0000000000055 /* Release-Canary */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 87DQ3HMK5G;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.phibrowser.canary.PhiUninstaller;
+				PRODUCT_MODULE_NAME = PhiUninstaller;
+				PRODUCT_NAME = PhiUninstaller;
+				SKIP_INSTALL = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = PHI_UNINSTALLER;
+				SWIFT_VERSION = 5.0;
+			};
+			name = "Release-Canary";
+		};
 		B0C469692E3B10E2007F0C7A /* Debug */ = {
 			isa = XCBuildConfiguration;
 			baseConfigurationReferenceAnchor = 37686B012F1103F300DC3990 /* Configs */;
@@ -3760,6 +4045,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = 87DQ3HMK5G;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
@@ -3892,6 +4178,18 @@
 				54A200532FE1000000000053 /* OpenSource */,
 				54A200542FE1000000000054 /* Release */,
 				54A200552FE1000000000055 /* Release-Canary */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A8F100502FF0000000000050 /* Build configuration list for PBXNativeTarget "PhiUninstaller" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A8F100512FF0000000000051 /* Debug */,
+				A8F100522FF0000000000052 /* Debug-Canary */,
+				A8F100532FF0000000000053 /* OpenSource */,
+				A8F100542FF0000000000054 /* Release */,
+				A8F100552FF0000000000055 /* Release-Canary */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

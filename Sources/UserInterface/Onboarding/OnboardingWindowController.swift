@@ -11,11 +11,48 @@ extension NSNotification.Name {
 }
 
 class OnboardingWindowController: NSWindowController {
-    private lazy var loginViewController: LoginViewController = {
+    private(set) var presentsGuestMigrationRecovery = false
+
+    private(set) lazy var loginViewController: LoginViewController = {
         let vc = LoginViewController()
+        vc.presentationMode = presentsGuestMigrationRecovery
+            ? .guestMigrationRecovery
+            : .standard
         vc.onLoginSuccess = { [weak self] credentials in
             guard let credentials, let self else { return }
             self.routeToCurrentPhase(using: credentials)
+        }
+        vc.onContinueAsGuest = { [weak self] in
+            self?.showGuestPrivacyConfirmation()
+        }
+        return vc
+    }()
+
+    private lazy var guestPrivacyConfirmationViewController: GuestPrivacyConfirmationViewController = {
+        let vc = GuestPrivacyConfirmationViewController()
+        vc.onConfirm = { [weak self, weak vc] sharesUsageMetrics in
+            Task { @MainActor [weak self, weak vc] in
+                guard ChromiumLauncher.sharedInstance().bridge != nil else {
+                    AppLogError(
+                        "[GuestPrivacy] Cannot enter Guest Mode before the Chromium bridge is ready"
+                    )
+                    vc?.resetAfterGuestEntryFailure()
+                    return
+                }
+
+                let result = LoginController.shared.continueAsGuest(
+                    metricsReportingPreference: sharesUsageMetrics
+                )
+                switch result {
+                case .enteredGuestMode:
+                    return
+                case .requiresAccountRecovery:
+                    guard let self else { return }
+                    self.setContent(self.loginViewController)
+                case .failed:
+                    vc?.resetAfterGuestEntryFailure()
+                }
+            }
         }
         return vc
     }()
@@ -33,29 +70,9 @@ class OnboardingWindowController: NSWindowController {
 
     private lazy var layoutSelectionViewController: LayoutSelectionViewController = {
         let vc = LayoutSelectionViewController()
-        vc.nextClosure = { [weak self] next in
-            guard let self else { return }
-            if next {
-                LoginController.shared.phase = .importData
-                setContent(importViewController)
-            } else {
-                self.showPasswordManagerPage()
-            }
-        }
-        return vc
-    }()
-
-    private lazy var importViewController: ImportFromOtherBrowserViewController = {
-        let vc = ImportFromOtherBrowserViewController()
-        vc.onCompletion = { [weak self] in
+        vc.nextClosure = { [weak self] _ in
             guard let self else { return }
             self.showPasswordManagerPage()
-        }
-        vc.nextClosure = { [weak self] next in
-            guard let self else { return }
-            if !next {
-                self.showPasswordManagerPage()
-            }
         }
         return vc
     }()
@@ -63,8 +80,15 @@ class OnboardingWindowController: NSWindowController {
     private lazy var passwordManagerViewController: PasswordManagerViewController = {
         let vc = PasswordManagerViewController()
         vc.nextClosure = { [weak self] _ in
-            guard let self else { return }
-            self.finish()
+            self?.showNextStepPage()
+        }
+        return vc
+    }()
+
+    private lazy var nextStepViewController: NextStepViewController = {
+        let vc = NextStepViewController()
+        vc.nextClosure = { [weak self] _ in
+            self?.finish()
         }
         return vc
     }()
@@ -80,7 +104,7 @@ class OnboardingWindowController: NSWindowController {
         return vc
     }()
     
-    convenience init() {
+    convenience init(presentsGuestMigrationRecovery: Bool = false) {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 640, height: 800),
             styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
@@ -93,7 +117,8 @@ class OnboardingWindowController: NSWindowController {
         window.animationBehavior = .default
 
         
-        self.init(window: window)        
+        self.init(window: window)
+        self.presentsGuestMigrationRecovery = presentsGuestMigrationRecovery
         setupContentViewController()
     }
 
@@ -146,8 +171,8 @@ class OnboardingWindowController: NSWindowController {
 
     private func viewController(for phase: LoginController.Phase, credentials: Credentials?, isFirstPage: Bool) -> NSViewController {
         setNameViewController.isFisrtPage = false
-        importViewController.isFisrtPage = false
         passwordManagerViewController.isFisrtPage = false
+        nextStepViewController.isFisrtPage = false
 
         switch phase {
         case .login:
@@ -161,17 +186,17 @@ class OnboardingWindowController: NSWindowController {
                 let user = AuthManager.retriveUserInfo(from: credentials)
                 welcomeViewController.userName = user.name
             } else {
-                welcomeViewController.userName = AccountController.shared.account?.userInfo?.name
+                welcomeViewController.userName = LoginController.shared.accountForOnboarding?.userInfo?.name
             }
             return welcomeViewController
         case .layoutSelection:
             return layoutSelectionViewController
-        case .importData:
-            importViewController.isFisrtPage = isFirstPage
-            return importViewController
         case .passwordManager:
             passwordManagerViewController.isFisrtPage = isFirstPage
             return passwordManagerViewController
+        case .nextStep:
+            nextStepViewController.isFisrtPage = isFirstPage
+            return nextStepViewController
         case .done:
             return loginViewController
         }
@@ -182,16 +207,20 @@ class OnboardingWindowController: NSWindowController {
         setContent(passwordManagerViewController)
     }
 
+    private func showNextStepPage() {
+        LoginController.shared.phase = .nextStep
+        setContent(nextStepViewController)
+    }
+
+    func showGuestPrivacyConfirmation() {
+        setContent(guestPrivacyConfirmationViewController)
+    }
+
     private func finish() {
         LoginController.shared.phase = .done
-        close()
-        
-        if MainBrowserWindowControllersManager.shared.getFirstAvailableWindowId() == nil {
-            ChromiumLauncher.sharedInstance().bridge?.applicationShouldHandleReopen(NSApp, hasVisibleWindows: false)
-            NotificationCenter.default.post(name: .loginCompleted, object: nil)
-        } else {
-            ChromiumLauncher.sharedInstance().bridge?.notifyRebuildMenuAfterLogin()
-            NotificationCenter.default.post(name: .loginCompleted, object: nil)
+
+        Task { @MainActor in
+            await LoginController.shared.completeCurrentLogin()
         }
     }
 }

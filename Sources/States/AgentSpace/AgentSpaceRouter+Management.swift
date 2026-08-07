@@ -33,6 +33,10 @@ extension AgentSpaceRouter {
     /// user-space management message refuses with this response. nil means
     /// allowed.
     static func userSpaceOperationsRefusal() -> String? {
+        if MainBrowserWindowControllersManager.shared
+            .isGuestTransitionInteractionBlocked {
+            return failure("guest_account_transition_in_progress")
+        }
         guard !PhiPreferences.AgentSpaces.userSpaceOperationsEnabled else { return nil }
         return failure("user_space_operations_disabled")
     }
@@ -332,7 +336,7 @@ extension AgentSpaceRouter {
     /// a client made moments earlier; the store fetch is authoritative.
     @MainActor
     private static func storedRules() -> [SpaceURLRule] {
-        AccountController.shared.account?.localStorage.getAllURLRules() ?? []
+        AccountController.shared.localDataAccount?.localStorage.getAllURLRules() ?? []
     }
 
     /// A rule may target any existing normal Space, or the Incognito rule
@@ -794,7 +798,7 @@ extension AgentSpaceRouter {
         let object = json(context.payload)
         let requested = object?["profileId"] as? String
         return MainActor.assumeIsolated {
-            guard let store = AccountController.shared.account?.localStorage else {
+            guard let store = AccountController.shared.localDataAccount?.localStorage else {
                 return failure("no_account")
             }
             guard let profileId = resolveProfileId(requested) else {
@@ -824,7 +828,7 @@ extension AgentSpaceRouter {
               URL(string: url.trimmingCharacters(in: .whitespacesAndNewlines)) != nil
         else { return invalid() }
         return MainActor.assumeIsolated {
-            guard let store = AccountController.shared.account?.localStorage else {
+            guard let store = AccountController.shared.localDataAccount?.localStorage else {
                 return failure("no_account")
             }
             guard let profileId = resolveProfileId(obj["profileId"] as? String) else {
@@ -852,7 +856,7 @@ extension AgentSpaceRouter {
             return invalid()
         }
         return MainActor.assumeIsolated {
-            guard let store = AccountController.shared.account?.localStorage else {
+            guard let store = AccountController.shared.localDataAccount?.localStorage else {
                 return failure("no_account")
             }
             guard let model = store.getTab(by: guid),
@@ -877,7 +881,7 @@ extension AgentSpaceRouter {
         guard let obj = json(context.payload),
               let guid = obj["guid"] as? String else { return invalid() }
         return MainActor.assumeIsolated {
-            guard let store = AccountController.shared.account?.localStorage else {
+            guard let store = AccountController.shared.localDataAccount?.localStorage else {
                 return failure("no_account")
             }
             guard let model = store.getTab(by: guid),
@@ -910,7 +914,7 @@ extension AgentSpaceRouter {
     static func handleBookmarksList(context: ExtensionMessageContext) -> String? {
         let requestedSpace = json(context.payload)?["spaceId"] as? String
         return MainActor.assumeIsolated {
-            guard let store = AccountController.shared.account?.localStorage else {
+            guard let store = AccountController.shared.localDataAccount?.localStorage else {
                 return failure("no_account")
             }
             guard let scope = bookmarkScope(requestedSpace) else {
@@ -960,7 +964,7 @@ extension AgentSpaceRouter {
         guard let obj = json(context.payload),
               let url = obj["url"] as? String, !url.isEmpty else { return invalid() }
         return MainActor.assumeIsolated {
-            guard let store = AccountController.shared.account?.localStorage else {
+            guard let store = AccountController.shared.localDataAccount?.localStorage else {
                 return failure("no_account")
             }
             guard let scope = bookmarkScope(obj["spaceId"] as? String) else {
@@ -992,7 +996,7 @@ extension AgentSpaceRouter {
                   .trimmingCharacters(in: .whitespacesAndNewlines),
               !title.isEmpty else { return invalid() }
         return MainActor.assumeIsolated {
-            guard let store = AccountController.shared.account?.localStorage else {
+            guard let store = AccountController.shared.localDataAccount?.localStorage else {
                 return failure("no_account")
             }
             guard let scope = bookmarkScope(obj["spaceId"] as? String) else {
@@ -1021,7 +1025,7 @@ extension AgentSpaceRouter {
         guard let obj = json(context.payload),
               let guid = obj["guid"] as? String else { return invalid() }
         return MainActor.assumeIsolated {
-            guard let store = AccountController.shared.account?.localStorage else {
+            guard let store = AccountController.shared.localDataAccount?.localStorage else {
                 return failure("no_account")
             }
             guard let model = store.getTab(by: guid),
@@ -1048,7 +1052,7 @@ extension AgentSpaceRouter {
         guard let obj = json(context.payload),
               let guid = obj["guid"] as? String else { return invalid() }
         return MainActor.assumeIsolated {
-            guard let store = AccountController.shared.account?.localStorage else {
+            guard let store = AccountController.shared.localDataAccount?.localStorage else {
                 return failure("no_account")
             }
             guard let model = store.getTab(by: guid),
@@ -1078,7 +1082,7 @@ extension AgentSpaceRouter {
         guard let obj = json(context.payload),
               let guid = obj["guid"] as? String else { return invalid() }
         return MainActor.assumeIsolated {
-            guard let store = AccountController.shared.account?.localStorage else {
+            guard let store = AccountController.shared.localDataAccount?.localStorage else {
                 return failure("no_account")
             }
             guard let model = store.getTab(by: guid),

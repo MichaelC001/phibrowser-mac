@@ -16,6 +16,14 @@ class AccountSettingViewController: NSViewController, SettingsPane {
     private static let maxPaneTitleLength = 20
 
     var paneTitle: String {
+        if ApplicationState.shared.isGuest {
+            return NSLocalizedString(
+                "settings.account.guest.paneTitle",
+                value: "Guest",
+                comment: "Account settings - Pane title shown while using Phi in Guest Mode"
+            )
+        }
+
         let fullName: String
         if !accountViewModel.userName.isEmpty {
             fullName = accountViewModel.userName
@@ -49,6 +57,8 @@ class AccountSettingViewController: NSViewController, SettingsPane {
     private weak var avatarWindowController: AccountWebWindowController?
     private var cancellables = Set<AnyCancellable>()
     private var settingsWindowCloseObserver: NSObjectProtocol?
+    private var signedInRightContainerLeadingConstraint: Constraint?
+    private var guestRightContainerLeadingConstraint: Constraint?
 
     private var avatarEditURL: String {
         #if DEBUG
@@ -108,28 +118,26 @@ class AccountSettingViewController: NSViewController, SettingsPane {
         super.viewWillAppear()
         
         AppLogDebug("👁️ [AccountSettings] viewWillAppear called")
-        
-        // Check if user is logged in before loading data
-        let isLoggedIn = LoginController.shared.isLoggedin()
-        AppLogDebug("👁️ [AccountSettings] Login status check: \(isLoggedIn)")
-        updateReauthenticationWarning()
 
-        guard isLoggedIn else {
-            AppLogDebug("👁️ [AccountSettings] Not logged in, skipping data load")
+        updateAccessPresentation()
+        defaultBrowserViewModel.checkDefaultBrowser()
+
+        guard ApplicationState.shared.isAuthenticated else {
+            AppLogDebug("👁️ [AccountSettings] Account is not authenticated, skipping account data load")
             return
         }
-        
-        AppLogDebug("👁️ [AccountSettings] Starting data load...")
+
+        loadAuthenticatedAccountData()
+    }
+
+    private func loadAuthenticatedAccountData() {
+        AppLogDebug("👁️ [AccountSettings] Starting authenticated data load...")
         accountView.revalidateAvatar()
         Task {
-            // Load all data in parallel using async let
             async let userInfo: Profile? = accountViewModel.loadUserInfo()
 
-            // Start browser check immediately (it's not async)
-            defaultBrowserViewModel.checkDefaultBrowser()
             let profile = await userInfo
             profileCardView.userInfo = profile
-            // Revalidate avatar after user info is loaded (avatarURL may have been empty before)
             accountView.revalidateAvatar()
             AppLogDebug("👁️ [AccountSettings] Data load completed")
         }
@@ -149,12 +157,18 @@ class AccountSettingViewController: NSViewController, SettingsPane {
         view.addSubview(rightContainer)
 
         rightContainer.snp.makeConstraints { make in
-            make.left.equalTo(profileCardView.snp.right).offset(4)
+            signedInRightContainerLeadingConstraint =
+                make.left.equalTo(profileCardView.snp.right).offset(4).constraint
             make.top.equalToSuperview().offset(36)
             make.right.equalToSuperview().offset(-36)
             make.bottom.lessThanOrEqualToSuperview().offset(-36)
             make.width.greaterThanOrEqualTo(352)
         }
+        rightContainer.snp.makeConstraints { make in
+            guestRightContainerLeadingConstraint =
+                make.left.equalToSuperview().offset(36).constraint
+        }
+        guestRightContainerLeadingConstraint?.deactivate()
 
         // Account card (top)
         rightContainer.addSubview(accountView)
@@ -168,7 +182,6 @@ class AccountSettingViewController: NSViewController, SettingsPane {
         defaultBrowserView.snp.makeConstraints { make in
             make.top.equalTo(accountView.snp.bottom).offset(20)
             make.left.right.equalToSuperview()
-            make.height.equalTo(42)
         }
 
         // Share section
@@ -207,8 +220,18 @@ class AccountSettingViewController: NSViewController, SettingsPane {
                 await self?.accountViewModel.logout()
             }
         }
+        accountView.loginAction = {
+            Task { @MainActor in
+                LoginController.shared.showLoginWindow()
+            }
+        }
+        accountView.reauthenticationAction = {
+            Task { @MainActor in
+                _ = await AuthManager.shared.reauthenticateExpiredSession()
+            }
+        }
 
-        updateReauthenticationWarning()
+        updateAccessPresentation()
     }
 
     private func openAvatarEditor() {
@@ -256,7 +279,8 @@ class AccountSettingViewController: NSViewController, SettingsPane {
         shareViewModel.$shouldShowInvitation
             .receive(on: DispatchQueue.main)
             .sink { [weak self] shouldShow in
-                self?.shareView.isHidden = !shouldShow
+                guard let self else { return }
+                self.shareView.isHidden = ApplicationState.shared.isGuest || !shouldShow
             }
             .store(in: &cancellables)
         
@@ -276,12 +300,42 @@ class AccountSettingViewController: NSViewController, SettingsPane {
                 self?.updateReauthenticationWarning()
             }
             .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(for: .browserAccessStateDidChange)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                self.updateAccessPresentation()
+                if ApplicationState.shared.isAuthenticated {
+                    self.loadAuthenticatedAccountData()
+                }
+            }
+            .store(in: &cancellables)
     }
 
     private func updateReauthenticationWarning() {
         accountView.updateReauthenticationWarning(
-            isVisible: AuthManager.shared.requiresReauthentication
+            isVisible: ApplicationState.shared.isAuthenticated
+                && AuthManager.shared.requiresReauthentication
         )
+    }
+
+    private func updateAccessPresentation() {
+        let isGuest = ApplicationState.shared.isGuest
+        profileCardView.isHidden = isGuest
+        accountView.updateGuestPresentation(isGuest)
+        shareView.isHidden = isGuest || !shareViewModel.shouldShowInvitation
+
+        if isGuest {
+            signedInRightContainerLeadingConstraint?.deactivate()
+            guestRightContainerLeadingConstraint?.activate()
+        } else {
+            guestRightContainerLeadingConstraint?.deactivate()
+            signedInRightContainerLeadingConstraint?.activate()
+        }
+
+        updateReauthenticationWarning()
+        notifyPaneTitleDidChange()
     }
 
     private func registerSettingsWindowCloseObserverIfNeeded() {
@@ -408,6 +462,7 @@ class AccountViewModel: ObservableObject {
     }
 
     func loadUserInfo(showLoading: Bool = true) async -> Profile? {
+        guard ApplicationState.shared.isAuthenticated else { return nil }
         // Show cached data first while the fresh request is still pending.
         if let cachedProfile = loadCachedProfile() {
             await MainActor.run {
@@ -429,6 +484,7 @@ class AccountViewModel: ObservableObject {
         // Refresh the profile from the API.
         do {
             let resp = try await APIClient.shared.getAccountProfile()
+            guard ApplicationState.shared.isAuthenticated else { return nil }
             if resp.code == 0 {
                 let profile = resp.data
                 // Refresh the cached copy with the latest network response.
@@ -468,10 +524,10 @@ class AccountViewModel: ObservableObject {
     @MainActor
     private func showLogoutConfirmation() -> Bool {
         let alert = NSAlert()
-        alert.messageText = NSLocalizedString("settings.account.logoutConfirmation.title", value: "Confirm Logout", comment: "Account settings - Logout confirmation dialog title")
-        alert.informativeText = NSLocalizedString("settings.account.logoutConfirmation.message", value: "You will be logged out and returned to the login screen. Are you sure?", comment: "Account settings - Logout confirmation dialog message")
-        alert.addButton(withTitle: NSLocalizedString("settings.account.logoutConfirmation.cancelButton", value: "Cancel", comment: "Account settings - Cancel button in logout confirmation dialog"))
-        alert.addButton(withTitle: NSLocalizedString("settings.account.logoutConfirmation.logoutButton", value: "Logout", comment: "Account settings - Logout button in logout confirmation dialog"))
+        alert.messageText = NSLocalizedString("settings.account.logoutConfirmation.title", value: "Sign out of Phi?", comment: "Account settings - Sign-out confirmation dialog title")
+        alert.informativeText = NSLocalizedString("settings.account.logoutConfirmation.message", value: "You’ll return to the sign-in screen.", comment: "Account settings - Sign-out confirmation dialog message")
+        alert.addButton(withTitle: NSLocalizedString("settings.account.logoutConfirmation.cancelButton", value: "Cancel", comment: "Account settings - Cancel button in sign-out confirmation dialog"))
+        alert.addButton(withTitle: NSLocalizedString("settings.account.logoutConfirmation.logoutButton", value: "Sign out", comment: "Account settings - Sign-out button in sign-out confirmation dialog"))
         alert.alertStyle = .warning
         return alert.runModal() == .alertSecondButtonReturn
     }
@@ -479,10 +535,10 @@ class AccountViewModel: ObservableObject {
     @MainActor
     private func showLogoutFailedAlert() {
         let alert = NSAlert()
-        alert.messageText = NSLocalizedString("settings.account.logoutFailure.title", value: "Logout Failed", comment: "Account settings - Alert title when logout fails")
-        alert.informativeText = NSLocalizedString("settings.account.logoutFailure.message", value: "Something went wrong when logging out", comment: "Account settings - Alert message when logout fails")
+        alert.messageText = NSLocalizedString("settings.account.logoutFailure.title", value: "Sign out failed", comment: "Account settings - Alert title when sign-out fails")
+        alert.informativeText = NSLocalizedString("settings.account.logoutFailure.message", value: "Something went wrong when signing out", comment: "Account settings - Alert message when sign-out fails")
         alert.alertStyle = .warning
-        alert.addButton(withTitle: NSLocalizedString("settings.account.logoutFailure.dismissButton", value: "OK", comment: "Account settings - OK button to dismiss logout failed alert"))
+        alert.addButton(withTitle: NSLocalizedString("settings.account.logoutFailure.dismissButton", value: "OK", comment: "Account settings - OK button to dismiss sign-out failed alert"))
         alert.runModal()
     }
 
@@ -546,6 +602,7 @@ class AccountViewModel: ObservableObject {
         // Step 4: local account state — credentials, cached profile and avatar,
         // and the account reference — was cleared by `AuthManager.logOut()`.
         AppLogDebug("🚪 [Logout] Step 4: Local account state cleared")
+        ApplicationState.shared.requireLogin()
         
         // Step 5: close the settings window.
         AppLogDebug("🚪 [Logout] Step 5: Closing settings window")
@@ -610,6 +667,7 @@ class AccountViewModel: ObservableObject {
     }
 
     func updateUserName(_ newName: String) async {
+        guard ApplicationState.shared.isAuthenticated else { return }
         let oldName = userName
 
         // Optimistic update: reflect immediately in UI
@@ -621,6 +679,7 @@ class AccountViewModel: ObservableObject {
         do {
             let request = UpdateProfileRequest(name: newName)
             let resp = try await APIClient.shared.updateProfile(updates: request)
+            guard ApplicationState.shared.isAuthenticated else { return }
 
             if resp.code == 0 {
                 let updatedProfile = resp.data
@@ -775,13 +834,96 @@ class ProfileCardView: NSView {
 
 // MARK: - Default Browser Section View
 
+private final class VerticallyCenteredTextFieldCell: NSTextFieldCell {
+    override func drawingRect(forBounds rect: NSRect) -> NSRect {
+        var drawingRect = super.drawingRect(forBounds: rect)
+        let contentHeight = min(
+            ceil(cellSize(forBounds: rect).height),
+            drawingRect.height
+        )
+        drawingRect.origin.y += (drawingRect.height - contentHeight) / 2
+        drawingRect.size.height = contentHeight
+        return drawingRect
+    }
+}
+
+private final class WrappingButtonCell: NSButtonCell {
+    func singleLineTitleRect(forBounds rect: NSRect) -> NSRect {
+        super.titleRect(forBounds: rect)
+    }
+
+    func wrappedTitle(_ title: NSAttributedString) -> NSAttributedString {
+        let result = NSMutableAttributedString(attributedString: title)
+        guard result.length > 0 else {
+            return result
+        }
+
+        let existingStyle = result.attribute(
+            .paragraphStyle,
+            at: 0,
+            effectiveRange: nil
+        ) as? NSParagraphStyle
+        let paragraphStyle = existingStyle?.mutableCopy() as? NSMutableParagraphStyle
+            ?? NSMutableParagraphStyle()
+        paragraphStyle.alignment = alignment
+        paragraphStyle.lineBreakMode = .byWordWrapping
+        result.addAttribute(
+            .paragraphStyle,
+            value: paragraphStyle,
+            range: NSRange(location: 0, length: result.length)
+        )
+        return result
+    }
+
+    override func titleRect(forBounds rect: NSRect) -> NSRect {
+        let singleLineRect = singleLineTitleRect(forBounds: rect)
+        guard attributedTitle.length > 0, singleLineRect.width > 0 else {
+            return singleLineRect
+        }
+
+        let measuredRect = wrappedTitle(attributedTitle).boundingRect(
+            with: NSSize(width: singleLineRect.width, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading]
+        )
+        let height = min(ceil(measuredRect.height), max(0, rect.height - 8))
+        return NSRect(
+            x: singleLineRect.minX,
+            y: rect.midY - height / 2,
+            width: singleLineRect.width,
+            height: height
+        )
+    }
+
+    override func drawTitle(
+        _ title: NSAttributedString,
+        withFrame frame: NSRect,
+        in controlView: NSView
+    ) -> NSRect {
+        wrappedTitle(title).draw(
+            with: frame,
+            options: [.usesLineFragmentOrigin, .usesFontLeading]
+        )
+        return frame
+    }
+}
+
 class DefaultBrowserSectionView: SettingItemBackgroundView {
+    private enum Layout {
+        static let horizontalPadding: CGFloat = 12
+        static let verticalPadding: CGFloat = 8
+        static let spacing: CGFloat = 8
+        static let buttonMaxWidth: CGFloat = 145
+        static let fallbackWidth: CGFloat = 352
+        static let minimumControlHeight: CGFloat = 24
+    }
+
     private let statusLabel = NSTextField(labelWithString: "")
     private let setDefaultButton = NSButton()
     private let loadingIndicator = NSProgressIndicator()
 
     private let viewModel: DefaultBrowserViewModel
     private var cancellables = Set<AnyCancellable>()
+    private var lastLayoutWidth: CGFloat = 0
 
     init(viewModel: DefaultBrowserViewModel) {
         self.viewModel = viewModel
@@ -794,15 +936,55 @@ class DefaultBrowserSectionView: SettingItemBackgroundView {
         fatalError("init(coder:) has not been implemented")
     }
 
+    override var intrinsicContentSize: NSSize {
+        let availableWidth = bounds.width > 0 ? bounds.width : Layout.fallbackWidth
+        let buttonWidth = min(setDefaultButton.intrinsicContentSize.width, Layout.buttonMaxWidth)
+        let statusWidth = max(
+            1,
+            availableWidth
+                - Layout.horizontalPadding * 2
+                - Layout.spacing
+                - buttonWidth
+        )
+        let statusHeight = statusLabel.attributedStringValue.boundingRect(
+            with: NSSize(width: statusWidth, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading]
+        ).height
+        let buttonHeight = wrappedButtonHeight(for: buttonWidth)
+        let controlHeight = max(
+            Layout.minimumControlHeight,
+            ceil(statusHeight),
+            buttonHeight
+        )
+        return NSSize(
+            width: NSView.noIntrinsicMetric,
+            height: controlHeight + Layout.verticalPadding * 2
+        )
+    }
+
+    override func layout() {
+        let width = bounds.width
+        if abs(width - lastLayoutWidth) > 0.5 {
+            lastLayoutWidth = width
+            invalidateIntrinsicContentSize()
+        }
+        super.layout()
+    }
+
     private func setupUI() {
+        statusLabel.cell = VerticallyCenteredTextFieldCell(textCell: "")
+        statusLabel.isEditable = false
+        statusLabel.isSelectable = false
+        statusLabel.isBezeled = false
+        statusLabel.drawsBackground = false
         statusLabel.font = .systemFont(ofSize: 13)
         statusLabel.textColor = .labelColor
+        statusLabel.lineBreakMode = .byWordWrapping
+        statusLabel.maximumNumberOfLines = 0
+        statusLabel.cell?.usesSingleLineMode = false
+        statusLabel.cell?.wraps = true
+        statusLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         addSubview(statusLabel)
-
-        statusLabel.snp.makeConstraints { make in
-            make.left.equalToSuperview().offset(12)
-            make.centerY.equalToSuperview()
-        }
 
         // Loading indicator
         loadingIndicator.style = .spinning
@@ -816,17 +998,37 @@ class DefaultBrowserSectionView: SettingItemBackgroundView {
             make.width.height.equalTo(16)
         }
 
-        setDefaultButton.title = NSLocalizedString("settings.account.defaultBrowser.setDefaultButton", value: "Set as default", comment: "Account settings - Button to set Phi as default browser")
-        setDefaultButton.bezelStyle = .rounded
+        let title = NSLocalizedString("settings.account.defaultBrowser.setDefaultButton", value: "Set as default", comment: "Account settings - Button to set Phi as default browser")
+        setDefaultButton.cell = WrappingButtonCell(textCell: title)
+        setDefaultButton.title = title
+        setDefaultButton.toolTip = title
+        setDefaultButton.bezelStyle = .regularSquare
+        setDefaultButton.cell?.usesSingleLineMode = false
+        setDefaultButton.cell?.wraps = true
+        setDefaultButton.cell?.lineBreakMode = .byWordWrapping
         setDefaultButton.image = NSImage(systemSymbolName: "heart.fill", accessibilityDescription: nil)
         setDefaultButton.imagePosition = .imageLeading
         setDefaultButton.target = self
         setDefaultButton.action = #selector(setDefaultTapped)
         addSubview(setDefaultButton)
 
+        let buttonWidth = min(
+            setDefaultButton.intrinsicContentSize.width,
+            Layout.buttonMaxWidth
+        )
         setDefaultButton.snp.makeConstraints { make in
-            make.right.equalToSuperview().offset(-12)
+            make.right.equalToSuperview().offset(-Layout.horizontalPadding)
             make.centerY.equalToSuperview()
+            make.top.greaterThanOrEqualToSuperview().inset(Layout.verticalPadding)
+            make.bottom.lessThanOrEqualToSuperview().inset(Layout.verticalPadding)
+            make.width.lessThanOrEqualTo(Layout.buttonMaxWidth)
+            make.height.equalTo(wrappedButtonHeight(for: buttonWidth))
+        }
+        
+        statusLabel.snp.makeConstraints { make in
+            make.left.equalToSuperview().offset(Layout.horizontalPadding)
+            make.top.bottom.equalToSuperview().inset(Layout.verticalPadding)
+            make.trailing.equalTo(setDefaultButton.snp.leading).offset(-Layout.spacing)
         }
         
         // Initial state: show loading
@@ -838,6 +1040,8 @@ class DefaultBrowserSectionView: SettingItemBackgroundView {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] text in
                 self?.statusLabel.stringValue = text
+                self?.statusLabel.toolTip = text
+                self?.invalidateIntrinsicContentSize()
             }
             .store(in: &cancellables)
 
@@ -867,6 +1071,33 @@ class DefaultBrowserSectionView: SettingItemBackgroundView {
             loadingIndicator.isHidden = true
             setDefaultButton.isHidden = false
         }
+        invalidateIntrinsicContentSize()
+    }
+
+    private func wrappedButtonHeight(for width: CGFloat) -> CGFloat {
+        guard let cell = setDefaultButton.cell as? WrappingButtonCell else {
+            return setDefaultButton.intrinsicContentSize.height
+        }
+
+        let measurementBounds = NSRect(
+            x: 0,
+            y: 0,
+            width: width,
+            height: Layout.minimumControlHeight
+        )
+        let titleWidth = cell.singleLineTitleRect(forBounds: measurementBounds).width
+        guard titleWidth > 0 else {
+            return setDefaultButton.intrinsicContentSize.height
+        }
+
+        let titleHeight = cell.wrappedTitle(setDefaultButton.attributedTitle).boundingRect(
+            with: NSSize(width: titleWidth, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading]
+        ).height
+        return max(
+            setDefaultButton.intrinsicContentSize.height,
+            ceil(titleHeight) + 8
+        )
     }
 
     @MainActor
@@ -960,8 +1191,8 @@ class AccountCardView: SettingItemBackgroundView {
     }()
 
     private let logoutStatusLabel: NSTextField = {
-        let tf = NSTextField(labelWithString: NSLocalizedString("settings.account.logoutProgress.browserConfirmationStatus", value: "Confirm logout in the opened browser.",
-            comment: "Account settings - Status shown while waiting for logout to finish"
+        let tf = NSTextField(labelWithString: NSLocalizedString("settings.account.logoutProgress.browserConfirmationStatus", value: "Finish signing out in your browser.",
+            comment: "Account settings - Status shown while waiting for sign-out to finish"
         ))
         tf.font = .systemFont(ofSize: 11, weight: .medium)
         tf.textColor = .secondaryLabelColor
@@ -976,10 +1207,22 @@ class AccountCardView: SettingItemBackgroundView {
 
     private let logoutButton: NSButton = {
         let btn = NSButton()
-        btn.title = NSLocalizedString("settings.account.logoutButton", value: "Logout", comment: "Account settings - Logout button")
+        btn.title = NSLocalizedString("settings.account.logoutButton", value: "Sign out", comment: "Account settings - Sign-out button")
         btn.bezelStyle = .rounded
         btn.image = NSImage(systemSymbolName: "rectangle.portrait.and.arrow.right", accessibilityDescription: nil)
         btn.imagePosition = .imageLeading
+        return btn
+    }()
+
+    private let loginButton: NSButton = {
+        let btn = NSButton()
+        btn.title = NSLocalizedString(
+            "settings.account.guest.loginButton",
+            value: "Sign in",
+            comment: "Account settings - Button shown in the Guest account card to open sign-in"
+        )
+        btn.bezelStyle = .rounded
+        btn.isHidden = true
         return btn
     }()
 
@@ -996,10 +1239,13 @@ class AccountCardView: SettingItemBackgroundView {
     var onUserNameUpdated: ((String) -> Void)?
     var onAvatarEdit: (() -> Void)?
     var logoutAction: (() -> Void)?
+    var loginAction: (() -> Void)?
+    var reauthenticationAction: (() -> Void)?
 
     private var isAvatarHovered = false
     private var isNameHovered = false
     private var canEdit = false
+    private var isGuestPresentation = false
     private var showsReauthenticationWarning = false
     private var isLogoutInProgress = false
     private var avatarRevalidateTask: DownloadTask?
@@ -1065,6 +1311,16 @@ class AccountCardView: SettingItemBackgroundView {
         logoutButton.setContentHuggingPriority(.defaultHigh, for: .horizontal)
         addSubview(logoutButton)
         logoutButton.snp.makeConstraints { make in
+            make.right.equalToSuperview().offset(-12)
+            make.centerY.equalToSuperview()
+        }
+
+        loginButton.target = self
+        loginButton.action = #selector(loginTapped)
+        loginButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        loginButton.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        addSubview(loginButton)
+        loginButton.snp.makeConstraints { make in
             make.right.equalToSuperview().offset(-12)
             make.centerY.equalToSuperview()
         }
@@ -1161,14 +1417,16 @@ class AccountCardView: SettingItemBackgroundView {
         viewModel.$userName
             .receive(on: DispatchQueue.main)
             .sink { [weak self] name in
-                self?.nameLabel.stringValue = name
+                guard let self, !self.isGuestPresentation else { return }
+                self.nameLabel.stringValue = name
             }
             .store(in: &cancellables)
 
         viewModel.$userEmail
             .receive(on: DispatchQueue.main)
             .sink { [weak self] email in
-                self?.emailLabel.stringValue = email
+                guard let self, !self.isGuestPresentation else { return }
+                self.emailLabel.stringValue = email
             }
             .store(in: &cancellables)
 
@@ -1176,7 +1434,10 @@ class AccountCardView: SettingItemBackgroundView {
             .removeDuplicates()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] urlString in
-                guard let self, let url = URL(string: urlString), !urlString.isEmpty else { return }
+                guard let self,
+                      !self.isGuestPresentation,
+                      let url = URL(string: urlString),
+                      !urlString.isEmpty else { return }
                 // Use the current image as placeholder so it stays visible on cache miss
                 let placeholder = self.avatarImageView.image
                     ?? NSImage(systemSymbolName: "person.crop.circle.fill", accessibilityDescription: "Avatar")?
@@ -1198,30 +1459,35 @@ class AccountCardView: SettingItemBackgroundView {
         viewModel.$isLoading
             .receive(on: DispatchQueue.main)
             .sink { [weak self] isLoading in
-                self?.updateLoadingState(isLoading)
+                guard let self, !self.isGuestPresentation else { return }
+                self.updateLoadingState(isLoading)
             }
             .store(in: &cancellables)
 
         viewModel.$canEditUserName
             .receive(on: DispatchQueue.main)
             .sink { [weak self] canEdit in
-                self?.canEdit = canEdit
+                guard let self, !self.isGuestPresentation else { return }
+                self.canEdit = canEdit
             }
             .store(in: &cancellables)
 
         viewModel.$isLogoutInProgress
             .receive(on: DispatchQueue.main)
             .sink { [weak self] isLogoutInProgress in
-                self?.updateLogoutButtonState(isLogoutInProgress)
+                guard let self, !self.isGuestPresentation else { return }
+                self.updateLogoutButtonState(isLogoutInProgress)
             }
             .store(in: &cancellables)
     }
 
     private func updateLoadingState(_ isLoading: Bool) {
+        guard !isGuestPresentation else { return }
         if isLoading {
             loadingIndicator.startAnimation(nil)
             loadingIndicator.isHidden = false
             logoutButton.isHidden = true
+            loginButton.isHidden = true
             nameLabel.isHidden = true
             emailLabel.isHidden = true
             logoutStatusLabel.isHidden = true
@@ -1229,7 +1495,7 @@ class AccountCardView: SettingItemBackgroundView {
         } else {
             loadingIndicator.stopAnimation(nil)
             loadingIndicator.isHidden = true
-            logoutButton.isHidden = false
+            updateActionButtonVisibility()
             nameLabel.isHidden = false
             emailLabel.isHidden = false
             updateStatusLineVisibility()
@@ -1238,7 +1504,68 @@ class AccountCardView: SettingItemBackgroundView {
 
     func updateReauthenticationWarning(isVisible: Bool) {
         showsReauthenticationWarning = isVisible
+        updateActionButtonVisibility()
         updateStatusLineVisibility()
+    }
+
+    func updateGuestPresentation(_ isGuest: Bool) {
+        guard isGuestPresentation != isGuest else { return }
+        isGuestPresentation = isGuest
+        updateNameLayout(isGuest: isGuest)
+        avatarRevalidateTask?.cancel()
+        avatarRevalidateTask = nil
+        canEdit = isGuest ? false : viewModel.canEditUserName
+        avatarEditButton.alphaValue = 0
+        nameEditIconButton.alphaValue = 0
+
+        if isGuest {
+            loadingIndicator.stopAnimation(nil)
+            loadingIndicator.isHidden = true
+            logoutButton.isHidden = true
+            loginButton.isHidden = false
+            nameLabel.isHidden = false
+            emailLabel.isHidden = true
+            logoutStatusLabel.isHidden = true
+            reauthenticationWarningLabel.isHidden = true
+            nameLabel.stringValue = NSLocalizedString(
+                "settings.account.guest.title",
+                value: "You’re using Phi without signing in",
+                comment: "Account settings - Title of the Guest account card"
+            )
+            avatarImageView.image = NSImage(
+                systemSymbolName: "person.crop.circle.fill",
+                accessibilityDescription: nil
+            )?.withSymbolConfiguration(.init(pointSize: 28, weight: .regular))
+            avatarImageView.contentTintColor = .secondaryLabelColor
+        } else {
+            loginButton.isHidden = true
+            nameLabel.stringValue = viewModel.userName
+            emailLabel.stringValue = viewModel.userEmail
+            updateLoadingState(viewModel.isLoading)
+            updateLogoutButtonState(viewModel.isLogoutInProgress)
+        }
+    }
+
+    private func updateNameLayout(isGuest: Bool) {
+        nameHoverArea.snp.remakeConstraints { make in
+            make.left.equalTo(avatarContainerView.snp.right)
+            make.right.equalTo(logoutButton.snp.left).offset(-4)
+            make.top.equalToSuperview()
+            if isGuest {
+                make.bottom.equalToSuperview()
+            } else {
+                make.bottom.equalTo(snp.centerY)
+            }
+        }
+
+        nameLabel.snp.remakeConstraints { make in
+            make.left.equalToSuperview().offset(12)
+            if isGuest {
+                make.centerY.equalToSuperview()
+            } else {
+                make.bottom.equalToSuperview().offset(-2)
+            }
+        }
     }
 
     private func updateLogoutButtonState(_ isInProgress: Bool) {
@@ -1248,7 +1575,18 @@ class AccountCardView: SettingItemBackgroundView {
         updateStatusLineVisibility()
     }
 
+    private func updateActionButtonVisibility() {
+        guard !isGuestPresentation, loadingIndicator.isHidden else { return }
+        logoutButton.isHidden = showsReauthenticationWarning
+        loginButton.isHidden = !showsReauthenticationWarning
+    }
+
     private func updateStatusLineVisibility() {
+        guard !isGuestPresentation else {
+            logoutStatusLabel.isHidden = true
+            reauthenticationWarningLabel.isHidden = true
+            return
+        }
         let isLoading = !loadingIndicator.isHidden
         logoutStatusLabel.isHidden = isLoading || !isLogoutInProgress
         reauthenticationWarningLabel.isHidden = isLoading || isLogoutInProgress || !showsReauthenticationWarning
@@ -1257,6 +1595,7 @@ class AccountCardView: SettingItemBackgroundView {
     // MARK: Avatar revalidation
 
     func revalidateAvatar() {
+        guard !isGuestPresentation else { return }
         let urlString = viewModel.avatarURL
         guard let url = URL(string: urlString), !urlString.isEmpty else { return }
 
@@ -1282,6 +1621,7 @@ class AccountCardView: SettingItemBackgroundView {
     /// Instantly display a locally-provided avatar image (e.g. from the WKWebView editor),
     /// bypassing any network round-trip.
     func setAvatarImage(_ image: NSImage) {
+        guard !isGuestPresentation else { return }
         avatarRevalidateTask?.cancel()
         let size = image.size
         let circularImage = NSImage(size: size, flipped: false) { rect in
@@ -1409,6 +1749,14 @@ class AccountCardView: SettingItemBackgroundView {
     @objc private func logoutTapped() {
         guard !isLogoutInProgress else { return }
         logoutAction?()
+    }
+
+    @objc private func loginTapped() {
+        if showsReauthenticationWarning {
+            reauthenticationAction?()
+        } else {
+            loginAction?()
+        }
     }
 }
 

@@ -575,6 +575,7 @@ always-true rules:
   UI, wait and re-observe (or `waitForElement` an app-specific selector)
   before concluding anything.
 - If the run reports the CDP endpoint is missing, not responding, or access
-  denied, read `references/install.md` and follow it (enable Settings ▸
-  Developer ▸ Remote debugging — no relaunch — and approve the consent prompt),
-  then return to the task.
+  denied, read `references/install.md` and follow it. Nothing needs starting
+  or enabling first: the skill launches Phi when no browser is running, and
+  the consent prompt it raises turns agent control on as part of allowing you.
+  Ask the user to approve it, then return to the task.

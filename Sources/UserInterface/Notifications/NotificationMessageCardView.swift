@@ -481,6 +481,7 @@ private struct NotificationCardAgentAvatarView: View {
     @MainActor
     private func loadAvatar() async {
         image = nil
+        guard ApplicationState.shared.isAuthenticated else { return }
 
         do {
             let payload = try await APIClient.shared.getAgentAvatarImageData()

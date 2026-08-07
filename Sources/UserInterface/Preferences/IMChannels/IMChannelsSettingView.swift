@@ -7,22 +7,40 @@ import AppKit
 import SwiftUI
 import CoreImage.CIFilterBuiltins
 
-struct IMChannelsSettingView: View {
+struct PhiLinkSettingsSectionView: View {
     @State private var vm = IMChannelsViewModel()
+    @State private var isGuest = ApplicationState.shared.isGuest
+    let enabled: Bool
+
+    init(enabled: Bool = true) {
+        self.enabled = enabled
+    }
+
+    private var shouldLoadChannels: Bool {
+        enabled && !isGuest
+    }
 
     var body: some View {
-        ScrollView(.vertical) {
-            VStack(alignment: .leading, spacing: 24) {
-                IMSectionHeader(
-                    title: NSLocalizedString("settings.phiLink.sectionTitle", value: "Telegram", comment: "Phi Link - Section title"),
-                    subtitle: String(
-                        format: NSLocalizedString("settings.phiLink.sectionDescription", value: "Using Telegram to send and receive messages with %@",
-                            comment: "Phi Link - Section subtitle with agent name"
-                        ),
-                        vm.agentName
-                    )
+        VStack(alignment: .leading, spacing: 24) {
+            IMSectionHeader(
+                title: NSLocalizedString(
+                    "settings.ai.phiLink.sectionTitle",
+                    value: "Phi Link",
+                    comment: "Phi & AI settings - Section title for Phi Link messaging options"
+                ),
+                subtitle: String(
+                    format: NSLocalizedString("settings.phiLink.sectionDescription", value: "Using Telegram to send and receive messages with %@",
+                        comment: "Phi Link - Section subtitle with agent name"
+                    ),
+                    vm.agentName
                 )
+            )
 
+            if isGuest {
+                IMContainerView {
+                    LoginRequiredPresentationView()
+                }
+            } else {
                 if !vm.topNoticeMessages.isEmpty {
                     VStack(spacing: 10) {
                         ForEach(vm.topNoticeMessages, id: \.self) { message in
@@ -31,15 +49,25 @@ struct IMChannelsSettingView: View {
                     }
                 }
 
-                TelegramChannelsSection(vm: vm)
+                TelegramChannelsSection(vm: vm, enabled: enabled)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.vertical, 36)
-            .padding(.horizontal, 36)
         }
-        .themedBackground(PhiPreferences.fixedWindowBackground)
-        .frame(width: 680, height: 561)
-        .task { await vm.loadAll() }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .opacity(enabled ? 1.0 : 0.4)
+        .disabled(!enabled)
+        .task(id: shouldLoadChannels) {
+            guard shouldLoadChannels else {
+                await vm.stopPolling()
+                return
+            }
+            await vm.loadAll()
+        }
+        .onReceive(
+            NotificationCenter.default.publisher(for: .browserAccessStateDidChange)
+                .receive(on: DispatchQueue.main)
+        ) { _ in
+            isGuest = ApplicationState.shared.isGuest
+        }
         .onDisappear { Task { await vm.stopPolling() } }
     }
 }
@@ -51,13 +79,13 @@ private struct IMSectionHeader: View {
     var subtitle: String? = nil
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 4) {
             Text(title)
-                .font(.system(size: 13, weight: .semibold))
+                .font(.system(size: 12))
                 .themedForeground(.textSecondary)
             if let subtitle {
                 Text(subtitle)
-                    .font(.system(size: 12))
+                    .font(.system(size: 11))
                     .themedForeground(.textTertiary)
             }
         }
@@ -68,12 +96,13 @@ private struct IMSectionHeader: View {
 
 private struct TelegramChannelsSection: View {
     @Bindable var vm: IMChannelsViewModel
+    let enabled: Bool
 
     var body: some View {
         IMContainerView {
-            OfficialBotSection(vm: vm)
+            OfficialBotSection(vm: vm, enabled: enabled)
             Divider()
-            CustomBotSection(vm: vm)
+            CustomBotSection(vm: vm, enabled: enabled)
         }
     }
 }
@@ -82,6 +111,7 @@ private struct TelegramChannelsSection: View {
 
 private struct OfficialBotSection: View {
     @Bindable var vm: IMChannelsViewModel
+    let enabled: Bool
 
     var body: some View {
         DisclosureGroup(isExpanded: $vm.isOfficialBotExpanded) {
@@ -109,7 +139,7 @@ private struct OfficialBotSection: View {
                     .themedForeground(.textTertiary)
             }
             Spacer(minLength: 8)
-            if !vm.hasLoaded || vm.isOfficialBotLoading {
+            if enabled && (!vm.hasLoaded || vm.isOfficialBotLoading) {
                 ProgressView()
                     .controlSize(.mini)
             }
@@ -124,7 +154,7 @@ private struct OfficialBotSection: View {
 
     @ViewBuilder
     private var officialBotBody: some View {
-        if !vm.hasLoaded {
+        if enabled && !vm.hasLoaded {
             loadingRow
         } else if let pairing = vm.pairing, !vm.officialBotNeedsReconnect {
             connectedView(pairing: pairing)
@@ -186,7 +216,7 @@ private struct OfficialBotSection: View {
                 Task { await vm.disconnectOfficialBot() }
             } label: {
                 HStack(spacing: 4) {
-                    if vm.isOfficialBotLoading {
+                    if enabled && vm.isOfficialBotLoading {
                         ProgressView()
                             .controlSize(.mini)
                     }
@@ -303,7 +333,7 @@ private struct OfficialBotSection: View {
                 Task { await vm.connectOfficialBot() }
             } label: {
                 HStack(spacing: 4) {
-                    if vm.isOfficialBotLoading {
+                    if enabled && vm.isOfficialBotLoading {
                         ProgressView()
                             .controlSize(.mini)
                     }
@@ -348,6 +378,7 @@ private struct OfficialBotSection: View {
 
 private struct CustomBotSection: View {
     @Bindable var vm: IMChannelsViewModel
+    let enabled: Bool
 
     var body: some View {
         DisclosureGroup(isExpanded: $vm.isCustomBotExpanded) {
@@ -371,7 +402,7 @@ private struct CustomBotSection: View {
                     .themedForeground(.textTertiary)
             }
             Spacer(minLength: 8)
-            if !vm.hasLoaded || vm.isCustomBotSaving || vm.isVerifying {
+            if enabled && (!vm.hasLoaded || vm.isCustomBotSaving || vm.isVerifying) {
                 ProgressView()
                     .controlSize(.mini)
             }
@@ -386,7 +417,7 @@ private struct CustomBotSection: View {
 
     @ViewBuilder
     private var customBotBody: some View {
-        if !vm.hasLoaded {
+        if enabled && !vm.hasLoaded {
             HStack {
                 Spacer()
                 ProgressView()
@@ -446,7 +477,7 @@ private struct CustomBotSection: View {
                     Task { await vm.verifyCustomBot() }
                 } label: {
                     HStack(spacing: 4) {
-                        if vm.isVerifying {
+                        if enabled && vm.isVerifying {
                             ProgressView().controlSize(.mini)
                         }
                         Label(
@@ -463,7 +494,7 @@ private struct CustomBotSection: View {
                     Task { await vm.saveCustomBot() }
                 } label: {
                     HStack(spacing: 4) {
-                        if vm.isCustomBotSaving {
+                        if enabled && vm.isCustomBotSaving {
                             ProgressView().controlSize(.mini)
                         }
                         Label(
@@ -526,7 +557,7 @@ private struct CustomBotSection: View {
                     Task { await vm.verifyCustomBot() }
                 } label: {
                     HStack(spacing: 4) {
-                        if vm.isVerifying {
+                        if enabled && vm.isVerifying {
                             ProgressView().controlSize(.mini)
                         }
                         Label(
@@ -543,7 +574,7 @@ private struct CustomBotSection: View {
                     Task { await vm.removeCustomBot() }
                 } label: {
                     HStack(spacing: 4) {
-                        if vm.isCustomBotSaving {
+                        if enabled && vm.isCustomBotSaving {
                             ProgressView().controlSize(.mini)
                         }
                         Label(
@@ -913,5 +944,11 @@ private func openBotFather() {
 }
 
 #Preview {
-    IMChannelsSettingView()
+    ScrollView(.vertical) {
+        PhiLinkSettingsSectionView()
+            .padding(.vertical, 36)
+            .padding(.horizontal, 36)
+    }
+    .themedBackground(PhiPreferences.fixedWindowBackground)
+    .frame(width: 680, height: 561)
 }

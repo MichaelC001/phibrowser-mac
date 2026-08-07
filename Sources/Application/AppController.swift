@@ -52,7 +52,7 @@ import PostHog
     private var coldOpenURLForwardWorkItem: DispatchWorkItem?
     private var coldOpenURLForwardAttempts = 0
     private var pendingColdOpenForwardURLs: [URL] = []
-    private var pendingOpenURLsAwaitingLoginStatus: [URL] = []
+    private var pendingOpenURLsAwaitingBrowserAccess: [URL] = []
     /// Cached in `applicationWillFinishLaunching`; weak — owned by `ChromiumLauncher`, not AppController.
     private weak var chromiumBridge: (any PhiChromiumBridgeProtocol)?
 
@@ -73,12 +73,32 @@ import PostHog
     }
     
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Chromium may query login state before launch completes, so refresh it first.
+        // Resolve the synchronous browser-access gate before Chromium asks
+        // whether its windows may be shown. The async refresh below can still
+        // recover a fresher shared credential snapshot afterwards.
+        resolveBrowserAccessFromAuthentication(checkChromiumLaunchStatus: true)
+        if ApplicationState.shared.isGuest {
+            GuestModePreferences.disableAI()
+        }
+        LoginController.shared.prepareGuestMigrationRecoveryBeforeChromiumLaunch()
+        let permitsSentinelLaunch: Bool
+        if ApplicationState.shared.isGuest {
+            permitsSentinelLaunch =
+                AuthManager.shared
+                    .prepareGuestSessionBoundaryBeforeServiceLaunch(
+                        preserveLocalRecoveryCredentials:
+                            ApplicationState.shared
+                                .isGuestMigrationRecoveryInProgress
+                    )
+        } else {
+            permitsSentinelLaunch = true
+        }
         LoginController.shared.refreshLoginStatusOnLaunching()
         
         //        ASWebAuthenticationSessionWebBrowserSessionManager.shared.sessionHandler = self
         
         ChromiumLauncher.sharedInstance().bridge?.applicationDidFinishLaunching(notification)
+        SentinelTelemetryConsentPublisher.shared.start()
         
         //        ASWebAuthenticationSessionWebBrowserSessionManager.shared.sessionHandler = self
         
@@ -92,9 +112,11 @@ import PostHog
         DefaultExtensionManifestWriter.start()
         FeedbackOutboxUploader.shared.start()
 
-        // Start the agent CDP socket listener when the user has enabled agent
-        // browser control (Settings ▸ Developer ▸ Remote debugging).
-        AgentCDPListener.shared.startIfEnabled()
+        // The agent CDP socket listens for the whole app session, whether or
+        // not agent browser control is switched on: an agent that connects
+        // while it is off gets a consent prompt offering to turn it on, rather
+        // than an endpoint that isn't there (see AgentCDPListener).
+        AgentCDPListener.shared.start()
         
         NotificationCenter.default.addObserver(self,
                                                selector: #selector(phiWillTryToTerminateApplicationNotification(_:)),
@@ -109,6 +131,14 @@ import PostHog
                                                name: .loginCompleted,
                                                object: nil)
         NotificationCenter.default.addObserver(self,
+                                               selector: #selector(browserAccessStateDidChange(_:)),
+                                               name: .browserAccessStateDidChange,
+                                               object: nil)
+        NotificationCenter.default.addObserver(self,
+                                               selector: #selector(mainAccountChanged(_:)),
+                                               name: .mainAccountChanged,
+                                               object: nil)
+        NotificationCenter.default.addObserver(self,
                                                selector: #selector(refreshSpacesMenuVisibility),
                                                name: .activeBrowserWindowDidChange,
                                                object: nil)
@@ -117,15 +147,20 @@ import PostHog
                                                name: .activeBrowserWindowDidChange,
                                                object: nil)
         
-        if PhiPreferences.AISettings.launchSentinelOnLogin.loadValue() {
-            SentinelHelper.register()
-        }
-        if PhiPreferences.AISettings.phiAIEnabled.loadValue() {
-            SentinelHelper.launch()
-            SentinelWatchdog.shared.start()
-        }
-        Task.detached(priority: .utility) {
-            await SentinelVersionGuard.shared.runStartupCheck()
+        if permitsSentinelLaunch,
+           ApplicationState.shared.isAuthenticated {
+            AuthenticatedSentinelSessionLifecycle.reconcile()
+            Task.detached(priority: .utility) {
+                await SentinelVersionGuard.shared.runStartupCheck()
+            }
+        } else {
+            AuthenticatedSentinelSessionLifecycle.reconcile()
+            if !permitsSentinelLaunch {
+                AppLogError(
+                    "Sentinel launch suppressed because the Guest " +
+                    "shared-token boundary could not be established"
+                )
+            }
         }
     }
 
@@ -136,6 +171,7 @@ import PostHog
         UserDefaultsRegistration.registerDefaults()
         
         setupLogging()
+        SentinelLanguagePreferenceSync.persistCurrentPreference()
         // Wire the shared keychain store into AppLog so its keychain errors and
         // retry recoveries land in the same log file as the rest of the app.
         // Must happen before any auth flow (login / renew / launch recovery)
@@ -161,9 +197,11 @@ import PostHog
                 guard event.event == "Application Opened" else { return event }
                 event.properties["layout_mode"] = PhiPreferences.GeneralSettings.loadLayoutMode().rawValue
                 event.properties["ai_enabled"] = PhiPreferences.AISettings.phiAIEnabled.loadValue()
+                event.properties["is_guest_mode"] = ApplicationState.shared.isGuest
                 return event
             }
             PostHogSDK.shared.setup(postHogConfig)
+            captureUserDefaultsSnapshot()
         } else {
             AppLogInfo("PostHog: project token or host not set in PostHogConfig.generated.swift; skipping init")
         }
@@ -175,6 +213,10 @@ import PostHog
         coldOpenURLForwardWorkItem?.cancel()
         coldOpenURLForwardWorkItem = nil
         AppLogInfo("-------applicationWillTerminate----")
+        MainActor.assumeIsolated {
+            SentinelLanguagePreferenceTerminationCoordinator
+                .prepareForPhiTermination()
+        }
         MemoryUsageMonitor.shared.stop()
         AgentCDPListener.shared.stop()
         if let chromiumBridge {
@@ -207,14 +249,19 @@ import PostHog
     }
     
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        // FIXME: Closing the final window via the title-bar button can bypass Chromium's tab-close
-        // notifications. We likely need a more explicit cleanup and restore strategy here.
+        // Closing the last window keeps the app alive, and the session data
+        // behind that close is safe: Chromium defers every close in the
+        // window group until SpaceManager reports the teardown settled
+        // (windowGroupCloseDidSettle), so a title-bar close stores the same
+        // session quitting does and a Dock reopen restores it.
         return false
     }
     
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
-        if LoginController.shared.orderFrontLoginWindowIfNeeded() {
-            LoginController.shared.showLoginWindow()
+        if !ApplicationState.shared.canUseBrowser {
+            if !ApplicationState.shared.isGuestMigrationRecoveryInProgress {
+                LoginController.shared.showLoginWindow()
+            }
             return true
         } else {
             // Only renew on reopen when the access token is actually close to
@@ -223,10 +270,11 @@ import PostHog
             // amplified ferrt risk on stale RTs (see Auth0 incident
             // 2026-04-22). The periodic renew timer still handles long-term
             // freshness; this gate just removes the redundant burst on reopen.
-            if AuthManager.shared.shouldRenewOnReopen() {
+            if ApplicationState.shared.isAuthenticated,
+               AuthManager.shared.shouldRenewOnReopen() {
                 AuthManager.shared.renewCredentials()
             } else {
-                AppLogDebug("reopen: access token still fresh, skipping renew")
+                AppLogDebug("reopen: Guest Mode or fresh access token, skipping renew")
             }
             // With no surviving browser window, spawn the persisted
             // last-active Space ourselves instead of letting Chromium's
@@ -250,7 +298,7 @@ import PostHog
     }
     
     func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
-        guard LoginController.shared.isLoggedin() else {
+        guard ApplicationState.shared.canUseBrowser else {
             return nil
         }
         let menu = ChromiumLauncher.sharedInstance().bridge?.applicationDockMenu(sender)
@@ -262,11 +310,11 @@ import PostHog
             return
         }
 
-        if LoginController.shared.orderFrontLoginWindowIfNeeded() {
-            if AuthManager.shared.hasRecoverableLoginSession() {
-                pendingOpenURLsAwaitingLoginStatus.append(contentsOf: urls)
+        if !ApplicationState.shared.canUseBrowser {
+            pendingOpenURLsAwaitingBrowserAccess.append(contentsOf: urls)
+            if !ApplicationState.shared.isGuestMigrationRecoveryInProgress {
+                LoginController.shared.showLoginWindow()
             }
-            LoginController.shared.showLoginWindow()
         } else {
             if let url = urls.first, DeeplinkHandler.handle(url) {
                 return
@@ -284,6 +332,12 @@ import PostHog
     /// window). Cold launch retries in `coldOpenURLForwardDelay` steps up to
     /// `coldOpenURLForwardMaxAttempts`, then forwards anyway.
     private func scheduleForwardOpenURLsToChromium(application: NSApplication, urls: [URL]) {
+        // No window but a restorable history and the switch is on: bring the
+        // previous session back first so the link lands as a new tab in the
+        // restored active window instead of a bare new one. The queue below
+        // then forwards once a (restored) window exists. A no-op otherwise.
+        SpaceManager.shared.beginSessionRestoreForExternalOpenIfEligible()
+
         if isReadyToForwardOpenURLs {
             let urlsToForward = pendingColdOpenForwardURLs + urls
             pendingColdOpenForwardURLs.removeAll()
@@ -355,15 +409,47 @@ import PostHog
     }
 
     @objc private func loginStatusRefreshCompleted(_ notification: Notification) {
+        resolveBrowserAccessFromAuthentication(checkChromiumLaunchStatus: false)
         Task { @MainActor in
-            self.flushPendingOpenURLsAwaitingLoginStatus()
+            self.flushPendingOpenURLsAwaitingBrowserAccess()
         }
     }
 
     @objc private func loginCompleted(_ notification: Notification) {
-        Task { @MainActor in
-            self.flushPendingOpenURLsAwaitingLoginStatus()
+        if LoginController.shared.isLoggedin() {
+            ApplicationState.shared.markSignedIn()
+        } else {
+            resolveBrowserAccessFromAuthentication(checkChromiumLaunchStatus: false)
         }
+        Task { @MainActor in
+            self.flushPendingOpenURLsAwaitingBrowserAccess()
+        }
+    }
+
+    @objc private func browserAccessStateDidChange(_ notification: Notification) {
+        Task { @MainActor in
+            AuthenticatedSentinelSessionLifecycle.reconcile()
+            guard ApplicationState.shared.canUseBrowser,
+                  !ApplicationState.shared
+                    .isGuestAccountPromotionInProgress else {
+                return
+            }
+
+            self.flushPendingOpenURLsAwaitingBrowserAccess()
+            ChromiumLauncher.sharedInstance().bridge?.notifyRebuildMenuAfterLogin()
+
+            // Guest entry can happen before Chromium has created a dangling
+            // window. Ask Chromium to create/reopen one only when neither a
+            // live nor a dangling browser already exists.
+            if MainBrowserWindowControllersManager.shared.getFirstAvailableWindowId() == nil {
+                ChromiumLauncher.sharedInstance().bridge?
+                    .applicationShouldHandleReopen(NSApp, hasVisibleWindows: false)
+            }
+        }
+    }
+
+    @objc private func mainAccountChanged(_ notification: Notification) {
+        resolveBrowserAccessFromAuthentication(checkChromiumLaunchStatus: false)
     }
 
     private func bindChromiumBridgeIfNeeded() {
@@ -373,26 +459,46 @@ import PostHog
     }
 
     @MainActor
-    private func flushPendingOpenURLsAwaitingLoginStatus() {
-        guard !pendingOpenURLsAwaitingLoginStatus.isEmpty else {
+    private func flushPendingOpenURLsAwaitingBrowserAccess() {
+        guard !pendingOpenURLsAwaitingBrowserAccess.isEmpty else {
             return
         }
 
-        guard AuthManager.shared.hasRecoverableLoginSession() else {
-            pendingOpenURLsAwaitingLoginStatus.removeAll()
+        guard ApplicationState.shared.canUseBrowser else {
             return
         }
 
-        guard !LoginController.shared.orderFrontLoginWindowIfNeeded() else {
-            return
-        }
-
-        let urls = pendingOpenURLsAwaitingLoginStatus
-        pendingOpenURLsAwaitingLoginStatus.removeAll()
+        let urls = pendingOpenURLsAwaitingBrowserAccess
+        pendingOpenURLsAwaitingBrowserAccess.removeAll()
         if let url = urls.first, DeeplinkHandler.handle(url) {
             return
         }
         scheduleForwardOpenURLsToChromium(application: NSApp, urls: urls)
+    }
+
+    private func resolveBrowserAccessFromAuthentication(
+        checkChromiumLaunchStatus: Bool
+    ) {
+        // A persisted Guest choice deliberately outranks credentials that were
+        // staged but never committed. LoginController performs the one
+        // identity-bound recovery when a migration journal exists; ordinary
+        // browser-access probes must not revive that session.
+        let isPersistedGuest = ApplicationState.shared.isGuest
+        let isAuthenticated: Bool
+        if isPersistedGuest {
+            isAuthenticated = false
+        } else {
+            isAuthenticated = checkChromiumLaunchStatus
+                ? AuthManager.shared.checkLoginStatusOnChromiumLaunch()
+                : LoginController.shared.isLoggedin()
+        }
+        ApplicationState.shared.resolveInitialAccess(
+            isAuthenticationBlocked: AuthManager.shared.isAccountDeletionInProgress,
+            hasRecoverableLoginSession: isPersistedGuest
+                ? false
+                : AuthManager.shared.hasRecoverableLoginSession(),
+            isAuthenticated: isAuthenticated
+        )
     }
 }
 

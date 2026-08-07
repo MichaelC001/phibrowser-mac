@@ -13,6 +13,7 @@ class WebContentHeaderState: ObservableObject {
     @Published var showNavigationButtons: Bool = false
     @Published var showChatButton: Bool = false
     @Published var showFeedbackButton: Bool = false
+    @Published var isFeedbackIconOnly: Bool = false
     @Published var showDownloadButton: Bool = false
     @Published var showMemoryButton: Bool = false
     @Published var showSidebarButton: Bool = false
@@ -35,6 +36,8 @@ class WebContentHeaderState: ObservableObject {
         self.showDownloadButton = traditionalLayout
         self.showMemoryButton = traditionalLayout && phiAIEnabled
         self.showFeedbackButton = traditionalLayout
+            && !ApplicationState.shared.isGuest
+        self.isFeedbackIconOnly = traditionalLayout
         self.showChatButton = false
     }
 
@@ -234,6 +237,13 @@ class WebContentHeader: NSView {
         partnerAIChatEnabledCancellable = nil
         setupConfigObserver()
 
+        NotificationCenter.default.publisher(for: .browserAccessStateDidChange)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.updateLayoutVisibility()
+            }
+            .store(in: &cancellables)
+
         unsafeBrowserState?.$sidebarCollapsed
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
@@ -341,13 +351,18 @@ class WebContentHeader: NSView {
         let aiChatEnabled = focusedAIChat || partnerAIChat
         let isInPlaceholder = unsafeBrowserState?.isInPlaceholderMode ?? false
         let phiAIEnabled = UserDefaults.standard.bool(forKey: PhiPreferences.AISettings.phiAIEnabled.rawValue)
+        let isGuest = ApplicationState.shared.isGuest
 
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             self.state.showAddressBar = navigationAtTop
             self.state.showNavigationButtons = navigationAtTop && !isInPlaceholder
             self.state.showChatButton = navigationAtTop && !overviewActive && !isIncognito && aiChatEnabled && phiAIEnabled && !isInPlaceholder
-            self.state.showFeedbackButton = (traditionalLayout || (navigationAtTop && isCollapsed)) && !isInPlaceholder
+            self.state.showFeedbackButton =
+                (traditionalLayout || (navigationAtTop && isCollapsed))
+                && !isInPlaceholder
+                && !isGuest
+            self.state.isFeedbackIconOnly = traditionalLayout
             self.state.showDownloadButton = (traditionalLayout || (navigationAtTop && isCollapsed)) && !isInPlaceholder
             self.state.showMemoryButton = (traditionalLayout || (navigationAtTop && isCollapsed)) && phiAIEnabled && !isIncognito && !isInPlaceholder
             self.state.showSidebarButton = !traditionalLayout && navigationAtTop && isCollapsed

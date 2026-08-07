@@ -62,7 +62,9 @@ struct SpacesSettingsView: View {
         }
         .onAppear {
             profileManager.refresh()
-            pinnedTabScope = AccountController.shared.account?.localStorage.pinnedTabScope() ?? .profile
+            pinnedTabScope =
+                AccountController.shared.localDataAccount?.localStorage.pinnedTabScope()
+                ?? .profile
             orderedIds = listedSpaces.map(\.spaceId)
             if selectedSpaceId == nil { selectInitialSpace() }
         }
@@ -472,7 +474,7 @@ struct SpacesSettingsView: View {
         let isCopy = newScope.hierarchyLevel < previousScope.hierarchyLevel
         pinnedTabScope = newScope
 
-        guard let store = AccountController.shared.account?.localStorage else {
+        guard let store = AccountController.shared.localDataAccount?.localStorage else {
             pinnedTabScope = previousScope
             return
         }

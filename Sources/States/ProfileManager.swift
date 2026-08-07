@@ -232,7 +232,8 @@ final class ProfileManager: ObservableObject {
             displayNamesByProfileId[profile.profileId] = profile.displayName
         }
         Task { @MainActor in
-            AccountController.shared.account?.localStorage.upsertProfileDisplayNames(displayNamesByProfileId)
+            AccountController.shared.localDataAccount?.localStorage
+                .upsertProfileDisplayNames(displayNamesByProfileId)
         }
     }
 

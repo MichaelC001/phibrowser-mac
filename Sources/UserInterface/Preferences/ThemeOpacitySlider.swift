@@ -26,12 +26,11 @@ struct ThemeOpacitySliderView: NSViewRepresentable {
     /// Control width; the track image is generated at this width so the
     /// gradient is never stretched. Callers must match their `.frame` width.
     var width: CGFloat = 324
+    var knobDiameter: CGFloat = 18
 
     func makeCoordinator() -> Coordinator {
         Coordinator(value: $value)
     }
-
-    private static let knobDiameter: CGFloat = 18
 
     func makeNSView(context: Context) -> CustomSlider {
         let slider = ThemeOpacityCustomSlider(frame: NSRect(origin: .zero, size: NSSize(width: width, height: 20)))
@@ -40,9 +39,9 @@ struct ThemeOpacitySliderView: NSViewRepresentable {
         slider.doubleValue = value
         slider.isContinuous = true
         slider.barSize = NSSize(width: width, height: 10)
-        slider.knobSize = NSSize(width: Self.knobDiameter, height: Self.knobDiameter)
+        slider.knobSize = NSSize(width: knobDiameter, height: knobDiameter)
         slider.knobView = ThemeOpacitySliderKnobView(
-            frame: NSRect(origin: .zero, size: NSSize(width: Self.knobDiameter, height: Self.knobDiameter)),
+            frame: NSRect(origin: .zero, size: NSSize(width: knobDiameter, height: knobDiameter)),
             borderColor: borderColor
         )
         slider.trackImage = makeTrackImage(color: trackColor, borderColor: borderColor)
@@ -53,6 +52,8 @@ struct ThemeOpacitySliderView: NSViewRepresentable {
 
     func updateNSView(_ slider: CustomSlider, context: Context) {
         context.coordinator.value = $value
+        slider.knobSize = NSSize(width: knobDiameter, height: knobDiameter)
+        slider.knobView?.frame.size = NSSize(width: knobDiameter, height: knobDiameter)
         slider.trackImage = makeTrackImage(color: trackColor, borderColor: borderColor)
         if let knobView = slider.knobView as? ThemeOpacitySliderKnobView {
             knobView.borderColor = borderColor
@@ -226,5 +227,234 @@ private final class ThemeOpacitySliderCell: ImageSliderCell {
         let x = ratio * travel
         let y = (bounds.height - knobHeight) / 2.0
         return NSRect(x: x, y: y, width: knobWidth, height: knobHeight)
+    }
+}
+
+private struct SpaceThemeEditorGlassBackground: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = .popover
+        view.blendingMode = .withinWindow
+        view.state = .active
+        view.wantsLayer = true
+        view.layer?.cornerRadius = 10
+        view.layer?.masksToBounds = true
+
+        return view
+    }
+
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
+}
+
+/// Compact editor used by the existing "Edit Theme" menu actions. It shares
+/// the persistent Space theme and color-component paths used by the General
+/// and Spaces settings panes.
+struct SpaceThemeEditorView: View {
+    static let contentSize = NSSize(width: 328, height: 99)
+
+    private static let innerCardSize = NSSize(width: 312, height: 83)
+    private static let swatchGroupWidth: CGFloat = 200
+    private static let sliderWidth: CGFloat = 199
+    private static let panelDivider = Color(nsColor: .separatorColor)
+    private static let panelInnerBorder = Color(nsColor: .separatorColor)
+
+    let spaceId: String
+    let onDismiss: () -> Void
+
+    @ObservedObject private var spaceManager = SpaceManager.shared
+    @Environment(\.phiAppearance) private var appearance
+
+    @State private var selectedThemeId: String
+    @State private var sliderValue: Double
+
+    init(spaceId: String, onDismiss: @escaping () -> Void) {
+        self.spaceId = spaceId
+        self.onDismiss = onDismiss
+
+        let themeId = SpaceManager.shared.resolvedThemeId(forSpaceId: spaceId)
+        let appearance = ThemeManager.shared.currentAppearance
+        _selectedThemeId = State(initialValue: themeId)
+        _sliderValue = State(
+            initialValue: Self.sliderValue(
+                forSpaceId: spaceId,
+                themeId: themeId,
+                appearance: appearance
+            )
+        )
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            colorRow
+                .frame(height: 40)
+
+            Rectangle()
+                .fill(Self.panelDivider)
+                .frame(height: 1)
+
+            saturationRow
+                .frame(height: 42)
+        }
+        .padding(.horizontal, 12)
+        .frame(
+            width: Self.innerCardSize.width,
+            height: Self.innerCardSize.height
+        )
+        .background {
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(Color.primary.opacity(0.01))
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .stroke(Self.panelInnerBorder, lineWidth: 1)
+                .allowsHitTesting(false)
+        }
+        .padding(8)
+        .frame(
+            width: Self.contentSize.width,
+            height: Self.contentSize.height
+        )
+        .background {
+            SpaceThemeEditorGlassBackground()
+        }
+        .onAppear(perform: syncControls)
+        .onReceive(NotificationCenter.default.publisher(for: .spaceThemeDidChange)) { notification in
+            guard let changedSpaceId = notification.userInfo?["spaceId"] as? String,
+                  changedSpaceId == spaceId else { return }
+            syncControls()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .themeDidChange)) { _ in
+            syncControls()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .appearanceDidChange)) { _ in
+            syncControls()
+        }
+        .onChange(of: spaceManager.spaces.map(\.spaceId)) { _, spaceIds in
+            if !spaceIds.contains(spaceId) {
+                onDismiss()
+            }
+        }
+    }
+
+    private var colorRow: some View {
+        HStack(spacing: 0) {
+            Text(NSLocalizedString("settings.spaces.theme.colorLabel", value: "Color", comment: "Spaces settings - theme color row label"))
+                .font(.body)
+                .foregroundStyle(.primary)
+
+            Spacer(minLength: 0)
+
+            HStack(spacing: 0) {
+                ForEach(ThemeManager.shared.orderedThemes, id: \.id) { theme in
+                    ThemeSwatchView(
+                        fillColor: theme == .pure
+                            ? .white
+                            : Color(theme.color(for: .themeColor, appearance: appearance)),
+                        ringColor: Color(theme.color(for: .themeColor, appearance: appearance)),
+                        selected: selectedThemeId == theme.id,
+                        title: nil,
+                        showsContrastBorder: theme == .pure,
+                        dotDiameter: 16,
+                        ringDiameter: 20,
+                        action: { selectTheme(theme.id) }
+                    )
+                    .frame(maxWidth: .infinity)
+                    .accessibilityLabel(theme.name)
+                }
+            }
+            .frame(width: Self.swatchGroupWidth)
+        }
+    }
+
+    private var saturationRow: some View {
+        HStack(spacing: 0) {
+            Text(NSLocalizedString("settings.spaces.theme.saturationLabel", value: "Saturation", comment: "Spaces settings - theme saturation row label for the per-Space window colors"))
+                .font(.body)
+                .foregroundStyle(.primary)
+
+            Spacer(minLength: 0)
+
+            ThemeOpacitySliderView(
+                value: sliderBinding,
+                trackColor: sliderTrackColor,
+                borderColor: .separatorColor,
+                trackStyle: sliderTrackStyle,
+                width: Self.sliderWidth,
+                knobDiameter: 16
+            )
+            .frame(width: Self.sliderWidth, height: 20)
+            .accessibilityLabel(NSLocalizedString("settings.spaces.theme.saturationLabel", value: "Saturation", comment: "Spaces settings - theme saturation row label for the per-Space window colors"))
+        }
+    }
+
+    private var sliderBinding: Binding<Double> {
+        Binding(
+            get: { sliderValue },
+            set: { newValue in
+                sliderValue = newValue
+                if selectedThemeId == Theme.pure.id {
+                    spaceManager.setPureThemeSliderValue(newValue, forSpaceId: spaceId)
+                } else {
+                    spaceManager.setOverlaySaturation(
+                        CGFloat(OverlaySaturationScale.saturation(forSlider: newValue)),
+                        forSpaceId: spaceId,
+                        appearance: appearance
+                    )
+                }
+            }
+        )
+    }
+
+    private var sliderTrackColor: NSColor {
+        spaceManager.resolvedTheme(forSpaceId: spaceId)
+            .color(for: .windowOverlayBackground, appearance: appearance)
+    }
+
+    private var sliderTrackStyle: ThemeSliderTrackStyle {
+        selectedThemeId == Theme.pure.id ? .pureBrightness(appearance) : .saturation
+    }
+
+    private var displayedTheme: Theme {
+        ThemeManager.shared.registeredThemes[selectedThemeId]
+            ?? Theme.builtInThemes.first(where: { $0.id == selectedThemeId })
+            ?? ThemeManager.shared.currentTheme
+    }
+
+    private func selectTheme(_ themeId: String) {
+        guard selectedThemeId != themeId else { return }
+        selectedThemeId = themeId
+        spaceManager.setTheme(forSpaceId: spaceId, themeId: themeId)
+        syncControls()
+    }
+
+    private func syncControls() {
+        let themeId = spaceManager.resolvedThemeId(forSpaceId: spaceId)
+        selectedThemeId = themeId
+        sliderValue = Self.sliderValue(
+            forSpaceId: spaceId,
+            themeId: themeId,
+            appearance: appearance
+        )
+    }
+
+    private static func sliderValue(
+        forSpaceId spaceId: String,
+        themeId: String,
+        appearance: Appearance
+    ) -> Double {
+        if themeId == Theme.pure.id {
+            return SpaceManager.shared.effectivePureThemeSliderValue(
+                forSpaceId: spaceId,
+                appearance: appearance
+            )
+        }
+        return OverlaySaturationScale.sliderValue(
+            forSaturation: Double(
+                SpaceManager.shared.effectiveOverlaySaturation(
+                    forSpaceId: spaceId,
+                    appearance: appearance
+                )
+            )
+        )
     }
 }

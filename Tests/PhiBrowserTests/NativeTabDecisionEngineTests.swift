@@ -95,6 +95,39 @@ final class NativeTabDecisionEngineTests: XCTestCase {
         XCTAssertEqual(index, 3)
     }
 
+    func testRestoreWithoutAnchorPrependsAtHead() {
+        // A restored payload with no predecessor really is the strip's first
+        // tab, so it belongs at index 0 even when the window already shows a
+        // tab (e.g. the placeholder NTP a restoring window starts with).
+        let context = NativeTabCreationContext(creationKind: .restore,
+                                               insertAfterTabId: nil)
+
+        let index = NativeTabDecisionEngine.insertionIndex(
+            visibleNormalTabIds: [1, 2, 3],
+            context: context,
+            relationGraph: .empty
+        )
+
+        XCTAssertEqual(index, 0)
+    }
+
+    func testRestoreWithHiddenAnchorFallsThroughInsteadOfPrepending() {
+        // The anchor exists in the strip but the Mac side hides it (pinned or
+        // bookmark-bound), so it is absent from the visible list. Prepending
+        // here reverses every tab that follows the hidden one; falling
+        // through lets the caller append in strip order instead.
+        let context = NativeTabCreationContext(creationKind: .restore,
+                                               insertAfterTabId: 99)
+
+        let index = NativeTabDecisionEngine.insertionIndex(
+            visibleNormalTabIds: [1, 2, 3],
+            context: context,
+            relationGraph: .empty
+        )
+
+        XCTAssertNil(index)
+    }
+
     func testForegroundLinkFromSplitOpenerLandsAfterSplitPartner() {
         let context = NativeTabCreationContext(
             isActiveAtCreation: true,

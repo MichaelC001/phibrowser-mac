@@ -5,52 +5,83 @@
 // the accepted connection into Chromium's DevTools server; agent-Space
 // management/lifecycle is served by the app directly on the same socket
 // (/phi-agent). This client discovers the socket from a pointer file the app
-// writes and speaks HTTP + the CDP WebSocket over it. The `--remote-debugging
-// -port` developer override exposes raw CDP for other tools but has no
-// authenticated agent-Space surface, so the skill requires the socket.
+// writes and speaks HTTP + the CDP WebSocket over it. The socket is there
+// whenever Phi runs, switched on or not: connecting while agent control is off
+// raises the consent prompt that offers to turn it on, so the skill never has
+// to send the user into Settings first.
+//
+// That socket is Phi's ONLY CDP surface. `--remote-debugging-port` and
+// `--remote-debugging-pipe` are stripped from the launch arguments before
+// Chromium sees them (ChromiumLauncher.m), because a TCP or pipe endpoint
+// would supplant the FD-injection transport the app owns.
 
 import crypto from 'node:crypto'
 import http from 'node:http'
 import net from 'node:net'
-import { existsSync, readFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
+// PHI_BUNDLE_ID pins one channel: discovery and launch see only that bundle,
+// so a running build of the OTHER channel can never answer for it (the CLI's
+// --canary sets it). Without the pin, canary is preferred, stable is the
+// fallback.
 const CANDIDATE_DIRS = [
   process.env.PHI_USER_DATA_DIR,
-  join(homedir(), 'Library/Application Support/com.phibrowser.canary.Mac'),
-  join(homedir(), 'Library/Application Support/com.phibrowser.Mac'),
+  ...(process.env.PHI_BUNDLE_ID
+    ? [join(homedir(), 'Library/Application Support', process.env.PHI_BUNDLE_ID)]
+    : [
+        join(homedir(), 'Library/Application Support/com.phibrowser.canary.Mac'),
+        join(homedir(), 'Library/Application Support/com.phibrowser.Mac'),
+      ]),
 ].filter(Boolean)
 
 // The consent prompt can hold the very first connection open while the user
 // decides, so the first HTTP request tolerates a long wait.
 const CONSENT_WAIT_MS = 180000
 
+// How long to wait for a just-launched Phi to publish its socket. Cold start
+// has to bring up Chromium and restore the session before the listener runs.
+const LAUNCH_WAIT_MS = 60000
+const LAUNCH_POLL_MS = 250
+
+// Tried in order when this copy of the skill isn't inside an app bundle — a
+// repo checkout driving the scripts directly, where there is no linked
+// install to infer. Canary first, matching endpoint discovery's precedence.
+const LAUNCH_BUNDLE_IDS = ['com.phibrowser.canary.Mac', 'com.phibrowser.Mac']
+
 const NOT_FOUND_MESSAGE =
-  'Phi Browser CDP endpoint not found. Turn on Settings ▸ Developer ▸ ' +
-  'Remote debugging ▸ “Allow agents to control Phi (CDP)” (it applies ' +
-  'immediately — no relaunch), then approve this agent when Phi asks. ' +
-  'See references/install.md.'
+  'Phi Browser CDP endpoint not found, and Phi could not be started. Phi ' +
+  'publishes the socket whenever it runs, so this means no Phi Browser is ' +
+  'installed where the skill looked, or launching it was suppressed ' +
+  '(PHI_NO_LAUNCH). See references/install.md.'
+
+const LAUNCH_TIMEOUT_MESSAGE =
+  'Phi Browser was launched but never published its CDP socket within ' +
+  `${Math.round(LAUNCH_WAIT_MS / 1000)}s. It may still be starting, or it ` +
+  'may have stopped at a login or restore prompt — check the Phi window and ' +
+  'retry.'
 
 const DENIED_MESSAGE =
-  'Phi Browser denied this agent CDP access. Approve it in the Phi prompt ' +
-  '(or remove it under Settings ▸ Developer ▸ Remote debugging ▸ ' +
-  'Remembered agents and reconnect to be asked again).'
-
-const TCP_ONLY_MESSAGE =
-  'Phi Browser\'s --remote-debugging-port is on, but the phi-browser skill ' +
-  'needs the app-owned socket: agent Spaces require authenticated access. ' +
-  'Turn on Settings ▸ Developer ▸ Remote debugging ▸ “Allow agents to control ' +
-  'Phi (CDP)”. The debugging port serves raw CDP tools only.'
+  'Phi Browser denied this agent CDP access. The user may have blocked it for ' +
+  '30 minutes or for good, in which case retrying will not prompt again — ask ' +
+  'them to allow it, or to unblock it under Settings ▸ Developer ▸ Remote ' +
+  'debugging ▸ Blocked agents.'
 
 /**
- * All plausible endpoints in precedence order — the PHI_USER_DATA_DIR
- * override, then canary, then stable: UDS pointers first (across ALL dirs),
- * then any `--remote-debugging-port` TCP override. A pointer or socket FILE
- * can outlive a crashed app (a crash skips the clean-quit unlink), so
- * existence is not liveness — callers walk the list and probe, see
- * discoverLiveEndpoint. Each entry is `{kind: 'uds', socketPath}` or
- * `{kind: 'tcp'}`.
+ * All plausible socket endpoints in precedence order — the PHI_USER_DATA_DIR
+ * override, then canary, then stable. A pointer or socket FILE can outlive a
+ * crashed app (a crash skips the clean-quit unlink), so existence is not
+ * liveness — callers walk the list and probe, see discoverLiveEndpoint. Each
+ * entry is `{socketPath}`.
+ *
+ * A `DevToolsActivePort` file in one of these dirs is deliberately ignored:
+ * only the retired TCP transport ever wrote one (the injected transport is
+ * handed an empty output dir precisely to suppress it), so today it can only
+ * be a leftover from a build that predates the app-owned socket. Treating it
+ * as an endpoint used to mask the real answer — Phi isn't running.
  */
 export function discoverEndpoints() {
   const out = []
@@ -60,13 +91,75 @@ export function discoverEndpoints() {
     const socketPath = readFileSync(pointer, 'utf8')
       .split('\n').map((l) => l.trim()).filter(Boolean)[0]
     if (socketPath && existsSync(socketPath)) {
-      out.push({ kind: 'uds', socketPath })
+      out.push({ socketPath })
     }
   }
-  for (const dir of CANDIDATE_DIRS) {
-    if (existsSync(join(dir, 'DevToolsActivePort'))) out.push({ kind: 'tcp' })
-  }
   return out
+}
+
+/**
+ * The Phi install this copy of the skill belongs to, or null when it doesn't
+ * live inside one.
+ *
+ * Every install links `<agent>/skills/phi-browser` at
+ * `<Phi.app>/Contents/Resources/phi-browser-skill`, so resolving this file's
+ * realpath and cutting at the enclosing `.app` names the exact app the skill
+ * shipped with — canary or stable, /Applications or a DerivedData dev build —
+ * with nothing to guess. Cutting at the FIRST `.app/` keeps the outer bundle
+ * if one is ever nested. Returns null for a repo checkout, where the scripts
+ * belong to no install and `LAUNCH_BUNDLE_IDS` decides instead.
+ */
+export function linkedAppPath() {
+  try {
+    const real = realpathSync(fileURLToPath(import.meta.url))
+    const marker = real.indexOf('.app/')
+    return marker < 0 ? null : real.slice(0, marker + '.app'.length)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Starts Phi Browser, returning what was launched (or null if nothing could
+ * be). Opened with `-g` so an agent starting the browser never steals the
+ * focus of whatever the user is doing — the agent's own Space is hidden
+ * anyway, and a foreground steal from a background task is the rudest thing
+ * this skill could do.
+ *
+ * Set PHI_NO_LAUNCH=1 to forbid it, for anyone who would rather an agent
+ * never start their browser unasked.
+ *
+ * Launches with `-skip-onboarding`: on a fresh profile the app would
+ * otherwise sit at the onboarding window with no browser window for CDP to
+ * attach to; the flag makes Phi choose Guest Mode instead. A signed-in
+ * profile is unaffected, and builds without the flag ignore the unknown
+ * argument.
+ */
+function launchPhi() {
+  if (process.env.PHI_NO_LAUNCH) return null
+  // A linked app wins even under a PHI_BUNDLE_ID pin: the engine loads from
+  // the pinned bundle then, so `linked` IS the pinned app — and `-a <path>`
+  // names that exact copy where `-b` lets LaunchServices pick among every
+  // registered copy of the id.
+  const linked = linkedAppPath()
+  const attempts = linked
+    ? [['-g', '-a', linked]]
+    : (process.env.PHI_BUNDLE_ID
+        ? [process.env.PHI_BUNDLE_ID]
+        : LAUNCH_BUNDLE_IDS).map((id) => ['-g', '-b', id])
+  for (const args of attempts) {
+    try {
+      execFileSync(
+        '/usr/bin/open',
+        [...args, '--args', '-skip-onboarding'],
+        { stdio: 'ignore' },
+      )
+      return args[args.length - 1]
+    } catch {
+      // Not installed (open exits non-zero) — fall through to the next.
+    }
+  }
+  return null
 }
 
 /** True for errors meaning "this socket file has no listener behind it" —
@@ -165,8 +258,9 @@ export async function verifyEndpoint(endpoint, { agentPid = null,
         `(unsandboxed) permissions. [${err.message}]`)
     }
     throw new Error(
-      `Phi Browser CDP endpoint is not responding. Toggle it off and on in ` +
-      `Settings ▸ Developer ▸ Remote debugging. [${err.message}]`)
+      `Phi Browser CDP endpoint is not responding. A consent prompt may be ` +
+      `waiting for the user in Phi; otherwise check that Phi Browser is ` +
+      `running. [${err.message}]`)
   }
   // The browser advertises its target as ws://<host>/devtools/browser/<uuid>;
   // only the path matters (the transport is our socket, not that host:port).
@@ -593,41 +687,73 @@ export class DirectPhiChannel {
   close() { try { this.ws.close() } catch {} }
 }
 
-export async function connectBrowser({ agentPid = null, agentCapability = null } = {}) {
-  const candidates = discoverEndpoints()
-  if (candidates.length === 0) throw new Error(NOT_FOUND_MESSAGE)
-  const uds = candidates.filter((c) => c.kind === 'uds')
-  if (uds.length === 0) {
-    // The --remote-debugging-port override has no authenticated agent-Space
-    // surface, so the skill can't drive agent Spaces over it.
-    throw new Error(TCP_ONLY_MESSAGE)
-  }
-  let lastErr = null
-  for (const endpoint of uds) {
+/**
+ * Tries each candidate in order, returning a connected client — or null when
+ * every one turned out to be a crash-orphaned socket file, leaving the last
+ * such error in `out.lastErr`. Any other failure (denial, sandbox wall, no
+ * WebSocket) is a real answer from a live endpoint and propagates.
+ */
+async function connectOverCandidates(candidates, opts, out) {
+  for (const endpoint of candidates) {
     let browserWsPath
     try {
-      ({ browserWsPath } = await verifyEndpoint(endpoint,
-                                                { agentPid, agentCapability }))
+      ({ browserWsPath } = await verifyEndpoint(endpoint, opts))
     } catch (err) {
       // A crashed app's leftover socket refuses instantly — walk on so a
-      // dead canary pointer can never shadow a live stable Phi. Real
-      // answers (denial, sandbox wall, no-WS) propagate.
-      if (isDeadSocketError(err)) { lastErr = err; continue }
+      // dead canary pointer can never shadow a live stable Phi.
+      if (isDeadSocketError(err)) { out.lastErr = err; continue }
       throw err
     }
     const client = new CdpClient({ socketPath: endpoint.socketPath,
-                                   wsPath: browserWsPath, agentPid,
-                                   agentCapability })
+                                   wsPath: browserWsPath, ...opts })
     await client.connect()
     // Management + lifecycle go straight to the app over a second WS on the
     // same socket (/phi-agent); page automation stays on the Chromium
     // browser-target WS above.
     client.phi = await new DirectPhiChannel({
       socketPath: endpoint.socketPath,
-      agentPid,
-      agentCapability,
+      ...opts,
     }).connect()
     return client
   }
-  throw lastErr ?? new Error(NOT_FOUND_MESSAGE)
+  return null
+}
+
+/**
+ * Connects to a Phi that is still starting. Retries the whole discover →
+ * connect cycle rather than just waiting for the pointer file to appear: a
+ * crash leaves the pointer and socket files behind, so their existence would
+ * otherwise read as "ready" long before the relaunched app is listening.
+ */
+async function connectAfterLaunch(opts, out) {
+  const deadline = Date.now() + LAUNCH_WAIT_MS
+  for (;;) {
+    const candidates = discoverEndpoints()
+    if (candidates.length > 0) {
+      const client = await connectOverCandidates(candidates, opts, out)
+      if (client) return client
+    }
+    if (Date.now() >= deadline) return null
+    await new Promise((resolve) => setTimeout(resolve, LAUNCH_POLL_MS))
+  }
+}
+
+export async function connectBrowser({ agentPid = null, agentCapability = null } = {}) {
+  const opts = { agentPid, agentCapability }
+  const out = { lastErr: null }
+
+  const candidates = discoverEndpoints()
+  if (candidates.length > 0) {
+    const client = await connectOverCandidates(candidates, opts, out)
+    if (client) return client
+    // Every candidate was a crash leftover, so nothing is running behind
+    // them — the same "no browser" case as finding nothing at all.
+  }
+
+  // Start the install this skill belongs to and wait for it, instead of
+  // failing with advice the agent has no way to act on.
+  if (!launchPhi()) throw out.lastErr ?? new Error(NOT_FOUND_MESSAGE)
+  const client = await connectAfterLaunch(opts, out)
+  if (!client) throw new Error(LAUNCH_TIMEOUT_MESSAGE)
+  return client
 }

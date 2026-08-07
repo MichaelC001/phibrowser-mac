@@ -8,9 +8,6 @@ import Combine
 
 /// State model for the sidebar bottom bar.
 class SidebarBottomBarState: ObservableObject {
-    /// Width threshold below which the feedback button switches to icon-only mode.
-    static let compactWidthThreshold: CGFloat = 230
-    
     /// Single-row height.
     static let singleRowHeight: CGFloat = 24
     /// Two-row height.
@@ -21,8 +18,8 @@ class SidebarBottomBarState: ObservableObject {
     /// Legacy compact layout flag, kept for compatibility.
     @Published var isCompact: Bool = false
     
-    /// Whether the feedback button is icon-only.
-    @Published var isFeedbackCompact: Bool = false
+    /// Whether the feedback button is hidden for the current access mode.
+    @Published var isFeedbackHidden: Bool = ApplicationState.shared.isGuest
     
     /// Current bar height.
     var currentHeight: CGFloat {
@@ -55,38 +52,8 @@ struct SidebarBottomBarSwiftUI: View {
     let onMemoryTap: () -> Void
     
     var body: some View {
-        GeometryReader { geometry in
-            regularLayout
-                .onChange(of: geometry.size.width) { newWidth in
-                    updateFeedbackCompactState(width: newWidth)
-                }
-                .onChange(of: showCardEntry) { _ in
-                    updateFeedbackCompactState(width: geometry.size.width)
-                }
-                .onChange(of: state.isChatHidden) { _ in
-                    updateFeedbackCompactState(width: geometry.size.width)
-                }
-                .onAppear {
-                    updateFeedbackCompactState(width: geometry.size.width)
-                }
-        }
-        .frame(height: SidebarBottomBarState.singleRowHeight)
-    }
-    
-    /// Update whether the feedback button should switch to icon-only mode.
-    private func updateFeedbackCompactState(width: CGFloat) {
-        let chatButtonExists = !state.isChatHidden
-        let bulbButtonExists = showCardEntry
-        let widthBelowThreshold = width < SidebarBottomBarState.compactWidthThreshold
-        
-        let tooNarrow = width < 200
-        let shouldBeCompact = (tooNarrow && chatButtonExists) || (chatButtonExists && widthBelowThreshold)
-        
-        if state.isFeedbackCompact != shouldBeCompact {
-//            withAnimation(.easeInOut(duration: 0.05)) {
-                state.isFeedbackCompact = shouldBeCompact
-//            }
-        }
+        regularLayout
+            .frame(height: SidebarBottomBarState.singleRowHeight)
     }
     
     // MARK: - Regular Layout
@@ -101,12 +68,17 @@ struct SidebarBottomBarSwiftUI: View {
 
             Spacer(minLength: 0)
 
-            FeedbackButtonSwiftUI(action: onFeedbackTap, isIconOnly: state.isFeedbackCompact)
+            if !state.isFeedbackHidden {
+                ViewThatFits(in: .horizontal) {
+                    FeedbackButtonSwiftUI(action: onFeedbackTap)
+                    FeedbackButtonSwiftUI(action: onFeedbackTap, isIconOnly: true)
+                }
                 .layoutPriority(1)
+            }
 
             if !state.isChatHidden {
                 ChatButton(action: onChatTap)
-                    .layoutPriority(1)
+                    .layoutPriority(2)
             }
         }
         .padding(.horizontal, WebContentConstant.edgesSpacing)
@@ -158,9 +130,11 @@ struct SidebarBottomBarSwiftUI: View {
             .frame(height: SidebarBottomBarState.singleRowHeight)
             .animation(showCardEntry ? .spring(response: 0.28, dampingFraction: 0.78) : nil, value: showCardEntry)
             
-            FeedbackButtonSwiftUI(action: onFeedbackTap, isIconOnly: false)
-                .padding(.leading, 8)
-                .frame(height: SidebarBottomBarState.singleRowHeight)
+            if !state.isFeedbackHidden {
+                FeedbackButtonSwiftUI(action: onFeedbackTap, isIconOnly: false)
+                    .padding(.leading, 8)
+                    .frame(height: SidebarBottomBarState.singleRowHeight)
+            }
         }
     }
 
@@ -195,16 +169,13 @@ struct FeedbackButtonSwiftUI: View {
     private let iconOnlyWidth: CGFloat = 32
     /// Width for the full label mode.
     private let fullWidth: CGFloat = 90
-    /// Tooltip delay in seconds.
-    private let tooltipDelay: TimeInterval = 0.2
+    /// Minimum horizontal breathing room for the full label mode.
+    private let fullContentHorizontalPadding: CGFloat = 2
     
     @State private var isHovering = false
-    @State private var showTooltip = false
-    @State private var hoverTask: DispatchWorkItem?
     
     var body: some View {
         Button {
-            hideTooltip()
             action()
         } label: {
             HStack(spacing: 4) {
@@ -218,9 +189,13 @@ struct FeedbackButtonSwiftUI: View {
                     Text(NSLocalizedString("sidebar.feedbackButton.title", value: "Feedback", comment: "Feedback - Sidebar feedback button title"))
                         .font(.system(size: 11))
                         .foregroundColor(Color.primaryLabel)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: contentWidth == nil, vertical: false)
                 }
             }
-            .frame(width: isIconOnly ? iconOnlyWidth : (contentWidth ?? fullWidth))
+            .padding(.horizontal, isIconOnly ? 0 : fullContentHorizontalPadding)
+            .frame(width: isIconOnly ? iconOnlyWidth : contentWidth)
+            .frame(minWidth: !isIconOnly && contentWidth == nil ? fullWidth : nil)
             .padding(.vertical, 3)
             .frame(height: contentHeight)
             .background(
@@ -233,76 +208,10 @@ struct FeedbackButtonSwiftUI: View {
             )
         }
         .buttonStyle(.plain)
-        .background(alignment: .top) {
-            if isIconOnly && showTooltip {
-                FastTooltip(text: NSLocalizedString("sidebar.feedbackButton.tooltip", value: "Feedback", comment: "Feedback - Tooltip text for icon-only feedback button"))
-                    .offset(y: -16)
-                    .transition(.opacity.combined(with: .scale(scale: 0.95)))
-                    .allowsHitTesting(false)
-            }
-        }
+        .help(NSLocalizedString("sidebar.feedbackButton.tooltip", value: "Feedback", comment: "Feedback - Tooltip text for feedback button"))
         .onHover { hovering in
             isHovering = hovering
-            handleHover(hovering)
         }
-        .onChange(of: isIconOnly) { newValue in
-            if !newValue {
-                showTooltip = false
-                hoverTask?.cancel()
-                hoverTask = nil
-            }
-        }
-    }
-    
-    private func handleHover(_ hovering: Bool) {
-        hoverTask?.cancel()
-        hoverTask = nil
-        
-        if hovering && isIconOnly {
-            let task = DispatchWorkItem { [self] in
-                withAnimation(.easeOut(duration: 0.15)) {
-                    showTooltip = true
-                }
-            }
-            hoverTask = task
-            DispatchQueue.main.asyncAfter(deadline: .now() + tooltipDelay, execute: task)
-        } else {
-            hideTooltip()
-        }
-    }
-    
-    /// Hide the tooltip when clicked or when the pointer leaves.
-    private func hideTooltip() {
-        hoverTask?.cancel()
-        hoverTask = nil
-        withAnimation(.easeOut(duration: 0.1)) {
-            showTooltip = false
-        }
-    }
-}
-
-// MARK: - Tooltip
-
-private struct FastTooltip: View {
-    let text: String
-    
-    var body: some View {
-        Text(text)
-            .font(.system(size: 8))
-            .foregroundColor(Color(nsColor: .controlTextColor))
-            .fixedSize()
-            .padding(.horizontal, 2)
-            .padding(.vertical, 2)
-            .background(
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(Color(nsColor: .windowBackgroundColor))
-                    .shadow(color: .black.opacity(0.2), radius: 2, x: 0, y: 1)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 2)
-                    .stroke(Color(nsColor: .separatorColor), lineWidth: 0.5)
-            )
-            .fixedSize()
     }
 }
 
@@ -447,6 +356,13 @@ class SidebarBottomBarSwiftUIView: NSView {
             .sink { [weak self] isCompact in
                 guard let self = self else { return }
                 self.onHeightChange?(self.state.height(for: isCompact))
+            }
+            .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(for: .browserAccessStateDidChange)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.state.isFeedbackHidden = ApplicationState.shared.isGuest
             }
             .store(in: &cancellables)
     }

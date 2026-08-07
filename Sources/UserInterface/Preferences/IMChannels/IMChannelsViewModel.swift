@@ -89,6 +89,7 @@ final class IMChannelsViewModel {
     // MARK: - Load All
 
     func loadAll() async {
+        guard ApplicationState.shared.isAuthenticated else { return }
         AppLogDebug("[IMChannels] loadAll started")
         await MainActor.run {
             officialBotErrorMessage = nil
@@ -99,6 +100,7 @@ final class IMChannelsViewModel {
             group.addTask { await self.loadCustomBot() }
             group.addTask { await self.loadAgentPersona() }
         }
+        guard ApplicationState.shared.isAuthenticated else { return }
         await MainActor.run { hasLoaded = true }
         AppLogDebug("[IMChannels] loadAll finished — pairing: \(pairing?.id ?? "nil"), customBot: \(customBot?.id ?? "nil")")
     }
@@ -106,8 +108,10 @@ final class IMChannelsViewModel {
     // MARK: - Agent Persona
 
     private func loadAgentPersona() async {
+        guard ApplicationState.shared.isAuthenticated else { return }
         do {
             let response = try await api.fetchAgentPersona()
+            guard ApplicationState.shared.isAuthenticated else { return }
             let name = response.variables?.name ?? "Phi"
             await MainActor.run {
                 self.agentName = name
@@ -120,8 +124,10 @@ final class IMChannelsViewModel {
     // MARK: - Official Bot
 
     func loadPairings() async {
+        guard ApplicationState.shared.isAuthenticated else { return }
         do {
             let pairings = try await api.listPairings()
+            guard ApplicationState.shared.isAuthenticated else { return }
             await MainActor.run {
                 let found = pairings.first { $0.platform == "telegram" }
                 self.pairing = found
@@ -137,6 +143,7 @@ final class IMChannelsViewModel {
     }
 
     func refreshAll() async {
+        guard ApplicationState.shared.isAuthenticated else { return }
         await MainActor.run {
             officialBotErrorMessage = nil
             customBotErrorMessage = nil
@@ -148,6 +155,7 @@ final class IMChannelsViewModel {
     }
 
     func connectOfficialBot() async {
+        guard ApplicationState.shared.isAuthenticated else { return }
         AppLogDebug("[IMChannels] connectOfficialBot called")
         await MainActor.run {
             isOfficialBotLoading = true
@@ -155,6 +163,7 @@ final class IMChannelsViewModel {
         }
         do {
             let response = try await api.prepareTelegram()
+            guard ApplicationState.shared.isAuthenticated else { return }
             AppLogDebug("[IMChannels] prepareTelegram success — sessionId: \(response.pairing.sessionId), deepLink: \(response.pairing.deepLink ?? "nil")")
             await MainActor.run {
                 activeSession = response.pairing
@@ -172,6 +181,7 @@ final class IMChannelsViewModel {
     }
 
     func disconnectOfficialBot() async {
+        guard ApplicationState.shared.isAuthenticated else { return }
         guard let p = pairing else { return }
         AppLogDebug("[IMChannels] disconnectOfficialBot — pairingId: \(p.id)")
 
@@ -199,6 +209,7 @@ final class IMChannelsViewModel {
     }
 
     func refreshQR() async {
+        guard ApplicationState.shared.isAuthenticated else { return }
         await stopPolling()
         await connectOfficialBot()
     }
@@ -206,6 +217,7 @@ final class IMChannelsViewModel {
     // MARK: - Official Bot Polling
 
     private func startPolling(sessionId: String) {
+        guard ApplicationState.shared.isAuthenticated else { return }
         Task { @MainActor in
             self.doStopPolling()
             AppLogDebug("[IMChannels] polling started — sessionId: \(sessionId)")
@@ -232,8 +244,16 @@ final class IMChannelsViewModel {
     }
 
     private func pollPairingStatus(sessionId: String) async {
+        guard ApplicationState.shared.isAuthenticated else {
+            await stopPolling()
+            return
+        }
         do {
             let session = try await api.getPairingStatus(sessionId: sessionId)
+            guard ApplicationState.shared.isAuthenticated else {
+                await stopPolling()
+                return
+            }
             AppLogDebug("[IMChannels] poll — status: \(session.status)")
 
             if session.status == "paired" {
@@ -280,8 +300,10 @@ final class IMChannelsViewModel {
     // MARK: - Custom Bot
 
     func loadCustomBot() async {
+        guard ApplicationState.shared.isAuthenticated else { return }
         do {
             let response = try await api.listCustomBotChannels()
+            guard ApplicationState.shared.isAuthenticated else { return }
             await MainActor.run {
                 isImServerConnected = response.connected
                 customBot = response.channels.first { $0.channelType == "telegram" }
@@ -296,6 +318,7 @@ final class IMChannelsViewModel {
     }
 
     func saveCustomBot() async {
+        guard ApplicationState.shared.isAuthenticated else { return }
         let token = customBotToken.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !token.isEmpty else { return }
 
@@ -350,6 +373,7 @@ final class IMChannelsViewModel {
     }
 
     func verifyCustomBot() async {
+        guard ApplicationState.shared.isAuthenticated else { return }
         let token = customBotToken.trimmingCharacters(in: .whitespacesAndNewlines)
         let channelId = customBot?.id
 
@@ -379,6 +403,7 @@ final class IMChannelsViewModel {
     }
 
     func removeCustomBot() async {
+        guard ApplicationState.shared.isAuthenticated else { return }
         guard let existing = customBot else { return }
         await MainActor.run {
             isCustomBotSaving = true

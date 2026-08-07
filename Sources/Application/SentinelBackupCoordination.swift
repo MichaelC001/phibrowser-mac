@@ -313,6 +313,9 @@ struct SentinelAIDataExportService {
     ) async -> AIDataExportCoordinator.Result {
         let coordinator = AIDataExportCoordinator(
             ensureSentinelRunning: {
+                guard ApplicationState.shared.isAuthenticated else {
+                    return false
+                }
                 if SentinelHelper.isRunning {
                     return true
                 }

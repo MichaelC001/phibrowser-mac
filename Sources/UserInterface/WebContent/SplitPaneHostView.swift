@@ -64,6 +64,11 @@ final class SplitPaneHostView: NSView {
     /// like the DevTools views above. Must be kept across `attach()` (see keep).
     private weak var primaryCrashView: NSView?
     private weak var secondaryCrashView: NSView?
+    /// Login-required presentation for account-backed content in a Guest NTP.
+    /// Kept separate from crash overlays so a renderer crash can still take
+    /// visual priority when both states are briefly present.
+    private weak var primaryLoginRequiredView: NSView?
+    private weak var secondaryLoginRequiredView: NSView?
 
     /// Which pane currently owns the active tab. Drives the accent-colored
     /// focus ring drawn on top of the pane. Nil hides the ring.
@@ -251,7 +256,8 @@ final class SplitPaneHostView: NSView {
         // panes is unaffected: the moved view is already re-homed by the
         // addSubview moves above, so it never matches.
         let keep: [NSView?] = [primary, secondary, primaryDevToolsView, secondaryDevToolsView,
-                               primaryCrashView, secondaryCrashView]
+                               primaryCrashView, secondaryCrashView,
+                               primaryLoginRequiredView, secondaryLoginRequiredView]
         for container in [primaryPaneContainer, secondaryPaneContainer] {
             for stale in container.subviews where !keep.contains(where: { $0 === stale }) {
                 stale.removeFromSuperview()
@@ -271,15 +277,30 @@ final class SplitPaneHostView: NSView {
         } else {
             secondary.autoresizingMask = []
         }
-        // Re-raise any crash overlay back above its just-re-added native.
+        // Re-raise presentation overlays above the just-re-added native.
+        if let loginView = primaryLoginRequiredView {
+            primaryPaneContainer.addSubview(loginView, positioned: .above, relativeTo: primary)
+        }
+        if let loginView = secondaryLoginRequiredView {
+            secondaryPaneContainer.addSubview(loginView, positioned: .above, relativeTo: secondary)
+        }
+        // Renderer crashes take priority over the login-required presentation.
         // attach() re-adds the native via addSubview (on top), which would
         // otherwise bury a kept crash overlay — the dead native then intercepts
         // the overlay's button clicks while drawing nothing (so it still shows).
         if let cv = primaryCrashView {
-            primaryPaneContainer.addSubview(cv, positioned: .above, relativeTo: primary)
+            primaryPaneContainer.addSubview(
+                cv,
+                positioned: .above,
+                relativeTo: primaryLoginRequiredView ?? primary
+            )
         }
         if let cv = secondaryCrashView {
-            secondaryPaneContainer.addSubview(cv, positioned: .above, relativeTo: secondary)
+            secondaryPaneContainer.addSubview(
+                cv,
+                positioned: .above,
+                relativeTo: secondaryLoginRequiredView ?? secondary
+            )
         }
         primaryPane = primary
         secondaryPane = secondary
@@ -441,7 +462,11 @@ final class SplitPaneHostView: NSView {
             stale.removeFromSuperview()
         }
         crashView.wantsLayer = true
-        container.addSubview(crashView, positioned: .above, relativeTo: nativePane(for: pane))
+        container.addSubview(
+            crashView,
+            positioned: .above,
+            relativeTo: existingLoginRequiredView(for: pane) ?? nativePane(for: pane)
+        )
         crashView.frame = container.bounds
         crashView.autoresizingMask = [.width, .height]
         setCrashView(crashView, for: pane)
@@ -475,6 +500,52 @@ final class SplitPaneHostView: NSView {
         switch pane {
         case .primary: primaryCrashView = view
         case .secondary: secondaryCrashView = view
+        }
+    }
+
+    // MARK: - Login Required (per-pane)
+
+    func attachLoginRequiredView(pane: Pane, loginRequiredView: NSView) {
+        let container = paneContainer(for: pane)
+        let existing = existingLoginRequiredView(for: pane)
+        if existing === loginRequiredView, loginRequiredView.superview === container {
+            return
+        }
+        if let stale = existing, stale !== loginRequiredView {
+            stale.removeFromSuperview()
+        }
+        loginRequiredView.wantsLayer = true
+        container.addSubview(
+            loginRequiredView,
+            positioned: .above,
+            relativeTo: nativePane(for: pane)
+        )
+        loginRequiredView.frame = container.bounds
+        loginRequiredView.autoresizingMask = [.width, .height]
+        setLoginRequiredView(loginRequiredView, for: pane)
+
+        if let crashView = existingCrashView(for: pane) {
+            container.addSubview(
+                crashView,
+                positioned: .above,
+                relativeTo: loginRequiredView
+            )
+        }
+    }
+
+    func detachLoginRequiredView(pane: Pane) {
+        existingLoginRequiredView(for: pane)?.removeFromSuperview()
+        setLoginRequiredView(nil, for: pane)
+    }
+
+    private func existingLoginRequiredView(for pane: Pane) -> NSView? {
+        pane == .primary ? primaryLoginRequiredView : secondaryLoginRequiredView
+    }
+
+    private func setLoginRequiredView(_ view: NSView?, for pane: Pane) {
+        switch pane {
+        case .primary: primaryLoginRequiredView = view
+        case .secondary: secondaryLoginRequiredView = view
         }
     }
 

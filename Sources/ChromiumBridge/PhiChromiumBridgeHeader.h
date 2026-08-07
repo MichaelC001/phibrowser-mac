@@ -74,6 +74,19 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
     PhiOmniboxSuggestionDispositionSwitchToTab
 };
 
+/// Where a window is in Browser's two-phase close model (browser.h), as
+/// reported by `windowCloseStateForWindowId:`.
+typedef NS_ENUM(NSInteger, PhiWindowCloseState) {
+    /// No resolvable browser (mid-teardown or delete-scheduled) — the window
+    /// will drop from the Mac window map on its own.
+    PhiWindowCloseStateGone = 0,
+    /// The beforeunload phase is in flight: a prompt is up, or the close is
+    /// unwinding after the user chose to leave.
+    PhiWindowCloseStateAttemptingClose = 1,
+    /// Alive with the attempting flag cleared — the user kept this window.
+    PhiWindowCloseStateNotAttempting = 2,
+};
+
 @protocol PhiChromiumBridgeDelegate <NSObject>
 @property (nonatomic, copy, readonly, nullable) void (^extensionChangedCallback)(NSArray<NSDictionary *> *list, int64_t windowId);
 - (NSView * _Nullable)getWebContentSuperView;
@@ -90,6 +103,14 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
 - (void)tabWillBeRemove:(int64_t)tabId windowId:(int64_t)windowId;
 - (void)tabTitleUpdated:(int64_t)tabId title:(NSString *)title windowId:(int64_t)windowId;
 - (void)activeTabChanged:(int64_t)tabId index:(int)index windowId:(int64_t)windowId;
+/// Full-strip tab -> index map for one window, emitted on insert / move /
+/// remove. It is authoritative: the client re-sequences its visible order to
+/// match. `windowId` identifies the owning window; `0` means Chromium could
+/// not resolve one and the client falls back to the active window — a guess
+/// that silently drops the correction for whichever window actually moved, so
+/// senders should pass a real id whenever they have one. Suppressed while that
+/// window's restoredWindowSnapshot batch is open, because the snapshot payloads
+/// already carry final indices.
 - (void)tabIndicesUpdated:(NSDictionary<NSNumber *, NSNumber *> *)tabIndices windowId:(int64_t)windowId;
 
 // ==========================================================================
@@ -214,7 +235,8 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
 - (BOOL)dispatchCommand:(int)commandId window:(NSWindow*)window;
 
 // Login management
-- (BOOL)isUserLoggedIn;
+- (BOOL)canShowChromiumWindow;
+- (BOOL)isPhiGuestMode;
 - (void)showLoginUI;
 - (NSString *)getAuth0AccessTokenSyncly;
 
@@ -296,11 +318,12 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
                     url:(NSString *)urlString
          sourceWindowId:(int64_t)sourceWindowId;
 
-/// A Space URL rule routed a navigation that started from a new tab page to a
-/// DIFFERENT Space, so the URL is opening elsewhere. The Mac client should reset
-/// `windowId`'s active new-tab page back to a clean state because the source
-/// navigation was cancelled before it could complete. A no-op if that window's
-/// active tab is not a new tab page.
+/// A Space URL rule routed a navigation that started from a new tab / native NTP
+/// to a DIFFERENT Space, so the URL is opening elsewhere. The Mac client should
+/// reset `windowId`'s active new-tab page back to a clean state: submitting the
+/// URL from the NTP omnibox hid the NTP's native controls in anticipation of a
+/// page load that never happens here, leaving a blank tab. A no-op if that
+/// window's active tab is not a new tab / NTP.
 - (void)refreshNewTabInWindow:(int64_t)windowId;
 
 // ==========================================================================
@@ -342,7 +365,11 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
 @optional
 // Per-window extension action badge state (text/colors/visibility/enabled).
 // Keys: windowId, extensionId, tabId, badgeText, backgroundColor, textColor,
-// visible, enabled.
+// visible (false only for a page action hidden on this tab — remove from
+// layout), enabled (false => a click falls back to the context menu),
+// grayscale (true => render the icon grayed out, keep it laid out).
+// Semantics mirror Chrome's ExtensionActionViewModel: grayscale only when the
+// action is disabled AND the extension cannot interact with the page.
 - (void)badgeInfoChanged:(NSDictionary *)info;
 // Per-window dynamic extension action icon. Keys: windowId, extensionId, tabId,
 // iconData (PNG NSData, empty => no dynamic icon), dipSize, scale.
@@ -369,15 +396,60 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
 /// `windowId` is always the fresh per-run id; the two never coincide by
 /// contract, only by counter accident, so match restore snapshots against
 /// `restoredFromWindowId` exclusively.
+///
+/// The reserved value `-1` means session restore created this window because
+/// the profile's session held no restorable window at all. It re-creates no
+/// saved window, so it is never a snapshot key — but it is still the restore's
+/// stand-in for the window group being reopened, and the client places it by
+/// profile instead.
 - (void)mainBrowserWindowCreated:(NSWindow *)window
                             type:(ChromiumBrowserType)browserType
                        profileId:(NSString *)profileId
                         windowId:(int64_t)windowId
             restoredFromWindowId:(int64_t)restoredFromWindowId;
+/// Space-aware variant of the above — preferred by the bridge when implemented.
+/// `restoredSpaceId` is non-nil only when the tab-restore stack (Cmd+Shift+T,
+/// "Reopen Closed Window") re-created this window, and then names the Space it
+/// belonged to when it closed.
+///
+/// It is NOT interchangeable with `restoredFromWindowId`: that one is a window
+/// id the client matches against its own snapshot, whereas tab restore keeps no
+/// usable window id at all (a restored entry's tab `browser_id` is 0 and its
+/// `original_id` is another entry's id), so the Space identity itself travels
+/// inside the restore entry. The two are mutually exclusive — session restore
+/// reports the window id, tab restore reports the Space.
+- (void)mainBrowserWindowCreated:(NSWindow *)window
+                            type:(ChromiumBrowserType)browserType
+                       profileId:(NSString *)profileId
+                        windowId:(int64_t)windowId
+            restoredFromWindowId:(int64_t)restoredFromWindowId
+                 restoredSpaceId:(NSString * _Nullable)restoredSpaceId;
 // Relationship snapshot version increases monotonically per window.
 - (void)tabRelationshipSnapshotChanged:(NSDictionary *)snapshot
                              windowId:(int64_t)windowId
                                version:(int64_t)version;
+/// One restored saved window delivered as a single batch (T3A snapshot seam).
+/// Called SYNCHRONOUSLY inside Chromium's session-restore replay stack when
+/// the window's replay finishes; per-tab newTabCreatedWithInfo /
+/// activeTabChanged / tabIndicesUpdated / split / relationship events for
+/// this window were withheld while it replayed. Ownership of the payload
+/// transfers to the Mac client before this returns; the client may defer
+/// application, but MUST NOT call back into Chromium synchronously here.
+/// Snapshot keys:
+///   tabs — NSArray<NSDictionary*> of newTabCreatedWithInfo-shaped payloads
+///     in Chromium's final strip order; index/url/title/groupIdHex are
+///     final values, and each creationContext's insertAfterTabId anchors the
+///     PRECEDING entry (first entry has none).
+///   splitEvents — NSArray<NSDictionary*> of this window's split events in
+///     fire order ("type": created|visualsChanged|contentsChanged|removed,
+///     plus splitId/primaryTabId/secondaryTabId/layout/ratio as applicable);
+///     apply after the tabs.
+///   activeTabId — NSNumber (int64), the window's final active tab; absent
+///     when the window has none. Apply last.
+/// A trailing tabRelationshipSnapshotChanged for this window follows this
+/// call when the replay produced one.
+- (void)restoredWindowSnapshot:(NSDictionary<NSString *, id> *)snapshot
+                      windowId:(int64_t)windowId;
 // Returns a custom shortcut override, or nil to use Chromium defaults.
 - (nullable NSDictionary<NSString*, id>*)keyEquivalentOverrideForCommand:
     (int)commandId;
@@ -426,6 +498,12 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
 /// thread per settings page load — must not block (answer from cache).
 - (NSDictionary<NSString *, id> * _Nullable)getPhiAccountInfo;
 
+/// The user pressed "export account data" on the Phi account subpage in
+/// chrome://settings. Mac owns the verification UI and all authenticated
+/// network calls; Chromium only relays the action. Called on the UI thread —
+/// return promptly and present asynchronously.
+- (void)startPhiAccountDataExport;
+
 /// The user pressed "delete account and data" on the Phi account subpage in
 /// chrome://settings. Mac owns everything from here: the warning dialog that
 /// names the account, the deletion request, clearing the local credentials
@@ -433,6 +511,21 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
 /// and does not wait for a result. Called on the UI thread — return promptly
 /// and present asynchronously, never from inside this call.
 - (void)startPhiAccountDeletion;
+
+/// The effective UMA metrics + crash reporting consent changed. Carries the
+/// exact value isMetricsReportingEnabled returns at the same instant (the
+/// guest-mode carve-out applied), delivered synchronously on the browser
+/// main thread when the consent preference is written — from every source:
+/// the chrome://settings toggle, setMetricsReportingEnabled:completion:, or
+/// enterprise policy. Changes only: only real transitions of the effective
+/// value arrive — no baseline push at startup (read the initial state via
+/// isMetricsReportingEnabled) and no repeats of the last delivered value,
+/// so each call is itself a meaningful signal. A change initiated through
+/// the bridge setter echoes back here with the state actually in effect (a
+/// policy-refused change corrects itself through this channel). Guest-mode
+/// entry/exit alone does not fire this — no preference write happens, and
+/// the Mac client owns those transitions.
+- (void)metricsReportingEnabledChanged:(BOOL)enabled;
 @end
 
 @protocol PhiChromiumBridgeProtocol <NSObject>
@@ -448,6 +541,11 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
 /// flight) or the URL is invalid; the caller falls back to a regular tab.
 - (id<WebContentWrapper> _Nullable)newWebContentsForUrl:(NSString *)urlString
                                                 windowId:(int64_t)windowId;
+
+/// When enabled, mouse-downs whose hit view is WebContents remain page-owned
+/// instead of moving the native window.
+- (void)setWebContentsOwnsMouseDown:(BOOL)ownsMouseDown
+                           windowId:(int64_t)windowId;
 
 // Resolves `urlString` against the Space URL routing table for `windowId` and,
 // if a rule matches, hands the URL off through the same routing path the
@@ -520,6 +618,21 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
 /// targetSpaceId is not in the map are treated as no-match.
 - (void)setSpaceRoutingTable:(NSArray<NSDictionary<NSString *, id> *> *)rules
               spaceWindowMap:(NSDictionary<NSString *, NSNumber *> *)spaceWindowMap;
+
+/// Tell Chromium which Space a window is presented as.
+///
+/// Chromium needs its own copy because the tab-restore stack ("recently closed")
+/// is recorded inside Chromium's close handshake, synchronously in
+/// `Browser::OnWindowClosing()` — before AppKit delivers `windowWillClose`. It
+/// must therefore already hold the Space to stamp into the restore entry; the
+/// Mac client cannot supply it after the fact. The `spaceWindowMap` above cannot
+/// serve: it carries one entry per slot's VISIBLE window, so a Space whose
+/// window is hidden behind a sibling is absent from it.
+///
+/// Call once per window as it registers with its slot — a window's Space never
+/// changes. Pass an empty `spaceId` to forget a window early; Chromium
+/// otherwise drops the entry when the window's Browser is destroyed.
+- (void)setWindowSpace:(NSString *)spaceId forWindowId:(int64_t)windowId;
 
 /// Push the Space list shown in the web-content right-click "Open Link In
 /// Space" submenu. Replaces the whole list atomically; send on every change to
@@ -811,6 +924,49 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
 /// @param windowId The window ID to execute the command on
 - (void)executeCommand:(int)commandId windowId:(int64_t)windowId;
 
+// ==========================================================================
+// Session restore concealment (Mac → Chromium)
+// ==========================================================================
+
+/// Tells Chromium that a restored window is one of the sibling-Space windows
+/// the Mac client keeps concealed for the restore burst.
+///
+/// Concealment drops the window's alpha to zero, which Chromium cannot see:
+/// the window and its selected restored tab both stay VISIBLE, so session
+/// restore would eagerly start a navigation for a window nobody can see —
+/// once per concealed Space, all of it competing with the landing window for
+/// the main thread. While the flag is set, the selected tab is replayed but
+/// not loaded.
+///
+/// Send YES from inside the window-created callback (slot registration runs
+/// there, before Chromium replays the tabs) and NO when the window is
+/// revealed — clearing the flag starts the skipped load, so the Space the
+/// user switches to is never a blank page. Both directions are idempotent
+/// and a `windowId` that no longer resolves is a no-op.
+- (void)setRestoredSiblingConcealed:(BOOL)concealed windowId:(int64_t)windowId;
+
+// ==========================================================================
+// Window-group close (Mac → Chromium)
+// ==========================================================================
+
+/// Tells Chromium that a browser-window close has finished settling on the Mac
+/// side — either the closed window was the whole gesture, or the Space slot's
+/// teardown cascade has drained. Chromium records every window close as pending
+/// and waits for this: profiles that still have a window commit their pending
+/// closes (the user closed that window group and kept working), profiles left
+/// without one keep them, so the stored session still describes the layout that
+/// was closed. Must NOT be sent while a slot is still tearing down, or the
+/// group gets committed a window at a time and only its last Space survives a
+/// restore.
+- (void)windowGroupCloseDidSettle;
+
+/// Read-only probe for the window-group close cascade: reports where a
+/// window is in Browser's two-phase close (browser.h). The Mac client polls
+/// this at each veto-recovery deadline and treats a cascade as vetoed only
+/// when every surviving window reports NotAttempting; see
+/// `windowGroupCloseDidSettle` for the settle contract this protects.
+- (PhiWindowCloseState)windowCloseStateForWindowId:(int64_t)windowId;
+
 // Favicon service
 - (void)getFaviconForURL:(NSString *)urlString completion:(void (^)(NSData * _Nullable faviconData))completion;
 - (void)getFaviconForURL:(NSString *)urlString profileId:(NSString * _Nullable)profileId completion:(void (^)(NSData * _Nullable faviconData))completion;
@@ -913,6 +1069,39 @@ typedef NS_ENUM(NSUInteger, PhiOmniboxSuggestionDisposition) {
 /// id; re-enabling generates a fresh one) or before the id is first
 /// created. Main thread only.
 - (NSString * _Nullable)getMetricsClientId;
+
+/// Flips the UMA metrics + crash reporting consent through the same runtime
+/// path as the chrome://settings toggle, so the persisted pref, the client
+/// id lifecycle (opting out clears it; re-enabling mints a fresh one), and
+/// the live start/stop of uploads all follow. `completion` runs once on the
+/// main thread with the state actually in effect afterwards — it can differ
+/// from `enabled` when the value is policy-managed. Main thread only.
+- (void)setMetricsReportingEnabled:(BOOL)enabled
+                        completion:(void (^)(BOOL effectiveEnabled))completion;
+
+/// The app-level "restore previous session" switch, held in Chromium local
+/// state (an absent key means on). The Mac settings toggle reads and writes it
+/// through these; the cold-start path reads the same pref directly, so the two
+/// never diverge. Main thread only.
+- (BOOL)isRestorePreviousSessionEnabled;
+- (void)setRestorePreviousSessionEnabled:(BOOL)enabled;
+
+/// Restores the previous session mid-session for a Dock reopen or an external
+/// link that arrives with no window open, mirroring cold start: every profile
+/// that owned a window when the app last had windows is reloaded and its last
+/// session replayed. `preferredProfileId` (a profile directory basename, the
+/// same wire id mainBrowserWindowCreated reports) names the profile whose
+/// session replays first — pass the active Space's profile so its window's
+/// content is ready earliest; pass nil to keep the stored order. Every profile
+/// is still restored immediately either way. `completion` runs once, after
+/// every profile's restore has settled (a started replay settles when its
+/// browsers and tabs have been created; a skipped or refused profile settles
+/// immediately), so no more restored windows can appear after it runs. YES
+/// iff at least one window will appear; the caller can fall back to opening a
+/// plain window on NO, which settles as promptly as before since nothing
+/// replayed. Gate this on isRestorePreviousSessionEnabled. Main thread only.
+- (void)restorePreviousSessionWithPreferredProfile:(NSString * _Nullable)preferredProfileId
+                                        completion:(void (^)(BOOL restoredAnyWindow))completion;
 
 #pragma mark - Security / Certificate
 

@@ -327,16 +327,39 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
         )
     }
     
-    func isUserLoggedIn() -> Bool {
-        let isLoggedIn = AuthManager.shared.checkLoginStatusOnChromiumLaunch()
-        AppLogDebug("🌐 [Chromium] isUserLoggedIn check: \(isLoggedIn)")
-        return isLoggedIn
+    func canShowChromiumWindow() -> Bool {
+        if ApplicationState.shared.isGuest {
+            let canUseBrowser = ApplicationState.shared.canUseBrowser
+            AppLogDebug(
+                "🌐 [Chromium] persisted Guest browser access check: " +
+                "\(canUseBrowser)"
+            )
+            return canUseBrowser
+        }
+
+        let isAuthenticated = AuthManager.shared.checkLoginStatusOnChromiumLaunch()
+        ApplicationState.shared.resolveInitialAccess(
+            isAuthenticationBlocked: AuthManager.shared.isAccountDeletionInProgress,
+            hasRecoverableLoginSession: AuthManager.shared.hasRecoverableLoginSession(),
+            isAuthenticated: isAuthenticated
+        )
+        let canUseBrowser = ApplicationState.shared.canUseBrowser
+        AppLogDebug(
+            "🌐 [Chromium] browser access check: \(canUseBrowser), " +
+            "authenticated: \(ApplicationState.shared.isAuthenticated)"
+        )
+        return canUseBrowser
+    }
+
+    func isPhiGuestMode() -> Bool {
+        ApplicationState.shared.isGuest
     }
 
     /// Returns the current Phi account identity from the same per-account
     /// profile cache used by the Mac account settings page. The ID-token
     /// identity covers the short window before the init prefetch completes.
     func getPhiAccountInfo() -> [String: Any]? {
+        guard ApplicationState.shared.isAuthenticated else { return nil }
         guard let account = AccountController.shared.account else { return nil }
         let profile: Profile? = account.userDefaults.codableValue(
             forKey: AccountUserDefaults.DefaultsKey.cachedProfile.rawValue
@@ -363,17 +386,50 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
         }
     }
 
+    /// The settings page asked to export the signed-in account's data. The
+    /// native side owns the access token, verification UI and Oblivion calls.
+    func startPhiAccountDataExport() {
+        guard ApplicationState.shared.isAuthenticated else {
+            AppLogWarn(
+                "🌐 [Chromium] Ignoring account data export without an " +
+                "authenticated browser session"
+            )
+            return
+        }
+        AppLogInfo("🌐 [Chromium] startPhiAccountDataExport called by Chromium")
+        Task { @MainActor in
+            AccountDataExportController.shared.start()
+        }
+    }
+
     /// The settings page asked to delete the Phi account and its data. The
     /// hop off this call is required: presenting from inside it would run a
     /// sheet while a Chromium message handler is still on the stack.
     func startPhiAccountDeletion() {
+        guard ApplicationState.shared.isAuthenticated else {
+            AppLogWarn(
+                "🌐 [Chromium] Ignoring account deletion without an " +
+                "authenticated browser session"
+            )
+            return
+        }
         AppLogInfo("🌐 [Chromium] startPhiAccountDeletion called by Chromium")
         Task { @MainActor in
             AccountDeletionController.shared.start()
         }
     }
     
+    func metricsReportingEnabledChanged(_ enabled: Bool) {
+        SentinelTelemetryConsentPublisher.shared.metricsReportingEnabledChanged(
+            enabled
+        )
+    }
+
     func getAuth0AccessTokenSyncly() -> String {
+        guard ApplicationState.shared.isAuthenticated else {
+            AppLogDebug("🌐 [Chromium] getAuth0AccessTokenSyncly called without an authenticated browser session")
+            return ""
+        }
         let token = AuthManager.shared.getAccessTokenSyncly() ?? ""
         let hasToken = !token.isEmpty
         AppLogDebug("🌐 [Chromium] getAuth0AccessTokenSyncly called - hasToken: \(hasToken)")
@@ -393,7 +449,20 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
     }
 
     func mainBrowserWindowCreated(_ window: NSWindow, type browserType: ChromiumBrowserType, profileId: String, windowId: Int64, restoredFromWindowId: Int64) {
-        AppLogInfo("🌐 [Chromium] mainBrowserWindowCreated called - windowId: \(windowId), restoredFrom: \(restoredFromWindowId), type: \(browserType.rawValue)")
+        // Legacy entry point kept for framework/client version skew: a Phi
+        // Framework built before `restoredSpaceId` was added calls this
+        // selector. Nil means "not a tab-restore re-creation", so the
+        // restored-Space branch below never fires on this path.
+        mainBrowserWindowCreated(window,
+                                 type: browserType,
+                                 profileId: profileId,
+                                 windowId: windowId,
+                                 restoredFromWindowId: restoredFromWindowId,
+                                 restoredSpaceId: nil)
+    }
+
+    func mainBrowserWindowCreated(_ window: NSWindow, type browserType: ChromiumBrowserType, profileId: String, windowId: Int64, restoredFromWindowId: Int64, restoredSpaceId: String?) {
+        AppLogInfo("🌐 [Chromium] mainBrowserWindowCreated called - windowId: \(windowId), restoredFrom: \(restoredFromWindowId), restoredSpace: \(restoredSpaceId ?? "nil"), type: \(browserType.rawValue)")
 
 
         guard browserType == .normal || browserType == .incognito
@@ -403,8 +472,13 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
             return
         }
 
-        // Check login status BEFORE creating window controller
-        let userLoggedIn = isUserLoggedIn()
+        if browserType == .normal {
+            SpaceManager.shared
+                .observeNormalWindowProfileForDefaultSpace(profileId)
+        }
+
+        // Check Chromium window availability BEFORE creating a controller.
+        let canUseBrowser = canShowChromiumWindow()
 
         // Chromium has no concept of Spaces or slots. Resolve which slot
         // (i.e. which user-perceived browser window) this Chromium window
@@ -454,6 +528,21 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
                 resolvedSlot = claim.slot
                 spaceId = SpaceManager.shared.spaceId(boundTo: profileId,
                                                       preferring: claim.spaceId)
+            } else if let restoredSpace = SpaceManager.shared.restoredSpaceTarget(
+                restoredSpaceId, profileId: profileId) {
+                // Tab-restore path ("Reopen Closed Window"): the restore entry
+                // carried the Space its window belonged to, so honor it instead
+                // of inheriting the active Space. Ranked above the
+                // session-restore claim below because a Space stamped into the
+                // entry is exact, where that claim's zero-id branch only
+                // profile-matches a snapshot.
+                //
+                // A NEW slot, not the key slot: joining the key slot would
+                // register this window as a non-active sibling Space and hide
+                // it, so the reopen would look like nothing happened. Its own
+                // slot opens on the restored Space and is visible.
+                spaceId = restoredSpace
+                resolvedSlot = SpaceManager.shared.createSlot(initialSpaceId: spaceId)
             } else if let restored = SpaceManager.shared.claimRestoredWindow(
                 forRestoredFromWindowId: Int(restoredFromWindowId),
                 profileId: profileId) {
@@ -486,7 +575,21 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
             spaceId = SpaceManager.shared.persistedActiveSpaceId ?? LocalStore.defaultSpaceId
         }
 
-        if userLoggedIn, MainBrowserWindowControllersManager.shared.findControllerWith(window: window) == nil {
+        if canUseBrowser,
+           MainBrowserWindowControllersManager.shared.findControllerWith(window: window) == nil {
+            // Restored sibling-Space windows must be concealed for the whole
+            // restore burst — Chromium's post-construction Show()/re-orders
+            // (and the startup activation of the last-used profile's browser)
+            // undo any eager orderOut, but alpha survives them all. The mark
+            // must precede the controller init: slot registration runs inside
+            // it, and the conceal has to land before the registration-time
+            // tab-group enrollment (a transparent window selected into the
+            // shared group frame blanks the visible active window). Revealed
+            // by the slot's visibility reconcile once the burst settles.
+            if isRestoredWindow, let resolvedSlot,
+               resolvedSlot.activeSpaceId != spaceId {
+                resolvedSlot.markRestoredSiblingForConcealment(spaceId: spaceId)
+            }
             let mainWindowController = MainBrowserWindowController(
                 window: window,
                 windowId: Int(windowId),
@@ -533,14 +636,22 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
                 // linger. Re-assert the slot's one-visible-window invariant on
                 // the next runloop turn, after Chromium finishes showing them.
                 if isRestoredWindow {
+                    // Restored windows are surfaced by Chromium before the
+                    // deferred autosave tick in MainSplitViewController can
+                    // run (the main thread is busy replaying the session), so
+                    // their first visible frame would show the default
+                    // sidebar width and jump later. Adopt the persisted split
+                    // position now, ahead of any Show().
+                    mainWindowController.mainSplitViewController
+                        .adoptAutosavedSplitPositionNow()
                     resolvedSlot?.scheduleRestoreVisibilityReconcile()
                 }
             } else {
                 AppLogInfo("🌐 Shadow window controller initialized but hidden.")
             }
-            AppLogInfo("🌐 [Chromium] ✅ Window controller created and displayed (user logged in)")
+            AppLogInfo("🌐 [Chromium] ✅ Window controller created with browser access")
         } else {
-            AppLogInfo("🌐 [Chromium] User not logged in, adding window as dangling window")
+            AppLogInfo("🌐 [Chromium] Browser access unavailable, adding dangling window")
             MainBrowserWindowControllersManager.shared.addDanglingWindow(
                 window,
                 windowId: Int(windowId),
@@ -550,14 +661,23 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
                 slot: resolvedSlot
             )
             
-            DispatchQueue.main.async {
-                LoginController.shared.showLoginWindow()
-                if let loginWindow = LoginController.shared.loginWindowController?.window {
-                    loginWindow.makeKeyAndOrderFront(nil)
-                    NSApp.activate(ignoringOtherApps: true)
+            if !ApplicationState.shared.isGuestMigrationRecoveryInProgress {
+                DispatchQueue.main.async {
+                    LoginController.shared.showLoginWindow()
+                    if let loginWindow = LoginController.shared.loginWindowController?.window {
+                        loginWindow.makeKeyAndOrderFront(nil)
+                        NSApp.activate(ignoringOtherApps: true)
+                    }
                 }
+                AppLogInfo("🌐 [Chromium] ✅ Window stored as dangling, login window will be shown")
+            } else {
+                // Launch recovery owns its identity-bound reauthentication
+                // presentation after the async credential refresh completes.
+                AppLogInfo(
+                    "🌐 [Chromium] ✅ Window stored as dangling; Guest migration " +
+                    "recovery owns login presentation"
+                )
             }
-            AppLogInfo("🌐 [Chromium] ✅ Window stored as dangling, login window will be shown")
         }
     }
     
@@ -643,9 +763,12 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
         }
     }
     
-    func newTabCreated(withInfo tabInfo: [AnyHashable : Any], windowId: Int64) {
-        AppLogDebug("[Tab] newTabCreated: \(tabInfo) \n, windowId: \(windowId)")
-        
+    /// Builds the (Tab, NativeTabCreationContext) pair from one
+    /// newTabCreatedWithInfo-shaped bridge payload. Shared by the per-tab
+    /// path and the restored-window snapshot path (T3A) so the two parses
+    /// cannot drift.
+    private func makeTab(fromBridgeInfo tabInfo: [AnyHashable: Any],
+                         windowId: Int64) -> (tab: Tab, context: NativeTabCreationContext) {
         let title = tabInfo["title"] as? String
         let url = tabInfo["url"] as? String
         let index = tabInfo["index"] as? Int ?? -1
@@ -675,12 +798,19 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
         }
         let creationPayload = (tabInfo["creationContext"] as? [AnyHashable: Any]) ?? tabInfo
         let creationContext = NativeTabCreationContext(dictionary: creationPayload)
+        return (tab, creationContext)
+    }
+
+    func newTabCreated(withInfo tabInfo: [AnyHashable : Any], windowId: Int64) {
+        AppLogDebug("[Tab] newTabCreated: \(tabInfo) \n, windowId: \(windowId)")
+
+        let (tab, creationContext) = makeTab(fromBridgeInfo: tabInfo, windowId: windowId)
+        let id = tab.guid
         AppLogDebug(
             "[NativeTab] mac newTabCreated " +
-            "tabId=\(id) windowId=\(windowId) index=\(index) " +
-            "creationPayload=\(creationPayload)"
+            "tabId=\(id) windowId=\(windowId) index=\(tab.index) " +
+            "creationPayload=\((tabInfo["creationContext"] as? [AnyHashable: Any]) ?? tabInfo)"
         )
-        
         if MainBrowserWindowControllersManager.shared.hasDanglingWindow(for: windowId.intValue) {
             MainBrowserWindowControllersManager.shared.addPendingTabToDanglingWindow(tab, windowId: windowId.intValue)
             AppLogInfo("🪟 [Chromium] Tab added to dangling window pending tabs - windowId: \(windowId), tabGuid: \(id)")
@@ -688,6 +818,128 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
             EventBus.shared
                 .send(TabEvent(browserId: windowId.intValue,
                                action: .newTabWithContext(tab, context: creationContext)))
+        }
+    }
+
+    /// One restored saved window delivered as a single batch (T3A snapshot
+    /// seam). Called SYNCHRONOUSLY inside Chromium's session-restore replay
+    /// stack: parse, take ownership, and apply the whole payload here in the
+    /// same stack (T3B) — data and the visible list no longer wait for the
+    /// main queue to drain the replay backlog. Deliberately NOT routed
+    /// through EventBus (T3A amendment decision 1). The applied transaction
+    /// must never call back into Chromium synchronously; BrowserState's
+    /// snapshot transaction owns that discipline.
+    @objc(restoredWindowSnapshot:windowId:)
+    func restoredWindowSnapshot(_ snapshot: [String: Any], windowId: Int64) {
+        let tabInfos = (snapshot["tabs"] as? [[AnyHashable: Any]]) ?? []
+        let items = tabInfos.map { makeTab(fromBridgeInfo: $0, windowId: windowId) }
+        let activeTabId = snapshot["activeTabId"] as? Int
+        let splitActions = parseSplitActions(fromBridgeEvents: snapshot["splitEvents"])
+
+        guard !items.isEmpty else { return }
+
+        if MainBrowserWindowControllersManager.shared.hasDanglingWindow(for: windowId.intValue) {
+            // Pre-login dangling window: mirror the per-tab path's dangling
+            // semantics (tabs buffered; split/active events were never
+            // buffered for dangling windows).
+            for item in items {
+                MainBrowserWindowControllersManager.shared
+                    .addPendingTabToDanglingWindow(item.tab, windowId: windowId.intValue)
+            }
+            AppLogInfo("🪟 [Chromium] Restored snapshot buffered to dangling window - windowId: \(windowId), tabs: \(items.count)")
+            return
+        }
+
+        let payload = BrowserState.RestoredWindowSnapshot(tabs: items,
+                                                          activeTabId: activeTabId,
+                                                          splitActions: splitActions)
+        // T3B: apply synchronously in this replay stack. The bridge calls on
+        // Chromium's UI thread (= AppKit main = MainActor) but that isn't
+        // type-enforced — mirror showCrashPage's assert-and-degrade rather
+        // than trap; the off-main fallback keeps the T3A task shape so the
+        // window still restores.
+        guard Thread.isMainThread else {
+            assertionFailure("restoredWindowSnapshot off the main thread; deferring application")
+            Task { @MainActor in
+                self.applyRestoredWindowSnapshot(payload, windowId: windowId)
+            }
+            return
+        }
+        MainActor.assumeIsolated {
+            applyRestoredWindowSnapshot(payload, windowId: windowId)
+        }
+    }
+
+    @MainActor
+    private func applyRestoredWindowSnapshot(_ payload: BrowserState.RestoredWindowSnapshot,
+                                             windowId: Int64) {
+        guard let browserState = MainBrowserWindowControllersManager.shared
+            .getBrowserState(for: windowId.intValue) else {
+            // Same drop semantics as a queued event whose window closed:
+            // the payload (tabs + wrappers) is simply released.
+            AppLogWarn("Window not found for restored snapshot: \(windowId)")
+            return
+        }
+        browserState.handleRestoredWindowSnapshot(payload)
+        // This window's restored content is fully formed now. If it is the
+        // restore's front target (the last-active Space's window), reveal it
+        // immediately instead of leaving it to the settle reconcile after
+        // every profile has replayed; the slot re-checks eligibility and the
+        // reconcile still runs unchanged afterwards.
+        if let controller = MainBrowserWindowControllersManager.shared
+            .controller(for: windowId.intValue) {
+            controller.slot?.frontRestoredWindowOnSnapshotApplied(controller)
+        }
+    }
+
+    /// Decodes the snapshot's buffered split events into the same actions
+    /// the individual split delegate methods would have sent.
+    private func parseSplitActions(fromBridgeEvents events: Any?) -> [SplitEvent.SplitAction] {
+        guard let dicts = events as? [[AnyHashable: Any]], !dicts.isEmpty else { return [] }
+        return dicts.compactMap { event in
+            guard let type = event["type"] as? String,
+                  let splitId = event["splitId"] as? String else {
+                AppLogError("[Split] restored snapshot: malformed split event \(event)")
+                return nil
+            }
+            switch type {
+            case "created":
+                guard let primary = event["primaryTabId"] as? Int,
+                      let secondary = event["secondaryTabId"] as? Int,
+                      let layout = event["layout"] as? String,
+                      let ratio = event["ratio"] as? Double else {
+                    AppLogError("[Split] restored snapshot: malformed created event \(event)")
+                    return nil
+                }
+                return .created(splitId: splitId,
+                                primaryTabId: primary,
+                                secondaryTabId: secondary,
+                                layout: parseBridgeLayout(layout),
+                                ratio: ratio)
+            case "visualsChanged":
+                guard let layout = event["layout"] as? String,
+                      let ratio = event["ratio"] as? Double else {
+                    AppLogError("[Split] restored snapshot: malformed visualsChanged event \(event)")
+                    return nil
+                }
+                return .visualsChanged(splitId: splitId,
+                                       layout: parseBridgeLayout(layout),
+                                       ratio: ratio)
+            case "contentsChanged":
+                guard let primary = event["primaryTabId"] as? Int,
+                      let secondary = event["secondaryTabId"] as? Int else {
+                    AppLogError("[Split] restored snapshot: malformed contentsChanged event \(event)")
+                    return nil
+                }
+                return .contentsChanged(splitId: splitId,
+                                        primaryTabId: primary,
+                                        secondaryTabId: secondary)
+            case "removed":
+                return .removed(splitId: splitId)
+            default:
+                AppLogError("[Split] restored snapshot: unknown split event type \(type)")
+                return nil
+            }
         }
     }
 
@@ -793,7 +1045,15 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
         if windowId != 0 {
             targetWindowId = windowId.intValue
         } else {
+            // Chromium could not resolve the owning window (or the embedded
+            // framework predates it sending one). Routing a full-strip map to
+            // the active window is a guess: it silently drops the correction
+            // for whichever window actually moved, so make it visible.
             targetWindowId = MainBrowserWindowControllersManager.shared.activeWindowController?.windowId
+            AppLogWarn(
+                "[NativeTab] tabIndices arrived without a windowId; " +
+                "falling back to the active window \(targetWindowId.map(String.init) ?? "nil")"
+            )
         }
         guard let targetWindowId else {
             return
@@ -890,6 +1150,13 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
             AppLogWarn("🦖 [Coordinator] no controller for windowId=\(windowId)")
             return
         }
+        // Placeholder mode means the last-tab close did NOT close the window,
+        // so the tab-driven-close marker `Tab.close()` armed for this Space
+        // predicts an auto-close that will never happen. Cancel it here —
+        // before the cast below, which can fail and would otherwise leave a
+        // live marker to misclassify the user's next genuine close of this
+        // window as a hand-off to a sibling Space.
+        windowController.slot?.cancelTabDrivenClose(for: windowController.spaceId)
         guard let nsWrapper = wrapper as? (WebContentWrapper & NSObject) else {
             AppLogWarn("🦖 [Coordinator] wrapper cast failed")
             return

@@ -627,42 +627,87 @@ final class AgentSpaceManager: ObservableObject {
             "agent_name": AgentDriverBadge.telemetryName(agentName),
         ])
 
-        guard let slot = SpaceManager.shared.keySlot ?? SpaceManager.shared.slots.first else {
-            // No window open at all — the persisted-active Space hasn't been
-            // surfaced. v1: fail cleanly; the caller retries once a window is up.
-            AppLogWarn("[AgentSpace] createAgentSpace: no slot available to spawn into")
-            appendTranscript(taskId: taskId, kind: .error,
-                             text: "Task failed to start — no window to spawn into")
-            tasksBySpaceId[spaceId] = nil
-            spaceIdByTaskId[taskId] = nil
-            tearDownTranscript(taskId: taskId)
+        // Everything below runs against a slot; a failure at any point unwinds
+        // the task recorded above with the same cleanup.
+        let failSpawn: (String) -> Void = { [weak self] transcriptText in
+            guard let self else { completion(nil, nil); return }
+            self.appendTranscript(taskId: taskId, kind: .error, text: transcriptText)
+            self.tasksBySpaceId[spaceId] = nil
+            self.spaceIdByTaskId[taskId] = nil
+            self.tearDownTranscript(taskId: taskId)
             SpaceManager.shared.deleteSpace(spaceId: spaceId)
             completion(nil, nil)
-            return
+        }
+        let spawnInto: (SpaceWindowSlot) -> Void = { [weak self] slot in
+            slot.spawnHiddenWindow(forSpaceId: spaceId) { windowId in
+                guard let self else { completion(nil, nil); return }
+                guard let windowId else {
+                    failSpawn("Task failed to start — window spawn failed")
+                    return
+                }
+                if var task = self.tasksBySpaceId[spaceId] {
+                    task.windowId = windowId
+                    task.status = .running
+                    self.tasksBySpaceId[spaceId] = task
+                }
+                completion(spaceId, windowId)
+                // The task is running with a live window now — autoview may surface
+                // it. Deferred a beat so the hidden spawn's window churn (key
+                // suppression, re-hide) settles before the deliberate switch.
+                self.autoViewReevaluate(delay: 0.8)
+            }
         }
 
-        slot.spawnHiddenWindow(forSpaceId: spaceId) { [weak self] windowId in
-            guard let self else { completion(nil, nil); return }
-            guard let windowId else {
-                self.appendTranscript(taskId: taskId, kind: .error,
-                                      text: "Task failed to start — window spawn failed")
-                self.tasksBySpaceId[spaceId] = nil
-                self.spaceIdByTaskId[taskId] = nil
-                self.tearDownTranscript(taskId: taskId)
-                SpaceManager.shared.deleteSpace(spaceId: spaceId)
-                completion(nil, nil)
+        if let slot = SpaceManager.shared.keySlot ?? SpaceManager.shared.slots.first {
+            spawnInto(slot)
+            return
+        }
+        // No window open at all — the user closed the last one with the app
+        // staying in the Dock, so there is nothing to spawn into. Reopen
+        // through the same path a Dock-icon click takes (persisted Space, or
+        // the full session-restore replay), then spawn once its slot
+        // registers. Failing here instead dead-ended every CDP round with
+        // create_failed until the user surfaced a window themselves.
+        guard SpaceManager.shared.reopenOnPersistedSpaceIfWindowless() else {
+            AppLogWarn("[AgentSpace] createAgentSpace: no slot available to spawn into")
+            failSpawn("Task failed to start — no window to spawn into")
+            return
+        }
+        AppLogInfo("[AgentSpace] createAgentSpace: windowless — reopened the "
+                   + "persisted session, waiting for its slot")
+        awaitFirstSlot(deadline: Date().addingTimeInterval(Self.windowlessReopenSlotTimeout)) { slot in
+            guard let slot else {
+                AppLogWarn("[AgentSpace] createAgentSpace: windowless reopen "
+                           + "registered no slot in time")
+                failSpawn("Task failed to start — no window to spawn into")
                 return
             }
-            if var task = self.tasksBySpaceId[spaceId] {
-                task.windowId = windowId
-                task.status = .running
-                self.tasksBySpaceId[spaceId] = task
-            }
-            completion(spaceId, windowId)
-            // The task is running with a live window now — autoview may surface
-            // it. Deferred a beat so the hidden spawn's window churn (key
-            // suppression, re-hide) settles before the deliberate switch.
-            self.autoViewReevaluate(delay: 0.8)
+            spawnInto(slot)
+        }
+    }
+
+    /// How long a windowless create waits for the Dock-reopen path to register
+    /// a slot before giving up — session restore settles through Chromium
+    /// callbacks and can take a while on a large session.
+    private static let windowlessReopenSlotTimeout: TimeInterval = 20
+
+    /// Polls for the first registered slot until `deadline`. The reopen path
+    /// creates its windows asynchronously and nothing today publishes "slot
+    /// arrived"; main-queue polling serves the one caller without adding a
+    /// notification channel for it.
+    private func awaitFirstSlot(deadline: Date,
+                                completion: @escaping (SpaceWindowSlot?) -> Void) {
+        if let slot = SpaceManager.shared.keySlot ?? SpaceManager.shared.slots.first {
+            completion(slot)
+            return
+        }
+        guard Date() < deadline else {
+            completion(nil)
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+            guard let self else { completion(nil); return }
+            self.awaitFirstSlot(deadline: deadline, completion: completion)
         }
     }
 
@@ -1358,6 +1403,15 @@ extension SpaceModel {
     var isAgentSpace: Bool {
         AgentSpaceManager.isAgentSpaceModel(
             name: name, iconName: iconName, colorHex: colorHex)
+    }
+
+    /// True for any agent Space — ephemeral or persistent — matched by its
+    /// visual signature. The display-order grouping (agent Spaces after user
+    /// Spaces, with a divider between the groups) keys off this, so both kinds
+    /// land on the agent side of the divider.
+    var isAnyAgentSpace: Bool {
+        isAgentSpace || AgentSpaceManager.isPersistentAgentSpaceModel(
+            iconName: iconName, colorHex: colorHex)
     }
 }
 

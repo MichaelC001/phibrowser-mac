@@ -186,6 +186,119 @@ struct SentinelAccountDeletedEvent: Equatable {
     }
 }
 
+enum AuthenticatedSentinelSessionPolicy {
+    static func shouldRun(
+        browserAccessState: BrowserAccessState,
+        isAuthenticated: Bool,
+        aiEnabled: Bool
+    ) -> Bool {
+        browserAccessState == .signedIn
+            && isAuthenticated
+            && aiEnabled
+    }
+
+    static func shouldRegisterAtLogin(
+        browserAccessState: BrowserAccessState,
+        isAuthenticated: Bool,
+        aiEnabled: Bool,
+        launchOnLogin: Bool
+    ) -> Bool {
+        shouldRun(
+            browserAccessState: browserAccessState,
+            isAuthenticated: isAuthenticated,
+            aiEnabled: aiEnabled
+        ) && launchOnLogin
+    }
+
+    static func shouldTerminate(
+        browserAccessState: BrowserAccessState,
+        isAuthenticated: Bool,
+        aiEnabled: Bool
+    ) -> Bool {
+        guard !aiEnabled else { return false }
+        return browserAccessState == .guest
+            || (browserAccessState == .signedIn && isAuthenticated)
+    }
+}
+
+@MainActor
+enum AuthenticatedSentinelSessionLifecycle {
+    static func reconcile(
+        aiEnabled: Bool =
+            PhiPreferences.AISettings.phiAIEnabled.loadValue(),
+        launchOnLogin: Bool =
+            PhiPreferences.AISettings.launchSentinelOnLogin.loadValue()
+    ) {
+        let browserAccessState =
+            ApplicationState.shared.browserAccessState
+        let isAuthenticated = ApplicationState.shared.isAuthenticated
+        guard AuthenticatedSentinelSessionPolicy.shouldRun(
+            browserAccessState: browserAccessState,
+            isAuthenticated: isAuthenticated,
+            aiEnabled: aiEnabled
+        ) else {
+            SentinelWatchdog.shared.stop()
+            if !aiEnabled {
+                Task {
+                    await SentinelHelper.unregister()
+                }
+            }
+            if AuthenticatedSentinelSessionPolicy.shouldTerminate(
+                browserAccessState: browserAccessState,
+                isAuthenticated: isAuthenticated,
+                aiEnabled: aiEnabled
+            ) {
+                SentinelHelper.requestTerminationForBrowserUpdate()
+            }
+            return
+        }
+
+        if AuthenticatedSentinelSessionPolicy.shouldRegisterAtLogin(
+            browserAccessState: browserAccessState,
+            isAuthenticated: isAuthenticated,
+            aiEnabled: aiEnabled,
+            launchOnLogin: launchOnLogin
+        ) {
+            SentinelHelper.register()
+            schedulePhiReactivationAfterRegistration()
+        } else {
+            Task {
+                await SentinelHelper.unregister()
+            }
+        }
+        SentinelHelper.launch()
+        SentinelWatchdog.shared.start()
+    }
+
+    /// Stops Phi from supervising Sentinel while leaving an already running
+    /// helper alone. Guest and login-required sessions clear shared
+    /// authentication state separately, so Sentinel can safely remain idle.
+    static func suspendForUnauthenticatedSession() {
+        SentinelWatchdog.shared.stop()
+    }
+
+    /// Fails closed when Phi cannot prove that the cross-process credential
+    /// boundary was cleared. This is not part of ordinary Guest lifecycle:
+    /// the termination request is reserved for the exceptional case where an
+    /// already running Sentinel may still possess the previous account token.
+    static func containCredentialBoundaryFailure() {
+        SentinelWatchdog.shared.stop()
+        SentinelHelper.terminate()
+    }
+
+    private static func schedulePhiReactivationAfterRegistration() {
+        Task { @MainActor in
+            for _ in 0..<10 {
+                try? await Task.sleep(nanoseconds: 200_000_000)
+                if !NSApp.isActive {
+                    NSApp.activate()
+                    break
+                }
+            }
+        }
+    }
+}
+
 enum SentinelHelper {
     struct RunningInfo: Equatable {
         let bundleID: String
@@ -217,6 +330,13 @@ enum SentinelHelper {
     static func unregister() async {
         let identifier = loginItemIdentifier()
         let service = SMAppService.loginItem(identifier: identifier)
+        guard service.status != .notRegistered,
+              service.status != .notFound else {
+            AppLogInfo(
+                "Sentinel login item already unavailable, status: \(service.status)"
+            )
+            return
+        }
         do {
             try await service.unregister()
             AppLogInfo("Sentinel login item unregistered, status: \(service.status)")
@@ -272,11 +392,12 @@ enum SentinelHelper {
         }
     }
 
-    static func requestTerminationForBrowserUpdate(timeout: TimeInterval = 8) {
+    @discardableResult
+    static func requestTerminationForBrowserUpdate(timeout: TimeInterval = 8) -> Bool {
         let identifier = loginItemIdentifier()
         guard runningApplication(identifier: identifier) != nil else {
             AppLogInfo("Sentinel is not running; no browser update termination request needed")
-            return
+            return true
         }
 
         let request = SentinelBrowserUpdateTerminationRequest.make(
@@ -295,12 +416,13 @@ enum SentinelHelper {
         while Date() < deadline {
             if runningApplication(identifier: identifier) == nil {
                 AppLogInfo("Sentinel exited before browser update installation (requestID \(request.requestID))")
-                return
+                return true
             }
             RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.1))
         }
 
         AppLogWarn("Timed out waiting for Sentinel to exit before browser update installation (requestID \(request.requestID))")
+        return false
     }
 
     static func openDashboard(section: String) {

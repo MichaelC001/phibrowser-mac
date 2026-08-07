@@ -119,7 +119,11 @@ class PasswordManagerViewController: OnboardingBaseViewController {
             comment: "Onboarding password manager - Page title"
         )
         skipButton.isHidden = true
-        nextButton.title = NSLocalizedString("oobe.passwordManager.finishButton", value: "Finish", comment: "Onboarding password manager - Finish button")
+        nextButton.title = NSLocalizedString(
+            "oobe.navigation.continueButton",
+            value: "Next",
+            comment: "OOBE navigation - Button to continue to the next step"
+        )
         setupOptions()
     }
 

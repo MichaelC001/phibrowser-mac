@@ -195,6 +195,26 @@ private extension NSView {
 final class SpaceManager: ObservableObject {
     static let shared = SpaceManager()
 
+    /// Chooses the profile that owns a newly materialized default Space.
+    /// Signed-in access preserves the established `Default` binding. Guest
+    /// access has no account profile of its own, so it must wait for Chromium
+    /// to report the profile of the window that will use the Space.
+    static func profileIdForDefaultSpaceCreation(
+        isGuest: Bool,
+        isGuestAccountPromotionInProgress: Bool,
+        isBoundToDefaultAccount: Bool,
+        observedNormalWindowProfileId: String?
+    ) -> String? {
+        guard isGuest else { return LocalStore.defaultProfileId }
+        guard !isGuestAccountPromotionInProgress,
+              isBoundToDefaultAccount,
+              let observedNormalWindowProfileId,
+              !observedNormalWindowProfileId.isEmpty else {
+            return nil
+        }
+        return observedNormalWindowProfileId
+    }
+
     /// spaceId prefix shared by every Incognito Space. Their ids are minted
     /// at creation (`createIncognitoSpace`) and never persisted — each Space
     /// is a detached `SpaceModel` appended in `handleSpacesUpdate`, so store
@@ -395,6 +415,10 @@ final class SpaceManager: ObservableObject {
     }
 
     private weak var boundAccount: Account?
+    /// First normal Chromium profile observed this app session. Chromium can
+    /// report a dangling window before browser access is granted, so retain
+    /// the value independently of account binding for a later Guest entry.
+    private var observedNormalWindowProfileId: String?
     private var cancellables = Set<AnyCancellable>()
     private var spacesCancellable: AnyCancellable?
     private var rulesCancellable: AnyCancellable?
@@ -438,6 +462,43 @@ final class SpaceManager: ObservableObject {
         /// so the slot reopens fullscreen as ONE Space instead of orphaning
         /// blank Spaces. See `SpaceWindowSlot.applyPendingRestoreFullScreen`.
         let wasFullScreen: Bool
+        /// Where the slot's window sat on screen at snapshot time, already
+        /// clamped to the screens attached NOW (`loadRestoreSnapshot`) — the
+        /// display it was saved on may be gone by the time it is read back.
+        ///
+        /// Always a WINDOWED rect: a slot in fullscreen records the geometry it
+        /// will have once it leaves fullscreen, never the screen-sized one (see
+        /// `SpaceWindowSlot.snapshotFrame`).
+        ///
+        /// Nil for a snapshot written before this field existed, and for one
+        /// whose recorded rect no longer parses. That means "this slot has no
+        /// remembered geometry", so a consumer either places the slot its own
+        /// way or does nothing — never drops the entry. Every other restore
+        /// path here works without a frame, and none is gated on one.
+        ///
+        /// Read by the reopen loading window, which is placed here and then
+        /// forces the restored window onto the same rect
+        /// (`showReopenLoadingWindows`, `slotForRestoreIndex`). It takes the
+        /// second option on nil: no remembered position, no loading window, and
+        /// the slot reopens exactly as it does today.
+        let frame: NSRect?
+        /// How wide the slot's sidebar was, so a reopen can draw a band where
+        /// it will come back. `0` means collapsed — which is also how
+        /// `.comfortable` records itself, since it keeps the sidebar collapsed
+        /// permanently — and nil means a snapshot written before this existed.
+        /// The two are NOT the same to the one consumer: a collapsed sidebar
+        /// draws nothing because there is nothing there, and an absent value
+        /// draws nothing because guessing a width would put the boundary
+        /// somewhere the restored window's sidebar does not end
+        /// (`ReopenLoadingWindow.sidebarBandWidth`).
+        let sidebarWidth: CGFloat?
+        /// Where the slot's window had its leading traffic light, as a distance
+        /// from the top-left of its frame. Recorded so the loading window can
+        /// place its own on the answer this Chromium and this macOS actually
+        /// gave, instead of on a constant copied out of the fork. Nil for a
+        /// snapshot written before this existed; the copy is then the fallback
+        /// (`ReopenLoadingWindow.trafficLightOrigin(remembered:)`).
+        let trafficLightOrigin: NSPoint?
     }
     private var restoreEntries: [SlotRestoreEntry] = []
     /// Previous-session windowId → index into `restoreEntries`. Entries are
@@ -448,6 +509,29 @@ final class SpaceManager: ObservableObject {
     /// entry during this launch. Lets multiple windows from the same saved
     /// slot reattach to the same `SpaceWindowSlot`.
     private var restoredSlotsByIndex: [Int: SpaceWindowSlot] = [:]
+    /// Index into `restoreEntries` → the loading window standing in for that
+    /// slot. `slotForRestoreIndex` lends each one to the slot that claims its
+    /// entry, so the slot can drop it behind its restored window and close it
+    /// early; the reference stays here as well, because this map is what
+    /// guarantees every window of the run is eventually closed — a claimed slot
+    /// can leave `restoredSlotsByIndex` (`removeSlot`) before the hand-off is
+    /// over, and a window nothing holds but a discarded slot would stay on
+    /// screen for good.
+    private var reopenLoadingWindowsByRestoreIndex: [Int: ReopenLoadingWindow] = [:]
+    /// True from the moment a reopen places its first loading window until the
+    /// hand-off is completely over — loading windows closed and forced
+    /// placements dropped. Those two do not end together (see
+    /// `ReopenLoadingHandoff`), so this covers the whole span rather than
+    /// either one. When the feature is off it is never set, which is what
+    /// reduces both teardown entry points here to a single flag test.
+    private var reopenLoadingRunActive = false
+    /// Decides when this reopen's loading windows may be destroyed. Nil outside
+    /// a run.
+    private var reopenLoadingHandoff: ReopenLoadingHandoff?
+    /// The one armed callback asking `reopenLoadingHandoff` to decide again.
+    /// Replaced, never accumulated — the tracker always names a single next
+    /// deadline.
+    private var reopenLoadingHandoffWait: DispatchWorkItem?
     /// Restored windows do not always arrive with their previous-session
     /// windowId: Chromium's multi-profile startup opens one *fresh* window per
     /// last-open profile (`restoredFromWindowId == 0`), which the windowId key
@@ -459,6 +543,42 @@ final class SpaceManager: ObservableObject {
     /// absorbed into a stale, never-claimed snapshot slot.
     private var restoreReattachDeadline: Date?
     private static let restoreReattachGracePeriod: TimeInterval = 60
+    /// Reserved `restoredFromWindowId` for the window Chromium's session restore
+    /// creates when a profile's saved session held nothing restorable
+    /// (`phi::kRestoreFallbackWindowId` — the two must stay in sync). Phi
+    /// produces such sessions routinely: a window whose last tab closes stays
+    /// alive on a placeholder page, and a window saved with an empty tab list is
+    /// dropped when the session is read back, so reopening one macOS window that
+    /// hosted two Spaces can mean one profile with an empty session and one with
+    /// a real one.
+    ///
+    /// The window re-creates no saved window, so it is never a snapshot key —
+    /// but it is still this restore's stand-in for the slot being reopened, so
+    /// it claims a snapshot entry by profile. It is the one shape that may do so
+    /// outside the launch grace period, because the id says what the window IS;
+    /// no ambient "a restore is running" state is consulted, which would be
+    /// unsafe (a Cmd+N during a restore is handled by the window-level path once
+    /// the first restored window takes key, so a misclaimed — hence concealed —
+    /// window would look like the command did nothing).
+    private static let restoreFallbackWindowId = -1
+
+    /// True from the moment a windowless session restore is requested until
+    /// Chromium reports every profile's restore has settled — a started replay
+    /// settles once its windows and tabs exist, a skipped or refused profile
+    /// settles immediately (see `beginWindowlessSessionRestore`). Gates the
+    /// plain-window fallback, absorbs repeat Dock reopens, and defers
+    /// windowless new-window commands, so none of them can race the restore —
+    /// neither its per-profile session commit nor the replay itself. Read by
+    /// `AppController`.
+    ///
+    /// It also freezes cross-launch snapshot persistence for its whole span
+    /// (`mayPersistSlotsSnapshot`), which is the largest thing hanging off it:
+    /// a replay in progress is a half-restored group, and the reopen writes
+    /// once from the completion below instead. So a completion that never
+    /// arrived would not merely wedge the three gates above — it would stop
+    /// this session persisting its layout at all. The transitions are logged
+    /// for exactly that reason.
+    private(set) var isSessionRestoreInFlight = false
 
     /// One queued "reopen these tabs after the profile change lands" intent
     /// per Space, recorded by `changeProfile` before it closes the Space's
@@ -493,13 +613,22 @@ final class SpaceManager: ObservableObject {
             name: .mainAccountChanged,
             object: nil
         )
-        // Always bind eagerly so the persisted last-active Space is primed
-        // before the very first Chromium window arrives. In login flows
-        // where the real account isn't set yet, `defaultAccount` provides a
-        // stable plist to read from; if/when login completes the
-        // `.mainAccountChanged` observer re-binds to the real account.
-        let initialAccount = AccountController.shared.account ?? AccountController.defaultAccount
-        bind(to: initialAccount)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleBrowserAccessStateDidChange),
+            name: .browserAccessStateDidChange,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleScreenParametersChanged),
+            name: NSApplication.didChangeScreenParametersNotification,
+            object: nil
+        )
+        // Bind eagerly only when browser access has a local-data owner. Guest
+        // uses the stable default account; signed-in access uses the published
+        // identity. The login-required state must not expose either store.
+        refreshAccountBindingForBrowserAccess()
     }
 
     // MARK: - Public — read
@@ -557,6 +686,31 @@ final class SpaceManager: ObservableObject {
         // mid-session would be retained here (and never deinit) until the next
         // account bind clears the map.
         restoredSlotsByIndex = restoredSlotsByIndex.filter { $0.value !== slot }
+        // Shrink the restore snapshot now that the slot is gone. Nothing on the
+        // close path rewrites it from the settled layout — `unregisterWindow`
+        // only flushes a debounced frame write, before it drains anything, and
+        // the cascade and the deferred fullscreen reconcile both skip
+        // themselves mid-cascade — so without this the snapshot kept describing
+        // a window group the user closed, and it came back (as loose windows)
+        // at the next cold launch.
+        // When this was the LAST slot the write is a no-op: `persistSlotsSnapshot`
+        // never overwrites a saved snapshot with an empty one, which is exactly
+        // what freezes the final layout for a reopen.
+        persistSlotsSnapshot()
+    }
+
+    /// Reports a settled window-group close to Chromium, which holds every
+    /// window close pending until it hears one — see `windowGroupCloseDidSettle`
+    /// in `PhiChromiumBridgeHeader.h` for the contract.
+    ///
+    /// Silent while any slot is still draining its Space windows: reporting
+    /// mid-cascade is exactly the per-window decision the deferral exists to
+    /// avoid, and it would leave only the group's last Space restorable. Nothing
+    /// is lost by staying silent — the draining slot's last window reports for
+    /// everyone as it goes.
+    func reportWindowGroupCloseSettled() {
+        guard !slots.contains(where: { $0.isTearingDown }) else { return }
+        ChromiumLauncher.sharedInstance().bridge?.windowGroupCloseDidSettle()
     }
 
     /// Re-asserts every slot's one-visible-window invariant after an app
@@ -593,12 +747,38 @@ final class SpaceManager: ObservableObject {
     /// to one bound to that polluted profile, so the reopen lands on the
     /// wrong (typically default) Space instead of the one the user closed.
     func reopenOnPersistedSpaceIfWindowless() -> Bool {
-        guard hasEverHostedSlotWindow, slots.isEmpty else { return false }
-        // Non-slot windows don't count as "windowless": a standalone
-        // Incognito window is focused by Chromium's own reopen, and shadow
-        // windows are invisible background hosts either way.
-        guard !MainBrowserWindowControllersManager.shared.getAllWindows()
-            .contains(where: { $0.browserType != .shadow }) else { return false }
+        guard isWindowlessWithHostedSlots else { return false }
+        // Switch on: replay the whole closed window group (each Space with its
+        // tabs, the active one visible, fullscreen preserved), mirroring a cold
+        // start. Switch off keeps the plain single-window spawn.
+        if SessionRestorePreference.isEnabled {
+            // A restore from a rapid earlier Dock click is already running; its
+            // windows will arrive, so don't start a second one.
+            if isSessionRestoreInFlight {
+                return true
+            }
+            return beginWindowlessSessionRestore()
+        }
+        return spawnPersistedSpaceWindow()
+    }
+
+    /// True when the app has no browser window but has hosted a slot window this
+    /// session — the state a Dock reopen or an external-link open handles.
+    /// Non-slot windows don't count as "windowless": a standalone Incognito
+    /// window is focused by Chromium's own reopen, and shadow windows are
+    /// invisible background hosts either way.
+    private var isWindowlessWithHostedSlots: Bool {
+        hasEverHostedSlotWindow && slots.isEmpty
+            && !MainBrowserWindowControllersManager.shared.getAllWindows()
+                .contains(where: { $0.browserType != .shadow })
+    }
+
+    /// Opens a single plain window on the persisted last-active Space — the
+    /// windowless-reopen behavior when session restore is off, and the fallback
+    /// when a restore turns up nothing. Returns false (declining the reopen)
+    /// when no Space resolves, so Chromium's own handler runs.
+    @discardableResult
+    private func spawnPersistedSpaceWindow() -> Bool {
         // Same resolution shape as `handleSpacesUpdate`'s fallback: the
         // persisted id when it names a live, automatically-switchable Space,
         // else the first such Space. `activate` refuses unknown spaceIds, so
@@ -615,6 +795,407 @@ final class SpaceManager: ObservableObject {
         AppLogInfo("[SpaceManager] windowless reopen — spawning persisted Space \(spaceId)")
         createSlot(initialSpaceId: spaceId).activate(spaceId: spaceId)
         return true
+    }
+
+    /// Re-arms the persisted slot snapshot and asks Chromium to restore every
+    /// last-active profile's session, mirroring a cold start. Marks a restore
+    /// in flight until Chromium reports every profile's restore has settled
+    /// (windows and tabs created, or skipped/refused); if nothing was
+    /// restorable it falls back to a plain window. Returns true (handled).
+    @discardableResult
+    private func beginWindowlessSessionRestore() -> Bool {
+        guard let bridge = ChromiumLauncher.sharedInstance().bridge else {
+            // No bridge to drive the restore; still open something.
+            return spawnPersistedSpaceWindow()
+        }
+        // Re-arm the snapshot with the `restoredFromWindowId == 0` reattach
+        // fallback disarmed — see `loadRestoreSnapshot(armReattachDeadline:)` for
+        // why a mid-session re-arm must not arm it.
+        loadRestoreSnapshot(armReattachDeadline: false)
+        // Immediately — before Chromium is asked for anything, and before the
+        // main thread disappears into the replay for the next second and a
+        // half. It is not free: building and ordering in the windows measured
+        // 40-50ms on a six-Space reopen, which pushes the first restored window
+        // out by the same amount (the replay itself was unchanged). That is one
+        // of the two prices of the feature, and part of the reason it is a
+        // switch — the other is what the loading window costs while it is up,
+        // see `ReopenLoadingWindow.featureEnabledKey`.
+        showReopenLoadingWindows()
+        isSessionRestoreInFlight = true
+        // Both transitions are logged because snapshot persistence is frozen
+        // between them: a completion that never arrives leaves an app that
+        // looks entirely normal and silently never records its layout again,
+        // and this pair is the only way to see that from a log bundle.
+        AppLogInfo("[SpaceManager] windowless reopen — session restore in flight (snapshot writes deferred)")
+        armSessionRestoreWatchdog()
+        // Name the last-active Space's profile so Chromium replays it first:
+        // its window is the one revealed the moment its own snapshot lands
+        // (`frontRestoredWindowOnSnapshotApplied`), so it must not queue
+        // behind sibling profiles' synchronous replays. Order only — every
+        // profile still restores immediately; nil (unknown Space/profile)
+        // keeps the stored order.
+        let preferredProfileId = persistedActiveSpaceId
+            .flatMap { boundProfileId(forSpaceId: $0) }
+        bridge.restorePreviousSession(
+            withPreferredProfile: preferredProfileId
+        ) { [weak self] restoredAnyWindow in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                // Every profile's restore has settled: started replays have
+                // finished creating their windows and tabs, skipped or refused
+                // profiles settled immediately. Both races the flag guards
+                // against are over — the session-commit race, and the old
+                // attempted-to-settled gap in which a second Dock click
+                // re-began a restore that could only be refused (every profile
+                // still mid-replay), reported restoredAny=false, and spawned a
+                // stray plain window, while a windowless Cmd+N slipped past
+                // `AppController`'s drop gate into the same replay.
+                // Still clear here rather than on window arrival: a restore can
+                // produce a window that claims no snapshot entry at all (an
+                // emptied session's stand-in window claims by profile, and no
+                // entry need match its profile), so clearing on arrival could
+                // wedge the flag on. This completion is guaranteed to run
+                // (every per-profile terminal — settled, skipped, refused, or
+                // failed — signals the Chromium barrier), so the flag can
+                // never get stuck.
+                // Ahead of the two branches below, so an ordinary reopen has
+                // persisted before either can run. The branches only fire when
+                // the reopen did not produce a usable layout, and each writes
+                // again on its own — a second write in a case that is already
+                // the unusual one, which is the cheaper trade than holding the
+                // transaction open across a spawn.
+                self.endSessionRestoreTransaction(restoredAnyWindow: restoredAnyWindow)
+                if !restoredAnyWindow {
+                    // Nothing restorable: open a plain window.
+                    self.spawnPersistedSpaceWindow()
+                } else {
+                    self.repairSlotsWithAbsentActiveSpace()
+                }
+                // Every window this reopen was going to produce now exists, so
+                // the forced placement has nothing left to place and must stop
+                // applying before a later spawn wants to position its own
+                // window. The loading windows are a separate question, and a
+                // slower one: they sit under the restored windows, so they are
+                // torn down on whatever conservative deadline
+                // `ReopenLoadingHandoff` names rather than here. Guaranteed to
+                // run (every per-profile terminal signals the Chromium barrier,
+                // see above).
+                self.endReopenLoadingPlacements()
+                self.recordReopenLoadingHandoff(.restoreSettled)
+            }
+        }
+        return true
+    }
+
+    /// Ends the reopen's restore transaction: the live layout is trustworthy
+    /// again, and the one snapshot write the whole transaction was deferring
+    /// lands now.
+    ///
+    /// The two halves are one method rather than two adjacent statements
+    /// because splitting them is silent and total: clear the flag without
+    /// writing and the reopen never persists at all — for the life of the
+    /// process, since nothing else rewrites the record until the next layout
+    /// change — while writing before the clear is a write that refuses itself
+    /// (`mayPersistSlotsSnapshot`). Neither shows up in a test; no test in this
+    /// repo constructs a `SpaceManager`. Keeping them inseparable is the guard.
+    ///
+    /// Called once, from the completion that reports every profile settled.
+    /// A reopen that never settles never calls it, and the last complete
+    /// snapshot stands — which is the point of deferring in the first place.
+    private func endSessionRestoreTransaction(restoredAnyWindow: Bool) {
+        sessionRestoreWatchdog?.cancel()
+        sessionRestoreWatchdog = nil
+        isSessionRestoreInFlight = false
+        AppLogInfo("[SpaceManager] windowless reopen — restore settled (restoredAnyWindow=\(restoredAnyWindow)); writing the slot snapshot")
+        persistSlotsSnapshot()
+    }
+
+    /// Arms the deadline that bounds the freeze. Re-arming replaces any
+    /// previous one, so a reopen that somehow begins twice ends up with a
+    /// single pending deadline rather than two.
+    private func armSessionRestoreWatchdog() {
+        sessionRestoreWatchdog?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.sessionRestoreWatchdog = nil
+            let outcome = Self.sessionRestoreWatchdogOutcome(
+                isSessionRestoreInFlight: self.isSessionRestoreInFlight)
+            guard outcome.releasesFreeze else { return }
+            // Loud on purpose: reaching this means the restore never reported
+            // every profile settled, which is a Chromium-side fault this side
+            // cannot see any other way.
+            AppLogError("[SpaceManager] windowless reopen never settled within \(Self.sessionRestoreWatchdogDeadline)s — releasing the snapshot freeze without writing")
+            self.isSessionRestoreInFlight = false
+        }
+        sessionRestoreWatchdog = work
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + Self.sessionRestoreWatchdogDeadline, execute: work)
+    }
+
+    /// Puts a loading window on screen for every saved slot that qualifies,
+    /// each on its own remembered frame. Called at the top of a windowless
+    /// reopen's restore, before any Chromium work is requested.
+    ///
+    /// The frames come from the snapshot already clamped to the screens
+    /// attached now (`loadRestoreSnapshot`), and the slot each entry reopens
+    /// into is forced onto the same rect in `slotForRestoreIndex` — that
+    /// pairing, not a prediction, is what makes the hand-off jump-free.
+    private func showReopenLoadingWindows() {
+        // The switch decides before anything is read or built — in particular
+        // before the restore-preference read, which is a round trip into
+        // Chromium — so a run with it off does no work here at all. It is also
+        // passed into `shouldShow`, so the whole rule stays in the one place
+        // that is testable rather than living half here and half there.
+        let featureEnabled = ReopenLoadingWindow.isFeatureEnabled
+        guard featureEnabled else { return }
+        // A rapid second reopen re-enters with fresh entries and fresh indices;
+        // nothing from the previous pass may outlive them.
+        finishReopenLoadingRun()
+        let sessionRestoreEnabled = SessionRestorePreference.isEnabled
+        let isWindowlessReopen = isWindowlessWithHostedSlots
+        for index in restoreEntries.indices {
+            let entry = restoreEntries[index]
+            guard ReopenLoadingWindow.shouldShow(
+                featureEnabled: featureEnabled,
+                sessionRestoreEnabled: sessionRestoreEnabled,
+                isWindowlessReopen: isWindowlessReopen,
+                snapshotFrame: entry.frame,
+                slotWasFullScreen: entry.wasFullScreen
+            ), let frame = entry.frame else { continue }
+            // Everything the window is drawn from comes from the entry, which
+            // read it off the window this one stands in for. The tint is the
+            // exception and cannot be stored: it has to be resolved now, or a
+            // theme changed while the app had no windows would be a stale
+            // colour on the rect. Resolved only when there will be a band —
+            // for a Space with a pinned theme it is a defaults read and a whole
+            // `Theme` copy, on the one path this feature is measured on.
+            let bandWidth = ReopenLoadingWindow.sidebarBandWidth(
+                remembered: entry.sidebarWidth, inWindowOfWidth: frame.width)
+            let window = ReopenLoadingWindow(
+                frame: frame,
+                sidebarWidth: entry.sidebarWidth,
+                sidebarTint: bandWidth == nil
+                    ? nil : sidebarTint(forSpaceId: entry.activeSpaceId),
+                trafficLightOrigin: entry.trafficLightOrigin)
+            // Regardless: the reopen runs during app activation, and waiting to
+            // be frontmost the ordinary way would give up the head start this
+            // window exists for.
+            window.orderFrontRegardless()
+            reopenLoadingWindowsByRestoreIndex[index] = window
+            // What the snapshot supplied, not what the window did with it:
+            // "the field was never recorded" and "it was recorded as zero" are
+            // different states and a log bundle has to tell them apart. The
+            // lights say `none` where this OS draws none at all, which is not
+            // the same as falling back to the copied constant.
+            let bandNote = entry.sidebarWidth
+                .map { "\($0)->\(bandWidth.map(String.init(describing:)) ?? "none")" }
+                ?? "unrecorded"
+            let lightsNote = ReopenLoadingWindow
+                .trafficLightOrigin(remembered: entry.trafficLightOrigin)
+                .map { _ in entry.trafficLightOrigin == nil ? "copied" : "remembered" } ?? "none"
+            // The one of the three that reports what the WINDOW did rather than
+            // what the snapshot supplied, because unlike the band and the
+            // lights the indicator has no snapshot input to report. The rate is
+            // in the line because it is the only number here that costs
+            // anything, so it is what a log bundle would need to show.
+            let dotsNote = window.activityDots == nil
+                ? "none" : "\(ReopenLoadingWindow.activityStepsPerSecond)/s"
+            AppLogInfo("[SpaceManager] reopen: loading window shown at \(NSStringFromRect(frame)) band=\(bandNote) lights=\(lightsNote) dots=\(dotsNote)")
+        }
+        guard !reopenLoadingWindowsByRestoreIndex.isEmpty else { return }
+        reopenLoadingRunActive = true
+        let now = Date()
+        let handoff = ReopenLoadingHandoff(startedAt: now)
+        reopenLoadingHandoff = handoff
+        applyReopenLoadingHandoff(handoff.reconsider(at: now))
+    }
+
+    /// Feeds the hand-off tracker a fact and acts on its answer.
+    private func recordReopenLoadingHandoff(_ fact: ReopenLoadingHandoff.Fact) {
+        guard let handoff = reopenLoadingHandoff else { return }
+        applyReopenLoadingHandoff(handoff.record(fact, at: Date()))
+    }
+
+    private func applyReopenLoadingHandoff(_ outcome: ReopenLoadingHandoff.Outcome) {
+        switch outcome {
+        case .alreadyTornDown:
+            break
+        case .tearDown:
+            finishReopenLoadingRun()
+        case .wait(let seconds):
+            let work = DispatchWorkItem { [weak self] in
+                guard let self, let handoff = self.reopenLoadingHandoff else { return }
+                self.applyReopenLoadingHandoff(handoff.reconsider(at: Date()))
+            }
+            reopenLoadingHandoffWait?.cancel()
+            reopenLoadingHandoffWait = work
+            // Late is harmless by construction: the loading window is under the
+            // restored window by now, so the restore saturating the main thread
+            // and pushing this out only delays something already invisible.
+            DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: work)
+        }
+    }
+
+    /// A restored window the user will actually see has registered into one of
+    /// this reopen's slots. Reported by the slot rather than looked up, because
+    /// only the slot knows whether the window it just took is the visible one
+    /// or a concealed sibling.
+    fileprivate func noteReopenLoadingHandoffWindowRegistered() {
+        guard let handoff = reopenLoadingHandoff else { return }
+        let outcome = handoff.record(.restoredWindowRegistered, at: Date())
+        // This runs inside Chromium's synchronous window-created callback,
+        // where the convention in this file is to defer anything that closes
+        // windows or rewrites slot state by a turn (see
+        // `pendingCloseOnReplacementBySpaceId`). Only the backstop can answer
+        // `.tearDown` to a registration — a window arriving more than
+        // `ReopenLoadingHandoff.backstop` after the loading windows went up —
+        // and that is precisely the answer that must not run re-entrantly: it
+        // would drop every slot's forced placement while the burst is still
+        // delivering windows onto it.
+        if case .tearDown = outcome {
+            DispatchQueue.main.async { [weak self] in self?.finishReopenLoadingRun() }
+            return
+        }
+        applyReopenLoadingHandoff(outcome)
+    }
+
+    /// Stops the slots forcing this reopen's remembered frame on windows that
+    /// register from here on. Runs when the restore settles — every window this
+    /// reopen promised anything about now exists — and deliberately NOT with
+    /// the loading window teardown, which outlives it (see
+    /// `ReopenLoadingHandoff`). Holding the override past the restore would
+    /// drag a later, unrelated spawn onto the reopen rect.
+    private func endReopenLoadingPlacements() {
+        guard reopenLoadingRunActive else { return }
+        for slot in slots {
+            slot.endReopenPlacementOverride()
+        }
+    }
+
+    /// Ends this reopen's loading-window hand-off: closes every loading window
+    /// still up, here and on the slots, and drops any forced placement still in
+    /// force. Idempotent, and a single flag test when the feature is off.
+    private func finishReopenLoadingRun() {
+        guard reopenLoadingRunActive else { return }
+        reopenLoadingRunActive = false
+        reopenLoadingHandoffWait?.cancel()
+        reopenLoadingHandoffWait = nil
+        reopenLoadingHandoff = nil
+        for window in reopenLoadingWindowsByRestoreIndex.values {
+            window.close()
+        }
+        reopenLoadingWindowsByRestoreIndex.removeAll()
+        for slot in slots {
+            slot.endReopenLoadingHandover()
+        }
+        AppLogInfo("[SpaceManager] reopen: loading window hand-off finished")
+    }
+
+    /// Makes every still-registered slot show the Space it says it is showing,
+    /// once a reopen restore has settled.
+    ///
+    /// A slot is seeded with the Space its snapshot entry had visible, but that
+    /// Space's window does not always come back: a window saved with an empty
+    /// tab list is dropped when the session is read back, so a slot whose
+    /// visible Space was left on a placeholder page restores its OTHER Spaces
+    /// only. The slot then reports a Space that owns no window — its indicator,
+    /// name and tint name one Space while the tabs on screen belong to another
+    /// — and `reconcileRestoreVisibility` bails on every pass (it has no active
+    /// window to front), so the restored windows stay concealed until the reveal
+    /// ladder's blind catch-all surfaces all of them at once, seconds later.
+    ///
+    /// Per slot that owns windows but none for its active Space:
+    ///   * the active Space can still be surfaced here → spawn its window
+    ///     through the slot's own `activate`, so it registers back into THIS
+    ///     slot (never a second one) and the windows already there stay hidden
+    ///     siblings. This is what Chromium's own fallback window does for a
+    ///     profile whose session held nothing restorable (see
+    ///     `restoreFallbackWindowId`); doing it here too means the same user
+    ///     gesture no longer gives two different results depending on whether
+    ///     that profile happened to hold another restorable window.
+    ///   * otherwise (the Space was deleted, or is an Incognito / agent Space
+    ///     and never an automatic destination) → switch the slot to a Space
+    ///     that did come back, taking the first present one in snapshot order.
+    ///
+    /// Driven by the restore-settled signal rather than the visibility
+    /// reconcile's timed ladder: that ladder arms on every Dock reopen whether
+    /// or not a restore runs, keeps ticking on slots already dropped from the
+    /// registry, and its early ticks fire while a sibling profile's window is
+    /// still legitimately in flight — repairing on one of those would freeze a
+    /// transient into a permanent misplacement. Idempotent: a slot whose active
+    /// Space owns a window is left alone, so this is a no-op whenever the
+    /// fallback window above already brought that Space back.
+    private func repairSlotsWithAbsentActiveSpace() {
+        // The Spaces an automatic switch may land on: still in the store, and
+        // neither Incognito nor agent-owned (both are deliberate destinations
+        // only — see `isAutomaticSwitchTarget`). Screens the Space being brought
+        // back AND the stand-in: the snapshot filters Incognito Spaces out of
+        // its window map but not agent ones, so an agent Space can come back
+        // with the rest of the slot.
+        let switchTargetIds = Set(
+            spaces.filter { isAutomaticSwitchTarget($0) }.map(\.spaceId)
+        )
+        for slot in slots {
+            let presentSpaceIds = slot.spaceIdsWithWindow
+            guard !slot.isTearingDown,
+                  let activeId = slot.activeSpaceId,
+                  !presentSpaceIds.isEmpty,
+                  !presentSpaceIds.contains(activeId) else { continue }
+            // Spawning the absent Space also needs its window to be owned by no
+            // OTHER slot — a Space maps 1:1 to a Chromium window, so a second
+            // window for it would put the same Space on screen twice.
+            let ownedElsewhere = slots.contains {
+                $0 !== slot && $0.windowController(for: activeId) != nil
+            }
+            let target: String
+            if switchTargetIds.contains(activeId), !ownedElsewhere {
+                AppLogInfo("[SpaceManager] restore settled: no window for slot's active Space \(activeId) — spawning it")
+                target = activeId
+            } else if let present = Self.firstPresentSpaceInSnapshotOrder(
+                windowMaps: restoreEntries.map(\.windowMap),
+                presentSpaceIds: presentSpaceIds.intersection(switchTargetIds)
+            ) {
+                // Snapshot order rather than the store-wide fallback the other
+                // "the active Space went away" paths resolve to
+                // (`handleSpacesUpdate`, `spawnPersistedSpaceWindow`): the
+                // stand-in has to be a Space whose window is in THIS slot, and
+                // the same one every time this state arises.
+                AppLogInfo("[SpaceManager] restore settled: slot's active Space \(activeId) cannot be surfaced — showing restored Space \(present) instead")
+                target = present
+            } else {
+                AppLogWarn("[SpaceManager] restore settled: slot's active Space \(activeId) cannot be surfaced and the snapshot names none of its restored Spaces — left as is")
+                continue
+            }
+            // Re-assert the slot's one-visible-window invariant once the target
+            // window is up: the passes that bailed never ran the sibling sweep,
+            // and never re-entered fullscreen either — `reconcileRestoreVisibility`
+            // is the only caller of `applyPendingRestoreFullScreen`, and a slot
+            // left with that marker set also stops re-arming `.moveToActiveSpace`
+            // on its hidden siblings. Armed from the swap's settle callback (the
+            // spawn path fires it once the new window is revealed, which an async
+            // profile load can push past this turn) and, for a repoint onto a
+            // window that is already the visible one, right after `activate`
+            // returns. Whichever runs first arms the coalesced ladder; the other
+            // is a no-op. Never armed while the window is still missing: such a
+            // pass can only bail.
+            slot.activate(spaceId: target, animated: false, onSwapSettled: { [weak slot] in
+                slot?.scheduleRestoreVisibilityReconcile()
+            })
+            if let active = slot.activeSpaceId, slot.windowController(for: active) != nil {
+                slot.scheduleRestoreVisibilityReconcile()
+            }
+        }
+    }
+
+    /// If the app is windowless with a restorable history and the switch is on,
+    /// begins a session restore so a subsequently-forwarded external link lands
+    /// in the restored active window instead of a bare new one. A no-op when
+    /// not eligible or a restore is already in flight; the caller queues its
+    /// URLs to forward once a window exists either way.
+    func beginSessionRestoreForExternalOpenIfEligible() {
+        guard isWindowlessWithHostedSlots, SessionRestorePreference.isEnabled,
+              !isSessionRestoreInFlight else { return }
+        beginWindowlessSessionRestore()
     }
 
     /// Walks every slot looking for one that recorded a pending spawn
@@ -666,6 +1247,14 @@ final class SpaceManager: ObservableObject {
     /// zero id never claims, so Cmd+N and other later Chromium-initiated
     /// windows can't be misclaimed by stale snapshot entries.
     ///
+    /// `restoreFallbackWindowId` is the third shape: restore's own stand-in
+    /// window for a profile whose session held nothing restorable. It also
+    /// claims by profile, but needs no grace period — the id itself says the
+    /// window is a restore product, which a user-opened window can never claim
+    /// to be. Without it a reopened slot whose visible Space was emptied comes
+    /// back split: this window mints its own slot, and the sibling profile's
+    /// window seeds a second slot on a Space that never arrives.
+    ///
     /// On a hit, returns the slot the previous session paired this window
     /// with — reusing the in-memory slot we already minted for a sibling
     /// window from the same saved slot, or creating a fresh one on first
@@ -683,20 +1272,27 @@ final class SpaceManager: ObservableObject {
     /// tabs into that one Space.
     func claimRestoredWindow(forRestoredFromWindowId restoredFromWindowId: Int,
                              profileId: String) -> (slot: SpaceWindowSlot, spaceId: String)? {
-        // Primary: exact previous-session windowId match.
-        if restoredFromWindowId != 0,
+        // Primary: exact previous-session windowId match. Positive ids only —
+        // a SessionID is always positive, so both `0` and the reserved
+        // `restoreFallbackWindowId` name a window that re-created no saved
+        // window and must never be looked up as one.
+        if restoredFromWindowId > 0,
            let index = restoreIndexByWindowId[restoredFromWindowId],
            index < restoreEntries.count,
            let spaceId = restoreEntries[index].windowMap[restoredFromWindowId] {
             restoreIndexByWindowId.removeValue(forKey: restoredFromWindowId)
             return (slotForRestoreIndex(index, fallbackSpaceId: spaceId), spaceId)
         }
-        // Fallback: ONLY for a window with no usable previous-session id
-        // (`restoredFromWindowId == 0` — Chromium's multi-profile startup opens
-        // one fresh window per last-open profile). Within the launch grace
-        // period, reattach by profile — claim the first not-yet-restored
-        // snapshot window, in saved-slot order, whose Space is bound to
-        // `profileId`.
+        // Fallback: reattach by PROFILE instead of by id. Open to the two window
+        // shapes that carry no usable previous-session id:
+        //
+        //   * `restoreFallbackWindowId` — restore's own stand-in window for a
+        //     profile whose session held nothing restorable. Self-identifying,
+        //     so no grace period is consulted: a mid-session reopen leaves the
+        //     deadline deliberately disarmed, and this window still has to find
+        //     its slot.
+        //   * `0` within the launch grace period — Chromium's multi-profile
+        //     startup opens one fresh window per last-open profile.
         //
         // A NON-zero id that misses the primary lookup is a window genuinely not
         // in the snapshot (e.g. opened while the live count was below the
@@ -704,20 +1300,57 @@ final class SpaceManager: ObservableObject {
         // must NOT be reattached by profile to some stale closed slot — that
         // would surface it as a closed Space (and force fullscreen). Returning
         // nil lets the coordinator mint a fresh slot on the resolved Space.
-        guard restoredFromWindowId == 0,
-              !profileId.isEmpty,
-              let deadline = restoreReattachDeadline,
-              Date() < deadline else { return nil }
+        // With the restore switch off there are no restored windows to
+        // reattach: the only zero-id window a cold launch produces is its
+        // plain NTP window, and profile-matching it against a stale snapshot
+        // entry would land it on the previous session's Space and inherit
+        // that entry's fullscreen marker. Checked here rather than when the
+        // snapshot loads: `bind(to:)` runs before Chromium is up, where the
+        // preference read falls back to its enabled default.
+        let claimsByProfile: Bool = {
+            if restoredFromWindowId == Self.restoreFallbackWindowId { return true }
+            guard restoredFromWindowId == 0,
+                  let deadline = restoreReattachDeadline else { return false }
+            return Date() < deadline
+        }()
+        guard claimsByProfile,
+              SessionRestorePreference.isEnabled,
+              !profileId.isEmpty else { return nil }
+        // Which of the profile's unclaimed snapshot windows this one takes over
+        // decides both the Space the user gets back and whose fullscreen marker
+        // the slot inherits — and a profile can own several (two of its Spaces
+        // surfaced from one slot, or Spaces sitting in different slots). Rank:
+        // the window whose Space was the visible one in its own entry, then an
+        // entry that holds the persisted last-active Space, then **snapshot
+        // order** — saved slot order, then previous-session window id. A total
+        // order, so the pick never depends on dictionary iteration order.
+        //
+        // Snapshot order is the project's single deterministic ordering over
+        // snapshot windows: anything else that has to pick among a saved slot's
+        // windows uses this one rather than inventing a near-synonym.
+        let persistedActive = persistedActiveSpaceId
+        var candidates: [(key: (Int, Int, Int, Int),
+                          index: Int, windowId: Int, spaceId: String)] = []
         for index in restoreEntries.indices {
-            for windowId in restoreEntries[index].windowMap.keys.sorted()
-                where restoreIndexByWindowId[windowId] == index {
-                guard let spaceId = restoreEntries[index].windowMap[windowId],
+            let entry = restoreEntries[index]
+            let holdsPersistedActive = persistedActive.map {
+                entry.windowMap.values.contains($0)
+            } ?? false
+            for (windowId, spaceId) in entry.windowMap {
+                guard restoreIndexByWindowId[windowId] == index,
                       boundProfileId(forSpaceId: spaceId) == profileId else { continue }
-                restoreIndexByWindowId.removeValue(forKey: windowId)
-                return (slotForRestoreIndex(index, fallbackSpaceId: spaceId), spaceId)
+                candidates.append((key: (spaceId == entry.activeSpaceId ? 0 : 1,
+                                         holdsPersistedActive ? 0 : 1,
+                                         index,
+                                         windowId),
+                                   index: index,
+                                   windowId: windowId,
+                                   spaceId: spaceId))
             }
         }
-        return nil
+        guard let pick = candidates.min(by: { $0.key < $1.key }) else { return nil }
+        restoreIndexByWindowId.removeValue(forKey: pick.windowId)
+        return (slotForRestoreIndex(pick.index, fallbackSpaceId: pick.spaceId), pick.spaceId)
     }
 
     /// Resolves (and reuses for later siblings) the live slot for a saved
@@ -733,8 +1366,46 @@ final class SpaceManager: ObservableObject {
         if restoreEntries[index].wasFullScreen {
             slot.markPendingRestoreFullScreen()
         }
+        // Lend the slot the loading window standing in for it, and the frame it
+        // sits on: the slot has to come back ON that frame, and it is the slot
+        // that gets to see the restored window this loading window has to drop
+        // behind. Driven by the window's existence rather than by re-deciding
+        // eligibility, so the loading window and the forced placement are one
+        // decision — no loading window, no override, and the slot takes
+        // Chromium's replayed bounds exactly as it does today.
+        if let window = reopenLoadingWindowsByRestoreIndex[index],
+           let frame = restoreEntries[index].frame {
+            slot.adoptReopenLoadingWindow(window, placedAt: frame)
+        }
         restoredSlotsByIndex[index] = slot
         return slot
+    }
+
+    /// The first of `presentSpaceIds` in **snapshot order** — saved slot order,
+    /// then previous-session window id — or nil when the snapshot names none of
+    /// them. `windowMaps` holds each snapshot entry's previous-session windowId
+    /// → spaceId map, in saved order.
+    ///
+    /// Snapshot order is the one ordering the project defines over snapshot
+    /// windows: `claimRestoredWindow` sorts by it too, below its own two
+    /// priority levels, so its ranking key spells the same rule out rather than
+    /// calling this — the two answer different questions (rank all of a
+    /// profile's candidates vs. take the first Space present in one slot).
+    /// Independent of dictionary iteration order either way, so the pick is
+    /// reproducible instead of whatever a hash walk happens to yield first.
+    static func firstPresentSpaceInSnapshotOrder(
+        windowMaps: [[Int: String]],
+        presentSpaceIds: Set<String>
+    ) -> String? {
+        for windowMap in windowMaps {
+            for windowId in windowMap.keys.sorted() {
+                if let spaceId = windowMap[windowId],
+                   presentSpaceIds.contains(spaceId) {
+                    return spaceId
+                }
+            }
+        }
+        return nil
     }
 
     /// The profileId a Space is bound to, or nil if unknown. Reads the live
@@ -749,6 +1420,18 @@ final class SpaceManager: ObservableObject {
         return MainActor.assumeIsolated {
             account.localStorage.getAllSpaces().first(where: { $0.spaceId == spaceId })?.profileId
         }
+    }
+
+    /// Captures the concrete Chromium profile that a fresh Guest default
+    /// Space must belong to. The coordinator calls this only for normal
+    /// windows; Incognito and Agent profiles must never become its owner.
+    func observeNormalWindowProfileForDefaultSpace(_ profileId: String) {
+        guard !profileId.isEmpty,
+              observedNormalWindowProfileId == nil else { return }
+        observedNormalWindowProfileId = profileId
+        guard ApplicationState.shared.isGuest,
+              spacesCancellable != nil else { return }
+        ensureDefaultSpaceForCurrentAccountIfReady()
     }
 
     /// Resolves the Space a normal window whose Chromium profile is
@@ -808,6 +1491,61 @@ final class SpaceManager: ObservableObject {
         return resolved
     }
 
+    private func ensureDefaultSpaceForCurrentAccountIfReady() {
+        guard let account = boundAccount,
+              AccountController.shared.localDataAccount === account,
+              let profileId = Self.profileIdForDefaultSpaceCreation(
+                  isGuest: ApplicationState.shared.isGuest,
+                  isGuestAccountPromotionInProgress: ApplicationState
+                      .shared.isGuestAccountPromotionInProgress,
+                  isBoundToDefaultAccount:
+                      account === AccountController.defaultAccount,
+                  observedNormalWindowProfileId:
+                      observedNormalWindowProfileId
+              ) else { return }
+        MainActor.assumeIsolated {
+            account.localStorage.ensureDefaultSpace(profileId: profileId)
+        }
+    }
+
+    /// The Space a tab-restored window ("Reopen Closed Window") should come
+    /// back on, or nil when the Space Chromium reported is unusable and the
+    /// caller should fall back to its normal placement.
+    ///
+    /// `restoredSpaceId` is stamped into the restore entry when the window
+    /// closes and travels with it, so unlike the session-restore snapshot it
+    /// stays valid across a relaunch. It can still go stale: the Space may have
+    /// been deleted since, or — for an Incognito Space — reaped along with its
+    /// last window. Agent Spaces are excluded for the same reason automatic
+    /// switches skip them.
+    ///
+    /// The result is re-bound to `profileId` so the window is never presented
+    /// as a Space belonging to another profile (which would surface that
+    /// profile's pinned tabs), matching every other resolution path.
+    func restoredSpaceTarget(_ restoredSpaceId: String?, profileId: String) -> String? {
+        guard let restoredSpaceId, !restoredSpaceId.isEmpty else { return nil }
+        // Same cold-launch caveat as `spaceId(boundTo:preferring:)`: the first
+        // windows of a launch arrive before the `spaces` publisher delivers.
+        var known = spaces
+        if known.isEmpty, let account = boundAccount {
+            known = MainActor.assumeIsolated {
+                account.localStorage.getAllSpaces()
+            }
+        }
+        guard let model = known.first(where: { $0.spaceId == restoredSpaceId }),
+              isAutomaticSwitchTarget(model) else { return nil }
+        // Validate what we are about to RETURN, not just what was asked for:
+        // `spaceId(boundTo:)` re-resolves to another Space of `profileId` when
+        // the stamped one no longer belongs to it (the user changed the Space's
+        // profile after the window closed), and that replacement is picked in
+        // strip order — it could land on an Agent Space, which no automatic
+        // placement may use. Decline instead, and let the caller fall back.
+        let resolved = spaceId(boundTo: profileId, preferring: model.spaceId)
+        guard let resolvedModel = known.first(where: { $0.spaceId == resolved }),
+              isAutomaticSwitchTarget(resolvedModel) else { return nil }
+        return resolved
+    }
+
     /// Set once app termination begins (see `markTerminating`). Quit tears the
     /// slots down window-by-window, and every teardown step that reaches
     /// `persistSlotsSnapshot` would otherwise rewrite the snapshot with the
@@ -823,19 +1561,126 @@ final class SpaceManager: ObservableObject {
     /// Once set, `persistSlotsSnapshot` no-ops, freezing the snapshot at the last
     /// healthy layout for the rest of the process's life.
     func markTerminating() {
+        // Land a debounced frame write before the freeze, or quitting within a
+        // second of the last drag persists the position the window had BEFORE
+        // that drag — the freeze below makes every later write a no-op.
+        // A quit landing inside a reopen's replay refuses this flush like any
+        // other write (`mayPersistSlotsSnapshot`), losing that one pending
+        // frame change rather than stamping a half-restored group as the
+        // layout to come back to. That trade is deliberate.
+        flushPendingSlotsSnapshotPersist()
         isTerminating = true
     }
+
+    /// Whether the live slot layout may be written over the saved snapshot at
+    /// all right now. Each answer of `false` names a state in which the layout
+    /// this side can see is a transient, not the group the next launch should
+    /// reattach into — so the last complete one has to stand.
+    ///
+    /// * `isTerminating` — quit dismantles the slots window by window; see the
+    ///   property for what a write during that costs.
+    /// * `isSessionRestoreInFlight` — a windowless reopen replays its windows
+    ///   one at a time, so every write before the replay settles describes a
+    ///   half-restored group. The reopen writes once itself, from the
+    ///   completion that reports every profile settled. Covers that reopen
+    ///   ONLY: a cold launch replays the same way but has no settle signal on
+    ///   this side, so it still writes once per restored window. Gating that
+    ///   on a wall clock instead would fire the batch write whether or not the
+    ///   restore aborted — buying the write count by giving up the guarantee
+    ///   that matters more.
+    /// * `isAnySlotTearingDown` — a slot mid-cascade has a half-drained window
+    ///   map, so a write from ANY trigger (AppKit's fullscreen teardown
+    ///   notifications, tab-bar churn, a sibling's key change) persists a
+    ///   partial group — dropping already-closed windows and the fullscreen
+    ///   marker from the very snapshot the next reopen restores, which splits
+    ///   the group into separate slots. The teardown's own endpoints persist
+    ///   the settled state after clearing the cascade flag: `removeSlot`
+    ///   shrinks the snapshot once the cascade drains, and
+    ///   `recoverFromVetoedCascade` rewrites it after a veto.
+    ///
+    /// Pure and static so the three can be pinned down by table: they are what
+    /// stands between a transient layout and the snapshot a reopen trusts, and
+    /// inline they were untestable. The fourth refusal — never replacing a
+    /// saved snapshot with an empty one — deliberately stays at the call site:
+    /// it can only be answered from the built array, and answering here is
+    /// precisely what avoids building it. `amendPersistedSnapshotActiveSpaceId`
+    /// does not come through here either; it patches one field of an existing
+    /// entry rather than rewriting the record, and says why.
+    static func mayPersistSlotsSnapshot(
+        isTerminating: Bool,
+        isSessionRestoreInFlight: Bool,
+        isAnySlotTearingDown: Bool
+    ) -> Bool {
+        !isTerminating && !isSessionRestoreInFlight && !isAnySlotTearingDown
+    }
+
+    /// What the watchdog below does when its deadline finds the reopen's
+    /// restore transaction still open.
+    struct SessionRestoreWatchdogOutcome: Equatable {
+        /// Stop refusing snapshot writes.
+        let releasesFreeze: Bool
+        /// Whether the watchdog itself writes the snapshot. Always false, and
+        /// separated out so it is pinned by a test rather than by a comment.
+        let writesSnapshot: Bool
+    }
+
+    /// The watchdog releases the freeze and **writes nothing**.
+    ///
+    /// Writing here is the tempting mistake: the transaction is over, so why
+    /// not persist? Because at this point the layout is whatever a hung
+    /// restore left behind — writing it stamps exactly the half-restored group
+    /// the freeze exists to keep out, reintroducing the defect this whole
+    /// mechanism fixed, just later and rarer. Releasing is enough: the next
+    /// ordinary layout change writes what the user actually has by then, and
+    /// until it comes the last complete snapshot stands, which is correct.
+    static func sessionRestoreWatchdogOutcome(
+        isSessionRestoreInFlight: Bool
+    ) -> SessionRestoreWatchdogOutcome {
+        SessionRestoreWatchdogOutcome(
+            releasesFreeze: isSessionRestoreInFlight, writesSnapshot: false)
+    }
+
+    /// Bounds how long `isSessionRestoreInFlight` may hold snapshot writes.
+    ///
+    /// The flag is cleared from one place: the completion that reports every
+    /// profile settled. That completion is argued to be unmissable — every
+    /// per-profile terminal, including failure, signals the Chromium barrier.
+    /// A profile that **hangs** rather than terminating signals nothing, and
+    /// then the flag is set for the life of the process: the app looks
+    /// entirely normal while silently never recording its layout again, so
+    /// every window the user moves afterwards is lost at the next launch.
+    ///
+    /// This is deliberately not a second completion path competing with the
+    /// barrier — it never writes and never spawns anything. It is a timeout on
+    /// a flag that gates all persistence, which is the kind of single point
+    /// worth a bound even when the argument for its terminality is good.
+    ///
+    /// 30s against a measured restore of roughly two seconds: long enough that
+    /// a merely slow machine never reaches it, short enough that the user has
+    /// not yet done much rearranging to lose.
+    private static let sessionRestoreWatchdogDeadline: TimeInterval = 30
+
+    /// Cancelled by `endSessionRestoreTransaction`, so the ordinary path never
+    /// reaches the deadline.
+    private var sessionRestoreWatchdog: DispatchWorkItem?
 
     /// Writes the current slot/window/Space layout to
     /// `AccountUserDefaults.slotsRestoreSnapshot`. Called from
     /// `SpaceWindowSlot.registerWindow` (and a few live-state mutations) so the
     /// persisted snapshot reflects the most recent healthy layout — sufficient
-    /// to reattach Chromium-restored windows next launch. Frozen during
-    /// termination (`isTerminating`, set before the teardown cascade) and never
-    /// overwrites a non-empty snapshot with an empty one, so quit teardown can't
-    /// drain it before the next launch reads it.
+    /// to reattach Chromium-restored windows next launch. Refused while the
+    /// layout is a transient (`mayPersistSlotsSnapshot`) and never overwrites a
+    /// non-empty snapshot with an empty one, so neither quit teardown nor a
+    /// half-finished reopen can drain it before the next launch reads it.
     fileprivate func persistSlotsSnapshot() {
-        guard !isTerminating else { return }
+        // Asked before anything is built: a refusal here saves the whole array
+        // rebuild over every slot's window map, and the states it refuses in
+        // are exactly the ones whose triggers fire once per window.
+        guard Self.mayPersistSlotsSnapshot(
+            isTerminating: isTerminating,
+            isSessionRestoreInFlight: isSessionRestoreInFlight,
+            isAnySlotTearingDown: slots.contains(where: { $0.isTearingDown })
+        ) else { return }
         guard let userDefaults = boundAccount?.userDefaults else { return }
         var dicts: [[String: Any]] = []
         for slot in slots {
@@ -865,6 +1710,41 @@ final class SpaceManager: ObservableObject {
             if slot.snapshotIsFullScreen() {
                 dict["isFullScreen"] = true
             }
+            // Where the slot sits on screen, so a reopen has a position on hand
+            // before Chromium reports the restored window's bounds. Stored as
+            // the AppKit rect string (plist-native, and `NSRectFromString` is
+            // the matching reader); absent for a slot that has never had a
+            // positioned window.
+            if let frame = slot.snapshotFrame() {
+                dict["frame"] = NSStringFromRect(frame)
+            }
+            // The rest of what the reopen loading window is drawn from. Both
+            // are read off the live window here rather than derived on the
+            // other side: the traffic-light origin belongs to the Chromium
+            // fork's own frame view, so measuring it at persist time is what
+            // keeps this side from having to track that file, and the sidebar
+            // width has to be PER SLOT. The app already keeps one of those
+            // (`AccountUserDefaults.lastKnownSidebarWidth`, written by
+            // `MainSplitViewController.updateSidebarWidth`), and it is not a
+            // substitute for two reasons: it is one number for the whole
+            // account rather than one per slot, and it deliberately refuses to
+            // record `0`, which is exactly the value that means "collapsed" and
+            // therefore "draw no band". It stays where it is, for the floating
+            // sidebar panel that reads it. Written only when known, so a slot
+            // that has never had a window adds nothing.
+            //
+            // Finiteness is checked HERE as well as on read: this dictionary
+            // goes into one plist with everything else the account stores, and
+            // `PropertyListSerialization` refuses a non-finite double for the
+            // whole file — which `AccountUserDefaults.persistLocked` logs and
+            // swallows, leaving the bad value in memory to fail every later
+            // write of every other key too.
+            if let sidebarWidth = slot.snapshotSidebarWidth(), sidebarWidth.isFinite {
+                dict["sidebarWidth"] = Double(sidebarWidth)
+            }
+            if let lightOrigin = slot.snapshotTrafficLightOrigin() {
+                dict["trafficLightOrigin"] = NSStringFromPoint(lightOrigin)
+            }
             dicts.append(dict)
         }
         // Backstop: never overwrite a saved snapshot with an empty one. A
@@ -872,10 +1752,95 @@ final class SpaceManager: ObservableObject {
         // while the app stays alive) must not erase the layout the next launch
         // restores into.
         guard !dicts.isEmpty else { return }
+        // This write supersedes any debounced one. Dropped only here, past
+        // every guard above: a refused write must leave the timer armed so the
+        // frame change that armed it still reaches disk once the slot settles.
+        pendingSlotsSnapshotPersistWorkItem?.cancel()
+        pendingSlotsSnapshotPersistWorkItem = nil
+        // The one place the cross-launch record is rewritten, and a synchronous
+        // whole-file write. Logged so how often it happens — a reopen must
+        // reach it once, not once per restored window — is answerable from a
+        // log bundle rather than only from a plist diff.
+        AppLogInfo("[SpaceManager] slot snapshot persisted: \(dicts.count) slot(s)")
         userDefaults.set(dicts, forKey: AccountUserDefaults.DefaultsKey.slotsRestoreSnapshot.rawValue)
     }
 
-    private func loadRestoreSnapshot() {
+    /// Trailing-edge debounce for `persistSlotsSnapshot`, used by the ONE
+    /// trigger that fires continuously: the visible window moving or resizing
+    /// (`SpaceWindowSlot.observeFrameChanges`). Every other trigger is a
+    /// discrete layout event and still writes synchronously.
+    ///
+    /// A drag emits `didMove` at screen refresh rate, and each write rewrites
+    /// the whole slot array, so the write has to wait for the gesture to stop:
+    /// one write per drag instead of one per pixel. Long enough that no
+    /// realistic drag or resize splits into two writes; short enough that the
+    /// user cannot both finish a drag and be gone before it lands — and the two
+    /// ways out (closing the window, quitting) flush it explicitly anyway.
+    private static let slotsSnapshotPersistDebounce: TimeInterval = 1.0
+
+    /// Non-nil while a frame change is still unwritten — not merely while a
+    /// timer is armed. `persistSlotsSnapshot` drops it only for a write that
+    /// actually lands, so a timer that fires into a refusal (any reason
+    /// `mayPersistSlotsSnapshot` gives) leaves it set and the next flush picks
+    /// the change up instead of losing it.
+    private var pendingSlotsSnapshotPersistWorkItem: DispatchWorkItem?
+
+    /// Requests a snapshot write once the current burst of frame changes stops.
+    /// Re-arming cancels the previous timer, so a continuous drag writes once,
+    /// `slotsSnapshotPersistDebounce` after the user lets go.
+    fileprivate func scheduleSlotsSnapshotPersist() {
+        pendingSlotsSnapshotPersistWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            // Deliberately does not clear the handle first: see its doc above.
+            self?.persistSlotsSnapshot()
+        }
+        pendingSlotsSnapshotPersistWorkItem = workItem
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + Self.slotsSnapshotPersistDebounce, execute: workItem)
+    }
+
+    /// Writes a debounced snapshot immediately, if one is pending. Called from
+    /// the two points past which the debounce can no longer fire usefully: a
+    /// window leaving its slot (`SpaceWindowSlot.unregisterWindow`, while the
+    /// map is still whole) and the start of quit (`markTerminating`). A no-op
+    /// when nothing is pending, so neither point changes the write frequency of
+    /// a session where the user never moved a window.
+    ///
+    /// Deliberately does not drop the pending item itself — `persistSlotsSnapshot`
+    /// does that only for a write that actually lands. A flush arriving while
+    /// the write is refused (see `mayPersistSlotsSnapshot`) therefore leaves
+    /// the change on record for the next write of any kind to pick up, instead
+    /// of swallowing it. The fired timer itself is spent either way; what
+    /// survives a refusal is the handle saying something is still unwritten.
+    fileprivate func flushPendingSlotsSnapshotPersist() {
+        guard pendingSlotsSnapshotPersistWorkItem != nil else { return }
+        persistSlotsSnapshot()
+    }
+
+    /// Rewrites the persisted snapshot entry containing `windowId` to carry
+    /// `spaceId` as its active Space, touching nothing else. Used by the
+    /// window-driven cascade to undo a close-driven key promotion that
+    /// persisted a sibling as the entry's active Space (a fullscreen tab
+    /// group promotes synchronously with the closing window's teardown,
+    /// before any close signal reaches this side, so no key guard can
+    /// suppress it). A full `persistSlotsSnapshot()` cannot repair this: the
+    /// closing window has already left the slot's window map, so a full
+    /// rewrite would drop its entry from the very snapshot a reopen
+    /// restores from.
+    fileprivate func amendPersistedSnapshotActiveSpaceId(windowId: Int, to spaceId: String) {
+        guard !isTerminating, let userDefaults = boundAccount?.userDefaults else { return }
+        let key = AccountUserDefaults.DefaultsKey.slotsRestoreSnapshot.rawValue
+        guard var dicts = userDefaults.object(forKey: key) as? [[String: Any]] else { return }
+        for index in dicts.indices {
+            guard let map = dicts[index]["windowMap"] as? [String: String],
+                  map[String(windowId)] != nil else { continue }
+            dicts[index]["activeSpaceId"] = spaceId
+            userDefaults.set(dicts, forKey: key)
+            return
+        }
+    }
+
+    private func loadRestoreSnapshot(armReattachDeadline: Bool = true) {
         restoreEntries.removeAll()
         restoreIndexByWindowId.removeAll()
         restoredSlotsByIndex.removeAll()
@@ -883,6 +1848,10 @@ final class SpaceManager: ObservableObject {
         guard let raw = boundAccount?.userDefaults.object(
             forKey: AccountUserDefaults.DefaultsKey.slotsRestoreSnapshot.rawValue
         ) as? [[String: Any]] else { return }
+        // Clamp against the layout in front of the user NOW, not the one the
+        // frames were recorded against — the display a slot was saved on may be
+        // gone. Read once for the whole snapshot.
+        let screens = Self.currentScreenGeometries()
         for dict in raw {
             let rawMap = (dict["windowMap"] as? [String: String]) ?? [:]
             let windowMap: [Int: String] = rawMap.reduce(into: [:]) { partial, pair in
@@ -892,7 +1861,13 @@ final class SpaceManager: ObservableObject {
             let entry = SlotRestoreEntry(
                 activeSpaceId: dict["activeSpaceId"] as? String,
                 windowMap: windowMap,
-                wasFullScreen: (dict["isFullScreen"] as? Bool) ?? false
+                wasFullScreen: (dict["isFullScreen"] as? Bool) ?? false,
+                frame: Self.decodedSlotFrame(dict["frame"]).map {
+                    Self.clampedSlotFrame($0, toScreens: screens)
+                },
+                sidebarWidth: Self.decodedSidebarWidth(dict["sidebarWidth"]),
+                trafficLightOrigin:
+                    Self.decodedTrafficLightOrigin(dict["trafficLightOrigin"])
             )
             let index = restoreEntries.count
             restoreEntries.append(entry)
@@ -903,10 +1878,131 @@ final class SpaceManager: ObservableObject {
         // Arm the profile-match fallback only when there is something to
         // reattach, and only briefly — long enough for the cold-launch restore
         // burst to land, short enough that later user-opened windows aren't
-        // absorbed (see `claimRestoredWindow`).
-        if !restoreEntries.isEmpty {
+        // absorbed (see `claimRestoredWindow`). A mid-session re-arm passes
+        // `armReattachDeadline: false`: those restored windows carry their real
+        // ids, and arming the fallback would let a concurrent Cmd+N misclaim a
+        // stale slot. The one exception needs no deadline — restore's own
+        // stand-in window announces itself with `restoreFallbackWindowId` and
+        // claims by profile regardless.
+        if armReattachDeadline && !restoreEntries.isEmpty {
             restoreReattachDeadline = Date().addingTimeInterval(Self.restoreReattachGracePeriod)
         }
+    }
+
+    /// One attached display, reduced to the two rects a frame clamp needs.
+    /// Exists so the clamp itself can be a pure function over plain values —
+    /// `NSScreen` cannot be constructed in a test, and the clamp is the piece
+    /// worth pinning down by table.
+    struct ScreenGeometry {
+        /// Full display bounds, in AppKit's bottom-left-origin global space.
+        let frame: NSRect
+        /// The part of `frame` a window may occupy — menu bar and Dock removed.
+        let visibleFrame: NSRect
+    }
+
+    /// The displays attached right now, in `NSScreen.screens` order, so index 0
+    /// is the one the clamp falls back to when a frame belongs to none of them.
+    fileprivate static func currentScreenGeometries() -> [ScreenGeometry] {
+        NSScreen.screens.map { ScreenGeometry(frame: $0.frame, visibleFrame: $0.visibleFrame) }
+    }
+
+    /// The slot frame stored in a snapshot entry, or nil when the entry has
+    /// none. Nil covers both graceful-degradation cases together: an entry
+    /// written before the field existed (no value) and one whose value no
+    /// longer parses — `NSRectFromString` answers an unreadable string with a
+    /// zero rect, which is not a frame any window ever had.
+    static func decodedSlotFrame(_ raw: Any?) -> NSRect? {
+        guard let string = raw as? String else { return nil }
+        let rect = NSRectFromString(string)
+        return rect.isEmpty ? nil : rect
+    }
+
+    /// The sidebar width stored in a snapshot entry, or nil when the entry has
+    /// none.
+    ///
+    /// Unlike the frame, zero is a value and not an absence: it is how a
+    /// collapsed sidebar is recorded. Only the states no window ever had are
+    /// refused — a negative width, and the non-finite values a corrupt plist
+    /// can hand back.
+    ///
+    /// Through `NSNumber` because that is what a plist hands back whatever the
+    /// value was written as. `as? Double` would in fact also work on that —
+    /// measured — but not on an integer boxed straight into an `Any`, which is
+    /// what the tests hand it, and the difference is not worth a reader having
+    /// to know.
+    static func decodedSidebarWidth(_ raw: Any?) -> CGFloat? {
+        guard let width = (raw as? NSNumber)?.doubleValue,
+              width.isFinite, width >= 0 else { return nil }
+        return CGFloat(width)
+    }
+
+    /// The traffic-light origin stored in a snapshot entry, or nil when the
+    /// entry has none.
+    ///
+    /// Filtered harder than "did it parse", because `NSPointFromString` does
+    /// not fail: it answers a partly-read string with a partly-filled point
+    /// (`"{13, junk}"` becomes `{13, 0}`) and an out-of-range one with an
+    /// infinity, and both would be used verbatim to move the lights — measured,
+    /// `{inf, 0}` puts the close button at x = 1.7e13, and `{13, 0}` puts the
+    /// three of them 13.5pt above where the restored window's are, which is the
+    /// hand-off jump this all exists to remove. So: finite, non-negative, and
+    /// inside the corner of a titlebar. The zero point is refused by the same
+    /// bound, and it is also what a wholly unreadable string decodes to.
+    static func decodedTrafficLightOrigin(_ raw: Any?) -> NSPoint? {
+        guard let string = raw as? String else { return nil }
+        let point = NSPointFromString(string)
+        guard point.x.isFinite, point.y.isFinite,
+              point.x > 0, point.y > 0,
+              point.x <= Self.maxPlausibleTrafficLightInset,
+              point.y <= Self.maxPlausibleTrafficLightInset else { return nil }
+        return point
+    }
+
+    /// How far from a window's top-left corner its leading traffic light can
+    /// credibly be. Generous — the measured value is 13 — because this is a
+    /// nonsense filter, not a specification: it only has to reject the values
+    /// `NSPointFromString` invents, and a real titlebar is nowhere near this
+    /// tall.
+    private static let maxPlausibleTrafficLightInset: CGFloat = 200
+
+    /// `frame` corrected for the screens listed in `screens`, or `frame`
+    /// unchanged when it is still usable as-is.
+    ///
+    /// Deliberately far weaker than AppKit's own constraint, which pulls a
+    /// frame fully inside `visibleFrame`: a window the user dragged halfway off
+    /// an edge is exactly where they put it and must stay there. Only the
+    /// states the user cannot get out of are corrected — a frame too large for
+    /// its display, or one with nothing left on any work area to grab, which is
+    /// what a saved frame becomes when its display is unplugged or shrinks.
+    ///
+    /// Total by construction: every input yields a frame, so a caller placing a
+    /// window never has to handle "the clamp declined".
+    static func clampedSlotFrame(_ frame: NSRect, toScreens screens: [ScreenGeometry]) -> NSRect {
+        guard !screens.isEmpty else { return frame }
+        // A frame that exactly covers a display is a fullscreen frame; macOS
+        // resizes those itself across a layout change. Checked on the frame
+        // rather than a styleMask because this runs where no window exists yet.
+        guard !screens.contains(where: { $0.frame.equalTo(frame) }) else { return frame }
+        // The display this frame belongs to: whichever it covers most. Ties —
+        // including the all-zero tie a frame off every display produces — keep
+        // the first, so a homeless frame deterministically lands on the primary.
+        let host = screens.max {
+            let lhs = NSIntersectionRect(frame, $0.frame)
+            let rhs = NSIntersectionRect(frame, $1.frame)
+            return lhs.width * lhs.height < rhs.width * rhs.height
+        } ?? screens[0]
+        let workArea = host.visibleFrame
+        var clamped = frame
+        clamped.size.width = min(clamped.width, workArea.width)
+        clamped.size.height = min(clamped.height, workArea.height)
+        if clamped.maxY > workArea.maxY {
+            clamped.origin.y = workArea.maxY - clamped.height
+        }
+        if !NSIntersectsRect(clamped, workArea) {
+            clamped.origin.x = workArea.minX
+            clamped.origin.y = workArea.maxY - clamped.height
+        }
+        return clamped
     }
 
     /// Returns the slot that currently hosts the given Chromium windowId,
@@ -966,12 +2062,12 @@ final class SpaceManager: ObservableObject {
         // which is what made "New Space" feel slow. The persisted row stays
         // authoritative: once its emission lands, `handleSpacesUpdate` replaces
         // this array wholesale with the context-attached models. We mirror
-        // `LocalStore.createSpace`'s per-profile max+1 sortOrder and reuse
-        // `getAllSpaces`'s (sortOrder, profileId, createdDate) ordering so the
-        // pill's position is identical before and after that reconciliation —
-        // no visible reposition.
-        let nextOrder = (spaces.filter { $0.profileId == profileId }
-            .map(\.sortOrder).max() ?? -1) + 1
+        // `LocalStore.createSpace`'s GLOBAL max+1 sortOrder (the strip is one
+        // combined list, so appending past the global max is what lands the
+        // new pill last) and reuse `getAllSpaces`'s (sortOrder, profileId,
+        // createdDate) ordering so the pill's position is identical before
+        // and after that reconciliation — no visible reposition.
+        let nextOrder = (spaces.map(\.sortOrder).max() ?? -1) + 1
         spaces.append(SpaceModel(spaceId: newSpaceId,
                                  profileId: profileId,
                                  name: name,
@@ -979,6 +2075,11 @@ final class SpaceManager: ObservableObject {
                                  iconName: iconName,
                                  sortOrder: nextOrder))
         spaces.sort { lhs, rhs in
+            // Mirror `handleSpacesUpdate`'s agent-Space grouping first, so a
+            // user Space created while an agent Space lives appears before the
+            // agent group immediately — the same slot the reconciled emission
+            // puts it in.
+            if lhs.isAnyAgentSpace != rhs.isAnyAgentSpace { return !lhs.isAnyAgentSpace }
             if lhs.sortOrder != rhs.sortOrder { return lhs.sortOrder < rhs.sortOrder }
             if lhs.profileId != rhs.profileId { return lhs.profileId < rhs.profileId }
             return lhs.createdDate < rhs.createdDate
@@ -2333,6 +3434,39 @@ final class SpaceManager: ObservableObject {
         applyResolvedTheme(forSpaceId: spaceId, to: controller)
     }
 
+    /// Pre-view variant of `applyPersistedTheme`: seeds a freshly-created
+    /// `BrowserState`'s theme context with the Space's persisted theme
+    /// BEFORE any view is built from it. The registerWindow-time apply runs
+    /// inside the same controller init but AFTER the view hierarchy is
+    /// assembled (`MainSplitViewController(state:)` precedes
+    /// `slot.registerWindow`), so views capture the context's default
+    /// shared-theme initial value; the corrective `setTheme` then reaches
+    /// them through `receive(on: .main)` sinks, which a session replay
+    /// holding the main thread defers past first paint — the restored
+    /// window visibly repaints from the default theme to the Space's one.
+    /// Untouched when nothing is persisted (shared mirroring stays as
+    /// configured). Incognito windows are skipped outright: a standalone
+    /// incognito window is created with the persisted *normal* Space id, so
+    /// the customization guard alone would let that Space's theme override
+    /// the fixed incognito theme — and, being excluded from registerWindow,
+    /// the window would never be corrected afterwards. (Incognito-Space
+    /// windows are skipped too; their synthetic Space never carries
+    /// customization, so nothing changes for them.) For normal windows
+    /// the register-time apply still runs afterwards and is an idempotent
+    /// re-assert.
+    func seedPersistedTheme(into browserState: BrowserState, spaceId: String) {
+        guard !browserState.isIncognito else { return }
+        guard hasThemeCustomization(forSpaceId: spaceId) else { return }
+        MainActor.assumeIsolated {
+            let context = browserState.themeContext
+            context.mirrorsSharedTheme = false
+            context.spaceThemeResolver = { [weak self] in
+                self?.resolvedTheme(forSpaceId: spaceId)
+            }
+            context.setTheme(resolvedTheme(forSpaceId: spaceId))
+        }
+    }
+
     /// The Theme instance `spaceId`'s windows display: its resolved registry
     /// theme with fixed V2 alpha, then the Space's saturation or Pure
     /// brightness when stored. The copy keeps the registry id so a pinned
@@ -2386,7 +3520,6 @@ final class SpaceManager: ObservableObject {
     /// propagating the annotation through the whole call chain.
     fileprivate func applyResolvedTheme(forSpaceId spaceId: String, to controller: MainBrowserWindowController) {
         MainActor.assumeIsolated {
-            let manager = ThemeManager.shared
             let context = controller.browserState.themeContext
             if hasThemeCustomization(forSpaceId: spaceId) {
                 context.mirrorsSharedTheme = false
@@ -2395,15 +3528,59 @@ final class SpaceManager: ObservableObject {
                 context.spaceThemeResolver = { [weak self] in
                     self?.resolvedTheme(forSpaceId: spaceId)
                 }
-                context.setTheme(resolvedTheme(forSpaceId: spaceId))
             } else {
-                // Nothing persisted — restore mirroring and snap to the
-                // global theme so the change is visible without waiting for
-                // the next global theme switch.
+                // Nothing persisted — restore mirroring so the change is
+                // visible without waiting for the next global theme switch.
                 context.mirrorsSharedTheme = true
                 context.spaceThemeResolver = nil
-                context.setTheme(manager.currentTheme)
             }
+            context.setTheme(themeAsAppliedToWindows(forSpaceId: spaceId))
+        }
+    }
+
+    /// The Theme a window bound to `spaceId` actually displays.
+    ///
+    /// Not the same as `resolvedTheme(forSpaceId:)`: a Space with nothing
+    /// persisted gets the global theme, while a customized one gets the
+    /// resolved copy carrying its own saturation or brightness. Extracted
+    /// because a second caller needs the same answer without a window to ask —
+    /// the reopen loading window, which paints its sidebar band before the
+    /// window that will replace it exists (`sidebarTint(forSpaceId:)`). Nil
+    /// spaceId means the slot has no active Space, which leaves the global
+    /// theme as the only thing there is to say.
+    ///
+    /// No alpha normalisation here, and an earlier version of this function
+    /// added one on the theory that a registry theme with a different overlay
+    /// alpha would read differently through this path than through a window's.
+    /// It cannot: `Theme.colorPair(for:)` forces the overlay role to
+    /// `defaultOverlayAlpha` on every read, whoever is asking.
+    fileprivate func themeAsAppliedToWindows(forSpaceId spaceId: String?) -> Theme {
+        MainActor.assumeIsolated {
+            guard let spaceId, hasThemeCustomization(forSpaceId: spaceId) else {
+                return ThemeManager.shared.currentTheme
+            }
+            return resolvedTheme(forSpaceId: spaceId)
+        }
+    }
+
+    /// The colour the sidebar of a window bound to `spaceId` fills itself with.
+    ///
+    /// `SidebarViewController`'s own role — `windowOverlayBackground`, the one
+    /// it gives its root view — resolved against the very theme that window
+    /// will be handed. Deliberately the role and not a colour picked to look
+    /// close: a Space with a pinned theme or a moved saturation slider has its
+    /// own sidebar colour, and only reading the role follows it.
+    ///
+    /// What it is NOT is the sidebar's pixels. The real one is an
+    /// `NSVisualEffectView` with this colour layered over a `.fullScreenUI`
+    /// material, so what the material picks up from behind the window is
+    /// missing from a flat fill. The boundary between band and content is the
+    /// thing that has to be exact, and that comes from the width, not from here.
+    func sidebarTint(forSpaceId spaceId: String?) -> NSColor {
+        MainActor.assumeIsolated {
+            themeAsAppliedToWindows(forSpaceId: spaceId)
+                .color(for: .windowOverlayBackground,
+                       appearance: ThemeManager.shared.currentAppearance)
         }
     }
 
@@ -2455,10 +3632,8 @@ final class SpaceManager: ObservableObject {
     // MARK: - Account / login binding
 
     @objc private func handleLoginCompleted() {
-        if let account = AccountController.shared.account {
-            bind(to: account)
-        }
-        // Re-run the reconcile skipped while logged out. Async so it lands after
+        refreshAccountBindingForBrowserAccess()
+        // Re-run the reconcile skipped before browser access. Async so it lands after
         // the window manager registers the dangling windows on this same
         // `.loginCompleted` post, so `activate` swaps instead of spawning.
         DispatchQueue.main.async { [weak self] in
@@ -2466,18 +3641,61 @@ final class SpaceManager: ObservableObject {
             // Read fresh from the bound account; `self.spaces` may still hold the
             // pre-login default-account emission (bind refreshes it async).
             let spaces = self.boundAccount?.localStorage.getAllSpaces() ?? self.spaces
-            // Empty while `ensureDefaultSpace` is still in flight; let the
-            // publisher emission reconcile once the store is populated.
-            guard !spaces.isEmpty else { return }
+            // A promotion can bind its target while default-Space creation is
+            // fenced. Once login commits, retry the idempotent initialization;
+            // its publisher emission will reconcile the populated store.
+            guard !spaces.isEmpty else {
+                self.ensureDefaultSpaceForCurrentAccountIfReady()
+                return
+            }
             self.handleSpacesUpdate(spaces)
         }
     }
 
     @objc private func handleAccountChanged(_ notification: Notification) {
-        if let account = notification.object as? Account {
-            bind(to: account)
-        } else {
+        refreshAccountBindingForBrowserAccess()
+    }
+
+    @objc private func handleBrowserAccessStateDidChange() {
+        refreshAccountBindingForBrowserAccess()
+    }
+
+    private func refreshAccountBindingForBrowserAccess() {
+        guard let account = AccountController.shared.localDataAccount else {
             unbind()
+            return
+        }
+        bind(to: account)
+    }
+
+    /// Rebinds Space persistence after a pre-import Guest migration failure
+    /// replaces the terminal source Account object with a fresh default
+    /// account over the same intact directory. Browser access does not change
+    /// in this rollback, so its normal observers have no event to react to.
+    @MainActor
+    func refreshGuestAccountBindingAfterMigrationRollback() {
+        guard ApplicationState.shared.isGuest,
+              !ApplicationState.shared
+                .isGuestAccountPromotionInProgress else {
+            return
+        }
+        refreshAccountBindingForBrowserAccess()
+    }
+
+    /// Displays were added, removed, or re-configured. A slot parks its windows
+    /// wherever the user dragged the group, and nothing else re-checks that
+    /// placement against the screens: AppKit's own repair runs through
+    /// `constrainFrameRect:toScreen:`, which Phi's `BrowserNativeWidgetWindow`
+    /// overrides so the client's deliberate off-screen placement survives being
+    /// ordered in. That trade is only safe if the client notices when a layout
+    /// change turns its placement into one the user cannot undo.
+    ///
+    /// Fires for far more than resolution changes (Dock and menu-bar geometry,
+    /// display sleep/wake), which is fine — every slot whose placement is still
+    /// usable is a no-op.
+    @objc private func handleScreenParametersChanged() {
+        for slot in slots {
+            slot.revalidatePlacementForScreenChange()
         }
     }
 
@@ -2489,9 +3707,41 @@ final class SpaceManager: ObservableObject {
         // that race the SwiftData publishers below.
         loadRestoreSnapshot()
 
+        // Seed `spaces` from a direct fetch SYNCHRONOUSLY, for the same
+        // reason `loadRestoreSnapshot` runs here and not in the task below:
+        // this bind runs on the main thread before Chromium is up, while the
+        // task is queued on the MainActor and a cold-launch session replay
+        // holds the main thread for seconds — measured ~1.4s from bind to
+        // task entry, well past the restored windows' first paint, which
+        // therefore rendered every `spaces` reader (Space pips, tints,
+        // profile lookups) with defaults until the late delivery re-colored
+        // them.
+        //
+        // DATA ONLY — deliberately NOT `handleSpacesUpdate`: bind can run
+        // inside `SpaceManager.init` (the singleton's first touch), and the
+        // full update path's side effects are unsafe that early — its login
+        // gate (`checkLoginStatusOnChromiumLaunch`) reaches
+        // `AccountController.account`'s didSet, whose shortcut reload asks
+        // the bridge to rebuild the main menu before AppKit is ready
+        // (startup crash in `NSMenu _setMenuName:`). Assigning the
+        // @Published array is effect-free here (no subscribers exist yet);
+        // slot reconciliation, migrations, and the default-space theme
+        // publish all run on the publisher's first emission, which replaces
+        // this seed wholesale through `handleSpacesUpdate` as before. The
+        // store fetch itself is the established synchronous main-context
+        // pattern (`handleLoginCompleted` / `boundProfileId`); bind runs on
+        // the main thread (account notifications post there), matching this
+        // file's other `assumeIsolated` entries.
+        let seededSpaces = MainActor.assumeIsolated {
+            account.localStorage.getAllSpaces()
+        }
+        if !seededSpaces.isEmpty {
+            lastStoreSpaces = seededSpaces
+            spaces = seededSpaces
+        }
+
         Task { @MainActor [weak self] in
-            guard let self else { return }
-            account.localStorage.ensureDefaultSpace(profileId: LocalStore.defaultProfileId)
+            guard let self, self.boundAccount === account else { return }
             // Agent Spaces are ephemeral — they should exist only while their
             // (in-memory) task runs. Any that were persisted and outlived their
             // task, e.g. across this relaunch, are orphans with no live task;
@@ -2513,6 +3763,7 @@ final class SpaceManager: ObservableObject {
                 .sink { [weak self] rules in
                     self?.handleURLRulesUpdate(rules)
                 }
+            self.ensureDefaultSpaceForCurrentAccountIfReady()
         }
     }
 
@@ -2675,7 +3926,11 @@ final class SpaceManager: ObservableObject {
     }
 
     private func unbind() {
+        let hadBoundAccount = boundAccount != nil
         boundAccount = nil
+        if hadBoundAccount {
+            observedNormalWindowProfileId = nil
+        }
         spacesCancellable?.cancel()
         spacesCancellable = nil
         rulesCancellable?.cancel()
@@ -2718,6 +3973,16 @@ final class SpaceManager: ObservableObject {
         // row under an incognito id (never written by this code) from
         // shadowing a synthetic Space.
         var updated = storeSpaces.filter { !Self.isIncognitoSpaceId($0.spaceId) }
+        // Agent Spaces always trail user Spaces, whatever their stored
+        // sortOrder: agent Spaces are appended at the global max on creation,
+        // but a user Space created while one lives would otherwise land after
+        // it. Grouping here — the single point every surface's order flows
+        // through — keeps the strip, the switcher menus, and the ⌃-number
+        // bindings agreeing, and lets the strip draw one divider between the
+        // groups. Stable partition: each group keeps its stored order, and a
+        // reorder commit (which persists the displayed order) renumbers the
+        // store toward this arrangement rather than fighting it.
+        updated = updated.filter { !$0.isAnyAgentSpace } + updated.filter(\.isAnyAgentSpace)
         lastStoreSpaces = updated
         migrateLegacyFollowGlobalPinsIfNeeded(storeSpaces: updated)
         // Every live Incognito Space joins the list at its runtime position —
@@ -2730,7 +3995,12 @@ final class SpaceManager: ObservableObject {
         for descriptor in incognitoSpaces.sorted(by: {
             ($0.sortIndex ?? Int.max, $0.ordinal) < ($1.sortIndex ?? Int.max, $1.ordinal)
         }) {
-            let index = min(max(descriptor.sortIndex ?? updated.count, 0), updated.count)
+            // A new Incognito Space (no recorded position) joins after the
+            // user Spaces but before the agent group, so it never lands past
+            // the strip's agent divider. Recomputed per insert — an earlier
+            // default-positioned Incognito Space shifts the boundary.
+            let defaultIndex = updated.firstIndex(where: \.isAnyAgentSpace) ?? updated.count
+            let index = min(max(descriptor.sortIndex ?? defaultIndex, 0), updated.count)
             updated.insert(makeIncognitoSpace(descriptor: descriptor, sortOrder: index), at: index)
         }
         spaces = updated
@@ -2756,12 +4026,11 @@ final class SpaceManager: ObservableObject {
             return (updated.first(where: isAutomaticSwitchTarget) ?? updated.first)?.spaceId
         }()
 
-        // Gate on login: before login, windows are dangling and not yet in any
-        // slot's `windowsBySpaceId`, so `activate`'s spawn guard can't see them
-        // and would spawn a duplicate empty window for a Space that already owns
-        // one (stray windows after a User-Data reset + re-login).
-        // `handleLoginCompleted` re-runs this once windows are registered.
-        if AuthManager.shared.checkLoginStatusOnChromiumLaunch() {
+        // Gate on browser access: before Guest entry or login, windows are
+        // dangling and not yet in any slot's `windowsBySpaceId`, so `activate`'s
+        // spawn guard cannot see them and would spawn a duplicate empty window.
+        // Access-state changes re-run this once windows are registered.
+        if ApplicationState.shared.canUseBrowser {
             for slot in slots {
                 // A slot mid-cascade is on its way out: activating a fallback
                 // would respawn a window into it and fight the teardown. Hit
@@ -2771,6 +4040,17 @@ final class SpaceManager: ObservableObject {
                     continue
                 }
                 if let current = slot.activeSpaceId, validIds.contains(current) {
+                    continue
+                }
+                // A slot whose restore reconcile is still running may sit on a
+                // Space the store simply hasn't delivered yet: on cold launch
+                // the SwiftData publisher's first emission races the restored
+                // windows, and a partial list would misread the snapshot's
+                // active Space as deleted — kicking the slot to a fallback and
+                // overwriting the persisted active Space mid-restore. Skip it;
+                // a genuinely deleted Space is re-reconciled by the next store
+                // emission once the restore settles.
+                if slot.restoreVisibilityReconcileScheduled {
                     continue
                 }
                 if let fallback {
@@ -3122,6 +4402,63 @@ final class SpaceWindowSlot: ObservableObject {
     /// illusion that the user is "swapping the contents" of one window.
     private var pendingFrameByWindowId: [Int: NSRect] = [:]
 
+    /// The loading window standing in for this slot while its windows are
+    /// replayed, lent to it by `SpaceManager.slotForRestoreIndex`. Nil whenever
+    /// the feature is off. The manager keeps its own reference and owns the
+    /// hand-off's end; this one exists so the slot can drop the loading window
+    /// behind the restored window that arrives (`pinUnder`) and close it
+    /// early if that window goes away again.
+    private var reopenLoadingWindow: ReopenLoadingWindow?
+
+    /// Where this slot reopened, when a reopen put a loading window there
+    /// first. Every window that registers into the slot without a more specific
+    /// pending frame is forced onto it, so the restored window and the loading
+    /// window it replaces occupy the same rect — the alternative is trusting
+    /// Chromium's replayed bounds to agree, which is exactly the assumption the
+    /// no-jump promise cannot rest on. Measured: Chromium replays a slot the
+    /// user parked overhanging a screen edge fully back on screen, 763pt away.
+    ///
+    /// In force until the restore settles (`endReopenPlacementOverride`) —
+    /// this reopen's remaining windows are still arriving, and every one of
+    /// them belongs on the same rect. Holding it past that would force the
+    /// frame on windows this reopen never promised anything about: a later
+    /// spawn that queues no frame of its own (a hidden agent-Space window)
+    /// would be dragged onto the reopen rect. The loading window outlives the
+    /// override rather than the other way round (`ReopenLoadingHandoff`), and
+    /// nothing needs the two to end together: by then the restored window is
+    /// on the rect and the loading window is behind it.
+    private var reopenPlacementFrame: NSRect?
+
+    /// Takes over the loading window standing in for this slot, and the frame
+    /// it occupies. See `reopenLoadingWindow` and `reopenPlacementFrame`.
+    fileprivate func adoptReopenLoadingWindow(_ window: ReopenLoadingWindow,
+                                              placedAt frame: NSRect) {
+        reopenLoadingWindow = window
+        reopenPlacementFrame = frame
+    }
+
+    /// Closes this slot's loading window, if it still has one. The forced
+    /// placement deliberately survives — see `reopenPlacementFrame`.
+    private func closeReopenLoadingWindow() {
+        reopenLoadingWindow?.close()
+        reopenLoadingWindow = nil
+    }
+
+    /// Stops forcing this reopen's remembered frame on newly registered
+    /// windows. Called from `SpaceManager` once the restore settles — before
+    /// the loading window goes, which outlives it.
+    fileprivate func endReopenPlacementOverride() {
+        reopenPlacementFrame = nil
+    }
+
+    /// Ends the reopen hand-off for this slot: closes anything still up and
+    /// stops forcing the reopen frame. Called from `SpaceManager` when the
+    /// hand-off's deadline arrives.
+    fileprivate func endReopenLoadingHandover() {
+        closeReopenLoadingWindow()
+        endReopenPlacementOverride()
+    }
+
     /// spaceId → controller whose window a profile-change respawn left on
     /// screen until its replacement registers. Holds the only strong
     /// reference once the controller is evicted from `windowsBySpaceId`.
@@ -3181,9 +4518,9 @@ final class SpaceWindowSlot: ObservableObject {
     private static let agentKeyFalloutWindow: TimeInterval = 3.0
 
     /// Space IDs whose imminent window close is driven by the user
-    /// closing the last tab in the active Space via the tab-row ✕
-    /// button, not by closing the window itself. Populated by
-    /// `markTabDrivenClose` from `Tab.close()` just before dispatching
+    /// closing the last tab in the active Space, not by closing the
+    /// window itself. Populated by `markTabDrivenClose` from
+    /// `Tab.close()` just before dispatching
     /// `IDC_CLOSE_TAB` when only one tab remains; drained by
     /// `unregisterWindow` to decide whether to switch to a sibling
     /// Space (tab-driven) or cascade-close every Space (window-driven,
@@ -3194,13 +4531,23 @@ final class SpaceWindowSlot: ObservableObject {
     /// (`SpaceManager.requestCloseIncognitoSpace`) instead of dispatching
     /// the close.
     ///
+    /// Cancelled by `cancelTabDrivenClose` when the window enters
+    /// placeholder mode. A last-tab close in a normal non-Incognito
+    /// window always does, so the auto-close this marker predicts never
+    /// happens and no user gesture carries a live marker into
+    /// `unregisterWindow` — the tab-driven hand-off there is currently
+    /// unreachable through this path.
+    ///
     /// Stored as spaceId → expiration deadline rather than a plain
     /// set: when the dispatched `IDC_CLOSE_TAB` is vetoed (typically
-    /// an `onbeforeunload` prompt the user cancels), no
-    /// `unregisterWindow` ever fires to drain the marker, and a later
-    /// window-driven close would otherwise misclassify itself as
-    /// tab-driven. The TTL caps that stale window at
-    /// `Self.tabDrivenCloseTTL` seconds.
+    /// an `onbeforeunload` prompt the user cancels), the window enters
+    /// no placeholder and no `unregisterWindow` ever fires, so nothing
+    /// cancels or drains the marker and a later window-driven close
+    /// would otherwise misclassify itself as tab-driven. The TTL caps
+    /// that stale window at `Self.tabDrivenCloseTTL` seconds. This
+    /// residual is the only remaining way a live marker reaches
+    /// `unregisterWindow`, and it is a known defect rather than an
+    /// intended behavior.
     private var pendingTabDrivenCloseDeadlines: [String: Date] = [:]
 
     /// Maximum lifetime of a `pendingTabDrivenCloseDeadlines` entry.
@@ -3220,7 +4567,8 @@ final class SpaceWindowSlot: ObservableObject {
     /// `unregisterWindow`, Chromium has already drained the WebContents
     /// and the contentView's GPU surface, so a snapshot taken there
     /// captures blank/partial pixels. Same lifetime semantics as
-    /// `pendingTabDrivenCloseDeadlines` — drained alongside it.
+    /// `pendingTabDrivenCloseDeadlines` — drained and cancelled
+    /// alongside it, and reachable only through the same residual.
     private var pendingTabDrivenCloseSnapshots: [String: NSImage] = [:]
 
     /// Set for the duration of an `activate(spaceId:)` call so the
@@ -3241,6 +4589,12 @@ final class SpaceWindowSlot: ObservableObject {
     /// create.
     private var visibleFrameObservers: [NSObjectProtocol] = []
 
+    /// Swapped onto the visible window alongside the two observers above, and
+    /// for the same job: the sidebar's width lives on that window's
+    /// `BrowserState`, so it has to follow the window the slot is showing. See
+    /// `observeSidebarWidth`.
+    private var visibleSidebarWidthObserver: AnyCancellable?
+
     /// The on-screen frame every Space window in this slot is kept aligned to
     /// — the slot's single source of truth for window position/size. Refreshed
     /// whenever the visible window moves or resizes (`observeFrameChanges`) and
@@ -3252,23 +4606,29 @@ final class SpaceWindowSlot: ObservableObject {
     /// has ever had a positioned window.
     private var lastKnownFrame: NSRect?
 
-    /// Post-swap frame pin. When a switch/spawn surfaces a window, Chromium
-    /// asynchronously re-applies that window's stale *creation* bounds a few
-    /// hundred ms later, clobbering the position the swap set — the user-visible
-    /// "jump back to where the window was before I moved it". The user's drag
-    /// updates the live NSWindow frame (and our `lastKnownFrame`) but never
-    /// reaches whatever stored bounds Chromium re-applies on re-show, so a
-    /// one-shot re-assert at surface time is simply too early to win.
+    /// `lastKnownFrame` minus the fullscreen rects — the geometry this slot
+    /// would occupy as an ordinary window. Kept apart because the two answer
+    /// different questions: `lastKnownFrame` is "align the siblings to this",
+    /// which must follow the window into fullscreen, while this is "reopen
+    /// here", which must not (a restored window always comes back windowed, so
+    /// a screen-sized rect would be a lie every time it were used).
     ///
-    /// While armed, the frame observer holds the surfaced window at this frame:
-    /// a programmatic reposition (Chromium's stale re-apply — no mouse button
-    /// held) is reverted and the pin then releases, having served its purpose;
-    /// a user drag (mouse held) instead moves the pin *with* the user and keeps
-    /// it armed, so a re-apply that lands mid/post-drag still snaps back to the
-    /// user's chosen spot. This is event-driven rather than time-bounded: it
-    /// waits for the actual re-apply however late it lands, and never fights a
-    /// deliberate drag. Nil when disarmed.
-    private var pinnedFrame: NSRect?
+    /// Refreshed from the visible window's live frame whenever one is available
+    /// — by the frame observer on every move/resize, and by `snapshotFrame` at
+    /// each persist — so a slot that enters fullscreen keeps the position it
+    /// had on the way in. Nil only before the slot has ever had a positioned
+    /// window outside fullscreen.
+    private var lastKnownWindowedFrame: NSRect?
+
+    /// The other two things the cross-launch record carries about how this slot
+    /// LOOKS, as opposed to where it sits: the sidebar's width and the leading
+    /// traffic light's origin. Cached for the same reason as the frame above —
+    /// a persist can run while the window is being torn down, and the last
+    /// value the slot actually had beats none. Nil only before the slot has had
+    /// a window to read them off. Written by `snapshotSidebarWidth` /
+    /// `snapshotTrafficLightOrigin`, read by nothing else.
+    private var lastKnownSidebarWidth: CGFloat?
+    private var lastKnownTrafficLightOrigin: NSPoint?
 
     /// True for the duration of a `performHorizontalWindowSlide`. Read by
     /// the `observeFrameChanges` propagation closure to early-return — the
@@ -3358,7 +4718,9 @@ final class SpaceWindowSlot: ObservableObject {
     /// previous (closing) window's contentView can no longer produce a
     /// usable snapshot — the override holds the composite captured at
     /// `markTabDrivenClose` time. Per-style animation functions consult
-    /// it as a fallback after their own snapshot attempt fails.
+    /// it as a fallback after their own snapshot attempt fails. Only the
+    /// tab-driven hand-off passes it, so it is currently unreachable
+    /// outside the residual documented on `unregisterWindow`.
     func activate(
         spaceId: String,
         leavingSnapshotOverride: NSImage? = nil,
@@ -3381,6 +4743,11 @@ final class SpaceWindowSlot: ObservableObject {
             onActivationFailed?()
             return
         }
+        // An explicit activation supersedes any earlier key-event adoption:
+        // from here on the active Space reflects a deliberate switch, so the
+        // window-driven cascade must not "undo" it (see
+        // `activeSpaceAdoptedFromKeyEvent`).
+        activeSpaceAdoptedFromKeyEvent = false
         isPerformingActivate = true
         defer { isPerformingActivate = false }
         guard let manager,
@@ -3471,17 +4838,6 @@ final class SpaceWindowSlot: ObservableObject {
                 // already torn down.
                 if let inheritedFrame, let targetWindow = target.window {
                     targetWindow.setFrame(inheritedFrame, display: false)
-                    // Hold this position against Chromium's late re-apply of the
-                    // window's stale creation bounds after it surfaces. A one-shot
-                    // re-assert is too early; the pin reverts that re-apply
-                    // whenever it lands. See `pinnedFrame`. Not armed in
-                    // fullscreen: the inherited frame is the screen-sized rect
-                    // there, no didMove fires in fullscreen to consume the pin,
-                    // and a stale pin would then "revert" AppKit's windowed-frame
-                    // restore on fullscreen exit, leaving the window screen-sized.
-                    if !slotHasFullScreenWindow {
-                        pinnedFrame = inheritedFrame
-                    }
                 }
                 // Align the target's sidebar shape to the previously visible
                 // Space *before* it surfaces so the user reads a single
@@ -3544,7 +4900,17 @@ final class SpaceWindowSlot: ObservableObject {
                 if slotHasFullScreenWindow {
                     syncSlotTabGroup(selecting: previous?.window)
                 }
-                if animated {
+                // A minimized target can only come back via `deminiaturize` —
+                // `makeKeyAndOrderFront` leaves it in the Dock — and the
+                // slide/push-in machinery assumes an orderly hidden window.
+                // Restore it here, after the frame/sidebar sync above so the
+                // Dock fly-out lands on the slot's frame, and let that
+                // fly-out stand in for the switch animation.
+                let restoredFromDock = target.window?.isMiniaturized == true
+                if restoredFromDock {
+                    target.window?.deminiaturize(nil)
+                }
+                if animated && !restoredFromDock {
                     performSwap(
                         from: previous,
                         to: target,
@@ -3568,6 +4934,22 @@ final class SpaceWindowSlot: ObservableObject {
                     onSwapSettled?()
                 }
             } else {
+                // Re-activating the already-active Space is an explicit ask
+                // to surface it — the agent-handoff prompt's "Switch to
+                // Agent Space" lands here. The window can be minimized in
+                // the Dock, ordered out, or parked off the user's current
+                // desktop while `isVisible` still reads true, so don't
+                // gate on state probes: deminiaturize when needed, then
+                // always re-front — `.moveToActiveSpace` lands it on the
+                // desktop the user is actually looking at, and fronting an
+                // already-frontmost window is harmless.
+                if let targetWindow = target.window {
+                    AppLogInfo("[SpaceWindowSlot] activate same-space \(spaceId): miniaturized=\(targetWindow.isMiniaturized) visible=\(targetWindow.isVisible) key=\(targetWindow.isKeyWindow) onActiveSpace=\(targetWindow.isOnActiveSpace) occlusionVisible=\(targetWindow.occlusionState.contains(.visible)) windowNumber=\(targetWindow.windowNumber)")
+                    if targetWindow.isMiniaturized {
+                        targetWindow.deminiaturize(nil)
+                    }
+                    makeKeyAndOrderFrontHidingSlotTabBar(targetWindow)
+                }
                 onSwapSettled?()
             }
             return
@@ -5056,12 +6438,6 @@ final class SpaceWindowSlot: ObservableObject {
     /// come in through `reconcileFullScreenWithWindowState`.
     func windowFullScreenStateChanged(isFullScreen: Bool) {
         self.isFullScreen = isFullScreen
-        // A Space switch's frame pin must not survive a fullscreen transition:
-        // armed inside fullscreen it holds the screen-sized rect, no didMove
-        // ever fires in fullscreen to consume it, and AppKit's programmatic
-        // frame restore on exit looks exactly like the "stale re-apply" the
-        // pin exists to revert — snapping the window back to full-screen size.
-        pinnedFrame = nil
         for controller in windowsBySpaceId.values {
             guard let window = controller.window else { continue }
             if isFullScreen {
@@ -5135,13 +6511,24 @@ final class SpaceWindowSlot: ObservableObject {
     /// restored window keep its own fullscreen state instead would make macOS
     /// spawn a separate Space per window and orphan the hidden ones — which is
     /// why restore comes back normal first (see Chromium session_restore.cc).
+    /// True from the moment `applyPendingRestoreFullScreen` schedules the
+    /// deferred `toggleFullScreen` until that toggle has been issued.
+    /// `pendingRestoreFullScreen` is consumed at scheduling, but the slot's
+    /// windows only start reporting `.fullScreen` once the toggle fires — a
+    /// restore reconcile pass landing in that gap must still treat the slot
+    /// as sharing a fullscreen Space, or it would hard-orderOut (and thereby
+    /// detach) the siblings the previous pass just grouped for the re-entry.
+    private var fullScreenReentryInFlight = false
+
     private func applyPendingRestoreFullScreen(activeWindow: NSWindow) {
         guard pendingRestoreFullScreen, activeWindow.isVisible else { return }
         pendingRestoreFullScreen = false
         guard !activeWindow.styleMask.contains(.fullScreen) else { return }
+        fullScreenReentryInFlight = true
         // Defer one runloop turn so the just-surfaced window has settled before
         // the fullscreen transition begins; re-check the state at fire time.
-        DispatchQueue.main.async { [weak activeWindow] in
+        DispatchQueue.main.async { [weak self, weak activeWindow] in
+            defer { self?.fullScreenReentryInFlight = false }
             guard let activeWindow,
                   !activeWindow.styleMask.contains(.fullScreen) else { return }
             activeWindow.toggleFullScreen(nil)
@@ -5150,6 +6537,10 @@ final class SpaceWindowSlot: ObservableObject {
 
     private func makeKeyAndOrderFrontHidingSlotTabBar(_ window: NSWindow?) {
         guard let window else { return }
+
+        // Every explicit fronting un-conceals: covers a mid-restore
+        // pip-switch to a Space whose window is still alpha-concealed.
+        revealConcealedWindow(window)
 
         hideSlotTabBars()
         if let tabGroup = window.tabGroup,
@@ -5203,7 +6594,7 @@ final class SpaceWindowSlot: ObservableObject {
     /// slot's hidden windows instead.
     private func orderOutRearmingMoveToActiveSpace(_ window: NSWindow) {
         window.orderOut(nil)
-        if !slotHasFullScreenWindow && !pendingRestoreFullScreen {
+        if !slotHasFullScreenWindow && !pendingRestoreFullScreen && !fullScreenReentryInFlight {
             window.collectionBehavior.insert(.moveToActiveSpace)
         }
     }
@@ -5346,12 +6737,14 @@ final class SpaceWindowSlot: ObservableObject {
     /// leftover swap overlay". No-op while a swap animates (the push-in draws on
     /// the still-front leaving window, and its overlay is legitimately live) or
     /// in a shared fullscreen Space (ordering a tab out flashes a blank
-    /// workspace). A miniaturized active window still gets its surfaced siblings
-    /// hidden, but is not brought back on screen. Keyed on `activeSpaceId` — the
-    /// slot's source of truth — not `visibleController`, which rapid switching
-    /// can leave transiently stale.
+    /// workspace), or while a window-driven cascade drains the slot (nothing to
+    /// re-assert, and the display adoption keeps `activeSpaceId` on a live window,
+    /// so the bail below no longer covers it). A miniaturized active window still
+    /// gets its surfaced siblings hidden, but is not brought back on screen.
+    /// Keyed on `activeSpaceId` — the slot's source of truth — not
+    /// `visibleController`, which rapid switching can leave transiently stale.
     private func enforceSlotSingleWindowInvariant() {
-        guard !isSwitchAnimationInFlight, !slotHasFullScreenWindow else { return }
+        guard !isSwitchAnimationInFlight, !slotHasFullScreenWindow, !isCascadingSlotClose else { return }
         guard let activeId = activeSpaceId,
               let activeController = windowsBySpaceId[activeId],
               let activeWindow = activeController.window else { return }
@@ -5398,6 +6791,124 @@ final class SpaceWindowSlot: ObservableObject {
         orderOutRearmingMoveToActiveSpace(window)
     }
 
+    /// Space ids whose next `registerWindow` belongs to a restored
+    /// sibling-Space window that must stay invisible for the whole restore
+    /// burst. Marked by `PhiChromiumCoordinator.mainBrowserWindowCreated`
+    /// BEFORE the controller init (registration runs inside that init, so a
+    /// post-init conceal would lose the race against the registration-time
+    /// tab-group enrollment below); consumed by `registerWindow`.
+    private var pendingRestoreConcealSpaceIds: Set<String> = []
+
+    /// Marks the restored window that is about to register for `spaceId` as
+    /// a concealed sibling: `registerWindow` then skips the slot tab-group
+    /// enrollment for it and conceals the window before Chromium's
+    /// post-construction Show() can surface it.
+    ///
+    /// Why concealment must include staying OUT of the native tab group:
+    /// grouped windows share one frame, and AppKit's automatic tabbing makes
+    /// the last-shown window the group's selected tab — a transparent
+    /// selected tab renders the whole shared frame transparent (the visible
+    /// active window "disappears" behind it until the reconcile pops the
+    /// siblings out). As an ungrouped window it surfaces alone — transparent
+    /// and inert — while the active window's frame stays untouched. The next
+    /// `syncSlotTabGroup` regroups it once it is genuinely surfaced — the
+    /// same regroup-on-resurface contract hidden siblings already follow
+    /// after a hard orderOut (see `deferGroupingForReveal` in
+    /// `registerWindow`).
+    func markRestoredSiblingForConcealment(spaceId: String) {
+        pendingRestoreConcealSpaceIds.insert(spaceId)
+    }
+
+    /// Applies the conceal to a just-registered restored sibling: invisible
+    /// (alpha survives every ordering call Chromium makes, unlike orderOut),
+    /// inert to clicks, and barred from automatic tab-group enrollment while
+    /// concealed. Reversed idempotently by `revealConcealedWindow` from
+    /// every settle path; `syncSlotTabGroup` restores the preferred tabbing
+    /// mode when the window is regrouped. Mirrors the dangling-window alpha
+    /// conceal/restore pair in
+    /// `MainBrowserWindowControllersManager.hideDanglingWindow`.
+    ///
+    /// Chromium is told too: alpha concealment is invisible to it, so it
+    /// would otherwise start a page load for this window's selected restored
+    /// tab — once per concealed Space, competing with the visible window for
+    /// the main thread. This runs inside Chromium's window-created callback,
+    /// ahead of the tab replay, so the mark is in place when it decides.
+    private func concealRestoredSiblingWindow(_ window: NSWindow, windowId: Int) {
+        window.alphaValue = 0
+        window.ignoresMouseEvents = true
+        window.tabbingMode = .disallowed
+        Self.setRestoredSiblingConcealedIfSupported(true, windowId: Int64(windowId))
+    }
+
+    /// The framework half of the bridge pair can lag this header during
+    /// development (it only re-syncs on a Chromium rebuild), and a hard call
+    /// into a framework that predates this selector raises
+    /// `doesNotRecognizeSelector` and takes the app down. Skipping is safe:
+    /// an old framework never marks a window, and both directions are
+    /// documented no-ops for unmarked windows — concealed restores just load
+    /// eagerly, the pre-feature behavior.
+    private static func setRestoredSiblingConcealedIfSupported(_ concealed: Bool, windowId: Int64) {
+        guard let bridge = ChromiumLauncher.sharedInstance().bridge,
+              bridge.responds(to: #selector(PhiChromiumBridgeProtocol.setRestoredSiblingConcealed(_:windowId:)))
+        else { return }
+        bridge.setRestoredSiblingConcealed(concealed, windowId: windowId)
+    }
+
+    /// Idempotent undo of `concealRestoredSiblingWindow`; safe on windows
+    /// that were never concealed. Dropping the Chromium mark starts the page
+    /// load that was skipped while concealed, so a Space that surfaces is
+    /// never a blank page. Dropped on every call rather than only on an alpha
+    /// transition — Chromium ignores the drop for a window it never marked,
+    /// while gating on the alpha would strand a window some other path had
+    /// already made opaque.
+    ///
+    /// The window carries no Chromium id, so the slot has to recover its
+    /// controller; every caller passes a window this slot owns, which makes a
+    /// miss a bug rather than a state to tolerate — hence the log.
+    private func revealConcealedWindow(_ window: NSWindow) {
+        if window.alphaValue != 1 { window.alphaValue = 1 }
+        if window.ignoresMouseEvents { window.ignoresMouseEvents = false }
+        guard let controller = windowsBySpaceId.values.first(where: { $0.window === window })
+        else {
+            AppLogWarn("[SpaceWindowSlot] revealConcealedWindow: window is not registered with this slot — Chromium keeps its restored-sibling mark")
+            return
+        }
+        Self.setRestoredSiblingConcealedIfSupported(false, windowId: Int64(controller.windowId))
+    }
+
+    /// Catch-all for the reconcile's final pass: no restored window may stay
+    /// transparent past the restore burst, even when the reconcile bailed on
+    /// every pass (e.g. the active Space's window never arrived).
+    private func revealAllConcealedWindows() {
+        for controller in windowsBySpaceId.values {
+            guard let window = controller.window else { continue }
+            revealConcealedWindow(window)
+        }
+    }
+
+    /// Fronts the restore's target window the moment its own content is fully
+    /// applied, instead of after the whole multi-profile burst settles. Called
+    /// by `PhiChromiumCoordinator` right after a restored window's snapshot
+    /// transaction lands. Only the app-level last-active Space's window
+    /// qualifies — the exact window the settle reconcile would front anyway —
+    /// so this merely moves that reveal earlier: siblings stay concealed until
+    /// the reconcile, which still runs unchanged afterwards (idempotent
+    /// re-front, sibling sweep, fullscreen re-entry). Gated to the restore
+    /// burst via `restoreVisibilityReconcileScheduled`, whose becomeKey
+    /// suppression also keeps this early key change out of the active-Space
+    /// bookkeeping; a genuine mid-restore user switch flips `activeSpaceId`
+    /// away and disarms this. An apply landing after the burst window (the
+    /// flag self-clears on the reconcile's final pass) simply falls back to
+    /// the settle reveal — later, never wrong.
+    func frontRestoredWindowOnSnapshotApplied(_ controller: MainBrowserWindowController) {
+        guard restoreVisibilityReconcileScheduled,
+              controller.spaceId == activeSpaceId,
+              controller.spaceId == manager?.persistedActiveSpaceId,
+              windowsBySpaceId[controller.spaceId] === controller,
+              let window = controller.window else { return }
+        makeKeyAndOrderFrontHidingSlotTabBar(window)
+    }
+
     /// Re-asserts this slot's one-visible-window invariant after Chromium
     /// surfaces several of the slot's windows at once. Scheduled (coalesced)
     /// by `PhiChromiumCoordinator.mainBrowserWindowCreated` for every restored
@@ -5415,7 +6926,18 @@ final class SpaceWindowSlot: ObservableObject {
     /// turns (Chromium's re-orders trail window creation by up to ~2s) and each
     /// pass orders every non-active window off screen, then re-fronts the
     /// active one.
-    private var restoreVisibilityReconcileScheduled = false
+    /// True while the slot's active Space was last changed by a window key
+    /// event (`handleWindowDidBecomeKey` adoption) rather than an explicit
+    /// `activate`. The window-driven cascade uses this to tell a close-driven
+    /// key promotion (AppKit re-keys a fullscreen sibling before the closing
+    /// window's willClose, and the adoption pollutes the active-Space
+    /// bookkeeping — must be undone) from a deliberate user switch made
+    /// before closing the group (must be preserved): at cascade time both
+    /// look identical (`activeSpaceId != closing spaceId`), only the source
+    /// of the last change distinguishes them. Cleared by `activate`.
+    private var activeSpaceAdoptedFromKeyEvent = false
+
+    fileprivate var restoreVisibilityReconcileScheduled = false
     func scheduleRestoreVisibilityReconcile() {
         guard !restoreVisibilityReconcileScheduled else { return }
         restoreVisibilityReconcileScheduled = true
@@ -5424,11 +6946,19 @@ final class SpaceWindowSlot: ObservableObject {
                 guard let self else { return }
                 if delay == 3.0 { self.restoreVisibilityReconcileScheduled = false }
                 self.reconcileRestoreVisibility()
+                // Final pass: whatever the reconcile did (or bailed on), no
+                // window may stay alpha-concealed past the restore burst.
+                if delay == 3.0 { self.revealAllConcealedWindows() }
             }
         }
     }
 
     private func reconcileRestoreVisibility() {
+        // Nothing to re-assert while a window-driven cascade drains the slot; the
+        // display adoption keeps `activeSpaceId` on a live window, so the bail
+        // below no longer covers it. `revealAllConcealedWindows` runs outside
+        // this pass, so no sibling stays concealed.
+        guard !isCascadingSlotClose else { return }
         // `activeSpaceId` names the Space that belongs on screen (it tracks the
         // restored windows' key events; a genuine mid-restore user switch also
         // lands here, and showing that Space while hiding the rest stays
@@ -5454,17 +6984,51 @@ final class SpaceWindowSlot: ObservableObject {
         // siblings stay stacked behind the re-selected active tab and the
         // strip bleed guard hides their ghost rows; a DETACHED sibling (never
         // part of the fullscreen Space) still gets the hard hide.
-        let inSharedFullScreen = slotHasFullScreenWindow
+        let inSharedFullScreen = slotHasFullScreenWindow || fullScreenReentryInFlight
+        // A slot about to re-enter fullscreen must NOT hard-orderOut its
+        // siblings: that detaches them from the native tab group, and the
+        // first Space switch after the re-entry then has to re-attach and
+        // key a window whose adoption into the fullscreen Space the window
+        // server is still processing — which kicks macOS off the fullscreen
+        // desktop entirely (the reopen-and-switch bug; deferring the key one
+        // turn was measured insufficient). Group the whole slot behind the
+        // active window BEFORE the fullscreen toggle instead: the tab group
+        // enters the fullscreen Space as one unit, so the first switch
+        // selects an already-settled member — the same shape as every later
+        // switch, which never yanks. Siblings stay stacked behind the
+        // selected active tab, the state the fullscreen branch below already
+        // trusts on every later pass.
+        if pendingRestoreFullScreen {
+            syncSlotTabGroup(selecting: activeWindow)
+            for controller in windowsBySpaceId.values {
+                guard let window = controller.window else { continue }
+                revealConcealedWindow(window)
+            }
+            visibleController = activeController
+            makeKeyAndOrderFrontHidingSlotTabBar(activeWindow)
+            updateWindowsMenuExclusion()
+            applyPendingRestoreFullScreen(activeWindow: activeWindow)
+            return
+        }
         var hidCount = 0
         for (siblingSpaceId, controller) in windowsBySpaceId where siblingSpaceId != activeId {
             guard let window = controller.window, window.isVisible else { continue }
             if inSharedFullScreen, windowsShareTabGroup(window, activeWindow) {
+                // Left stacked behind the active tab — safe to un-conceal
+                // (its z-order keeps it out of sight).
+                revealConcealedWindow(window)
                 continue
             }
             orderOutRearmingMoveToActiveSpace(window)
+            // Off screen now; restore visibility properties so the next
+            // pip-switch surfaces a fully opaque, interactive window.
+            revealConcealedWindow(window)
             hidCount += 1
         }
         visibleController = activeController
+        // The active window is never concealed on the claim path, but reveal
+        // defensively before fronting it.
+        revealConcealedWindow(activeWindow)
         // Re-front the active window only when something was actually hidden (or
         // it isn't the selected tab yet), so settled passes don't repeatedly
         // steal key focus.
@@ -5581,6 +7145,14 @@ final class SpaceWindowSlot: ObservableObject {
             pendingCloseOnReplacementBySpaceId[spaceId] = existing
         }
         windowsBySpaceId[spaceId] = controller
+        // Chromium records its "recently closed" stack inside its own close
+        // handshake, before AppKit reports the close, so it needs this pairing
+        // up front to stamp the Space into the restore entry — that is what
+        // lets a reopened window return to this Space instead of whichever one
+        // is active. A window's Space never changes, so publishing once here is
+        // enough; Chromium drops the entry with the window's Browser.
+        ChromiumLauncher.sharedInstance().bridge?.setWindowSpace(
+            spaceId, forWindowId: Int64(controller.windowId))
         manager?.hasEverHostedSlotWindow = true
         // The spawn for this Space has landed — clear the in-flight gate.
         pendingSpawnSpaceIds.remove(spaceId)
@@ -5593,7 +7165,10 @@ final class SpaceWindowSlot: ObservableObject {
         defer {
             manager?.pushSpaceStateToChromium()
             // Snapshot the live layout so the next launch can route
-            // session-restored windows back to their original Space.
+            // session-restored windows back to their original Space. A reopen
+            // replaying a saved group refuses here on every one of its windows
+            // and writes once from its own completion instead — see
+            // `SpaceManager.mayPersistSlotsSnapshot`.
             manager?.persistSlotsSnapshot()
         }
         if let window = controller.window {
@@ -5628,7 +7203,14 @@ final class SpaceWindowSlot: ObservableObject {
                 window.collectionBehavior.insert(.moveToActiveSpace)
             }
         }
-        if let frame = pendingFrameByWindowId.removeValue(forKey: controller.windowId),
+        // A spawn's own queued frame wins; `reopenPlacementFrame` is the
+        // fallback for a window this side never spawned — a restored one, which
+        // arrives carrying Chromium's replayed bounds. Applied here because
+        // registration runs inside Chromium's window-created callback, after
+        // the NSWindow has its bounds and before the post-construction Show()
+        // that puts it on screen: the frame the user first sees is this one.
+        if let frame = pendingFrameByWindowId.removeValue(forKey: controller.windowId)
+            ?? reopenPlacementFrame,
            let window = controller.window {
             window.setFrame(frame, display: false)
         }
@@ -5673,7 +7255,58 @@ final class SpaceWindowSlot: ObservableObject {
         // siblings already follow after a hard orderOut detaches them.
         let deferGroupingForReveal = verticalSwapCancel != nil
             && controller.window?.isVisible != true
-        if !deferGroupingForReveal {
+        // Restored sibling marked for concealment: conceal NOW (before
+        // Chromium's post-construction Show()) and keep it out of the slot
+        // tab group for the same span — a transparent window selected into
+        // the shared group frame would render the whole group invisible.
+        // See `markRestoredSiblingForConcealment`.
+        let concealAsRestoredSibling = pendingRestoreConcealSpaceIds.remove(spaceId) != nil
+        if let window = controller.window, concealAsRestoredSibling {
+            concealRestoredSiblingWindow(window, windowId: controller.windowId)
+        }
+        // This slot now has a window the user will see, so the loading window
+        // standing in for it drops behind that window rather than being taken
+        // away. Nothing here can tell when the restored window paints — it is
+        // ordered in well before its first frame reaches the screen, and every
+        // available signal fires inside that gap — so a loading window removed
+        // on any of them uncovers the desktop for as long as the gap lasts.
+        // Underneath it, the loading window is hidden the instant there is
+        // anything to hide it with, and closing it afterwards is invisible
+        // whenever it happens (`ReopenLoadingHandoff`).
+        //
+        // Both steps run HERE, synchronously, before the post-construction
+        // Show() later in this same turn. The shadow, so that no composited
+        // frame ever has both windows casting one onto the same ring of
+        // desktop. The ordering, because `pinUnder` declares a lasting
+        // relationship and so needs no window on screen to point at (see it for
+        // why the one-shot form could not run here). Note what this does and
+        // does not buy: it removes the ordering hazard, and it is NOT what
+        // makes the chrome late on about half of reopens — see
+        // `ReopenLoadingWindow.featureEnabledKey` for that, which is a separate
+        // and larger unsolved cost.
+        //
+        // Two windows are excluded, for different reasons. A concealed sibling
+        // registers at alpha 0 and is not a window the user sees, so it neither
+        // takes the loading window nor counts towards the deadline. And a
+        // window that is not becoming the slot's visible one must not take it
+        // either: re-parenting is silent, so an unrelated spawn registering
+        // here mid-hand-off (a hidden agent-Space window, say) would otherwise
+        // adopt the loading window and then drag it off screen with itself.
+        //
+        // `syncSlotTabGroup` may put this same window into a tab group on the
+        // next statement, which is the NSRangeException area noted above. The
+        // combination was tried: a loading window stays out of the group
+        // (`tabbingMode` never opts it in), and grouping, selecting another tab
+        // and ordering a grouped sibling out all leave it attached and visible.
+        if !concealAsRestoredSibling, shouldBecomeVisible,
+           let loading = reopenLoadingWindow,
+           let window = controller.window {
+            loading.yieldShadow()
+            loading.pinUnder(window)
+            manager?.noteReopenLoadingHandoffWindowRegistered()
+            AppLogInfo("[SpaceManager] reopen: loading window put under the restored one")
+        }
+        if !deferGroupingForReveal && !concealAsRestoredSibling {
             syncSlotTabGroup(selecting: shouldBecomeVisible ? controller.window : visibleController?.window)
         }
         if shouldBecomeVisible {
@@ -5780,8 +7413,9 @@ final class SpaceWindowSlot: ObservableObject {
 
     /// Records that `spaceId`'s next window close is going to be the
     /// result of the user closing the last tab in this Space, not
-    /// the result of closing the window itself. Called from the tab-
-    /// row ✕ button (`Tab.close()`) right before dispatching the
+    /// the result of closing the window itself. Called from
+    /// `Tab.close()` — the tab-row ✕ button and every other UI path
+    /// that funnels into it — right before dispatching the
     /// IDC_CLOSE_TAB command, when the active Space's tab count is
     /// about to drop to zero. ⌘W (`CommandDispatcher` IDC_CLOSE_TAB)
     /// deliberately does NOT call this: closing the last tab with ⌘W
@@ -5789,6 +7423,13 @@ final class SpaceWindowSlot: ObservableObject {
     /// sibling Space. Incognito Spaces never get here on a last-tab
     /// close — both paths intercept it and route into the confirmed
     /// Space teardown (`SpaceManager.requestCloseIncognitoSpace`).
+    ///
+    /// The predicted auto-close does not actually happen any more:
+    /// the window enters placeholder mode instead, and
+    /// `cancelTabDrivenClose` drops the marker and the composite
+    /// captured below. Both are kept because the vetoed-close residual
+    /// documented on `pendingTabDrivenCloseDeadlines` still consumes
+    /// them.
     func markTabDrivenClose(for spaceId: String) {
         pendingTabDrivenCloseDeadlines[spaceId] = Date().addingTimeInterval(Self.tabDrivenCloseTTL)
         // Capture the closing window's pixels now, while the WebContents
@@ -5800,13 +7441,34 @@ final class SpaceWindowSlot: ObservableObject {
         }
     }
 
+    /// Cancels what `markTabDrivenClose` armed for `spaceId`, marker and
+    /// pre-captured composite together. Called when Chromium reports the
+    /// window entered placeholder mode: the last-tab close left the window
+    /// standing, so the auto-close the marker predicts never happens. Left
+    /// armed it would live out its TTL and misclassify the user's next
+    /// genuine close of this window as a tab-driven hand-off, switching the
+    /// slot to a sibling Space instead of closing it. Idempotent — every
+    /// placeholder entry runs it, most with nothing to cancel.
+    func cancelTabDrivenClose(for spaceId: String) {
+        pendingTabDrivenCloseDeadlines.removeValue(forKey: spaceId)
+        pendingTabDrivenCloseSnapshots.removeValue(forKey: spaceId)
+    }
+
     /// Drops the controller for `spaceId`. Behavior splits on whether the
     /// close was tab-driven or window-driven:
     ///
     /// - Tab-driven (the user just closed the last tab in the visible Space)
     ///   AND another Space in the slot still has tabs: activate that
     ///   sibling. The user-perceived window stays alive showing the
-    ///   sibling Space's content.
+    ///   sibling Space's content. **Currently unreachable from any user
+    ///   gesture**: a last-tab close now leaves the window standing on the
+    ///   placeholder page, and that entry cancels the marker
+    ///   (`cancelTabDrivenClose`), so no close arrives here still tagged.
+    ///   The branch survives for the one residual that can still leave a
+    ///   live marker behind — an `IDC_CLOSE_TAB` vetoed by an
+    ///   `onbeforeunload` prompt, after which a genuine window close inside
+    ///   the TTL still lands here (a known defect, see
+    ///   `pendingTabDrivenCloseDeadlines`).
     /// - Otherwise (user closed the window itself, OR every other
     ///   Space is also empty): tear down every remaining Space via
     ///   `cascadeCloseRemainingWindows`, which calls `NSWindow.close()` one
@@ -5839,6 +7501,19 @@ final class SpaceWindowSlot: ObservableObject {
         // spaceId. A stale unregister must neither remove the replacement
         // nor run the visible-close side effects (sibling handoff/cascade).
         guard windowsBySpaceId[spaceId] === controller else { return }
+        // Land a debounced frame write while the slot is still whole. This is
+        // the last moment it can be written truthfully: the map is drained on
+        // the next line, the cascade below freezes persistence outright, and
+        // the write `removeSlot` does on the way out no-ops for the last slot —
+        // which is precisely the one a reopen restores from. A drag in the
+        // second before the user hit the red X would otherwise be lost, and the
+        // snapshot would keep an older position for good.
+        // Mid-cascade this reduces to nothing: `persistSlotsSnapshot` refuses
+        // to write while any slot is tearing down (and in the other states
+        // `mayPersistSlotsSnapshot` names), so the flush cannot smuggle a
+        // half-drained group into the snapshot. A refused flush keeps the
+        // change pending rather than dropping it.
+        manager?.flushPendingSlotsSnapshotPersist()
         windowsBySpaceId.removeValue(forKey: spaceId)
         defer { manager?.pushSpaceStateToChromium() }
         // Drain the marker unconditionally so a stale entry can't poison
@@ -5879,7 +7554,17 @@ final class SpaceWindowSlot: ObservableObject {
         // promotion lands after willClose.
         if isFullScreen {
             DispatchQueue.main.async { [weak self] in
-                self?.reconcileFullScreenWithWindowState()
+                guard let self else { return }
+                // Never mid-cascade. The slot's window map is half-drained
+                // there, so the reconcile reads "no fullscreen window left",
+                // flips the flag, and persists a snapshot of a window group
+                // that is already half gone — the group the next launch is
+                // supposed to restore. The teardown settles the state either
+                // way: it ends in `removeSlot` (which persists the surviving
+                // slots) or, if vetoed, in `recoverFromVetoedCascade` (which
+                // reconciles against the survivors).
+                guard !self.isCascadingSlotClose else { return }
+                self.reconcileFullScreenWithWindowState()
             }
         }
         // A window the controlled slot teardown is closing. It is already out
@@ -5914,7 +7599,9 @@ final class SpaceWindowSlot: ObservableObject {
         let siblingWithTabs = (wasVisible && isTabDriven) ? firstSiblingWithTabs() : nil
         if let siblingWithTabs {
             // Tab-driven close with a viable sibling: hand off to
-            // the sibling instead of tearing the slot down.
+            // the sibling instead of tearing the slot down. Currently
+            // unreachable from a user gesture — see the branch note in
+            // this method's doc comment.
             // `visibleController` is left pointing at the closing
             // controller so the pre-close composite snapshot can be
             // threaded into the per-style animation even after the
@@ -5941,12 +7628,46 @@ final class SpaceWindowSlot: ObservableObject {
                 AppLogInfo("[SpaceWindowSlot] window-driven close of \(spaceId); no siblings")
             } else {
                 AppLogInfo("[SpaceWindowSlot] window-driven close of \(spaceId); cascading \(windowsBySpaceId.count) sibling(s) via Chromium")
+                // In a fullscreen tab group AppKit promotes a sibling to key
+                // synchronously with the closing window's teardown, BEFORE
+                // this willClose runs, so no key guard can suppress that
+                // event: the adoption has already overwritten
+                // `activeSpaceId`, the persisted last-active Space, and the
+                // snapshot entry's active Space. Undo all three — but ONLY
+                // when the change actually came from a key adoption. A
+                // deliberate `activate` before closing the group leaves the
+                // same `activeSpaceId != spaceId` state (the fullscreen
+                // cascade can start on a background tab AppKit still reports
+                // as selected), and that switch is the user's real intent —
+                // it must survive the close.
+                if activeSpaceId != spaceId, activeSpaceAdoptedFromKeyEvent {
+                    activeSpaceAdoptedFromKeyEvent = false
+                    activeSpaceId = spaceId
+                    manager?.persistActiveSpaceId(spaceId)
+                    manager?.amendPersistedSnapshotActiveSpaceId(
+                        windowId: controller.windowId, to: spaceId)
+                }
                 isCascadingSlotClose = true
                 cascadeCloseRemainingWindows()
                 scheduleCascadeVetoRecovery()
+                // In fullscreen a sibling can already hold key (the promotion the
+                // undo above exists for), and AppKit posts no further key event
+                // for a window that is already key — so follow it from here.
+                if let keyed = windowsBySpaceId.first(where: { $0.value.window?.isKeyWindow == true }) {
+                    adoptSpaceForDisplayDuringCascade(keyed.key)
+                }
             }
         }
         if windowsBySpaceId.isEmpty {
+            // Nothing left here to cover a reopen loading window, and the slot
+            // is about to leave `restoredSlotsByIndex` below — so a user quick
+            // enough to close the restored window before the hand-off deadline
+            // would otherwise be left looking at a loading window with bare
+            // desktop behind it. Gated on the slot emptying rather than on any
+            // window leaving: a concealed sibling being retired mid-restore
+            // must NOT take the loading window away from the window it is still
+            // covering for.
+            closeReopenLoadingWindow()
             // The slot's last window is gone, so drop the slot from the
             // registry — but do NOT terminate the app when this empties the
             // slot map. Closing the last window (red X, Cmd+Shift+W, or
@@ -5988,13 +7709,16 @@ final class SpaceWindowSlot: ObservableObject {
         }
     }
 
-    /// Grace period after arming a window-driven cascade before it is treated
-    /// as vetoed. Each `IDC_CLOSE_WINDOW` roundtrip (Chromium close → browser
-    /// teardown → `windowWillClose` → `unregisterWindow`) is well under 100ms,
-    /// so a genuine cascade — even of several siblings — empties the slot far
-    /// inside this window; anything still standing at the deadline was blocked
-    /// by a `beforeunload` prompt the user cancelled. Matches the
-    /// `tabDrivenCloseTTL` reasoning for the tab-level version of this veto.
+    /// Poll interval for a window-driven cascade's veto check. Each
+    /// `IDC_CLOSE_WINDOW` roundtrip (Chromium close → browser teardown →
+    /// `windowWillClose` → `unregisterWindow`) is well under 100ms, so a
+    /// genuine cascade — even of several siblings — empties the slot far
+    /// inside one interval; the value matches the `tabDrivenCloseTTL` sizing
+    /// of that roundtrip. A deadline alone proves nothing about the windows
+    /// still standing, though: a `beforeunload` prompt stays up for as long
+    /// as the user cares to read it, so each deadline polls their close
+    /// state through the bridge instead of assuming a veto (see
+    /// `scheduleCascadeVetoRecovery`).
     private static let cascadeVetoRecoveryDelay: TimeInterval = 2.0
 
     /// Recovers a slot whose window-driven teardown was vetoed. The cascade
@@ -6007,11 +7731,43 @@ final class SpaceWindowSlot: ObservableObject {
     /// with `visibleController` nil the slot vanishes from
     /// `currentSpaceWindowMap` — its Spaces become unroutable and drop out of
     /// the "Open Link In Space" menu. If the cascade hasn't emptied the slot by
-    /// the deadline, treat it as vetoed and re-adopt a surviving window.
+    /// the deadline, poll every survivor's close state over the bridge: only
+    /// when all of them report `.notAttempting` (alive with the beforeunload
+    /// flag cleared — the user kept that window) is the cascade vetoed and a
+    /// survivor re-adopted. Any `.attemptingClose` (prompt up, or unwinding
+    /// after "leave") or `.gone` (mid-teardown; it drops from the map on its
+    /// own) re-arms the timer — with no cap, because the only unbounded state
+    /// is a prompt nobody has answered yet, and a recovery fired mid-gesture
+    /// is exactly the false veto this poll exists to prevent: it reports the
+    /// group close settled while siblings are still deciding, committing the
+    /// already-closed windows as plain closes.
     private func scheduleCascadeVetoRecovery() {
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.cascadeVetoRecoveryDelay) { [weak self] in
             guard let self, self.isCascadingSlotClose,
                   !self.windowsBySpaceId.isEmpty else { return }
+            var attempting = 0
+            var gone = 0
+            var kept = 0
+            if let bridge = ChromiumLauncher.sharedInstance().bridge {
+                for controller in self.windowsBySpaceId.values {
+                    switch bridge.windowCloseState(forWindowId: Int64(controller.windowId)) {
+                    case .attemptingClose: attempting += 1
+                    case .gone: gone += 1
+                    case .notAttempting: kept += 1
+                    @unknown default: attempting += 1
+                    }
+                }
+            } else {
+                // No bridge to interrogate — read as not-yet-terminal. Waiting
+                // is always safe; recovering on a guess is the bug this poll
+                // exists to prevent.
+                attempting = self.windowsBySpaceId.count
+            }
+            guard attempting == 0, gone == 0 else {
+                AppLogInfo("[SpaceWindowSlot] cascade close still in flight; re-polling (survivors=\(self.windowsBySpaceId.count) attempting=\(attempting) gone=\(gone) kept=\(kept))")
+                self.scheduleCascadeVetoRecovery()
+                return
+            }
             self.recoverFromVetoedCascade()
         }
     }
@@ -6030,13 +7786,60 @@ final class SpaceWindowSlot: ObservableObject {
         // undoing the drop-out the stuck flag caused.
         visibleController = survivor.value
         makeKeyAndOrderFrontHidingSlotTabBar(survivor.value.window)
+        // `unregisterWindow`'s deferred reconcile skipped itself while the
+        // cascade was armed, so a fullscreen slot whose teardown was vetoed
+        // still carries the closed window's flag. Re-derive it from the
+        // survivors before the snapshot below records it.
+        reconcileFullScreenWithWindowState()
+        // The frame observer refused every frame change while the cascade was
+        // armed, so the slot's shared frame can be stale by now — a fullscreen
+        // exit that landed mid-cascade is the concrete case. Re-seed it from the
+        // window the user is actually left looking at. Skipped while the slot is
+        // still fullscreen (the reconcile above has just refreshed that): the
+        // survivor's frame is the screen rect there, and recording it would
+        // discard the windowed frame every later switch and spawn inherits.
+        if !slotHasFullScreenWindow {
+            _ = resolveInheritedFrame(from: survivor.value)
+        }
         manager?.persistActiveSpaceId(survivor.key)
         manager?.persistSlotsSnapshot()
         manager?.notifySlotBecameKey(self)
+        // Windows survived the gesture, so the closes Chromium deferred are
+        // plain window closes after all — let it commit them.
+        manager?.reportWindowGroupCloseSettled()
         // A multi-veto (several dirty Spaces kept) can leave more than one
         // window on screen; collapse the rest behind the adopted one over the
         // standard sweep ladder.
         scheduleNonTargetSlotWindowSweep()
+    }
+
+    /// Lets the slot's DISPLAY follow the window on screen during a window-driven
+    /// cascade, without touching the persisted state that
+    /// `handleWindowDidBecomeKey`'s cascade guard protects.
+    ///
+    /// That guard drops mid-cascade key changes as teardown churn — but
+    /// `IDC_CLOSE_WINDOW` honors `beforeunload`, so a background Space's prompt
+    /// keeps its window on screen for as long as the user takes to answer, while
+    /// `activeSpaceId` stays frozen on the Space whose window already closed
+    /// (measured: 6.3s of wrong icon, since `recoverFromVetoedCascade` unfreezes
+    /// it only after the answer).
+    ///
+    /// Writes the display-facing pair only. Persistence must keep the closing
+    /// group's own active Space (see the undo in `unregisterWindow`) so a "Leave"
+    /// still reopens on it; `recoverFromVetoedCascade` persists the settled state.
+    private func adoptSpaceForDisplayDuringCascade(_ spaceId: String) {
+        // `isVisible` is not enough: `concealRestoredSiblingWindow` hides restore
+        // siblings by zeroing alpha only, and Chromium keys them as their tabs
+        // load — a cascade can arm inside that burst. Every other off-screen path
+        // orders the window out, which `isVisible` already catches.
+        guard isCascadingSlotClose,
+              let controller = windowsBySpaceId[spaceId],
+              let window = controller.window,
+              window.isVisible, window.alphaValue > 0 else { return }
+        if activeSpaceId == spaceId, visibleController === controller { return }
+        AppLogInfo("[SpaceWindowSlot] cascade close in flight; following on-screen Space \(spaceId) for display")
+        activeSpaceId = spaceId
+        visibleController = controller
     }
 
     /// Removes the controller registered for `spaceId` from this slot
@@ -6069,6 +7872,62 @@ final class SpaceWindowSlot: ObservableObject {
             manager?.removeSlot(self)
         }
         return controller
+    }
+
+    /// Prepares one in-place Native controller replacement while Guest data
+    /// is promoted into an account whose migration may have remapped the
+    /// Space identifier.
+    ///
+    /// The old controller is removed from the registry without any close,
+    /// sibling handoff, or spawn. The replacement is expected to register
+    /// synchronously after this returns, using `destinationSpaceId`.
+    @discardableResult
+    func prepareAccountTransitionWindowReplacement(
+        _ controller: MainBrowserWindowController,
+        from sourceSpaceId: String,
+        to destinationSpaceId: String
+    ) -> Bool {
+        guard windowsBySpaceId[sourceSpaceId] === controller else {
+            return false
+        }
+
+        _ = evictWindow(for: sourceSpaceId, removeSlotIfEmpty: false)
+        if activeSpaceId == sourceSpaceId || visibleController === controller {
+            activeSpaceId = destinationSpaceId
+        }
+        manager?.pushSpaceStateToChromium()
+        manager?.persistSlotsSnapshot()
+        return true
+    }
+
+    /// Remaps an empty slot captured while browser access was fenced.
+    ///
+    /// Crash recovery owns a Chromium window before its Native controller can
+    /// be constructed. Apply the receipt's Space mapping to the slot and any
+    /// still-pending spawn bookkeeping first, so registering the target-bound
+    /// controller never publishes the retired Guest identifier.
+    func prepareAccountTransitionPendingWindow(
+        from sourceSpaceId: String,
+        to destinationSpaceId: String
+    ) {
+        guard sourceSpaceId != destinationSpaceId else { return }
+
+        if activeSpaceId == sourceSpaceId {
+            activeSpaceId = destinationSpaceId
+        }
+        if lastRegularSpaceId == sourceSpaceId {
+            lastRegularSpaceId = destinationSpaceId
+        }
+        if pendingSpawnSpaceIds.remove(sourceSpaceId) != nil {
+            pendingSpawnSpaceIds.insert(destinationSpaceId)
+        }
+        let pendingWindowIds = pendingSpawnSpaceIdByWindowId.compactMap {
+            windowId, spaceId in
+            spaceId == sourceSpaceId ? windowId : nil
+        }
+        for windowId in pendingWindowIds {
+            pendingSpawnSpaceIdByWindowId[windowId] = destinationSpaceId
+        }
     }
 
     /// Profile-change respawn: replaces this slot's window for `spaceId` in
@@ -6107,6 +7966,9 @@ final class SpaceWindowSlot: ObservableObject {
     /// slot shut. Agent and Incognito Spaces are never hand-off targets
     /// (both scans): a last-tab close must not dump the user into an agent's
     /// hidden workspace or the Incognito Space.
+    ///
+    /// Only the tab-driven hand-off consults this, so it is currently
+    /// unreachable outside the residual documented on `unregisterWindow`.
     private func firstSiblingWithTabs() -> String? {
         if let manager {
             for space in manager.spaces where manager.isAutomaticSwitchTarget(space) {
@@ -6151,6 +8013,14 @@ final class SpaceWindowSlot: ObservableObject {
         windowsBySpaceId[spaceId]
     }
 
+    /// The Spaces this slot currently hosts a window for. Read by
+    /// `SpaceManager.repairSlotsWithAbsentActiveSpace` to tell a slot whose
+    /// active Space came back from one whose did not, and to pick a stand-in
+    /// among the Spaces that did.
+    var spaceIdsWithWindow: Set<String> {
+        Set(windowsBySpaceId.keys)
+    }
+
     /// Does this slot host the given Chromium windowId?
     func contains(windowId: Int) -> Bool {
         windowsBySpaceId.values.contains { $0.windowId == windowId }
@@ -6171,6 +8041,69 @@ final class SpaceWindowSlot: ObservableObject {
     /// cross-launch restore record. Read by `SpaceManager.persistSlotsSnapshot`.
     fileprivate func snapshotIsFullScreen() -> Bool {
         isFullScreen
+    }
+
+    /// Where this slot should reopen, for the cross-launch restore record. Read
+    /// by `SpaceManager.persistSlotsSnapshot`.
+    ///
+    /// Prefers the visible window's live frame and refreshes the cache from it
+    /// — the same read-live-then-fall-back shape as `resolveInheritedFrame`, so
+    /// a persist triggered while the window is mid-teardown still answers with
+    /// the last position the window actually held. A fullscreen slot answers
+    /// with its pre-fullscreen geometry: the live frame is the screen rect
+    /// there, which `lastKnownWindowedFrame` deliberately never adopts.
+    fileprivate func snapshotFrame() -> NSRect? {
+        if let frame = visibleController?.window?.frame,
+           !frame.isEmpty,
+           !NSScreen.screens.contains(where: { $0.frame.equalTo(frame) }) {
+            lastKnownWindowedFrame = frame
+        }
+        return lastKnownWindowedFrame
+    }
+
+    /// How wide this slot's sidebar is, for the cross-launch restore record.
+    /// Read by `SpaceManager.persistSlotsSnapshot`, and by nothing else — the
+    /// live value is `BrowserState.sidebarWidth`.
+    ///
+    /// Same read-live-then-fall-back shape as `snapshotFrame`, and for the same
+    /// reason: a persist can be triggered while the window is mid-teardown, and
+    /// the last width the slot actually had is a better answer than none.
+    ///
+    /// Zero is a real answer, not a missing one: it is what a collapsed sidebar
+    /// reports (`MainSplitViewController.updateSidebarWidth`), and what
+    /// `.comfortable` reports permanently. But it is ALSO what a window that
+    /// has not laid out yet reports — `BrowserState.sidebarWidth` starts at 0
+    /// and only `MainSplitViewController.viewWillAppear` wires the updates —
+    /// and `registerWindow` persists from inside the controller's own
+    /// initializer, before the window has ever been shown. The collapsed flag
+    /// is what tells the two apart, so a zero is adopted only when the window
+    /// says the sidebar really is collapsed. Left alone otherwise, which for a
+    /// brand-new slot means "no remembered width" and therefore no band, until
+    /// `observeSidebarWidth` sees the real value arrive.
+    fileprivate func snapshotSidebarWidth() -> CGFloat? {
+        if let state = visibleController?.browserState,
+           state.sidebarWidth > 0 || state.sidebarCollapsed {
+            lastKnownSidebarWidth = state.sidebarWidth
+        }
+        return lastKnownSidebarWidth
+    }
+
+    /// Where this slot's window has its leading traffic light, as a distance
+    /// from the top-left of its frame, for the cross-launch restore record.
+    /// Read by `SpaceManager.persistSlotsSnapshot`.
+    ///
+    /// Skipped while the slot is fullscreen, the same exclusion
+    /// `lastKnownWindowedFrame` makes: AppKit lays a fullscreen titlebar out
+    /// differently, and the loading window is only ever placed for a slot that
+    /// was NOT fullscreen. Caching it means a slot that has been fullscreen
+    /// since launch still answers with the windowed origin it had before.
+    fileprivate func snapshotTrafficLightOrigin() -> NSPoint? {
+        if !isFullScreen,
+           let window = visibleController?.window,
+           let origin = ReopenLoadingWindow.measuredTrafficLightOrigin(in: window) {
+            lastKnownTrafficLightOrigin = origin
+        }
+        return lastKnownTrafficLightOrigin
     }
 
     /// Used by `SpaceManager.handleSpacesUpdate` when a slot's active Space
@@ -6245,7 +8178,27 @@ final class SpaceWindowSlot: ObservableObject {
         // and rewrite the restore snapshot, so the next reopen surfaces the
         // wrong Space instead of the one that was on screen when the window was
         // closed. The whole slot is going away; there is nothing to adopt.
-        if isCascadingSlotClose { return }
+        if isCascadingSlotClose {
+            // Not adopted as a switch, but the display should still follow
+            // whatever window is on screen now.
+            adoptSpaceForDisplayDuringCascade(spaceId)
+            return
+        }
+        // Ignore key changes while session restore is still surfacing this
+        // slot's windows. On restore a slot owns several Chromium windows (one
+        // per Space ever surfaced) and Chromium `makeKeyAndOrderFront`s every
+        // one as its tabs finish loading, so each restored sibling briefly
+        // becomes key. Adopting those as external switches thrashes
+        // `activeSpaceId` and lands the slot on whichever window keyed last
+        // instead of the Space the snapshot recorded (`slotForRestoreIndex`'s
+        // `initialSpaceId`) — the "reopen flashes one Space then jumps to
+        // another" symptom. `reconcileRestoreVisibility` owns visibility during
+        // this window; a genuine user pip-switch goes through `activate`
+        // (`userInitiated`), not here, so it is unaffected. Covers both
+        // cold-launch and Dock reopen: both arm this flag via
+        // `scheduleRestoreVisibilityReconcile`, and it clears once the reconcile
+        // sequence settles.
+        if restoreVisibilityReconcileScheduled { return }
         // Ignore key changes on an agent Space's hidden window that isn't the
         // slot's current Space. An agent Space is an ephemeral background
         // workspace: its window is spawned hidden (`spawnHiddenWindow`) and
@@ -6332,6 +8285,7 @@ final class SpaceWindowSlot: ObservableObject {
         }
         let previousSpaceId = activeSpaceId
         let previous = visibleController
+        activeSpaceAdoptedFromKeyEvent = true
 
         // External (non-`activate`) trigger — Chromium routing a navigation
         // into a sibling Space's window via the URL rule throttle made that
@@ -6377,25 +8331,14 @@ final class SpaceWindowSlot: ObservableObject {
             // paths produce real pixels.
             if isExternalSwitch, let previous, let previousSpaceId {
                 // Chromium surfaced the target window itself for the URL-rule
-                // route, so the clicked path's swap-time frame pin never ran —
-                // yet Chromium still re-applies the target's stale creation
-                // bounds a few hundred ms after it surfaces, the same late
-                // clobber `activate` defends against. Without the pin that
-                // re-apply lands as a visible jump and, worse, the frame
-                // observer records the jumped-back bounds as `lastKnownFrame`
-                // and propagates them to every sibling. Hold the target at the
-                // leaving window's frame (still alive here, so authoritative)
-                // and arm the pin so the re-apply is reverted. Mirrors
-                // `activate`'s swap path; safe with both animation styles
-                // below. See `pinnedFrame`.
+                // route, so `activate`'s swap-time frame inheritance never ran.
+                // Do it here instead, from the leaving window (still alive, so
+                // authoritative), or the target surfaces at whatever position it
+                // was last left at. Mirrors `activate`'s swap path; safe with
+                // both animation styles below.
                 if let inheritedFrame = resolveInheritedFrame(from: previous),
                    let targetWindow = controller.window {
                     targetWindow.setFrame(inheritedFrame, display: false)
-                    // Not armed in fullscreen — same reasoning as the matching
-                    // guard in `activate`'s swap path.
-                    if !slotHasFullScreenWindow {
-                        pinnedFrame = inheritedFrame
-                    }
                 }
                 let direction = swapDirection(
                     previousSpaceId: previousSpaceId,
@@ -6452,6 +8395,11 @@ final class SpaceWindowSlot: ObservableObject {
             NotificationCenter.default.removeObserver(token)
         }
         visibleFrameObservers.removeAll()
+        // Ahead of the guard below, which is about the window: a controller
+        // whose window has not been made yet still has the `BrowserState` the
+        // sidebar width lives on, and skipping this would also leave the
+        // PREVIOUS window's subscription alive.
+        observeSidebarWidth(on: controller)
         guard let window = controller?.window else { return }
         let propagate: () -> Void = { [weak self, weak window] in
             guard let self,
@@ -6460,26 +8408,102 @@ final class SpaceWindowSlot: ObservableObject {
                   let visible = self.visibleController,
                   visible.window === window else { return }
             let frame = window.frame
-            // Post-swap pin: hold the just-surfaced window where the switch put
-            // it until Chromium's late re-apply of the window's stale creation
-            // bounds has been countered. A reposition with no mouse button held
-            // is that programmatic re-apply — revert it and release the pin. A
-            // reposition the user is driving (mouse held) moves the pin with
-            // them and keeps it armed. See `pinnedFrame`.
-            if let pinned = self.pinnedFrame {
-                if NSEvent.pressedMouseButtons == 0 {
-                    if !frame.equalTo(pinned) {
-                        window.setFrame(pinned, display: false)
-                        self.pinnedFrame = nil
-                    }
-                    return
-                }
-                self.pinnedFrame = frame
+            // Every frame change that reaches here is adopted as the slot's
+            // position — including programmatic ones. This slot used to keep a
+            // post-swap "pin" that reverted repositions no mouse button was
+            // driving, because AppKit rewrote a just-ordered-in window's frame
+            // into the screen's `visibleFrame` and the slot legitimately parks
+            // its windows partly off-screen. That rewrite is now refused at the
+            // source (Phi's `BrowserNativeWidgetWindow` overrides
+            // `constrainFrameRect:toScreen:`), which left the pin with nothing
+            // to consume it and therefore permanently armed after every switch —
+            // at which point it only undid legitimate repositioning: Window >
+            // Zoom, keyboard tiling, and AppKit re-homing a window off a display
+            // the user just unplugged. "No mouse button held" was never a sound
+            // proxy for "not the user" either; it also matches the didMove
+            // AppKit posts right after a drag's mouse-up.
+            // A frame change landing while the slot is cascading its windows
+            // shut is teardown churn, not placement: Chromium is surfacing
+            // whichever sibling still has a `beforeunload` prompt to answer.
+            // Refuse it as the slot's authoritative frame — that value seeds
+            // every later switch and spawn, so letting one in here outlives the
+            // gesture (measured before this guard: a cascade rewrote
+            // `lastKnownFrame` from the user's position to the screen work area,
+            // and the surviving window kept it after "Cancel").
+            //
+            // Deliberately not qualified by `pressedMouseButtons`: that reads
+            // any button anywhere, not "this window is being dragged", so it
+            // would only open a hole for a reposition landing while the user
+            // happens to be holding the mouse down. Nor is it safe to assume the
+            // user cannot move the window meanwhile — a `beforeunload` prompt is
+            // app-modal in Chromium's dialog queue, but its view is
+            // `ModalType::kWindow`, i.e. a sheet, and a sheet does not stop the
+            // parent being dragged. What makes refusing safe is the recovery
+            // path, not the assumption: a vetoed cascade re-seeds this from the
+            // survivor's live frame (`recoverFromVetoedCascade`), and a cascade
+            // that runs to completion takes the slot with it.
+            //
+            // Known cost, accepted: with several dirty Spaces the user can drag
+            // the window while the FIRST prompt is up, answer "Leave" to it, and
+            // then "Cancel" a later sibling's prompt. That drag is refused here
+            // and the dragged window is gone before the recovery runs, so the
+            // slot settles on the survivor's older position instead. Every way
+            // of keeping the drag re-opens the hole this guard closes —
+            // propagating to siblings mid-cascade carries a clobbered frame the
+            // same way, and `pressedMouseButtons` is the unreliable proxy that
+            // was removed from here for good reason. Losing one drag on that
+            // path is the cheaper failure.
+            if self.isCascadingSlotClose {
+                return
             }
             // The visible window is the slot's authoritative position now;
             // record it so a later spawn/switch inherits the user's drag even
             // if the source window is gone by then.
             self.lastKnownFrame = frame
+            // Never push a fullscreen rect onto the siblings. A sibling that has
+            // been ordered out is a plain windowed NSWindow, and a screen-sized
+            // rect puts its title bar above the menu bar — AppKit used to shove
+            // that back down on order-in, but Phi's
+            // `constrainFrameRect:toScreen:` override deliberately hands such a
+            // frame back untouched now, so an unreachable sibling would stay
+            // unreachable. The slot's own frame still follows fullscreen above:
+            // the in-fullscreen swap path inherits it.
+            //
+            // Keyed on the frame rather than on the window's `.fullScreen`
+            // styleMask, so that re-aligning the siblings on the way out of
+            // fullscreen does not hinge on when AppKit flips that mask — a point
+            // this code cannot observe (`windowFullScreenStateChanged` runs off
+            // the WILL hooks, which by design fire before the flip). The
+            // didResize that lands while leaving fullscreen already carries the
+            // windowed rect, so it propagates whatever the mask says.
+            if NSScreen.screens.contains(where: { $0.frame.equalTo(frame) }) {
+                return
+            }
+            // Past the fullscreen filter, so this is a windowed rect: the
+            // geometry the slot should reopen at. Recording it here is what
+            // makes moving and resizing reach the restore snapshot at all —
+            // every other trigger of a snapshot write is a layout event
+            // (registering a window, switching Space, fullscreen, key, evicting
+            // a window), so without this a drag was remembered only until the
+            // next one of those happened to fire, if one ever did.
+            //
+            // Skipped while the slot is fullscreen, on top of the exact-screen
+            // check above: the will-enter hook arms that flag before AppKit
+            // animates the window up to the screen, and the intermediate rects
+            // that animation posts match no display exactly — the check above
+            // would wave them through and the slot would remember a size it was
+            // never parked at. Leaving fullscreen needs no such guard: the flag
+            // is already false by then, and the trailing-edge debounce means
+            // only the settled windowed rect is ever written.
+            //
+            // Also gated on the value actually changing, so the writes stay
+            // tied to the user moving the window: a Space switch re-asserts the
+            // slot's inherited frame on the entering window, which lands here
+            // as a frame change carrying no new position.
+            if !self.isFullScreen, self.lastKnownWindowedFrame != frame {
+                self.lastKnownWindowedFrame = frame
+                self.manager?.scheduleSlotsSnapshotPersist()
+            }
             for (_, sibling) in self.windowsBySpaceId where sibling !== visible {
                 sibling.window?.setFrame(frame, display: false)
             }
@@ -6497,6 +8521,80 @@ final class SpaceWindowSlot: ObservableObject {
             using: { _ in propagate() }
         )
         visibleFrameObservers = [move, resize]
+    }
+
+    /// Keeps the snapshot's sidebar width current, the same way the two
+    /// observers above keep its frame current.
+    ///
+    /// Needed for exactly the reason the frame needed it: dragging the split
+    /// divider changes nothing a window notification reports, and every other
+    /// trigger of a snapshot write is a layout event — registering a window,
+    /// switching Space, fullscreen, key, evicting a window. Without this, a
+    /// user who widened the sidebar and then closed the window would reopen to
+    /// a band at the OLD width, and a band whose edge is not where the restored
+    /// sidebar ends is the position jump this whole feature exists to prevent.
+    /// (`unregisterWindow`'s flush covers the close-inside-the-debounce case,
+    /// as it does for a drag.)
+    ///
+    /// Seeded rather than left to the subscription: `@Published` delivers its
+    /// current value on subscribe, and the slot changing which window it shows
+    /// is not the user resizing anything. The seed goes through
+    /// `snapshotSidebarWidth`'s filter so a not-yet-laid-out window cannot
+    /// donate its initial zero.
+    private func observeSidebarWidth(on controller: MainBrowserWindowController?) {
+        visibleSidebarWidthObserver = nil
+        guard let controller else { return }
+        _ = snapshotSidebarWidth()
+        visibleSidebarWidthObserver = controller.browserState.$sidebarWidth
+            .dropFirst()
+            .sink { [weak self, weak controller] width in
+                guard let self, let controller,
+                      self.visibleController === controller,
+                      // The two refusals the frame path makes, for the same
+                      // reasons: a slot cascading shut is producing teardown
+                      // churn rather than layout the user asked for, and a
+                      // Space-switch slide is re-asserting the slot's own
+                      // shape onto the entering window.
+                      !self.isCascadingSlotClose,
+                      !self.isAnimatingWindowSlide,
+                      // Same "is this zero real" test as the snapshot read.
+                      width > 0 || controller.browserState.sidebarCollapsed,
+                      self.lastKnownSidebarWidth != width else { return }
+                self.lastKnownSidebarWidth = width
+                self.manager?.scheduleSlotsSnapshotPersist()
+            }
+    }
+
+    /// The frame `frame` has to be corrected to for the current screen layout,
+    /// or nil when it is still usable as-is.
+    ///
+    /// The correction itself is `SpaceManager.clampedSlotFrame` — the same rule
+    /// a saved frame is read back through, so a slot repaired live and a slot
+    /// reopened from the snapshot land in the same place. This wrapper only
+    /// adds "nil when nothing changed", which its caller uses to skip a
+    /// pointless `setFrame`.
+    private static func screenRepairedFrame(for frame: NSRect) -> NSRect? {
+        let screens = SpaceManager.currentScreenGeometries()
+        guard !screens.isEmpty else { return nil }
+        let repaired = SpaceManager.clampedSlotFrame(frame, toScreens: screens)
+        return repaired.equalTo(frame) ? nil : repaired
+    }
+
+    /// Re-checks this slot's placement after a screen-layout change and pulls
+    /// the windows back when the new layout left them unreachable. Only the
+    /// visible window is moved; the frame observer mirrors the correction onto
+    /// the siblings and records it, exactly as it does for a user drag.
+    ///
+    /// Skipped in fullscreen (the frame is legitimately the whole screen there)
+    /// and mid-cascade (the slot is tearing down, and the observer refuses
+    /// frame changes for the duration anyway).
+    fileprivate func revalidatePlacementForScreenChange() {
+        guard !isCascadingSlotClose, !slotHasFullScreenWindow,
+              let visibleWindow = visibleController?.window,
+              let repaired = Self.screenRepairedFrame(for: visibleWindow.frame)
+        else { return }
+        AppLogInfo("[SpaceWindowSlot] screen layout changed; repairing unreachable slot frame \(visibleWindow.frame) -> \(repaired)")
+        visibleWindow.setFrame(repaired, display: true)
     }
 
     /// The frame a window surfaced in this slot should adopt so every Space
@@ -6534,6 +8632,7 @@ final class SpaceWindowSlot: ObservableObject {
             NotificationCenter.default.removeObserver(token)
         }
         visibleFrameObservers.removeAll()
+        visibleSidebarWidthObserver = nil
         for observation in tabBarAccessoryObservationsByWindowId.values {
             observation.invalidate()
         }
@@ -6632,4 +8731,1022 @@ extension Notification.Name {
     /// the app is inactive, where an ordered-front window cannot become key.
     static let spaceSlotVisibleWindowDidChange =
         Notification.Name("PhiSpaceSlotVisibleWindowDidChange")
+}
+
+/// The loading window a windowless reopen puts on screen immediately, on the
+/// frame the reopening slot's snapshot remembered, while Chromium replays the
+/// session behind it.
+///
+/// It buys no time — nothing here makes the restore do less work, and it costs
+/// the restore a little (see the switch below). What it removes is the second
+/// and a half of blank desktop in between. It can only do that without a
+/// position jump because the restored window is then FORCED onto this same rect
+/// (`SpaceWindowSlot.registerWindow`) rather than trusted to come back with
+/// bounds that happen to match.
+///
+/// Sharing a rect is necessary and not sufficient: the two windows also have to
+/// be the same SHAPE, or the user watches one window be replaced by another
+/// rather than one window fill in. So this is a titled window wearing the
+/// browser window's own style mask and the same titlebar dressing (transparent
+/// titlebar, hidden title). Titled is the point: the corner radius and the
+/// window shadow come from an AppKit frame view at whatever values this macOS
+/// uses, instead of being guessed at in a borderless window's content layer and
+/// re-guessed every OS release.
+///
+/// Not quite for free, though, and this is the part that looks free and is not:
+/// the fork puts its OWN frame view under the browser window
+/// (`BrowserWindowFrame`), so the two shapes come from different classes and
+/// agree only as far as they happen to. On macOS 26.5 they do not entirely:
+///
+/// - the **corners differ**. That frame view returns 20 from
+///   `_getCachedWindowCornerRadius` where a stock one on this OS returns 16, and
+///   the arcs measured off a real reopen sit up to ~2pt apart through the upper
+///   half of the corner. Small, unfixable from this side, and NOT introduced
+///   here — this window has had the stock radius since it became titled. Worth
+///   knowing because an earlier note in this file claimed the two radii matched
+///   point for point; they do not.
+/// - the **traffic lights it moves outright**, and
+///   `alignTrafficLights(to:)` below is what puts them back, at the origin
+///   the snapshot saw on the window this one stands in for.
+///
+/// The bill for being titled is AppKit's frame constraint: it rewrites a titled
+/// window's frame into the screen's `visibleFrame` on every order-in, and a
+/// slot the user parked half off an edge would be dragged back — the position
+/// jump this whole feature exists to prevent. Browser windows are exempted from
+/// it in the Chromium fork
+/// (`-[BrowserNativeWidgetWindow constrainFrameRect:toScreen:]`), and
+/// `constrainFrameRect(_:to:)` below is the same refusal on this side.
+/// Measured on this deployment target: the same overhanging frame ordered in on
+/// a plain titled window comes back pulled to the work-area origin, on this one
+/// it comes back untouched. `ReopenLoadingWindowPlacementTests` holds both ends
+/// of that down.
+///
+/// Inside that shape it draws three things: the three traffic lights, in the
+/// inactive grey a window that can be neither key nor main is entitled to; the
+/// sidebar itself down the leading edge, at the width it had; and three dots in
+/// the middle of whatever is left, taking it in turns to light. Nothing here
+/// reads a preference, and every number the first two need — the rect, the
+/// band's width, the lights' origin — comes off the slot snapshot, measured
+/// from the very window this one stands in for. The band's COLOUR is the one
+/// thing resolved live rather than stored, because a theme the user changed
+/// while the app had no windows would otherwise be a stale fill. The dots need
+/// nothing stored at all.
+///
+/// The dots are also the only thing here that moves, and how fast they move is
+/// the only decision here that could cost measurable time — "could" because at
+/// the rate it settled on it does not, and two rates above it do. The sweep is
+/// in the spinner bullet below, along with what it does NOT bound: the cost of
+/// the three layers existing at all, which the control arm also draws.
+///
+/// It has all three because the empty version was used in anger, three times.
+/// The first report was that a blank rect reads as an application that has not
+/// started rather than one that is loading — the same user finding
+/// `.comfortable` the least bad of the three layouts, and finding it so because
+/// its first painted frame carries a skeleton (lights, `+`, a search icon, an
+/// empty tab strip) even though its tabs arrive no sooner and its total time to
+/// tabs is LONGER. What reads as alive is having something in the window, not
+/// having the right thing in it. The lights alone did not answer that — three
+/// 14pt discs are about 0.05% of a 1183x788 rect — and the second report said
+/// so: still no skeleton. The band is what `.comfortable` gets for free and the
+/// other two layouts had nothing of. A rect split into a sidebar and a content
+/// area reads as a browser window; a rect in one colour does not. The third
+/// report was that a browser-shaped window with nothing happening in it is
+/// still a window with nothing happening in it: there should be something in
+/// the large blank area saying it is loading, in every layout. That is the one
+/// requirement here about time passing rather than about shape, and it is the
+/// only one that cannot be met by holding still.
+///
+/// Six visuals were considered; this is what is left standing:
+///
+/// - **A spinner could not be afforded; the thing it was saying could.** The
+///   first version turned a 32pt ring here. Measured against the same scene
+///   with the switch off, it put the first thing on screen ~780ms sooner and
+///   the page's own first frame ~450ms LATER; with only the ring's animation
+///   frozen and everything else identical, roughly two thirds of that second
+///   number went away (n=3 per group, so the size is indicative and the
+///   direction is not). The ring had been making the window server recomposite
+///   this rect at 60fps for two seconds, to report that the main thread was too
+///   busy to draw — spending the restore it exists to cover.
+///
+///   The bill is per recomposition and not per second the window is up, so when
+///   the third report asked for the message back, the RATE was swept on the
+///   real reopen instead of guessed at a second time. Four arms, one binary,
+///   interleaved, 8 rounds each, all of them with the band in place — the
+///   ring's number could not be reused, because it was measured before this
+///   window had any vibrancy in it and vibrancy is not cheap to recomposite.
+///   Median of the page's own first frame against a control that draws these
+///   same three dots and does not animate them:
+///
+///   | rate | vs the still control | overlaps the control's range? |
+///   |---|---|---|
+///   | 3 steps a second | +14.0ms | yes, entirely |
+///   | 15 steps a second | +44.0ms | **no, 8/8 apart** |
+///   | interpolated, per display refresh | +133.5ms | **no, 8/8 apart** |
+///
+///   The bottom row is the positive control, and it is the reason the top row
+///   means anything: this batch CAN see an animation's cost — it separated
+///   44ms with no overlap at all — and it still could not separate three steps
+///   a second. That +14.0ms is smaller than the difference in frame
+///   quantisation between those same two arms (the 3-step arm's events land in
+///   a 67ms gap against the control's 33ms, so it is reported an expected 17ms
+///   late before the app has done anything at all). That is where
+///   `activityStepsPerSecond` comes from. Raising it is not a free change of
+///   taste; 15 was measured, and 15 costs. Making the dots BIGGER is free —
+///   the bill is per recomposition, and nothing here was measured against
+///   their size.
+///
+///   What the sweep does not bound: the three layers merely existing. The
+///   control arm draws them too, so what is measured is the animation. The
+///   nearest bound on the layers is the band — a full-height vibrancy view,
+///   far heavier than three 8pt layers — at +7.5ms on this same metric, and
+///   that is a cross-batch number.
+/// - **Traffic lights need nothing known about the window** beyond where they
+///   go. Phi leaves the browser window's own buttons in the titlebar —
+///   `FloatingTrafficLightsView` draws its own and forwards clicks rather than
+///   reparenting them — and only hides them for a collapsed sidebar in a
+///   non-traditional layout, which a freshly restored window is not. What they
+///   are NOT is free: their position had to be measured, because the style
+///   mask alone does not reproduce it. See `trafficLightOrigin(remembered:)`.
+/// - **The sidebar band needs one number, and it must be the real one.** A
+///   guessed width would put the boundary somewhere the restored window's
+///   sidebar does not end, and the band would step sideways at the hand-off —
+///   worse than no band. So it is read from the snapshot and nowhere else, and
+///   a snapshot that does not carry it draws nothing (`sidebarBandWidth`). The
+///   objection this had to get past — that a band would have to be one of three
+///   layouts, and `.comfortable` has no sidebar — turned out to cost nothing:
+///   `.comfortable` keeps the sidebar collapsed permanently, a collapsed
+///   sidebar records itself as width 0, and 0 draws nothing. One number covers
+///   the width, the collapsed state and the layout together, and nothing here
+///   reads `LayoutMode`.
+/// - **A flat fill of the sidebar's theme colour shows nothing, measured.**
+///   The obvious build — one `CALayer` filled with `windowOverlayBackground` —
+///   was built first. On the default theme it is invisible: Pure's light
+///   overlay is white at the fixed 0.8 overlay alpha over a white
+///   `windowBackgroundColor`, so the two tones are one tone. The real sidebar's
+///   separation (measured on a real reopen: 220 against the content's 253 on
+///   the same row) comes from its `NSVisualEffectView` material. So the band is
+///   that view, with that material, wearing that colour, resolved against the
+///   theme the Space that is reopening will be given
+///   (`SpaceManager.sidebarTint(forSpaceId:)`) — the sidebar's own recipe
+///   rather than a colour chosen to look like its output, which is the
+///   difference between following a theme and matching one.
+/// - **The indicator is the one thing here that copies nothing**, and that is
+///   allowed for the opposite reason to everything else: it corresponds to no
+///   part of the restored window, so there is nowhere it can be drawn in the
+///   wrong place relative to one. It is not replaced at the hand-off, it is
+///   covered — measured on all three layouts, and the frame after it goes has
+///   no trace of it left. What it must not be is a progress bar: that would
+///   either state a fraction nobody here knows, or move continuously, which is
+///   the expensive shape again under a different name.
+/// - **The closing window's last frame is not obtainable.** Phi can only
+///   capture those pixels synchronously on the close path, and under remote
+///   CoreAnimation there is no app-side IOSurface to capture from. Not merely
+///   unchosen — unbuildable, so do not spend a round rediscovering it.
+///
+/// What is deliberately absent is anything that is data: no tabs, no Space
+/// chips, no favicons. The `+ New Tab` row was considered and left out on a
+/// measured fact rather than on principle — it has no resting fill of its own
+/// to reproduce (`NewTabButtonCellView` sets its background clear and fills
+/// only on hover), so any shape drawn where it goes would be invented, and the
+/// hand-off would then remove it.
+///
+/// What is left is the window itself: this rect, this shape, this shadow, this
+/// background colour, three grey lights, a sidebar-coloured band, and three
+/// dots taking turns in the middle of the content area, arriving where the
+/// restored window will arrive. The restored window's first painted frame then
+/// fills it in — one visual change, which is what the z-order hand-off below is
+/// for.
+final class ReopenLoadingWindow: NSWindow {
+    /// Toggle at runtime:
+    ///   defaults write <bundle-id> PhiReopenLoadingWindowEnabled -bool YES
+    /// then relaunch. Off by default, and the measurements are why.
+    ///
+    /// Over 5 matched rounds each way on one six-Space scene, marker-anchored
+    /// from the Dock click: the first thing on screen arrives 633ms sooner
+    /// (median 65ms against 698ms), and the page's own first frame comes out
+    /// level (1832ms against 1815ms — a difference far inside either arm's own
+    /// spread of 176ms and 50ms, so no difference is claimed).
+    ///
+    /// The browser chrome is the problem, and it is not a matter of a median.
+    /// With the switch off it is on screen in the restored window's very first
+    /// painted frame, every round: 682-700ms, and the traffic lights are
+    /// already coloured in it. With the switch on the same measurement splits
+    /// in two — 746/748/748 against 1330/1374 — and across every round of this
+    /// scene measured either way, about half land in the late half. The
+    /// restored window's first frame is either flushed during a pause in the
+    /// restore's window-creation burst or it waits for the end of the burst,
+    /// and this window's existence is what decides that: with it off the pause
+    /// was enough in 6 rounds out of 6. Neither its overlap with the restored
+    /// window nor how long it stays up accounts for it (both were measured with
+    /// it moved off the rect and with it closed on registration; neither
+    /// changed the number), so the cost is paid by building and ordering it in
+    /// at all, before the restore is even asked for. Why that should be is NOT
+    /// established, and nothing here should be read as if it were.
+    ///
+    /// So the trade on offer is 633ms of earlier feedback against roughly even
+    /// odds of the chrome arriving ~590ms later. That is a product call and not
+    /// one this file can make — but it is a worse one than it looked while the
+    /// late half was believed to be a z-order race. With the switch off nothing
+    /// here is constructed and no other path consults it.
+    static let featureEnabledKey = "PhiReopenLoadingWindowEnabled"
+
+    static var isFeatureEnabled: Bool {
+        UserDefaults.standard.bool(forKey: featureEnabledKey)
+    }
+
+    /// Whether one saved slot gets a loading window on this reopen.
+    ///
+    /// Pure, and answerable before any window exists: two of the facts are
+    /// app-wide and three come straight off the slot's snapshot entry, so every
+    /// slot in a multi-slot reopen decides for itself. Every "no" leaves the
+    /// reopen behaving exactly as it does without the feature.
+    ///
+    /// - `featureEnabled`: the switch above.
+    /// - `sessionRestoreEnabled`: with restore off the reopen opens a single
+    ///   plain window on its own path — there is no replay to wait through.
+    /// - `isWindowlessReopen`: with a browser window already on screen the
+    ///   click has visible feedback already, and this would just be a second
+    ///   window in the way.
+    /// - `snapshotFrame`: nil for a slot saved before the snapshot carried
+    ///   geometry, or one whose stored rect no longer parses. Inventing a
+    ///   position would produce the jump this feature exists to prevent.
+    /// - `slotWasFullScreen`: a restored window always comes back windowed and
+    ///   only re-enters fullscreen once restore settles, so the sequence would
+    ///   be loading window → normal window → fullscreen animation. Worse than today,
+    ///   hence out of scope.
+    static func shouldShow(featureEnabled: Bool,
+                           sessionRestoreEnabled: Bool,
+                           isWindowlessReopen: Bool,
+                           snapshotFrame: NSRect?,
+                           slotWasFullScreen: Bool) -> Bool {
+        guard featureEnabled,
+              sessionRestoreEnabled,
+              isWindowlessReopen,
+              snapshotFrame != nil,
+              !slotWasFullScreen
+        else { return false }
+        return true
+    }
+
+    /// - Parameters:
+    ///   - frame: the slot's remembered rect, already clamped to the screens
+    ///     attached now.
+    ///   - sidebarWidth: how wide the slot's sidebar was, from the snapshot.
+    ///     Nil for a snapshot written before that was recorded, `0` for a
+    ///     collapsed one; both mean no band (`sidebarBandWidth`).
+    ///   - sidebarTint: the colour that sidebar filled itself with. Only read
+    ///     when there is a band to draw.
+    ///   - trafficLightOrigin: where the restored window's leading light sat,
+    ///     from the snapshot. Nil falls back to a constant copied out of the
+    ///     fork (`copiedTrafficLightOrigin`).
+    ///
+    /// Every default is nil, and nil is the honest degradation rather than a
+    /// convenience: it is exactly what an older snapshot supplies, and what the
+    /// window does with it is what the first reopen after an upgrade will do.
+    init(frame: NSRect,
+         sidebarWidth: CGFloat? = nil,
+         sidebarTint: NSColor? = nil,
+         trafficLightOrigin: NSPoint? = nil) {
+        // Resolved before `super.init` because it decides the style mask: no
+        // usable origin, no buttons at all.
+        let lightOrigin = Self.trafficLightOrigin(remembered: trafficLightOrigin)
+        // Byte for byte the mask the fork gives a normal browser window
+        // (`BrowserNativeWidgetMac::PopulateCreateWindowParams`: titled,
+        // closable, miniaturizable, resizable, plus full-size content for the
+        // `kBrowser` window class). Matching it is not decoration — it is what
+        // brings the three traffic lights into existence. A titled window
+        // WITHOUT closable/miniaturizable/resizable has no standard buttons at
+        // all: `standardWindowButton` answers nil for all three, measured, so
+        // before this they were not hidden here, they were absent.
+        //
+        // The mask gets them drawn. It does NOT get them in the right place —
+        // that takes `alignTrafficLights(to:)`, called at the end of this
+        // initializer — and when no origin can be trusted the mask reverts to
+        // the buttonless one, so no lights are drawn at all.
+        //
+        // They are drawn in AppKit's inactive grey, because this window can
+        // become neither key nor main (both refused below) — which is also the
+        // honest reading of a window that takes no input. The restored window's
+        // own first painted frame has them coloured, so the hand-off changes
+        // their colour but not their position.
+        super.init(contentRect: frame,
+                   styleMask: lightOrigin != nil
+                       ? [.titled, .closable, .miniaturizable, .resizable,
+                          .fullSizeContentView]
+                       : [.titled, .fullSizeContentView],
+                   backing: .buffered,
+                   defer: false)
+        // Whatever the band and the dots do not cover is this colour, and with
+        // no band it is nearly the whole rect: an opaque titled window's own
+        // frame view fills itself with it and rounds the corners, which is why
+        // the content view installed below carries only those two things and
+        // never a background of its own.
+        //
+        // The value is the literal one
+        // `MainBrowserWindowController.setupWindow` gives the browser window,
+        // so the rect held here is already the colour the restored window
+        // arrives in. Light and dark cannot diverge between the two either:
+        // both resolve it against one app-wide preference —
+        // `ThemeManager.userAppearanceChoice` sets `NSApp.appearance`, which
+        // this window inherits, and is also what the browser window's own
+        // `window.appearance` is built from. The one window that overrides it,
+        // Incognito, is never a reopen target: Incognito Spaces are dropped
+        // from the restore snapshot wholesale.
+        backgroundColor = .windowBackgroundColor
+        titlebarAppearsTransparent = true
+        titleVisibility = .hidden
+        isReleasedWhenClosed = false
+        // Titled windows are restorable by default, and the browser window
+        // turns that off for the same reason: AppKit re-creating a stand-in for
+        // a window this app builds itself, on a launch it knows nothing about,
+        // can only get in the way.
+        isRestorable = false
+        // Inert: it takes no input and becomes neither key nor main (both
+        // refused below). A deliberate departure from the original sketch,
+        // which had this window take key because the user just clicked the
+        // Dock — the restored window is the one they type into, a reopen
+        // already loses key on the target window for a few hundred ms, and
+        // nothing here can accept a keystroke anyway.
+        //
+        // Pass-through was re-examined when the visual became a blank rect, and
+        // again now that the rect carries three things shaped like buttons, and
+        // kept both times. The app a click falls through to is the one the user
+        // just left, and it is only reachable until the restored window is
+        // pinned over this rect: 155 to 175ms after this window goes up, median
+        // 165, over 16 reopens. (From this file's own two log lines, "loading
+        // window shown at" to "loading window put under the restored one"; the
+        // rounds and the command that recomputes it are in the ticket's
+        // evidence directory.) Hit testing is geometric, so from then on the
+        // restored window takes the click whether or not it has painted yet.
+        //
+        // Inside those 165ms the pointer is on the Dock tile the user just
+        // pressed, which is the gesture that got here — nowhere near this
+        // window's top-left corner. And a click that DID land there was going
+        // to the application underneath anyway a moment earlier, so passing it
+        // through is the behaviour that keeps doing what the user meant.
+        // Swallowing clicks instead would put a window that can be neither key
+        // nor main into the click path, where whether AppKit raises it over the
+        // restored window is not something this codebase knows — and it being
+        // raised is the one outcome worse than today.
+        //
+        // The lights are inert in the other direction too. No mouse event
+        // reaches them because of this line, and the one path this line does
+        // not close — an accessibility press — is closed by
+        // `makeTrafficLightsUnpressable` below, which costs nothing visually.
+        ignoresMouseEvents = true
+        // Not a window the user opened, so it must appear in none of the places
+        // the user's own windows are listed or cycled through — Window menu,
+        // Cmd+` , Mission Control.
+        isExcludedFromWindowsMenu = true
+        collectionBehavior = [.transient, .ignoresCycle, .fullScreenNone]
+        // No fade-in: the point of this window is to be on screen at the first
+        // opportunity, and an implicit animation would spend the first frames
+        // of that opportunity being invisible.
+        animationBehavior = .none
+        // The other half of the tax for being titled, and a separate one from
+        // the order-in constraint below: `init(contentRect:)` moves an
+        // overhanging rect up into the work area itself, before any
+        // `constrainFrameRect` call it could be refused through. Measured: a
+        // rect 60pt below the work area comes back 90pt above where it was
+        // asked for. A plain `setFrame` after the fact does land exactly (that
+        // path asks, and is refused), so put it back.
+        setFrame(frame, display: false)
+        // After the final `setFrame`, because all three read the settled size.
+        // Content view before the lights as a precaution rather than a measured
+        // need: installing one was checked and does NOT move the buttons, so
+        // the order is only insurance against a future AppKit that lays the
+        // titlebar out again when it gets one.
+        // `testTheSidebarBandDoesNotDisturbTheLights` is what would notice.
+        let host = NSView(frame: NSRect(origin: .zero, size: self.frame.size))
+        // The width actually drawn, not the width remembered: with no tint
+        // there is no band, and the indicator has to be centred in what the
+        // window really looks like.
+        var bandWidth: CGFloat?
+        if let width = Self.sidebarBandWidth(remembered: sidebarWidth,
+                                             inWindowOfWidth: self.frame.width),
+           let sidebarTint {
+            installSidebarBand(width: width, tint: sidebarTint, in: host)
+            bandWidth = width
+        }
+        if let dots = Self.activityDotsFrame(besideBandOfWidth: bandWidth,
+                                             inWindowOfSize: self.frame.size) {
+            installActivityDots(dots, in: host)
+        }
+        contentView = host
+        if let lightOrigin {
+            alignTrafficLights(to: lightOrigin)
+            makeTrafficLightsUnpressable()
+        }
+    }
+
+    /// The band while there is one, so the tests can hold its geometry down.
+    /// Nil is a real state — the snapshot remembered no width — and not a
+    /// zero-width view, so a reopen without one costs exactly what it cost
+    /// before the band existed.
+    private(set) var sidebarBand: ColoredVisualEffectView?
+
+    /// How wide a band to draw over the slot's sidebar, or nil for none.
+    ///
+    /// Nil in, nil out, and that is the rule the band exists under: a snapshot
+    /// written before this was recorded has no width, and a default would be a
+    /// guess. A band whose edge does not land exactly where the restored
+    /// window's sidebar ends moves at the hand-off, which is the one thing this
+    /// route exists to prevent — so no band beats a wrong band.
+    ///
+    /// `0` is a value rather than a gap: it is how a collapsed sidebar is
+    /// recorded, and `.comfortable` records itself the same way because it
+    /// keeps the sidebar collapsed permanently
+    /// (`MainSplitViewController.updateLayoutForHorizontalTabs`). One number
+    /// therefore settles the width, the collapsed state and which layouts draw
+    /// anything, which is why nothing in this class reads `LayoutMode` — and
+    /// `.comfortable` is the layout that needs no help, since its own first
+    /// painted frame already carries a tab-strip skeleton.
+    ///
+    /// A width that does not fit the window is refused outright rather than
+    /// clamped, by the same rule: the frame is clamped to the screens attached
+    /// now, so a slot saved on a wide display can in principle come back
+    /// narrower than its own sidebar was, and a band clamped to the window is
+    /// the whole rect in one colour — a solid block, not a browser window, and
+    /// nowhere near where the restored sidebar will end. Unreachable in
+    /// practice (`leftItemMaxWidth` is 500 and no display is narrower), which
+    /// is the other reason not to invent a behaviour for it.
+    static func sidebarBandWidth(remembered: CGFloat?,
+                                 inWindowOfWidth windowWidth: CGFloat) -> CGFloat? {
+        guard let remembered, remembered > 0, remembered <= windowWidth else { return nil }
+        return remembered
+    }
+
+    /// Covers the leading `width` points of the window with the sidebar.
+    ///
+    /// Built the way `SidebarViewController.loadView` builds the real one — the
+    /// same class, the same `.fullScreenUI` material, the same
+    /// `windowOverlayBackground` colour over it — and that is not fastidiousness,
+    /// it is the only thing that works. A flat fill of the colour alone was
+    /// built first and is INVISIBLE on the default theme: Pure's light overlay
+    /// is `0xFFFFFF` at the fixed 0.8 overlay alpha, over a window whose
+    /// background is `NSColor.windowBackgroundColor`, which is white too, so
+    /// the "two-tone split" composites to one tone. Measured off a real reopen
+    /// at 8 device pixels per point, the restored window's sidebar reads 220
+    /// and its content 253 on the same row — a 33-level step that comes from
+    /// the MATERIAL, not from the token. Reproducing the token without the
+    /// material reproduces none of it.
+    ///
+    /// Given the colour directly rather than through `themedBackgroundColor`,
+    /// on purpose: that property would subscribe this window to theme changes
+    /// and resolve against `ThemeManager.shared`, whereas the colour handed in
+    /// here is already resolved against the theme the Space that is reopening
+    /// will actually be given (`SpaceManager.sidebarTint(forSpaceId:)`).
+    ///
+    /// `state` is forced active because this window can be neither key nor
+    /// main, and the default would render the material in its inactive variant
+    /// while the restored window's sidebar — whose window does take key —
+    /// renders the active one.
+    ///
+    /// A full-size-content window's content view spans the frame, so the band's
+    /// coordinates are the frame's and the boundary is at exactly `width`.
+    /// Nothing resizes this window after `init`, so it is placed once.
+    private func installSidebarBand(width: CGFloat, tint: NSColor, in host: NSView) {
+        let band = ColoredVisualEffectView(
+            frame: NSRect(x: 0, y: 0, width: width, height: frame.height))
+        band.material = .fullScreenUI
+        band.state = .active
+        band.backgroundColor = tint
+        host.addSubview(band)
+        sidebarBand = band
+    }
+
+    // MARK: - The activity indicator
+
+    /// The three dots while there are any, so the tests can hold their geometry
+    /// and their rhythm down. Nil is a real state — a content area too small to
+    /// hold them draws none (`activityDotsFrame`) — rather than an empty view.
+    private(set) var activityDots: NSView?
+
+    /// Three, and the same three twice over: it is how many dots there are AND
+    /// how many steps a cycle has, because each dot lights exactly once per
+    /// cycle. Named rather than left as a literal because it is the one number
+    /// here that couples the geometry to the timing, across three functions.
+    static let activityDotCount = 3
+    /// Sized to the traffic lights' own discs rather than picked by eye: at 8pt
+    /// the group was 0.016% of the window by ink, a third of the lights the user
+    /// had already called too little to notice, and it read as too small on a
+    /// 1183x788 window. Matching them is the one non-arbitrary size available.
+    ///
+    /// Free to change. The A/B in `activityStepsPerSecond` priced the *rate* --
+    /// the window server bills per recomposition -- and nothing here is billed
+    /// by area: three 14pt discs animate 462pt² of a ~932,000pt² window.
+    static let activityDotDiameter: CGFloat = 14
+    static let activityDotGap: CGFloat = 12
+    static let activityDotLitOpacity: Float = 1
+    static let activityDotRestingOpacity: Float = 0.25
+    static let activityAnimationKey = "phiReopenLoadingActivity"
+
+    /// How many times a second the light moves on to the next dot.
+    ///
+    /// The one number this indicator costs anything through, and it was swept
+    /// rather than chosen. See the class comment for the curve.
+    static let activityStepsPerSecond: Double = 3
+
+    /// The group, laid out in a row.
+    private static var activityDotsSize: NSSize {
+        NSSize(width: CGFloat(activityDotCount) * activityDotDiameter
+                    + CGFloat(activityDotCount - 1) * activityDotGap,
+               height: activityDotDiameter)
+    }
+
+    /// Where the group goes in the window's own coordinates, or nil for "no
+    /// room for it".
+    ///
+    /// The blank area the user is looking at is the content area, so the group
+    /// is centred in what is left of the rect once the band has taken the
+    /// leading edge — not in the window. With no band (`.comfortable`, and any
+    /// snapshot with no remembered width) that is the whole rect, which is
+    /// exactly what is blank there. One number covers all three layouts here
+    /// for the same reason it does for the band, and nothing in this class
+    /// reads `LayoutMode`.
+    ///
+    /// Refused rather than squeezed when it does not fit, by the band's rule: a
+    /// group crushed against the band or clipped by the window is not an
+    /// indicator, it is a defect the user gets a second to look at. Vertically
+    /// it is the window's own centre and not the content pane's, because the
+    /// snapshot carries no toolbar height and inventing one is the same
+    /// mistake — the offset is at most a tab strip's worth on one layout.
+    ///
+    /// Total rather than nearly-total, and the finiteness test is why. Every
+    /// caller today hands in numbers that already passed a finite check
+    /// (`decodedSidebarWidth`, `decodedSlotFrame`), so it is unreachable — but
+    /// an infinity here would come back out as an infinite origin rather than
+    /// as a refusal, and this campaign has already lost an afternoon to a
+    /// non-finite number travelling further than anyone expected it to.
+    static func activityDotsFrame(besideBandOfWidth bandWidth: CGFloat?,
+                                  inWindowOfSize size: NSSize) -> NSRect? {
+        let leading = bandWidth ?? 0
+        guard leading.isFinite, size.width.isFinite, size.height.isFinite else { return nil }
+        let group = activityDotsSize
+        let contentWidth = size.width - leading
+        guard contentWidth >= group.width, size.height >= group.height else { return nil }
+        return NSRect(x: leading + (contentWidth - group.width) / 2,
+                      y: (size.height - group.height) / 2,
+                      width: group.width,
+                      height: group.height)
+    }
+
+    /// Puts the dots in the middle of the content area and starts them.
+    ///
+    /// The fill goes through the window's own appearance, and that wrapper is
+    /// load-bearing rather than tidy. `NSAppearance.currentDrawing()` is Aqua
+    /// outside a drawing context EVEN WHEN `NSApp.appearance` is darkAqua,
+    /// which is exactly what `ThemeManager` sets for a dark theme — so a bare
+    /// `.cgColor` here resolves the LIGHT variant, measured as black at 0.498
+    /// alpha where the dark variant is white at 0.549. That is black dots on a
+    /// dark window. It has nothing to do with the window not being on screen
+    /// yet: measured before and after `orderFront`, the answer is identical.
+    ///
+    /// Layer-hosting rather than layer-backed — the dots ARE this view's
+    /// content, so handing AppKit the layer is both simpler than asking for one
+    /// and non-optional, which removes a `guard` that could only ever have
+    /// failed silently.
+    ///
+    /// Nothing suppresses implicit actions here, and that is deliberate rather
+    /// than an omission: a `CALayer` that has never been committed has no
+    /// previous value to animate from, so setting frame, corner radius and
+    /// colour before `addSublayer` attaches nothing. Measured on a live render
+    /// server — the same mutations on an already-committed layer DO attach
+    /// `position` and `backgroundColor` animations, which is the case a
+    /// `CATransaction` would be for and is not the case here.
+    /// `testTheIndicatorIsTheOnlyThingThatAnimates` is what notices if that
+    /// ever stops being true.
+    private func installActivityDots(_ rect: NSRect, in host: NSView) {
+        let group = NSView(frame: rect)
+        let root = CALayer()
+        group.layer = root
+        group.wantsLayer = true
+        var resolved: CGColor?
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            resolved = NSColor.secondaryLabelColor.cgColor
+        }
+        // The closure above is synchronous and unconditional, so this fallback
+        // is unreachable. It is spelled out rather than force-unwrapped because
+        // what it produces is the wrong variant, and a reader should be able to
+        // see that rather than have to discover it.
+        let fill = resolved ?? NSColor.secondaryLabelColor.cgColor
+        let diameter = Self.activityDotDiameter
+        let pitch = diameter + Self.activityDotGap
+        for step in 0..<Self.activityDotCount {
+            let dot = CALayer()
+            dot.frame = NSRect(x: CGFloat(step) * pitch, y: 0,
+                               width: diameter, height: diameter)
+            dot.cornerRadius = diameter / 2
+            dot.backgroundColor = fill
+            // What a still one would look like, and what the first frame shows
+            // before the render server picks the rhythm up. It is the rhythm's
+            // own first keyframe, so there is no flash between the two.
+            dot.opacity = step == 0
+                ? Self.activityDotLitOpacity : Self.activityDotRestingOpacity
+            root.addSublayer(dot)
+            dot.add(Self.activityRhythm(lightingDotAt: step),
+                    forKey: Self.activityAnimationKey)
+        }
+        host.addSubview(group)
+        activityDots = group
+    }
+
+    /// One dot's share of the rhythm: lit for step `step` of three, resting for
+    /// the other two, forever.
+    ///
+    /// Discrete on purpose and not as a style: the calculation mode is the
+    /// whole cost argument. An interpolated animation of the same duration has
+    /// a new value on every display refresh and puts the window server back to
+    /// recompositing this rect at the refresh rate, which is what the ring it
+    /// replaces was doing. Discrete holds each value until the next key time,
+    /// so the work is three composites a cycle however long the cycle is.
+    ///
+    /// Driven by the render server rather than by a timer, which is not an
+    /// implementation detail either: the main thread is saturated by the very
+    /// restore this is reporting on, so anything clocked on it would freeze
+    /// exactly when it is supposed to say "still working".
+    private static func activityRhythm(lightingDotAt step: Int) -> CAKeyframeAnimation {
+        let rhythm = CAKeyframeAnimation(keyPath: "opacity")
+        rhythm.values = (0..<activityDotCount).map {
+            $0 == step ? activityDotLitOpacity : activityDotRestingOpacity
+        }
+        // Discrete mode wants one more key time than value — the last one is
+        // when the final value stops applying, not when it starts — which is
+        // why these are generated from the count rather than written out.
+        //
+        // 🔴 Not a formality. Measured against a live render server: three key
+        // times for three values makes the LAST DOT NEVER LIGHT and drops the
+        // realized rate from 3 steps a second to 2, while every property on the
+        // animation object still reads correctly. Nothing about the object
+        // looks wrong, so `testTheIndicatorAdvancesInDiscreteStepsAtTheSettledRate`
+        // asserts this array itself.
+        rhythm.keyTimes = (0...activityDotCount).map {
+            NSNumber(value: Double($0) / Double(activityDotCount))
+        }
+        rhythm.calculationMode = .discrete
+        rhythm.duration = Double(activityDotCount) / activityStepsPerSecond
+        // The window outlives any finite count worth choosing, and a stopped
+        // indicator on a restore that has not stopped is a worse lie than none.
+        rhythm.repeatCount = .infinity
+        return rhythm
+    }
+
+    private static let trafficLightKinds: [NSWindow.ButtonType] =
+        [.closeButton, .miniaturizeButton, .zoomButton]
+
+    /// Takes the three lights out of the one path that can still reach them.
+    ///
+    /// `ignoresMouseEvents` stops the mouse and nothing in this app targets
+    /// them, but an accessibility press is neither of those, and all three are
+    /// live wiring: their actions read `_close:`, `miniaturize:` and
+    /// `_setNeedsZoom:`. A press on close would destroy this window inside the
+    /// gap `ReopenLoadingHandoff.revealGrace` exists to cover; a press on
+    /// miniaturize would send a window the user never opened — and which is
+    /// deliberately kept out of the Window menu and Cmd-` — to the Dock.
+    ///
+    /// Costs nothing to look at, which is why it is worth doing: rendered off
+    /// screen on a window that can be neither key nor main, the enabled and
+    /// disabled titlebars come out byte-identical. Looking exactly like the
+    /// restored window's is the whole reason these are here, so a change that
+    /// altered them by a pixel would not have been worth this.
+    private func makeTrafficLightsUnpressable() {
+        for kind in Self.trafficLightKinds {
+            standardWindowButton(kind)?.isEnabled = false
+        }
+    }
+
+    /// Where `window` has its leading traffic light, as a distance from the
+    /// top-left corner of its frame — the one frame of reference the loading
+    /// window and the window it stands in for share.
+    ///
+    /// The reader half of the pair; `alignTrafficLights(to:)` is the writer,
+    /// and they must keep the same convention. Taken through window
+    /// coordinates rather than the titlebar view's own so neither depends on
+    /// how tall AppKit made that view or where it put it, and counted down
+    /// from the frame height because window coordinates start at the bottom
+    /// left.
+    ///
+    /// Called on a real browser window while the slot snapshot is being
+    /// written, which is the whole point: it answers with what THIS Chromium on
+    /// THIS macOS actually does, so nothing has to be copied out of the fork
+    /// and kept in step with it.
+    static func measuredTrafficLightOrigin(in window: NSWindow) -> NSPoint? {
+        // The close button specifically, not whichever one exists: the origin
+        // describes the LEADING light, so reading any other would shift the
+        // group by a whole 23pt pitch.
+        guard let leading = window.standardWindowButton(.closeButton),
+              let titlebar = leading.superview else { return nil }
+        let height = window.frame.height
+        guard height > 0 else { return nil }
+        let inWindow = titlebar.convert(leading.frame.origin, to: nil)
+        return NSPoint(x: inWindow.x,
+                       y: height - inWindow.y - leading.frame.height)
+    }
+
+    /// Where to put the lights, or nil for "draw none at all".
+    ///
+    /// A remembered origin wins over the copied constant. It was read off the
+    /// very window this one stands in for, on this machine, under this
+    /// Chromium, in this layout — so it needs no cross-repository coupling, and
+    /// a Chromium that moves its titlebar is followed automatically at the next
+    /// persist. Without one, the constant below, which is a copy and carries
+    /// all the problems a copy carries; reachable on the first reopen after
+    /// this started being recorded, and on any older snapshot.
+    ///
+    /// The macOS 26 test governs BOTH, and deliberately: it is not about where
+    /// the leading light goes, which a remembered origin does answer anywhere.
+    /// It is about the other two. `alignTrafficLights(to:)` translates the
+    /// group rigidly off the leading button, so it is right only if AppKit's
+    /// 23pt pitch and 14pt discs match the fork's — and that was measured on
+    /// 26.5 only. Below 26 the fork's inset override does not apply but its
+    /// `_shouldCenterTrafficLights` still does, so the two frame views are
+    /// known to differ there in a way nobody has looked at. Shipping an
+    /// unmeasured misalignment is worse than shipping no lights, which is what
+    /// this window did before it had any, and lifting this on the strength of
+    /// one measured point would be claiming the other two for free.
+    static func trafficLightOrigin(remembered: NSPoint?) -> NSPoint? {
+        guard #available(macOS 26, *) else { return nil }
+        return remembered ?? copiedTrafficLightOrigin
+    }
+
+    /// The fallback origin: where a restored window put its leading light when
+    /// that was measured by hand off a real reopen. NOT where AppKit puts a
+    /// plain titled window's.
+    ///
+    /// The fork installs its own `NSThemeFrame` subclass under every browser
+    /// window (`BrowserWindowFrame`, in
+    /// `components/remote_cocoa/app_shim/browser_native_widget_window_mac.mm`)
+    /// and that class moves them: `_minXTitlebarWidgetInset` returns 13 on
+    /// macOS 26, to sit concentric with the window corner it widens to 13 + 7 in
+    /// the same file, and `_shouldCenterTrafficLights` returns YES.
+    ///
+    /// Measured off a real reopen on macOS 26.5, at 8 device pixels per point:
+    /// the restored window's first disc has its origin at (13.00, 13.50) and a
+    /// plain titled window's at (9.00, 9.00), with the same 14pt diameter and
+    /// 23pt pitch in both, and the same numbers in `.performance`, `.balanced`
+    /// and `.comfortable`. Four points is small; it is also exactly the kind of
+    /// small this route cannot afford, because the hand-off is supposed to read
+    /// as one window filling in and three discs stepping sideways as it does is
+    /// the jump the whole route exists to remove.
+    ///
+    /// The x follows from the inset above. **Why the y is 13.5 and not 13 is not
+    /// established** — 13.5 is what was measured, not what was derived, and an
+    /// earlier version of this comment invented a cause for the half point that
+    /// did not survive review. Note also that "centre" plausibly makes the y a
+    /// function of the titlebar height, which `BrowserWindowFrame` takes from
+    /// the browser view per window; it did not vary across the three layouts,
+    /// which is the only evidence there is that it is a constant at all.
+    ///
+    /// That is the debt, and `trafficLightOrigin(in:)` above is what pays it
+    /// off: a snapshot that has seen a real window never reaches this value.
+    /// It stays for the reopens that have no such snapshot, and it stays a
+    /// standing coupling to that file for exactly those — if the fork changes
+    /// its inset, nothing here goes red and only a pixel round would notice.
+    ///
+    /// The other thing that could put the two sets out of step is the restored
+    /// window hiding its own lights, which it does when the sidebar is
+    /// collapsed in a non-traditional layout
+    /// (`MainBrowserWindowController.setupContentView`) — the sidebar's
+    /// floating pair is drawn instead, at its own metrics. That would not be a
+    /// four-point step, it would be three discs moving and changing size, so it
+    /// matters more than the correction above.
+    ///
+    /// It does not happen, and this is measured rather than argued, because the
+    /// obvious argument is wrong. AppKit's split-view autosave DOES persist the
+    /// sidebar item's collapsed flag — `defaults read` shows it as the fifth
+    /// field of `NSSplitView Subview Frames phiMainBrowserSplitView` — and a
+    /// restored window adopts that autosave before it is ever shown
+    /// (`PhiChromiumCoordinator`, `adoptAutosavedSplitPositionNow`). What
+    /// defeats it is that `BrowserState.sidebarCollapsed` is a fresh `false` on
+    /// a new window and `MainSplitViewController.viewWillAppear` re-asserts it
+    /// through the split item on subscription. Checked on the machine: with
+    /// that autosave field reading YES, a `.performance` reopen came back with
+    /// a 193pt sidebar and its native lights at (13.00, 13.50). `.comfortable`
+    /// does force the flag true but is the traditional layout the hide
+    /// condition exempts.
+    ///
+    /// Nothing moves them either: the floating view draws its own and forwards
+    /// clicks rather than reparenting the real ones, and the only other
+    /// traffic-light path in this file (`performHorizontalWindowSlide`) belongs
+    /// to a Space switch, which needs two windows in a slot and cannot be a
+    /// reopen.
+    static let copiedTrafficLightOrigin = NSPoint(x: 13.0, y: 13.5)
+
+    /// Moves all three lights so the leading one sits on `origin`.
+    private func alignTrafficLights(to origin: NSPoint) {
+        // No version test of its own, and no test for whether the buttons
+        // exist beyond this guard: the caller only reaches here with an origin,
+        // and an origin is exactly what made the style mask ask for buttons.
+        guard let leading = standardWindowButton(.closeButton),
+              let titlebar = leading.superview else { return }
+        // Same convention as `trafficLightOrigin(in:)`, inverted.
+        let target = NSPoint(x: origin.x,
+                             y: frame.height - origin.y - leading.frame.height)
+        let have = titlebar.convert(leading.frame.origin, to: nil)
+        let dx = target.x - have.x
+        let dy = target.y - have.y
+        // One translation for all three: the 23pt pitch already matches, so
+        // only the group's position is wrong.
+        for kind in Self.trafficLightKinds {
+            guard let button = standardWindowButton(kind) else { continue }
+            button.setFrameOrigin(NSPoint(x: button.frame.minX + dx,
+                                          y: button.frame.minY + dy))
+        }
+    }
+
+    override var canBecomeKey: Bool { false }
+
+    /// The third tax for being titled, and the one with teeth: AppKit's default
+    /// says any window with a title bar may be the app's MAIN window, and this
+    /// one is frontmost and alone on screen for the first half second of a
+    /// reopen. `NSApp.mainWindow` is what menu validation, the updater's theme
+    /// lookup and the alert presenter fall back to — none of which this window
+    /// can answer for. Same refusal `OverlayWindowController` and the Sparkle
+    /// update window already make.
+    override var canBecomeMain: Bool { false }
+
+    /// See the class comment: AppKit would otherwise pull an overhanging frame
+    /// back into the work area on order-in, and the restored window — exempted
+    /// from the same constraint in the fork — would then arrive somewhere else.
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
+        frameRect
+    }
+
+    /// Gives up its shadow to the restored window that is about to be shown.
+    ///
+    /// Both windows are on the same rect, so their shadows fall on the same
+    /// ring of desktop and would composite into one visibly heavier one — which
+    /// would then LIGHTEN when this window is destroyed, exactly the visible
+    /// event the z-order arrangement exists to avoid. From here the restored
+    /// window's shadow is the one that belongs to the shape the user sees.
+    /// Called before that window is shown, so no frame is ever composited with
+    /// both.
+    func yieldShadow() {
+        hasShadow = false
+        invalidateShadow()
+    }
+
+    /// Declares that this window belongs underneath the restored window that
+    /// has come to replace it, from now until it is destroyed.
+    ///
+    /// This is the whole hand-off. Nothing waits for the restored window to
+    /// paint, because nothing can see it paint: it is ordered in well before
+    /// its first frame reaches the screen, and every state signal available
+    /// fires inside that gap. Underneath it, the loading window shows through
+    /// for exactly as long as there is nothing to show instead, and stops being
+    /// visible the instant there is — so destroying it later
+    /// (`ReopenLoadingHandoff`) is a decision the user cannot see.
+    ///
+    /// A standing child relationship, not a one-shot `order(.below:)`, and the
+    /// name says so on purpose. This is declared inside Chromium's
+    /// window-created callback, where the restored window exists but has never
+    /// been ordered in, and ordering relative to a window that is not on screen
+    /// is simply dropped (measured, not assumed). AppKit maintains a child
+    /// ordering across every later ordering operation instead, including the
+    /// parent's own show, so the restored window is above this one from its
+    /// first frame with nothing left to repair. Declaring it against an unshown
+    /// parent does not take this window off screen (also measured); the rect
+    /// stays covered.
+    ///
+    /// Two further properties, both measured. This window is ordered out
+    /// whenever the restored one is, which is what should happen while the
+    /// restored window is the slot's active window — but it is a consequence of
+    /// the relationship, not a guarantee this file is making, and the slot
+    /// hard-`orderOut`s its windows from several ladders during this same span.
+    /// And `close()` detaches a child by itself, so destroying this window
+    /// needs no `removeChildWindow`; `unregisterWindow` and
+    /// `ReopenLoadingHandoff` are the two paths that do destroy it.
+    ///
+    /// The relationship is to one window, and that is sound only because a
+    /// reopen has at most one of these on screen: a windowless reopen's
+    /// snapshot always holds exactly one entry, because `removeSlot` shrinks it
+    /// on every close and the last close is the one that cannot (see T-b).
+    /// Should several ever coexist, each would still be pinned under its own
+    /// slot's window, which is what a shared window LEVEL could never express —
+    /// and a level below normal is not the fix in any case, since it would also
+    /// sink below the other application whose window is still on this rect,
+    /// which is the whole thing being covered.
+    func pinUnder(_ window: NSWindow) {
+        window.addChildWindow(self, ordered: .below)
+    }
+}
+
+/// Decides when a reopen's loading windows may be destroyed.
+///
+/// The loading window is not swapped for the restored window, it is left UNDER
+/// it (`ReopenLoadingWindow.pinUnder`), so the awkward part of the hand-off
+/// is gone by construction: from the first frame the restored window paints,
+/// the loading window is covered, and every later moment to remove it looks the
+/// same to the user. That leaves this type two things to get right, neither of
+/// them a matter of hitting an instant:
+///
+/// - the moment must ARRIVE, including when the restore never reports settling
+///   and when it brings no window back at all (`backstop`);
+/// - it must not arrive while the restored window is still contributing no
+///   pixels. Registration is not evidence of a painted window: a restored
+///   window is ordered in several hundred milliseconds before its first frame
+///   reaches the screen, and taking the loading window away inside that gap
+///   uncovers the desktop (`revealGrace`).
+///
+/// Kept apart from `SpaceManager` because it is the one piece here with real
+/// case analysis, and because none of the cases that matter — a restore that
+/// never settles, one that settles instantly, one that brings nothing back —
+/// can be produced on demand with a real reopen.
+final class ReopenLoadingHandoff {
+    /// Something the hand-off waits on.
+    enum Fact {
+        /// A restored window the user will actually see registered into one of
+        /// this reopen's slots. Concealed siblings do not count: they register
+        /// at alpha 0 and cover nothing.
+        case restoredWindowRegistered
+        /// Chromium reported every profile's restore settled — no further
+        /// window is coming from this reopen.
+        case restoreSettled
+    }
+
+    enum Outcome: Equatable {
+        /// Keep the loading windows up and ask again after this many seconds.
+        case wait(TimeInterval)
+        /// Close them now.
+        case tearDown
+        /// Already closed; the caller has nothing to do.
+        case alreadyTornDown
+    }
+
+    /// How long the loading window stays after the first restored window
+    /// registers. Covers the gap between a window being ordered in and it
+    /// painting, and that gap is much wider than it first looked: measured over
+    /// 12 reopens of the six-Space scene it runs from 538ms to 1095ms, because
+    /// the restored window's first frame is flushed either during a pause in
+    /// the restore's window-creation burst or only once the burst ends. 1.5s
+    /// clears the widest of those by about 400ms, which is the whole margin
+    /// there is — do not shorten this without re-measuring that gap, and note
+    /// that an earlier version of this comment justified it against 414ms,
+    /// which was the gap on a round that caught the pause. Only ever the
+    /// binding deadline on a restore that settles almost at once; on a real
+    /// multi-Space reopen the settle is later still.
+    static let revealGrace: TimeInterval = 1.5
+    /// Hard cap from the moment the loading windows went up, for the restore
+    /// that reports nothing back. Long enough never to fire on a slow but
+    /// healthy reopen, short enough that a wedged one is not left covering this
+    /// rect for the rest of the session.
+    static let backstop: TimeInterval = 8.0
+
+    private let startedAt: Date
+    private var firstWindowAt: Date?
+    private var settledAt: Date?
+    private var isTornDown = false
+
+    init(startedAt: Date) {
+        self.startedAt = startedAt
+    }
+
+    /// Records a fact and re-decides.
+    @discardableResult
+    func record(_ fact: Fact, at now: Date) -> Outcome {
+        guard !isTornDown else { return .alreadyTornDown }
+        switch fact {
+        case .restoredWindowRegistered:
+            // First one only. The grace covers the window the user is looking
+            // at; the tail of sibling Space windows that keeps arriving for
+            // the rest of the restore must not keep pushing it out.
+            if firstWindowAt == nil { firstWindowAt = now }
+        case .restoreSettled:
+            if settledAt == nil { settledAt = now }
+        }
+        return decide(at: now)
+    }
+
+    /// Re-decides without a new fact: an armed wait elapsed, or the run has
+    /// just begun and needs its first one.
+    func reconsider(at now: Date) -> Outcome {
+        guard !isTornDown else { return .alreadyTornDown }
+        return decide(at: now)
+    }
+
+    private func decide(at now: Date) -> Outcome {
+        let backstopAt = startedAt.addingTimeInterval(Self.backstop)
+        if now >= backstopAt { return tearDown() }
+        // Still replaying: more windows may yet arrive on these frames.
+        guard let settledAt else {
+            return .wait(backstopAt.timeIntervalSince(now))
+        }
+        // Grace from the window that has to paint before the loading window may
+        // go — or, when the restore brought nothing back, from the settle
+        // itself. "Nothing restored" is not "nothing is coming": the reopen
+        // answers it by spawning a plain window instead
+        // (`spawnPersistedSpaceWindow`), and that window needs exactly the
+        // cover a restored one needs. Timing the grace from the settle keeps
+        // the loading window up across the spawn; if the spawned window
+        // registers inside it, the line above takes over and the grace restarts
+        // from the window, which is the later and safer of the two.
+        let coverAt = (firstWindowAt ?? settledAt).addingTimeInterval(Self.revealGrace)
+        if now >= coverAt { return tearDown() }
+        return .wait(min(coverAt, backstopAt).timeIntervalSince(now))
+    }
+
+    private func tearDown() -> Outcome {
+        isTornDown = true
+        return .tearDown
+    }
 }

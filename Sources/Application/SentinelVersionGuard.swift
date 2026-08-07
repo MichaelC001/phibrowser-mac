@@ -85,7 +85,8 @@ final class SentinelVersionGuard {
         cooldown: TimeInterval = 10 * 60,
         now: @escaping () -> Date = Date.init,
         shouldRunSentinelProvider: @escaping () -> Bool = {
-            PhiPreferences.AISettings.phiAIEnabled.loadValue()
+            ApplicationState.shared.isAuthenticated
+                && PhiPreferences.AISettings.phiAIEnabled.loadValue()
         },
         browserBundleIDProvider: @escaping () -> String = {
             Bundle.main.bundleIdentifier ?? ""
@@ -94,8 +95,17 @@ final class SentinelVersionGuard {
             Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
         },
         sentinelInfoProvider: @escaping (String) -> RunningSentinelInfo? = SentinelVersionGuard.defaultRunningSentinelInfo,
-        restartRequestPoster: @escaping (SentinelVersionGuardSnapshot, String) -> Void = SentinelVersionGuard.postRestartRequest,
-        sentinelLauncher: @escaping () -> Void = SentinelHelper.launch,
+        restartRequestPoster: @escaping (SentinelVersionGuardSnapshot, String) -> Void = { snapshot, requestID in
+            guard ApplicationState.shared.isAuthenticated else { return }
+            SentinelVersionGuard.postRestartRequest(
+                snapshot: snapshot,
+                requestID: requestID
+            )
+        },
+        sentinelLauncher: @escaping () -> Void = {
+            guard ApplicationState.shared.isAuthenticated else { return }
+            SentinelHelper.launch()
+        },
         warningReporter: @escaping (SentinelVersionGuardWarning) -> Void = SentryService.captureSentinelVersionGuardWarning,
         logger: @escaping (String) -> Void = { AppLogInfo("[SentinelVersionGuard] \($0)") },
         sleep: @escaping (TimeInterval) async -> Void = { seconds in
@@ -195,6 +205,10 @@ final class SentinelVersionGuard {
     private func confirmConvergence(_ snapshot: SentinelVersionGuardSnapshot) async {
         for attempt in 1...maxConfirmationRetries {
             await sleep(confirmInterval)
+            guard shouldRunSentinelProvider() else {
+                logger("convergence check stopped because Sentinel is no longer required")
+                return
+            }
 
             guard let info = sentinelInfoProvider(snapshot.sentinelBundleID) else {
                 // Process gone (relaunch failed, or it exited and nothing respawned it).

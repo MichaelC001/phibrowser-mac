@@ -14,8 +14,21 @@ import Foundation
 /// authenticates every connecting process, prompts for the user's consent the
 /// first time an agent appears, and hands each approved connection to Chromium
 /// as a bare file descriptor via `attachDevToolsConnectionWithFD:`. Because the
-/// app owns the socket, the whole feature toggles at runtime — no relaunch — and
-/// access can be revoked instantly (`closeAllDevToolsConnections`).
+/// app owns the socket, access can be revoked instantly
+/// (`closeAllDevToolsConnections`).
+///
+/// The socket is up for the whole app session — it is a doorbell, not the
+/// door. The two master switches (Developer mode, and agent CDP access under
+/// Settings ▸ Developer) are enforced at consent time instead of by hiding the
+/// endpoint: with either one off, a connecting agent still reaches the prompt,
+/// which then asks to turn them on as part of allowing that agent. An agent
+/// therefore never has to talk the user through Settings, and "off" still
+/// means no agent can drive the browser until the user says so.
+///
+/// A doorbell anyone may ring needs a way to silence it, so the prompt's deny
+/// side is scoped too: this connection, 30 minutes, or never again, for the
+/// asking agent or for every agent. Those refusals (`AgentDenial`) outrank
+/// every grant and are checked before anything else.
 ///
 /// Threading: the accept loop runs on `ioQueue`; each connection is
 /// authenticated on the serial `authQueue` (which also serializes consent
@@ -43,23 +56,35 @@ final class AgentCDPListener {
 
     // MARK: - Lifecycle
 
-    /// Starts the listener when agent CDP access is enabled. Call at launch.
-    func startIfEnabled() {
-        if PhiPreferences.AgentSpaces.cdpAgentAccessEnabled {
-            start()
-        }
+    /// Whether an approved agent may drive the browser right now: Developer
+    /// mode (Settings ▸ General) and agent CDP access (Settings ▸ Developer)
+    /// must both be on. With either off the socket still accepts — the
+    /// consent prompt turns into a request to open both (see `evaluate`).
+    private static var accessGatesOpen: Bool {
+        PhiPreferences.AgentSpaces.developerModeEnabled
+            && PhiPreferences.AgentSpaces.cdpAgentAccessEnabled
     }
 
-    /// Flips the preference and applies it live: starts or stops the listener
-    /// now, with no relaunch. Call from the Settings toggle. Also refreshes
-    /// the main menu, whose View ▸ Agent Autoview / Agent Transcript items
-    /// are gated on this switch.
-    func setEnabled(_ enabled: Bool) {
+    /// Flips the preference and applies it live, with no relaunch. Call from
+    /// the Settings toggle. Turning it off severs every live connection at
+    /// once; the socket itself stays up either way, so the next agent to
+    /// connect can ask for it back. Also refreshes the main menu, whose
+    /// View ▸ Agent Autoview / Agent Transcript items are gated on this switch.
+    ///
+    /// - Parameter resettingRefusals: whether turning access ON also lifts
+    ///   every standing refusal. True for the Settings toggle — flipping the
+    ///   master switch back on is a clean slate, and the second way out of a
+    ///   "Never ask again, all agents" block after the Blocked agents list.
+    ///   False when one agent's approval is what turns the feature on
+    ///   (`openAccessGates`): allowing that agent must not unblock the others.
+    func setEnabled(_ enabled: Bool, resettingRefusals: Bool = true) {
         PhiPreferences.AgentSpaces.cdpAgentAccessEnabled = enabled
         if enabled {
-            start()
+            if resettingRefusals {
+                PhiPreferences.AgentSpaces.agentDenials = []
+            }
         } else {
-            stop()
+            revokeActiveAccess()
         }
         DispatchQueue.main.async {
             AppController.shared?.refreshPrefGatedMenuItems()
@@ -68,6 +93,7 @@ final class AgentCDPListener {
             if !enabled {
                 AgentTranscriptPanelController.shared.dismiss()
             }
+            NotificationCenter.default.post(name: .agentCDPAccessDidChange, object: nil)
         }
     }
 
@@ -90,6 +116,19 @@ final class AgentCDPListener {
         PhiPreferences.AgentSpaces.rememberedAgentGrants = remembered
         grantsLock.lock()
         sessionGrants.remove(key)
+        grantsLock.unlock()
+    }
+
+    /// Forgets every agent approval at once — the persisted "Always Allow"
+    /// grants and this session's "Allow Once" ones. The developer-mode
+    /// kill-switch calls it: turning developer mode off doesn't just close the
+    /// door, it forgets everyone who was ever let in, so each agent has to
+    /// pass consent from scratch afterwards. Denials are deliberately kept —
+    /// clearing approvals must never soften a refusal.
+    func forgetAllGrants() {
+        PhiPreferences.AgentSpaces.rememberedAgentGrants = []
+        grantsLock.lock()
+        sessionGrants.removeAll()
         grantsLock.unlock()
     }
 
@@ -178,17 +217,24 @@ final class AgentCDPListener {
         socketPath = nil
         pointerFilePath = nil
 
+        revokeActiveAccess()
+        AppLogInfo("[AgentCDP] stopped")
+    }
+
+    /// Cuts every agent off immediately: both transports are severed
+    /// (connections handed to Chromium and the app-served /phi-agent
+    /// channels) and this session's Allow-Once grants are dropped, so a
+    /// reconnecting agent has to pass consent again. Persisted "Always Allow"
+    /// grants survive — they are revoked from Settings, one agent at a time.
+    private func revokeActiveAccess() {
         grantsLock.lock()
         sessionGrants.removeAll()
         grantsLock.unlock()
 
-        // Sever both transports: connections handed to Chromium and the
-        // app-served /phi-agent channels (revoke is immediate).
         AgentDirectChannelRegistry.shared.closeAll()
         DispatchQueue.main.async {
             ChromiumLauncher.sharedInstance().bridge?.closeAllDevToolsConnections()
         }
-        AppLogInfo("[AgentCDP] stopped")
     }
 
     // MARK: - Accept loop (ioQueue)
@@ -401,57 +447,144 @@ final class AgentCDPListener {
 
     /// Returns true when `identity` may connect: a cached session grant, a
     /// remembered grant, or a fresh Allow from the consent prompt.
+    ///
+    /// While a master switch is off no grant stands on its own — every agent,
+    /// remembered or not, goes to the prompt, which asks to turn the switches
+    /// back on as part of allowing it. That is the only path that flips them
+    /// from outside Settings, and it always costs the user an explicit Allow.
     private func evaluate(_ identity: AgentIdentity) -> Bool {
-        grantsLock.lock()
-        if sessionGrants.contains(identity.key) {
-            grantsLock.unlock()
-            return true
+        // A standing refusal wins over everything, including a remembered
+        // grant: "Never ask again" has to mean it even if the same agent was
+        // once allowed.
+        if let denial = Self.liveDenials().first(where: { $0.covers(identity.key) }) {
+            AppLogInfo("[AgentCDP] refused \(identity.displayName) — standing denial"
+                       + (denial.isPermanent ? " (never ask again)" : " (until \(denial.expires!))"))
+            return false
         }
+
+        grantsLock.lock()
+        let granted = sessionGrants.contains(identity.key)
         grantsLock.unlock()
 
-        if PhiPreferences.AgentSpaces.rememberedAgentGrants.contains(identity.key) {
-            grantsLock.lock(); sessionGrants.insert(identity.key); grantsLock.unlock()
-            return true
+        let gatesOpen = Self.accessGatesOpen
+        if gatesOpen {
+            if granted { return true }
+            if PhiPreferences.AgentSpaces.rememberedAgentGrants.contains(identity.key) {
+                grantsLock.lock(); sessionGrants.insert(identity.key); grantsLock.unlock()
+                return true
+            }
         }
 
-        switch promptForConsent(identity) {
-        case .deny:
+        let choice = promptForConsent(identity, opensGates: !gatesOpen)
+        if case .deny(let scope, let allAgents) = choice {
+            if scope.isRemembered {
+                recordDenial(AgentDenial(key: allAgents ? nil : identity.key,
+                                         expires: scope.expiry))
+            }
             return false
-        case .allowOnce:
-            grantsLock.lock(); sessionGrants.insert(identity.key); grantsLock.unlock()
-            return true
-        case .allowRemember:
-            grantsLock.lock(); sessionGrants.insert(identity.key); grantsLock.unlock()
+        }
+
+        // Open the gates before the caller hands the connection on, so the
+        // browser is never driven while Settings still reads "off".
+        if !gatesOpen { openAccessGates() }
+
+        grantsLock.lock(); sessionGrants.insert(identity.key); grantsLock.unlock()
+        if choice == .allowAlways {
             var remembered = PhiPreferences.AgentSpaces.rememberedAgentGrants
             remembered.insert(identity.key)
             PhiPreferences.AgentSpaces.rememberedAgentGrants = remembered
-            return true
+        }
+        return true
+    }
+
+    // MARK: - Standing refusals
+
+    /// The refusals still in force, pruning lapsed ones on the way out (and
+    /// writing the pruned list back, so an expired entry doesn't linger in the
+    /// Settings list). Reads and writes are serialized by `authQueue` on the
+    /// consent path; the Settings list only removes.
+    private static func liveDenials() -> [AgentDenial] {
+        let all = PhiPreferences.AgentSpaces.agentDenials
+        let live = all.filter { !$0.isExpired }
+        if live.count != all.count {
+            PhiPreferences.AgentSpaces.agentDenials = live
+        }
+        return live
+    }
+
+    /// Records a refusal, dropping any it makes redundant and skipping itself
+    /// when a broader or longer one already stands — so choosing "never, all
+    /// agents" collapses the list to one entry instead of stacking.
+    private func recordDenial(_ denial: AgentDenial) {
+        var denials = Self.liveDenials()
+        denials.removeAll { denial.supersedes($0) }
+        if !denials.contains(where: { $0.supersedes(denial) }) {
+            denials.append(denial)
+        }
+        PhiPreferences.AgentSpaces.agentDenials = denials
+        AppLogInfo("[AgentCDP] recorded denial for "
+                   + (denial.appliesToAllAgents ? "all agents" : denial.displayName)
+                   + (denial.isPermanent ? " (never ask again)" : " (30 min)"))
+    }
+
+    /// Standing refusals, for the Developer settings "Blocked agents" list.
+    /// Safe to call from the main thread.
+    func blockedAgents() -> [AgentDenial] {
+        Self.liveDenials().sorted { lhs, rhs in
+            if lhs.appliesToAllAgents != rhs.appliesToAllAgents {
+                return lhs.appliesToAllAgents  // the broadest entry leads
+            }
+            return lhs.displayName.localizedCaseInsensitiveCompare(rhs.displayName) == .orderedAscending
         }
     }
 
-    private enum ConsentDecision { case deny, allowOnce, allowRemember }
+    /// Lifts one refusal (Settings ▸ unblock), so that agent is prompted for
+    /// again on its next connection.
+    func forgetDenial(id: String) {
+        PhiPreferences.AgentSpaces.agentDenials =
+            Self.liveDenials().filter { $0.id != id }
+    }
 
-    private func promptForConsent(_ identity: AgentIdentity) -> ConsentDecision {
-        var decision = ConsentDecision.deny
+    /// Turns on Developer mode and agent CDP access after the user approved a
+    /// prompt that said it would. Developer mode goes through AppController,
+    /// which owns that toggle's side effects (rebuilding an open Settings
+    /// window so the Developer tab appears).
+    private func openAccessGates() {
         DispatchQueue.main.sync {
-            let alert = NSAlert()
-            alert.messageText = String(
-                format: NSLocalizedString("agentControl.connectionApproval.title", value: "“%@” wants to control Phi Browser",
-                                          comment: "CDP consent - title"),
-                identity.displayName)
-            alert.informativeText = NSLocalizedString("agentControl.connectionApproval.message", value: "An agent is asking to drive Phi Browser over the DevTools Protocol — opening pages, reading content, and acting on your behalf. Only allow agents you trust.",
-                comment: "CDP consent - body")
-                + "\n\n" + identity.detail
-            alert.addButton(withTitle: NSLocalizedString("agentControl.connectionApproval.allowOnceButton", value: "Allow Once", comment: "CDP consent - allow for this session"))
-            alert.addButton(withTitle: NSLocalizedString("agentControl.connectionApproval.alwaysAllowButton", value: "Always Allow", comment: "CDP consent - allow and remember"))
-            alert.addButton(withTitle: NSLocalizedString("agentControl.connectionApproval.denyButton", value: "Deny", comment: "CDP consent - deny"))
-            switch alert.runModal() {
-            case .alertFirstButtonReturn: decision = .allowOnce
-            case .alertSecondButtonReturn: decision = .allowRemember
-            default: decision = .deny
+            MainActor.assumeIsolated {
+                AppController.shared?.setDeveloperModeEnabled(true)
             }
         }
-        return decision
+        setEnabled(true, resettingRefusals: false)
+        AppLogInfo("[AgentCDP] developer mode and agent CDP access enabled from the consent prompt")
+    }
+
+    /// The one prompt an agent ever triggers. `opensGates` adds the banner
+    /// saying that allowing also switches the feature on, so the user is never
+    /// sent to Settings to finish what they just approved. Its deny options
+    /// are the other half of that bargain: a prompt that can turn the feature
+    /// on has to be answerable with "and stop asking".
+    ///
+    /// Any other dismissal (the host window closing) reads as a plain deny —
+    /// the one answer that changes nothing.
+    private func promptForConsent(_ identity: AgentIdentity,
+                                  opensGates: Bool) -> AgentAccessChoice {
+        var choice = AgentAccessChoice.deny(scope: .thisTime, allAgents: false)
+        DispatchQueue.main.sync {
+            MainActor.assumeIsolated {
+                _ = NSApp.runPhiAlert { dismiss in
+                    AgentAccessApprovalAlert(
+                        agentName: identity.displayName,
+                        identityDetail: identity.detail,
+                        opensGates: opensGates
+                    ) { picked in
+                        choice = picked
+                        dismiss(.alertFirstButtonReturn)
+                    }
+                }
+            }
+        }
+        return choice
     }
 
     // MARK: - Helpers
@@ -600,4 +733,12 @@ final class AgentCDPListener {
         }
         close(fd)
     }
+}
+
+extension Notification.Name {
+    /// Posted when agent CDP access is switched on or off. The Settings toggle
+    /// is no longer the only thing that flips it — approving a consent prompt
+    /// does too — so the Developer pane has to hear about changes it didn't
+    /// make, or it would sit there reading "off" while an agent drives.
+    static let agentCDPAccessDidChange = Notification.Name("agentCDPAccessDidChange")
 }

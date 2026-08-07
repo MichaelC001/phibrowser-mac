@@ -531,7 +531,9 @@ class WebContentContainerViewController: NSViewController {
             .store(in: &cancellables)
 
         if lastKnownSidebarWidth <= 0 {
-            let cached = AccountController.shared.account?.userDefaults.lastKnownSidebarWidth ?? 0
+            let cached =
+                AccountController.shared.localDataAccount?.userDefaults.lastKnownSidebarWidth
+                ?? 0
             if cached > 0 {
                 lastKnownSidebarWidth = cached
             }
@@ -1443,6 +1445,7 @@ class WebContentContainerViewController: NSViewController {
             tabStripBarController?.view.isHidden = true
             topBarHeightConstraint?.update(offset: 0)
             topBarTopConstraint?.update(inset: WebContentConstant.edgesSpacing)
+            // This owns only the 8pt non-web gap above WebContents.
             titleAwareArea.isHidden = false
         }
 

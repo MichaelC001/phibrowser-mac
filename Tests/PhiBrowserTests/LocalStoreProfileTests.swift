@@ -376,9 +376,8 @@ final class LocalStoreProfileTests: XCTestCase {
     /// Bookmarks imported into a non-default Space must land under that Space's
     /// bookmark root, and must not leak into the default Space. Exercises the
     /// `spaceId` thread-through added for T1. The Chromium path shares the same
-    /// `bookmarkRoot(spaceId:)` change but its `BookmarkWrapper` input is a
-    /// framework type that cannot be constructed in a unit test, so the Arc
-    /// path stands in for the shared behavior.
+    /// `bookmarkRoot(spaceId:)` change and is covered separately through
+    /// `StubBookmarkWrapper`.
     func testSaveArcBookmarksToLocalStoreLandsInTargetSpace() async throws {
         let store = try makeStore()
         let context = try XCTUnwrap(store.getMainContext())
@@ -512,6 +511,135 @@ final class LocalStoreProfileTests: XCTestCase {
         let top = store.fetchBookmarks(parentId: nil,
             profileId: LocalStore.defaultProfileId, spaceId: "space-a")
         XCTAssertNil(top.first { $0.title == "Empty" })
+    }
+
+    /// Chromium titles its permanent bookmark bar node in the UI language, so
+    /// the persist path has to find it by position. Matching a hard-coded
+    /// "Bookmarks Bar" dropped every imported bookmark in a non-English UI while
+    /// the importer still reported success. The fixture uses the German titles;
+    /// any non-English UI language reproduces it (the bug was reported on a
+    /// zh-CN build).
+    func testSaveChromiumBookmarksAcceptsLocalizedBookmarkBarTitle() async throws {
+        let store = try makeStore()
+        let leaf = StubBookmarkWrapper(title: "Example", urlString: "https://example.com")
+        let importFolder = StubBookmarkWrapper(
+            title: "Aus Chrome importiert", isFolder: true, children: [leaf])
+        let bookmarksBar = StubBookmarkWrapper(
+            title: "Lesezeichenleiste", isFolder: true, children: [importFolder])
+        let otherBookmarks = StubBookmarkWrapper(
+            title: "Weitere Lesezeichen", isFolder: true, indexInParent: 1)
+
+        await store.saveChromiumBookmarksToLocalStore(
+            [bookmarksBar, otherBookmarks],
+            profileId: LocalStore.defaultProfileId,
+            spaceId: LocalStore.defaultSpaceId
+        )
+
+        let top = store.fetchBookmarks(
+            parentId: nil,
+            profileId: LocalStore.defaultProfileId,
+            spaceId: LocalStore.defaultSpaceId
+        )
+        let folder = try XCTUnwrap(
+            top.first { $0.title == "Aus Chrome importiert" },
+            "The bookmark bar's children must land under the Space's root."
+        )
+        let children = store.fetchBookmarks(
+            parentId: folder.guid,
+            profileId: LocalStore.defaultProfileId,
+            spaceId: LocalStore.defaultSpaceId
+        )
+        XCTAssertEqual(children.map { $0.title }, ["Example"])
+    }
+
+    /// The bridge drops permanent nodes that are hidden while empty, so its
+    /// payload is a filtered view of the model root. When the bookmark bar is
+    /// not in it, the import must abort rather than treat the next permanent
+    /// node — "Other Bookmarks" — as the bar and import its children.
+    func testSaveChromiumBookmarksAbortsWhenBookmarkBarIsMissing() async throws {
+        let store = try makeStore()
+        let leaf = StubBookmarkWrapper(title: "Stray", urlString: "https://example.com")
+        let otherBookmarks = StubBookmarkWrapper(
+            title: "Weitere Lesezeichen", isFolder: true, indexInParent: 1, children: [leaf])
+
+        await store.saveChromiumBookmarksToLocalStore(
+            [otherBookmarks],
+            profileId: LocalStore.defaultProfileId,
+            spaceId: LocalStore.defaultSpaceId
+        )
+
+        XCTAssertTrue(
+            store.fetchBookmarks(
+                parentId: nil,
+                profileId: LocalStore.defaultProfileId,
+                spaceId: LocalStore.defaultSpaceId
+            ).isEmpty,
+            "Without the bookmark bar node nothing may be imported."
+        )
+    }
+
+    func testSaveChromiumBookmarksSkipsEmptyPayload() async throws {
+        let store = try makeStore()
+
+        await store.saveChromiumBookmarksToLocalStore(
+            [],
+            profileId: LocalStore.defaultProfileId,
+            spaceId: LocalStore.defaultSpaceId
+        )
+
+        XCTAssertTrue(
+            store.fetchBookmarks(
+                parentId: nil,
+                profileId: LocalStore.defaultProfileId,
+                spaceId: LocalStore.defaultSpaceId
+            ).isEmpty,
+            "An empty bridge payload must not create any bookmarks."
+        )
+    }
+
+    /// The importer must resolve its store through the browser's local-data
+    /// accessor rather than through the signed-in account: imports performed
+    /// before sign-in (Guest Mode) used to resolve to nil, and every bookmark
+    /// was dropped without a trace while the UI reported success.
+    func testPersistImportedBookmarksWritesIntoTheResolvedStore() async throws {
+        let store = try makeStore()
+        let importer = BrowserDataImporter(
+            targetProfileId: LocalStore.defaultProfileId,
+            targetSpaceId: LocalStore.defaultSpaceId,
+            localDataStoreProvider: { store }
+        )
+        let leaf = StubBookmarkWrapper(title: "Example", urlString: "https://example.com")
+        let importFolder = StubBookmarkWrapper(
+            title: "Aus Chrome importiert", isFolder: true, children: [leaf])
+        let bookmarksBar = StubBookmarkWrapper(
+            title: "Lesezeichenleiste", isFolder: true, children: [importFolder])
+
+        await importer.persistImportedBookmarks([bookmarksBar], arcSpaceRoot: nil)
+
+        let top = store.fetchBookmarks(
+            parentId: nil,
+            profileId: LocalStore.defaultProfileId,
+            spaceId: LocalStore.defaultSpaceId
+        )
+        XCTAssertEqual(top.map { $0.title }, ["Aus Chrome importiert"])
+    }
+
+    /// With no store to resolve, persistence has to return quietly. There is no
+    /// observable state to assert on — the test guards against the path crashing
+    /// or force-unwrapping its way to a store.
+    func testPersistImportedBookmarksWithoutAStoreReturnsQuietly() async {
+        let importer = BrowserDataImporter(
+            targetProfileId: LocalStore.defaultProfileId,
+            targetSpaceId: LocalStore.defaultSpaceId,
+            localDataStoreProvider: { nil }
+        )
+        let bookmarksBar = StubBookmarkWrapper(
+            title: "Lesezeichenleiste",
+            isFolder: true,
+            children: [StubBookmarkWrapper(title: "Example", urlString: "https://example.com")]
+        )
+
+        await importer.persistImportedBookmarks([bookmarksBar], arcSpaceRoot: nil)
     }
 
     func testImportTargetLockTracksImportingSpaces() {
@@ -783,5 +911,33 @@ final class LocalStoreProfileTests: XCTestCase {
         let profiles = importer.loadChromiumProfiles(localStateURL: url)
         XCTAssertEqual(profiles.map { $0.directory }, ["Default", "Profile 1"])
         XCTAssertEqual(profiles.map { $0.name }, ["Your Arc", "aa"])
+    }
+}
+
+/// Stand-in for the Chromium bridge's bookmark payload. The concrete
+/// `BookmarkWrapper` class ships in the framework, but conforming to the
+/// protocol is enough to drive the persist path from a unit test.
+private final class StubBookmarkWrapper: NSObject, BookmarkWrapper {
+    let title: String?
+    let urlString: String?
+    let favIconURL: String? = nil
+    let guid = 0
+    let isFolder: Bool
+    let indexInParent: Int
+    let children: [BookmarkWrapper]
+
+    init(
+        title: String?,
+        urlString: String? = nil,
+        isFolder: Bool = false,
+        indexInParent: Int = 0,
+        children: [BookmarkWrapper] = []
+    ) {
+        self.title = title
+        self.urlString = urlString
+        self.isFolder = isFolder
+        self.indexInParent = indexInParent
+        self.children = children
+        super.init()
     }
 }

@@ -1,6 +1,6 @@
 # Analytics
 
-Last updated: 2026-05-21
+Last updated: 2026-08-04
 
 Phi Browser emits product analytics to both [Countly](https://phi-browser-eaade70cfd902.flex.countly.com) (legacy) and [PostHog](https://us.posthog.com/project/385742) (current). Both pipelines run side-by-side; PostHog is the forward-looking source of truth.
 
@@ -33,6 +33,30 @@ Nightly and release builds share the same self-hosted PostHog instance; the bund
 
 A plain Xcode Run/Debug compiles the empty-value default and runs without PostHog; no setup script is needed. After a local archive, the generated file will show up as locally modified — don't commit that.
 
+## Sentinel telemetry consent contract
+
+Chromium owns the device-level metrics preference. Phi publishes its current
+value to the `group.com.phibrowser.shared` App Group so Sentinel and its managed
+services can apply the same consent without duplicating the preference.
+
+| Channel | Shared file | Notification |
+| --- | --- | --- |
+| Stable | `telemetry-consent.plist` | `com.phibrowser.telemetryConsentDidChange` |
+| Canary | `telemetry-consent-canary.plist` | `com.phibrowser.canary.telemetryConsentDidChange` |
+| Dev | `telemetry-consent-dev.plist` | `com.phibrowser.dev.telemetryConsentDidChange` |
+
+The atomically written plist contains `SchemaVersion` (`1`), `Enabled`, a UUID
+`Revision`, and `UpdatedAtMillis`. A revision is retained across browser
+restarts while the effective state remains unchanged and replaced whenever the
+state changes or an invalid snapshot is repaired.
+
+The Chromium bridge exposes a live getter but no change callback, so Phi polls
+it once per second after Chromium finishes launching. A temporarily unavailable
+bridge does not overwrite an existing snapshot; consumers fail closed when no
+valid snapshot exists. Distributed notifications are wake-up hints only. A
+consumer must reread and validate the shared plist instead of trusting a
+notification payload.
+
 ## Identity
 
 | Boundary | PostHog call | Location |
@@ -60,17 +84,19 @@ All custom events are snake_case. Events prefixed `$` are auto-captured by the S
 
 | Event | Trigger | File |
 |-------|---------|------|
-| `$app_opened` | SDK lifecycle auto-capture; enriched with `layout_mode` (`balanced` / `performance` / `comfortable`) and `ai_enabled` (bool) via a `beforeSend` hook | `Application/AppController.swift` |
+| `$app_opened` | SDK lifecycle auto-capture; enriched with `layout_mode` (`balanced` / `performance` / `comfortable`), `ai_enabled` (bool), and `is_guest_mode` (bool) via a `beforeSend` hook | `Application/AppController.swift` |
 | `$app_installed` / `$app_updated` / `$app_backgrounded` | SDK lifecycle auto-capture | — |
 | `user_logged_in` | Auth0 login completed | `Onboarding/Login/LoginViewController.swift` |
 | `login_retried` | User tapped "Go back and try again" after failed/timed-out login | `Onboarding/Login/LoginViewController.swift` |
 | `user_logged_out` | User logged out; identity reset follows | `Onboarding/AuthManager.swift` |
+| `guest_mode_entered` | User successfully crossed the local credential boundary and entered Guest Mode | `Onboarding/LoginController.swift` |
+| `guest_mode_exited` | Guest account migration and authenticated account publication completed; `destination` is `signed_in` | `Onboarding/LoginController.swift` |
 | `onboarding_completed` | User tapped Next on welcome screen | `Onboarding/Welcome/OnboardingWelcomeViewController.swift` |
 | `ai_features_toggled` | User enabled/disabled AI features in settings | `Preferences/AISettings/AISettingView.swift` |
 | `connector_status` | Snapshot of each AI connector's connected/disconnected state, fired on refresh | `Preferences/AISettings/AISettingsConnectorViewModel.swift` |
 | `ai_chat_page_opened` | AI Chat page became visible | `Chat/AIChatViewController.swift` |
 | `ai_chat_page_viewed` | Fires on AI Chat page close, with `duration_seconds` dwell time | `Chat/AIChatViewController.swift` |
-| `user_defaults_snapshot` | Launch-time snapshot of selected preferences (NTP, AI toggles, default browser, appearance) | `Application/AppControlle+LaunchInfo.swift` |
+| `user_defaults_snapshot` | Launch-time snapshot of new-tab behavior, layout mode, appearance, default browser, proactive suggestions, and automatic current-tab context | `Application/AppControlle+LaunchInfo.swift` |
 
 Naming rule: **don't reuse PostHog-reserved names** (anything starting with `$`, or that collides with SDK-auto events like "app installed"). For features that could be ambiguous with app-level concepts (e.g. downloads), prefix with the feature scope (`file_download_*`, not `download_*`).
 

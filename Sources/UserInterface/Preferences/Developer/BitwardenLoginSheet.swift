@@ -7,7 +7,7 @@ import SwiftUI
 
 /// Sign-in / unlock sheet for the Bitwarden credential provider, presented from
 /// the General settings card. Its layout mirrors Bitwarden's own login form:
-/// the wordmark, a "Log in" title, an email step (email + "Remember email" +
+/// the wordmark, a "Sign in" title, an email step (email + "Remember email" +
 /// Continue), and the "Accessing:" server footer — deliberately without the
 /// "Create account" entry point (Phi does not onboard new Bitwarden accounts).
 ///
@@ -130,7 +130,7 @@ struct BitwardenLoginSheet: View {
 
     private var emailStep: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text(NSLocalizedString("settings.bitwardenLoginSheet.emailStep.title", value: "Log in", comment: "Bitwarden login sheet - Email step title"))
+            Text(NSLocalizedString("settings.bitwardenLoginSheet.emailStep.title", value: "Sign in", comment: "Bitwarden sign-in sheet - Email step title"))
                 .font(.system(size: 22, weight: .bold))
 
             VStack(alignment: .leading, spacing: 6) {
@@ -170,7 +170,7 @@ struct BitwardenLoginSheet: View {
 
     private var passwordStep: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text(NSLocalizedString("settings.bitwardenLoginSheet.passwordStep.title", value: "Log in", comment: "Bitwarden login sheet - Password step title"))
+            Text(NSLocalizedString("settings.bitwardenLoginSheet.passwordStep.title", value: "Sign in", comment: "Bitwarden sign-in sheet - Password step title"))
                 .font(.system(size: 22, weight: .bold))
 
             HStack(spacing: 6) {
@@ -201,7 +201,7 @@ struct BitwardenLoginSheet: View {
             }
 
             VStack(alignment: .leading, spacing: 6) {
-                Text(NSLocalizedString("settings.bitwardenLoginSheet.twoStepCodeField.label", value: "Two-step login code (if enabled)", comment: "Bitwarden login sheet - 2FA field label"))
+                Text(NSLocalizedString("settings.bitwardenLoginSheet.twoStepCodeField.label", value: "Two-step login code (if enabled)", comment: "Bitwarden sign-in sheet - Official two-step login field label"))
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                 styledField {
@@ -211,7 +211,7 @@ struct BitwardenLoginSheet: View {
                 }
             }
 
-            primaryButton(NSLocalizedString("settings.bitwardenLoginSheet.loginButton", value: "Log in", comment: "Bitwarden login sheet - submit button")) {
+            primaryButton(NSLocalizedString("settings.bitwardenLoginSheet.loginButton", value: "Sign in", comment: "Bitwarden sign-in sheet - Submit button")) {
                 submitLogin()
             }
             .disabled(!canSubmitPassword)
@@ -237,7 +237,7 @@ struct BitwardenLoginSheet: View {
             // helper answers "Two-step code required." and this field is the
             // way through.
             VStack(alignment: .leading, spacing: 6) {
-                Text(NSLocalizedString("settings.bitwardenUnlockSheet.twoStepCodeField.label", value: "Two-step login code (if enabled)", comment: "Bitwarden login sheet - 2FA field label"))
+                Text(NSLocalizedString("settings.bitwardenUnlockSheet.twoStepCodeField.label", value: "Two-step login code (if enabled)", comment: "Bitwarden sign-in sheet - Official two-step login field label"))
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                 styledField {

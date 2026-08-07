@@ -23,12 +23,10 @@ ln -sfn "$PWD/tools/phi-browser-skill/extensions/pi" ~/.pi/agent/extensions/phi-
 
 Requires Node >= 22. No npm dependencies.
 
-## 2. Enable agent CDP access (one-time, in Settings)
+## 2. Approve the agent (no Settings trip needed)
 
-The endpoint is OFF by default. Turn it on in **Settings ▸ Developer ▸ Remote
-debugging ▸ "Allow agents to control Phi (CDP)"**. It applies immediately —
-**no relaunch** — because the Phi app itself owns the socket and starts or
-stops it live with the toggle.
+There is nothing to switch on first. Phi publishes the socket whenever it
+runs, so just connect: the **consent prompt** does the rest.
 
 How it works, and why it's safe:
 
@@ -38,14 +36,29 @@ How it works, and why it's safe:
   (peer credentials + code signature) and shows a **consent prompt**: *Allow
   Once*, *Always Allow*, or *Deny*. Only after you allow does the connection
   reach the browser.
+- If agent control is off (it is off by default, as is Developer mode), the
+  same prompt says so and turns **both** on when you allow — the socket is a
+  doorbell, not an open door. Deny and nothing changes.
 - *Always Allow* is remembered per agent under **Settings ▸ Developer ▸ Remote
   debugging ▸ Remembered agents**; **Remove** there makes that agent ask again.
-- Turning the toggle off stops new connections and severs any live ones at
-  once.
+- *Deny* carries a scope: **Just this time** (ask again next connection),
+  **For 30 min**, or **Never ask again** — each optionally widened to *all
+  agents*, which turns away every agent including ones Phi has never seen.
+  Anything beyond "just this time" is listed under **Blocked agents**, where
+  **Unblock** lifts it; switching the CDP toggle off and on clears the lot.
+- Turning the toggle off severs every live connection at once.
 
 ## 3. Verify
 
-After enabling the toggle (no relaunch needed):
+Nothing needs to be running — the skill starts Phi itself when no browser is
+up. It launches the install it is linked to (the symlink from step 1 points
+inside a specific `Phi.app`), so the copy you installed from is the copy that
+opens; run from a repo checkout, which belongs to no install, it tries
+`com.phibrowser.canary.Mac` then `com.phibrowser.Mac`. The launch is
+backgrounded so it never steals focus. Set `PHI_NO_LAUNCH=1` to forbid it and
+have the skill fail instead.
+
+To watch it happen by hand, quit Phi first, then:
 
 ```bash
 # The app writes the socket's path here; only this Mac's processes can reach it.
@@ -53,9 +66,10 @@ SOCK=$(head -1 ~/Library/Application\ Support/com.phibrowser.canary.Mac/CDPAgent
 curl -s --unix-socket "$SOCK" http://localhost/json/version
 ```
 
-The first request triggers the consent prompt — approve it in Phi, then the
-JSON version blob prints. Then a smoke round (swap `~/.claude/skills` for
-your agent's skills folder):
+The first request triggers the consent prompt — approve it in Phi (approving
+also switches agent control on if it was off), then the JSON version blob
+prints. Then a smoke round (swap `~/.claude/skills` for your agent's skills
+folder):
 
 ```bash
 node ~/.claude/skills/phi-browser/scripts/runner.mjs <<'EOF'
@@ -146,10 +160,15 @@ needed): `node scripts/selftest-mirror.mjs`.
 
 ## Troubleshooting
 
-- **CDP endpoint not found**: the toggle isn't on for the bundle id actually
-  running (canary vs release), so no `CDPAgentSocket` pointer file exists. Turn
-  on Settings ▸ Developer ▸ Remote debugging (no relaunch). Set
-  `PHI_USER_DATA_DIR` to override the user-data-dir candidates.
+- **CDP endpoint not found**: the skill found no socket AND could not start
+  Phi. Either no Phi Browser is installed where it looked (a repo checkout
+  tries the canary and release bundle ids; an installed skill opens the app it
+  is linked to), or `PHI_NO_LAUNCH` is set. Installing the skill from the Phi
+  you actually run fixes the common case; `PHI_USER_DATA_DIR` overrides which
+  user-data dir is searched.
+- **Launched but never published its socket**: Phi started and 60s passed with
+  no endpoint. It is usually sitting at a login or session-restore prompt, or
+  is still starting on a cold machine — check the Phi window and retry.
 - **Wrong install answers (canary vs stable)**: endpoint discovery prefers
   Phi Canary over stable Phi when BOTH advertise a live endpoint (dead
   leftovers are probed and skipped). To target a specific install, set
@@ -189,12 +208,14 @@ needed): `node scripts/selftest-mirror.mjs`.
 - **Under Hermes: console commands stay queued**: the daemon delivers via
   the `hermes` CLI — it must be installed (PATH, `~/.local/bin`, or set
   `PHI_HERMES_BIN`). Check `hermes --resume <session-id> -z test` by hand.
-- **Access denied**: you (or a stale *Always Allow*) denied this agent. Approve
-  the next prompt, or remove the agent under Settings ▸ Developer ▸ Remote
-  debugging ▸ Remembered agents and reconnect to be asked again.
+- **Access denied**: you denied this agent. If the denial was "For 30 min" or
+  "Never ask again", retrying does not re-prompt — lift it under Settings ▸
+  Developer ▸ Remote debugging ▸ Blocked agents (**Unblock**), or switch
+  "Allow agents to control Phi (CDP)" off and on, which clears every block.
+  A "Just this time" denial re-prompts on the next connection.
 - **Endpoint not responding / first call hangs**: the first connection waits on
-  the consent prompt — approve it in Phi. If it's genuinely stuck, toggle
-  Remote debugging off and on to restart the listener.
+  the consent prompt — approve it in Phi. If Phi shows no prompt at all, check
+  that Phi Browser itself is responsive.
 - **Empty reply from `/json/version` (older builds)**: a lingering
   `PhiRemoteDebuggingPort` default moved CDP onto its retired TCP transport
   and off the app socket, so connections were dropped without a reply. Run

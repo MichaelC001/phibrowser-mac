@@ -6,10 +6,10 @@ Defines what happens when a Space's NSWindow closes, depending on how the close 
 
 A `SpaceWindowSlot` is the user-perceived window. It hosts one `MainBrowserWindowController` per Space ever surfaced from this slot; exactly one is visible at a time. Two close triggers map to different user intent:
 
-- **Tab-driven close** — the user closed the last tab in the active Space with the tab-row ✕ button. Chromium auto-closes the Browser, which closes the NSWindow. The user is saying "I'm done with this Space," not "I'm done with this window."
+- **Tab-driven close** — the user closed the last tab in the active Space through the tab UI. Chromium used to auto-close the Browser, which closed the NSWindow; today it enters placeholder mode instead and the window stays (see "The tag is cancelled…" below). The user is saying "I'm done with this Space," not "I'm done with this window."
 - **Window-driven close** — the user explicitly closed the window itself (red ✕, ⇧⌘W via the Close Window menu item's `performClose:` action, ⌘W on the last tab, Chromium's internal `BrowserWindowCocoa::Close`). The user is saying "I'm done with this whole window."
 
-⌘W on the last tab is deliberately window-driven, not tab-driven: closing a Space's last tab with the keyboard tears the whole slot down like ⇧⌘W / the red ✕, rather than switching to a sibling Space. Only the tab-row ✕ button switches to a sibling.
+⌘W on the last tab is deliberately window-driven, not tab-driven: closing a Space's last tab with the keyboard tears the whole slot down like ⇧⌘W / the red ✕, rather than switching to a sibling Space.
 
 By the time `windowWillClose` fires, tab strip state is identical in both cases (Chromium has torn the tabs down already), so the slot needs an out-of-band signal to tell them apart.
 
@@ -17,9 +17,13 @@ By the time `windowWillClose` fires, tab strip state is identical in both cases 
 
 Only one entry point tags a tab-driven close:
 
-- `Tab.close()` — the tab-row ✕ button (`Sources/UserInterface/Common/Tabs/Tab.swift`).
+- `Tab.close()` (`Sources/UserInterface/Common/Tabs/Tab.swift`) — reached from the tab-row ✕ button and every other UI path that closes a tab through the `Tab` object: the tab context menu's Close, the split-pane close, the sidebar tab list, the tab-search palette, the group overview, AppleScript.
 
 It checks `browserState.tabs.count <= 1` and, if true, calls `slot.markTabDrivenClose(for: spaceId)`. The marker is a spaceId → expiration-deadline entry in `pendingTabDrivenCloseDeadlines` on the slot. Any close path that does NOT tag the slot is treated as window-driven by default.
+
+**The tag is cancelled when the window enters placeholder mode.** Closing a Space's last tab in a normal, non-Incognito window no longer closes the window: Chromium keeps it alive showing the placeholder page (`Browser::TabStripEmpty` → `ShouldEnterPlaceholderMode` → `ShowPlaceholder`) and reports that over the bridge, which `PhiChromiumCoordinator.windowDidEnterPlaceholderMode` turns into `slot.cancelTabDrivenClose(for: spaceId)` — dropping the marker and the pre-captured composite together, before any fallible work in that callback. The auto-close the marker predicts never happens, so leaving it armed would make the user's *next* close of that same window — the one they mean as "close this window" — read as a tab-driven hand-off and switch to a sibling Space instead of closing the slot.
+
+Consequence: **no user gesture reaches `unregisterWindow` with a live tab-driven marker**, so the hand-off row of the matrix below is currently unreachable, as are the helpers only it uses (`firstSiblingWithTabs`, `pendingTabDrivenCloseSnapshots`, `activate`'s `leavingSnapshotOverride`). The one remaining way in is the vetoed-close residual below — a known defect, not a behavior.
 
 Keyboard ⌘W (`CommandDispatcher.dispatchCommand(.IDC_CLOSE_TAB, …)`) deliberately does **not** tag. Closing a Space's last tab with ⌘W is intended to tear the whole slot down like ⇧⌘W, so it dispatches `IDC_CLOSE_TAB` untagged and reaches `unregisterWindow` as a window-driven close. (⌘W is still swallowed by `handleCloseTab()` when the omnibox is open, which returns `true` without dispatching anything — no tag is involved either way.)
 
@@ -27,7 +31,7 @@ Keyboard ⌘W (`CommandDispatcher.dispatchCommand(.IDC_CLOSE_TAB, …)`) deliber
 
 One robustness rule applies to the tag:
 
-- **Markers have a TTL (`tabDrivenCloseTTL`, currently 2s).** When a dispatched `IDC_CLOSE_TAB` is vetoed — typically an `onbeforeunload` prompt the user cancels — no `unregisterWindow` fires to drain the marker. The TTL caps the stale window so a later window-driven close on the same Space is still correctly classified.
+- **Markers have a TTL (`tabDrivenCloseTTL`, currently 2s).** When a dispatched `IDC_CLOSE_TAB` is vetoed — typically an `onbeforeunload` prompt the user cancels — the window enters no placeholder and no `unregisterWindow` fires, so nothing cancels or drains the marker. The TTL caps the stale window so a later window-driven close on the same Space is still correctly classified; inside that window it is still misclassified.
 
 `unregisterWindow` reads `Date() < deadline` to decide `isTabDriven`. Expired markers are drained but not honored.
 
@@ -37,7 +41,7 @@ One robustness rule applies to the tag:
 
 | `wasVisible` | `isTabDriven` | sibling Space with tabs? | result |
 |---|---|---|---|
-| true | true | yes | `activate(spaceId: sibling)` — slot stays alive on the sibling. `visibleController` is left pointing at the closing controller so `activate` captures its frame as the inherited frame for the target. |
+| true | true | yes | `activate(spaceId: sibling)` — slot stays alive on the sibling. `visibleController` is left pointing at the closing controller so `activate` captures its frame as the inherited frame for the target. **Currently unreachable** except through the vetoed-close residual above. |
 | true | true | no | cascade — `cascadeCloseRemainingWindows` closes every remaining sibling through Chromium. |
 | true | false | (ignored) | cascade. |
 | false | false | (ignored) | cascade. |
@@ -45,7 +49,9 @@ One robustness rule applies to the tag:
 
 The `wasVisible == false && isTabDriven == false` row is why the cascade is **not** gated on `wasVisible` alone: in the slot's native tab group `visibleController` can lag AppKit's actually-selected tab, so a real window-driven close can arrive on a controller that isn't the tracked visible one. Gating the cascade on `wasVisible` only let that close slip through and strand the slot's other Spaces with live tabs. Background closes that must NOT cascade (`deleteSpace` / `changeProfile` / `respawnWindow`) evict the controller first, so they early-return on the identity guard and never reach this branch.
 
-After the body, if `windowsBySpaceId.isEmpty` the slot removes itself from `SpaceManager.slots`. If `SpaceManager.slots` is then empty, the slot calls `NSApp.terminate(nil)` — the user asked for "close all spaces and exit" on window-driven close, and the cleanup path through `applicationShouldTerminate` → `applicationWillTerminate` (see `AppController`) gives Chromium a clean shutdown for SessionService state.
+After the body, if `windowsBySpaceId.isEmpty` the slot removes itself from `SpaceManager.slots`. Emptying the last slot does **not** quit the app: it stays alive with no windows on screen, so the Dock icon can reopen the group. `removeSlot` shrinks the restore snapshot on its way out, and that write is a no-op when this was the last slot — `persistSlotsSnapshot` never overwrites a saved snapshot with an empty one, which is exactly what freezes the final layout for the reopen to restore from.
+
+Because that final write is a no-op, the snapshot a reopen restores from is whichever one landed *before* the close — which is why `unregisterWindow` opens with `flushPendingSlotsSnapshotPersist()`, before it touches the window map. Window moves and resizes persist on a debounce (they fire far too often to write per event), and this is the last moment such a pending write can still describe a whole, live slot. It is a no-op unless a frame change is actually outstanding, and mid-cascade it writes nothing at all — `persistSlotsSnapshot` refuses while any slot is tearing down, and likewise while quitting or while a windowless reopen is still replaying its session (`mayPersistSlotsSnapshot` holds all three). A refused flush leaves the frame change on record for the next write rather than dropping it, so the only case that really loses one is closing a window inside the debounce *during* a reopen replay — where keeping the last complete snapshot is the deliberate trade.
 
 ## How the cascade closes windows (`cascadeCloseRemainingWindows`)
 
@@ -71,6 +77,13 @@ takes, and it is the fix for the flaky teardown:
   changes *and* prior user interaction can surface a dialog — the same
   behavior the visible window already has. (Chrome suppresses the dialog for
   pages with no user gesture, so untouched background Spaces close silently.)
+- **Siblings on the placeholder page depend on a Chromium-side whitelist.** A
+  window parked on the placeholder page has an empty tab strip, and
+  `BrowserCommandController::ExecuteCommandWithDisposition` drops every command
+  that is not on the placeholder whitelist it keeps for that state.
+  `IDC_CLOSE_WINDOW` sits on that list for this cascade's sake; take it off and
+  placeholder siblings silently survive the cascade, which the slot then reads
+  as a vetoed close and puts back on screen seconds later.
 
 ## Sequence (matching log tags)
 
@@ -83,10 +96,10 @@ Window-driven close of a slot with N Spaces:
     and the last drop removes the slot.
 ```
 
-Tab-driven close with a viable sibling:
+Tab-driven close with a viable sibling (currently unreachable — this line appearing after a plain last-tab close means the marker was not cancelled):
 
 ```
 [SpaceWindowSlot] tab-driven close of <visibleSpaceId>; switching to sibling <siblingSpaceId>
 ```
 
-(Slot stays alive; no further log line, no terminate.)
+(Slot stays alive; no further log line.)

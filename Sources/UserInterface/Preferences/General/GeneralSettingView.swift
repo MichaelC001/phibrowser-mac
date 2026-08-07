@@ -28,6 +28,7 @@ struct GeneralSettingView: View {
     var body: some View {
         ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 24) {
+                LanguageSectionView()
                 if !settingsPresentation.openedFromIncognito {
                     ThemeSectionView()
                 }
@@ -336,6 +337,149 @@ private struct AppearanceSectionView: View {
     }
 }
 
+private struct LanguageSectionView: View {
+    @State private var selection = PhiPreferences.GeneralSettings.loadAppLanguagePreference()
+    @State private var repairedStoredLanguage = false
+    @State private var hasPreparedStoredLanguage = false
+
+    private var requiresRelaunch: Bool {
+        selection != PhiPreferences.GeneralSettings.appLanguagePreferenceAtLaunch
+            || repairedStoredLanguage
+    }
+
+    var body: some View {
+        GeneralSectionView(
+            title: NSLocalizedString(
+                "settings.general.language.sectionTitle",
+                value: "Language",
+                comment: "General settings - Language section title"
+            )
+        ) {
+            GeneralContainerView {
+                GeneralRowView(
+                    title: NSLocalizedString(
+                        "settings.general.language.displayLanguageTitle",
+                        value: "Display language",
+                        comment: "General settings - Row title for choosing Phi's native interface language"
+                    )
+                ) {
+                    Picker("", selection: $selection) {
+                        Text(
+                            NSLocalizedString(
+                                "settings.general.language.systemDefaultOption",
+                                value: "System Default",
+                                comment: "General settings - Language option that follows macOS, including its per-app language preference"
+                            )
+                        )
+                        .tag(AppLanguagePreference.system)
+
+                        Divider()
+
+                        ForEach(SupportedAppLanguage.pickerOrder) { language in
+                            Text(language.displayName)
+                                .tag(AppLanguagePreference.language(language))
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .fixedSize()
+                }
+
+                if requiresRelaunch {
+                    Divider()
+
+                    HStack(alignment: .center, spacing: 12) {
+                        Text(
+                            NSLocalizedString(
+                                "settings.general.language.relaunchHint",
+                                value: "Restart Phi to apply this language.",
+                                comment: "General settings - Hint shown after changing the display language explaining that a restart is required"
+                            )
+                        )
+                        .font(.system(size: 11))
+                        .themedForeground(.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                        Spacer(minLength: 12)
+
+                        Button(
+                            NSLocalizedString(
+                                "settings.general.language.restartButton",
+                                value: "Restart Phi",
+                                comment: "General settings - Button to restart Phi and apply the selected display language"
+                            ),
+                            action: promptToRestartApplication
+                        )
+                        .controlSize(.small)
+                    }
+                    .padding(.vertical, 12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
+        .onAppear {
+            guard !hasPreparedStoredLanguage else { return }
+            hasPreparedStoredLanguage = true
+            repairedStoredLanguage = PhiPreferences.GeneralSettings.saveAppLanguagePreference(
+                selection
+            )
+            if repairedStoredLanguage {
+                SentinelLanguagePreferenceSync.publish(selection)
+            }
+        }
+        .onChange(of: selection) { _, newValue in
+            PhiPreferences.GeneralSettings.saveAppLanguagePreference(newValue)
+            SentinelLanguagePreferenceSync.publish(newValue)
+            if newValue != PhiPreferences.GeneralSettings.appLanguagePreferenceAtLaunch {
+                promptToRestartApplication()
+            }
+        }
+    }
+
+    @MainActor
+    private func promptToRestartApplication() {
+        let configuration = PhiAlertAppKitConfiguration(
+            title: NSLocalizedString(
+                "settings.general.language.restartPrompt.title",
+                value: "Restart Phi?",
+                comment: "General settings - Confirmation title shown after selecting a display language that differs from the currently applied language"
+            ),
+            message: NSLocalizedString(
+                "settings.general.language.restartPrompt.message",
+                value: "The selected language will take effect after Phi restarts. Restart now?",
+                comment: "General settings - Confirmation message explaining that the newly selected display language requires a restart"
+            ),
+            secondaryAction: PhiAlertAppKitAction(
+                NSLocalizedString(
+                    "settings.general.language.restartPrompt.notNowButton",
+                    value: "Not Now",
+                    comment: "General settings - Button that postpones restarting after changing the display language"
+                ),
+                response: .alertSecondButtonReturn
+            ),
+            primaryAction: PhiAlertAppKitAction(
+                NSLocalizedString(
+                    "settings.general.language.restartButton",
+                    value: "Restart Phi",
+                    comment: "General settings - Button to restart Phi and apply the selected display language"
+                ),
+                role: .primary,
+                response: .alertFirstButtonReturn
+            )
+        )
+
+        DispatchQueue.main.async {
+            guard let sourceWindow = NSApp.keyWindow ?? NSApp.mainWindow,
+                  sourceWindow.isVisible else { return }
+
+            sourceWindow.presentPhiAlert(configuration) { response in
+                guard response == .alertFirstButtonReturn else { return }
+                AppController.relaunchPhiApplication()
+            }
+        }
+    }
+}
+
 private struct BrowsingSectionView: View {
     @AppStorage(PhiPreferences.GeneralSettings.openNewTabPageOnCmdT.rawValue)
     private var openNewTabPageOnCmdT: Bool = PhiPreferences.GeneralSettings.openNewTabPageOnCmdT.defaultValue
@@ -343,11 +487,18 @@ private struct BrowsingSectionView: View {
     @AppStorage(PhiPreferences.GeneralSettings.alwaysShowURLPath.rawValue)
     private var alwaysShowURLPath: Bool = PhiPreferences.GeneralSettings.alwaysShowURLPath.defaultValue
 
-    @AppStorage(PhiPreferences.AISettings.phiAIEnabled.rawValue)
-    private var phiAIEnabled: Bool = PhiPreferences.AISettings.phiAIEnabled.defaultValue
-
     @AppStorage(PhiPreferences.GeneralSettings.autoPictureInPictureModeKey)
     private var autoPictureInPictureModeRawValue: String = PhiPreferences.GeneralSettings.loadAutoPictureInPictureMode().rawValue
+
+    // Backed by Chromium local state through the bridge, not @AppStorage: the
+    // cold-start path reads the same pref, so it is the single source of truth.
+    @State private var restoreLastSessionEnabled = SessionRestorePreference.isEnabled
+
+    private var restoreLastSessionHint: String {
+        restoreLastSessionEnabled
+            ? NSLocalizedString("settings.general.restoreLastSession.enabledHint", value: "Reopen your windows and tabs the next time you open Phi.", comment: "General settings - Hint shown when restore-last-session is on")
+            : NSLocalizedString("settings.general.restoreLastSession.disabledHint", value: "Phi starts with a new window. Closing a window may sign you out of some sites.", comment: "General settings - Hint shown when restore-last-session is off, noting session cookies may be cleared when a window closes")
+    }
 
     private var selectedBehavior: Binding<NewTabBehaviour> {
         Binding(
@@ -378,11 +529,6 @@ private struct BrowsingSectionView: View {
                             Text(NSLocalizedString("settings.general.newTabShortcut.title", value: "New tab behavior", comment: "General settings - Row title for configuring new tab behavior"))
                                 .font(.system(size: 13))
                                 .themedForeground(.textPrimary)
-                            if !phiAIEnabled {
-                                Text(NSLocalizedString("settings.general.newTabPage.aiRequiredHint", value: "New Tab Page requires Phi AI to be enabled", comment: "General settings - Hint shown when Phi AI is disabled explaining New Tab Page requires it"))
-                                    .font(.system(size: 11))
-                                    .themedForeground(.textTertiary)
-                            }
                         }
                         Spacer(minLength: 12)
                         HStack(spacing: 16) {
@@ -390,13 +536,11 @@ private struct BrowsingSectionView: View {
                                 GeneralSttingCardView(
                                     image: Image(newTabImageName(for: behavior)),
                                     action: {
-                                        if behavior == .newTabPage && !phiAIEnabled { return }
                                         selectedBehavior.wrappedValue = behavior
                                     },
                                     selected: selectedBehavior.wrappedValue == behavior,
                                     title: behavior.displayName
                                 )
-                                .opacity(behavior == .newTabPage && !phiAIEnabled ? 0.4 : 1.0)
                             }
                         }
                     }
@@ -438,7 +582,32 @@ private struct BrowsingSectionView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                     Divider()
-                    
+
+                    HStack(alignment: .center, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(NSLocalizedString("settings.general.restoreLastSession.toggle", value: "Restore last session", comment: "General settings - Row title for the app-level restore-previous-session toggle"))
+                                .font(.system(size: 13))
+                                .themedForeground(.textPrimary)
+                            Text(restoreLastSessionHint)
+                                .font(.system(size: 11))
+                                .themedForeground(.textTertiary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: 12)
+                        Toggle("", isOn: $restoreLastSessionEnabled)
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                            .controlSize(.mini)
+                            .themedTint(.themeColor)
+                    }
+                    .padding(.vertical, 12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .onChange(of: restoreLastSessionEnabled) { _, newValue in
+                        SessionRestorePreference.isEnabled = newValue
+                    }
+
+                    Divider()
+
                     Button(action: handleAdditionalBrowserSettingsTap) {
                         GeneralRowView(title: NSLocalizedString("settings.general.additionalBrowserSettings.title", value: "Additional browser settings", comment: "General settings - Title for always more settings")) {
                             Image(systemName: "chevron.right")
@@ -576,7 +745,7 @@ private struct DeveloperModeSectionView: View {
     private var hintRow: some View {
         Text(developerModeEnabled
             ? NSLocalizedString("settings.general.developerMode.enabledHint", value: "Agent access, permissions, and the password manager live in the Developer tab.", comment: "General settings - Hint under the developer mode toggle pointing at the Developer settings pane")
-            : NSLocalizedString("settings.general.developerMode.disabledHint", value: "Turning developer mode off also turns off agent access and the agent password manager.", comment: "General settings - Hint under the developer mode toggle explaining the kill-switch behavior"))
+            : NSLocalizedString("settings.general.developerMode.disabledHint", value: "Turning developer mode off turns off agent access and the agent password manager, and revokes every allowed agent and credential approval. An agent that connects later can ask you to turn it back on.", comment: "General settings - Hint under the developer mode toggle explaining the kill-switch behavior, the revoked approvals, and that an agent may request it back"))
             .font(.system(size: 11))
             .themedForeground(.textTertiary)
             .fixedSize(horizontal: false, vertical: true)

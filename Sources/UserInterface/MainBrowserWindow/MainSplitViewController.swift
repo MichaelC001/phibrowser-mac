@@ -41,6 +41,8 @@ class MainSplitViewController: NSViewController {
         self.view = TitlebarTransparentView()
     }
 
+    private static let splitViewAutosaveName = "phiMainBrowserSplitView"
+
     override func viewDidLoad() {
         super.viewDidLoad()
 
@@ -49,8 +51,19 @@ class MainSplitViewController: NSViewController {
         setupTitlebarAwareLayout()
 
         DispatchQueue.main.async { [weak self] in
-            self?.splitViewController.splitView.autosaveName = "phiMainBrowserSplitView"
+            self?.splitViewController.splitView.autosaveName = Self.splitViewAutosaveName
         }
+    }
+
+    /// Applies the persisted split position now instead of waiting for the
+    /// deferred viewDidLoad tick above. Session-restored windows are surfaced
+    /// by Chromium while the main thread is still replaying the session, so
+    /// that tick cannot run before their first visible frame — the sidebar
+    /// would show its default width and visibly jump once the tick lands.
+    /// AppKit restores the saved divider position when `autosaveName` is
+    /// assigned; the deferred tick re-assigning the same name is a no-op.
+    func adoptAutosavedSplitPositionNow() {
+        splitViewController.splitView.autosaveName = Self.splitViewAutosaveName
     }
 
     override func viewWillAppear() {
@@ -332,7 +345,7 @@ extension MainSplitViewController: NSSplitViewDelegate {
         guard width != Self.leftItemMinWidth else {
             return
         }
-        AccountController.shared.account?.userDefaults.setLastKnownSidebarWidth(width)
+        AccountController.shared.localDataAccount?.userDefaults.setLastKnownSidebarWidth(width)
     }
 }
 
@@ -341,30 +354,44 @@ protocol TitlebarAwareHitTestable: NSView {
     func shouldConsumeHitTest(at point: NSPoint) -> Bool
 }
 
+/// Coordinates hit testing for Phi content that extends into the native titlebar.
+///
+/// Returning `nil` for empty or explicitly non-consuming titlebar regions lets
+/// AppKit handle native window dragging and the system titlebar double-click
+/// action. Ordinary descendant hits—including Chromium WebContents—must remain
+/// unchanged so their mouse events reach the original view.
 class TitlebarTransparentView: NSView {
-    /// Lets titlebar gestures fall through when a descendant view does not need the event.
-
     override func hitTest(_ point: NSPoint) -> NSView? {
-        guard bounds.contains(point) else {
+        // AppKit supplies `point` in the superview's coordinate space. Convert
+        // it before local bounds/titlebar checks; treating it as local can make
+        // an offset WebContents miss the hit and fall through to the titlebar.
+        let localPoint = convert(point, from: superview)
+        guard bounds.contains(localPoint) else {
             return nil
         }
 
         let superHit = super.hitTest(point)
+        guard let window else {
+            return superHit
+        }
+
+        guard isPointInTitlebar(localPoint, window: window) else {
+            return superHit
+        }
 
         if let titlebarAwareView = superHit as? TitlebarAwareHitTestable {
-            if !titlebarAwareView.shouldConsumeHitTest(at: point) {
-                if let window = self.window, isPointInTitlebar(point, window: window) {
-                    return nil
-                }
+            let hitPoint = titlebarAwareView.convert(localPoint, from: self)
+            if !titlebarAwareView.shouldConsumeHitTest(at: hitPoint) {
+                return nil
             }
         }
 
         if superHit == nil || superHit === self {
-            if let window = self.window, isPointInTitlebar(point, window: window) {
-                return nil
-            }
+            return nil
         }
-        
+
+        // Preserve normal descendants, especially Chromium's native view.
+        // Chromium then decides whether that WebContents may move the window.
         return superHit
     }
 

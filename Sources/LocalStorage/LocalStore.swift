@@ -45,7 +45,11 @@ class LocalStore {
     let account: Account
     private let userStorageURL: URL
     private var cancellable: AnyCancellable?
-    private let writeActor: LocalStoreActor?
+    private var writeActor: LocalStoreActor?
+    /// True only after an explicitly requested terminal migration barrier.
+    /// A store that merely failed to open must not be mistaken for a sealed
+    /// source that can resume from its durable migration snapshot.
+    @MainActor private(set) var isClosedForAccountDirectoryRemoval = false
 
     /// Serial FIFO queue for background writes. `writeActor` serializes write
     /// *execution*, but `performBackgroundWrite` previously dispatched each
@@ -59,7 +63,7 @@ class LocalStore {
     /// the live SplitGroup went away (e.g. on close). Funnelling every write
     /// through this stream restores submit-order == apply-order, which every
     /// caller already assumes.
-    private let writeJobContinuation: AsyncStream<() async -> Void>.Continuation?
+    private var writeJobContinuation: AsyncStream<() async -> Void>.Continuation?
     private(set) var compatibilityStatus: LocalStoreCompatibilityStatus = .notChecked
 
     @MainActor var mainContext: ModelContext? {
@@ -451,18 +455,18 @@ extension LocalStore {
     }
     
     func performBackgroundWrite(_ block: @escaping (ModelContext) -> Void) {
-        guard let writeActor else { return }
-        writeJobContinuation?.yield {
+        guard let writeActor, let writeJobContinuation else { return }
+        writeJobContinuation.yield {
             await writeActor.perform(block)
         }
     }
 
     func performBackgroundWriteAndWait(_ block: @escaping (ModelContext) -> Void) async {
-        guard let writeActor else { return }
+        guard let writeActor, let writeJobContinuation else { return }
         // Enqueue through the same FIFO stream so ordering relative to async
         // writes is preserved, then await this job's completion.
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            writeJobContinuation?.yield {
+            writeJobContinuation.yield {
                 await writeActor.perform(block)
                 continuation.resume()
             }
@@ -485,6 +489,69 @@ extension LocalStore {
                 }
             }
         }
+    }
+
+    /// Runs one final FIFO-ordered store operation and then makes this
+    /// LocalStore terminal before returning its result.
+    ///
+    /// The continuation is detached before the final job is enqueued, so a
+    /// caller cannot submit a write between a cleanup snapshot and container
+    /// release. Existing queued writes still run before the final operation.
+    @MainActor
+    func performFinalBackgroundOperationAndClose<Result: Sendable>(
+        _ block: @escaping (ModelContext) throws -> Result
+    ) async throws -> Result {
+        guard let writeActor, let continuation = writeJobContinuation else {
+            throw LocalStoreWriteError.storeUnavailable
+        }
+
+        writeJobContinuation = nil
+        let result: Result
+        do {
+            result = try await withCheckedThrowingContinuation {
+                (resultContinuation: CheckedContinuation<Result, Error>) in
+                continuation.yield {
+                    do {
+                        let value = try await writeActor.performThrowing(block)
+                        resultContinuation.resume(returning: value)
+                    } catch {
+                        resultContinuation.resume(throwing: error)
+                    }
+                }
+                continuation.finish()
+            }
+        } catch {
+            releaseStoreForAccountDirectoryRemoval()
+            throw error
+        }
+
+        releaseStoreForAccountDirectoryRemoval()
+        return result
+    }
+
+    /// Drains all submitted writes and releases the SwiftData container before
+    /// a verified account migration removes this store's directory.
+    ///
+    /// This is intentionally a terminal operation. Callers must freeze every
+    /// consumer before closing and rebind them to another LocalStore before
+    /// restoring interaction.
+    @MainActor
+    func closeForAccountDirectoryRemoval() async throws {
+        guard writeActor != nil else { return }
+        _ = try await performFinalBackgroundOperationAndClose { _ in () }
+    }
+
+    @MainActor
+    private func releaseStoreForAccountDirectoryRemoval() {
+        if let continuation = writeJobContinuation {
+            continuation.finish()
+        }
+        writeJobContinuation = nil
+        writeActor = nil
+        cancellable?.cancel()
+        cancellable = nil
+        container = nil
+        isClosedForAccountDirectoryRemoval = true
     }
     
     // Exposes the main context for UI-bound consumers.

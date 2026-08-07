@@ -573,7 +573,8 @@ extension AppController {
         for profile in ProfileManager.shared.profiles {
             displayNames[profile.profileId] = profile.displayName
         }
-        AccountController.shared.account?.localStorage.upsertProfileDisplayNames(displayNames)
+        AccountController.shared.localDataAccount?.localStorage
+            .upsertProfileDisplayNames(displayNames)
     }
 
     private static func sanitizedBackupFileNameComponent(_ raw: String) -> String {
@@ -1252,21 +1253,28 @@ extension AppController {
         }
     }
 
-    private static func relaunchPhiApplication() {
+    @MainActor
+    static func relaunchPhiApplication() {
         let bundlePath = Bundle.main.bundleURL.path
         let quoted = shellSingleQuotedForSh(bundlePath)
+        let processIdentifier = ProcessInfo.processInfo.processIdentifier
         let relaunch = Process()
         relaunch.executableURL = URL(fileURLWithPath: "/bin/sh")
-        relaunch.arguments = ["-c", "( sleep 0.5; /usr/bin/open -n \(quoted) ) &"]
+        relaunch.arguments = [
+            "-c",
+            "( while /bin/kill -0 \(processIdentifier) 2>/dev/null; do /bin/sleep 0.1; done; /usr/bin/open -n \(quoted) ) &",
+        ]
         do {
             try relaunch.run()
             relaunch.waitUntilExit()
         } catch {
-            AppLogWarn("[Debug] Failed to schedule relaunch after quit: \(error.localizedDescription)")
+            AppLogError("Failed to schedule Phi relaunch: \(error.localizedDescription)")
+            return
         }
-        DispatchQueue.main.async {
-            NSApp.terminate(nil)
-        }
+
+        SentinelWatchdog.shared.stop()
+        SentinelHelper.requestTerminationForBrowserUpdate()
+        NSApp.terminate(nil)
     }
 
     private static func shellSingleQuotedForSh(_ path: String) -> String {

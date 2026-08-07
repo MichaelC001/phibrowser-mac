@@ -87,6 +87,7 @@ extension AppController {
     func buildDebugMenuItem() -> NSMenuItem {
         let debugMenu = NSMenu(title: "*DEBUG*")
         let debugMenuItem = NSMenuItem(title: "*DEBUG*", action: nil, keyEquivalent: "")
+        debugMenuItem.tag = AppController.debugMenuItemTag
         debugMenuItem.submenu = debugMenu
 
         let debugSentryItem = NSMenuItem(title: "Debug Sentry",

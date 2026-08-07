@@ -5,6 +5,7 @@
 
 import XCTest
 import AppKit
+import SwiftUI
 @testable import Phi
 
 final class PhiBrowserTests: XCTestCase {
@@ -578,8 +579,7 @@ final class PhiBrowserTests: XCTestCase {
 
     func testBookmarkMainMenuItemRoutingKeepsChromiumBookmarksItemUntouched() {
         let action = BookmarkMainMenuItemRouting.action(
-            title: "Bookmarks",
-            tag: 40029
+            tag: ChromiumMainMenuRole.bookmarks.rawValue
         )
 
         XCTAssertEqual(
@@ -591,7 +591,6 @@ final class PhiBrowserTests: XCTestCase {
 
     func testBookmarkMainMenuItemRoutingRecognizesCustomBookmarksItem() {
         let action = BookmarkMainMenuItemRouting.action(
-            title: "Bookmarks",
             tag: AppController.bookmarksMenuItemTag
         )
 
@@ -599,6 +598,37 @@ final class PhiBrowserTests: XCTestCase {
             action,
             .configureCustomItem,
             "The native Phi Bookmarks item should be the only menu item that gets reconfigured and rebuilt."
+        )
+    }
+
+    func testChromiumMainMenuRoleUsesTagsInsteadOfLocalizedTitles() {
+        let mainMenu = NSMenu(title: "")
+        let appItem = NSMenuItem(title: "Localized App Menu", action: nil, keyEquivalent: "")
+        appItem.tag = ChromiumMainMenuRole.app.rawValue
+        let viewItem = NSMenuItem(title: "Localized View Menu", action: nil, keyEquivalent: "")
+        viewItem.tag = ChromiumMainMenuRole.view.rawValue
+        let historyItem = NSMenuItem(title: "Localized History Menu", action: nil, keyEquivalent: "")
+        historyItem.tag = ChromiumMainMenuRole.history.rawValue
+        mainMenu.addItem(appItem)
+        mainMenu.addItem(viewItem)
+        mainMenu.addItem(historyItem)
+
+        XCTAssertEqual(
+            ChromiumMainMenuRole.resolve(viewItem, helpMenu: nil),
+            .view
+        )
+        XCTAssertTrue(ChromiumMainMenuRole.app.item(in: mainMenu) === appItem)
+        XCTAssertEqual(ChromiumMainMenuRole.history.index(in: mainMenu), 2)
+    }
+
+    func testChromiumMainMenuRoleRecognizesAppKitHelpMenuByIdentity() {
+        let helpMenu = NSMenu(title: "Localized Help Menu")
+        let helpItem = NSMenuItem(title: "Localized Help Menu", action: nil, keyEquivalent: "")
+        helpItem.submenu = helpMenu
+
+        XCTAssertEqual(
+            ChromiumMainMenuRole.resolve(helpItem, helpMenu: helpMenu),
+            .help
         )
     }
 
@@ -743,6 +773,340 @@ final class PhiBrowserTests: XCTestCase {
             firstTimer === secondTimer,
             "Starting the renew timer while an existing valid timer is already running should keep the original timer instance instead of invalidating and replacing it."
         )
+    }
+
+    func testAuthSessionGenerationOnlyCommitsToCapturedSession() {
+        let sessions = AuthSessionGeneration()
+        let session = sessions.capture()
+        var canonicalCredential = "old-session"
+
+        let currentCommit = sessions.performIfCurrent(session) {
+            canonicalCredential = "renewed-session"
+            return true
+        }
+
+        XCTAssertEqual(currentCommit, true)
+        XCTAssertEqual(canonicalCredential, "renewed-session")
+
+        sessions.advance {
+            canonicalCredential = "new-session"
+        }
+        let staleCommit = sessions.performIfCurrent(session) {
+            canonicalCredential = "late-renewal"
+            return true
+        }
+
+        XCTAssertFalse(sessions.isCurrent(session))
+        XCTAssertNil(staleCommit)
+        XCTAssertEqual(canonicalCredential, "new-session")
+    }
+
+    func testAuthenticatedSessionPublicationStagesUntilSignedInCommit() {
+        XCTAssertTrue(
+            AuthenticatedSessionPublicationPolicy.stagesCredentials(
+                for: .guest
+            )
+        )
+        XCTAssertTrue(
+            AuthenticatedSessionPublicationPolicy.stagesCredentials(
+                for: .loginRequired
+            )
+        )
+        XCTAssertFalse(
+            AuthenticatedSessionPublicationPolicy.stagesCredentials(
+                for: .signedIn
+            )
+        )
+        XCTAssertFalse(
+            AuthenticatedSessionPublicationPolicy.canPublishSharedSession(
+                browserAccessState: .guest
+            )
+        )
+        XCTAssertTrue(
+            AuthenticatedSessionPublicationPolicy.canPublishSharedSession(
+                browserAccessState: .signedIn
+            )
+        )
+    }
+
+    func testStagedOnboardingCredentialRequiresMatchingActiveOnboardingAccount() {
+        let futureExpiry = Date().addingTimeInterval(300)
+
+        XCTAssertTrue(
+            StagedOnboardingCredentialPolicy.canUseToken(
+                browserAccessState: .guest,
+                onboardingPhaseRawValue:
+                    LoginController.Phase.setName.rawValue,
+                loginPhaseRawValue: LoginController.Phase.login.rawValue,
+                donePhaseRawValue: LoginController.Phase.done.rawValue,
+                credentialUserID: "auth0|target",
+                onboardingAccountUserID: "auth0|target",
+                expectedUserID: "auth0|target",
+                expiresAt: futureExpiry
+            )
+        )
+        XCTAssertFalse(
+            StagedOnboardingCredentialPolicy.canUseToken(
+                browserAccessState: .guest,
+                onboardingPhaseRawValue:
+                    LoginController.Phase.setName.rawValue,
+                loginPhaseRawValue: LoginController.Phase.login.rawValue,
+                donePhaseRawValue: LoginController.Phase.done.rawValue,
+                credentialUserID: "auth0|other",
+                onboardingAccountUserID: "auth0|target",
+                expectedUserID: "auth0|target",
+                expiresAt: futureExpiry
+            )
+        )
+        XCTAssertFalse(
+            StagedOnboardingCredentialPolicy.canUseToken(
+                browserAccessState: .signedIn,
+                onboardingPhaseRawValue:
+                    LoginController.Phase.setName.rawValue,
+                loginPhaseRawValue: LoginController.Phase.login.rawValue,
+                donePhaseRawValue: LoginController.Phase.done.rawValue,
+                credentialUserID: "auth0|target",
+                onboardingAccountUserID: "auth0|target",
+                expectedUserID: "auth0|target",
+                expiresAt: futureExpiry
+            )
+        )
+        XCTAssertFalse(
+            StagedOnboardingCredentialPolicy.canUseToken(
+                browserAccessState: .loginRequired,
+                onboardingPhaseRawValue:
+                    LoginController.Phase.done.rawValue,
+                loginPhaseRawValue: LoginController.Phase.login.rawValue,
+                donePhaseRawValue: LoginController.Phase.done.rawValue,
+                credentialUserID: "auth0|target",
+                onboardingAccountUserID: "auth0|target",
+                expectedUserID: "auth0|target",
+                expiresAt: futureExpiry
+            )
+        )
+    }
+
+    func testSentinelSessionRunsOnlyForCommittedAuthenticatedAccess() {
+        XCTAssertFalse(
+            AuthenticatedSentinelSessionPolicy.shouldRun(
+                browserAccessState: .guest,
+                isAuthenticated: false,
+                aiEnabled: true
+            )
+        )
+        XCTAssertFalse(
+            AuthenticatedSentinelSessionPolicy.shouldRun(
+                browserAccessState: .loginRequired,
+                isAuthenticated: false,
+                aiEnabled: true
+            )
+        )
+        XCTAssertFalse(
+            AuthenticatedSentinelSessionPolicy.shouldRun(
+                browserAccessState: .signedIn,
+                isAuthenticated: true,
+                aiEnabled: false
+            )
+        )
+        XCTAssertTrue(
+            AuthenticatedSentinelSessionPolicy.shouldRun(
+                browserAccessState: .signedIn,
+                isAuthenticated: true,
+                aiEnabled: true
+            )
+        )
+        XCTAssertFalse(
+            AuthenticatedSentinelSessionPolicy.shouldTerminate(
+                browserAccessState: .guest,
+                isAuthenticated: false,
+                aiEnabled: true
+            )
+        )
+        XCTAssertTrue(
+            AuthenticatedSentinelSessionPolicy.shouldTerminate(
+                browserAccessState: .guest,
+                isAuthenticated: false,
+                aiEnabled: false
+            )
+        )
+        XCTAssertFalse(
+            AuthenticatedSentinelSessionPolicy.shouldTerminate(
+                browserAccessState: .loginRequired,
+                isAuthenticated: false,
+                aiEnabled: true
+            )
+        )
+        XCTAssertTrue(
+            AuthenticatedSentinelSessionPolicy.shouldTerminate(
+                browserAccessState: .signedIn,
+                isAuthenticated: true,
+                aiEnabled: false
+            )
+        )
+        XCTAssertTrue(
+            AuthenticatedSentinelSessionPolicy.shouldRegisterAtLogin(
+                browserAccessState: .signedIn,
+                isAuthenticated: true,
+                aiEnabled: true,
+                launchOnLogin: true
+            )
+        )
+        XCTAssertFalse(
+            AuthenticatedSentinelSessionPolicy.shouldRegisterAtLogin(
+                browserAccessState: .signedIn,
+                isAuthenticated: true,
+                aiEnabled: true,
+                launchOnLogin: false
+            )
+        )
+    }
+
+    func testDeferredGuestCleanupResumesOnlyMatchingStagedIdentity() {
+        XCTAssertTrue(
+            DeferredGuestMigrationRecoveryPolicy.shouldSuspendGuestAccess(
+                hasRecoverableCredentials: true,
+                storedCredentialUserID: "auth0|target",
+                journalTargetUserID: "auth0|target"
+            )
+        )
+        XCTAssertFalse(
+            DeferredGuestMigrationRecoveryPolicy.shouldSuspendGuestAccess(
+                hasRecoverableCredentials: true,
+                storedCredentialUserID: "auth0|other",
+                journalTargetUserID: "auth0|target"
+            )
+        )
+        XCTAssertFalse(
+            DeferredGuestMigrationRecoveryPolicy.shouldSuspendGuestAccess(
+                hasRecoverableCredentials: false,
+                storedCredentialUserID: "auth0|target",
+                journalTargetUserID: "auth0|target"
+            )
+        )
+    }
+
+    func testReauthenticationIdentityAcceptsOnlyJournalTargetDuringRecovery() {
+        XCTAssertTrue(
+            AuthenticatedAccountIdentityPolicy.accepts(
+                candidateUserID: "auth0|target",
+                publishedUserID: nil,
+                pendingUserID: nil,
+                recoveryTargetUserID: "auth0|target",
+                isGuestMigrationRecoveryInProgress: true
+            )
+        )
+        XCTAssertFalse(
+            AuthenticatedAccountIdentityPolicy.accepts(
+                candidateUserID: "auth0|other",
+                publishedUserID: nil,
+                pendingUserID: nil,
+                recoveryTargetUserID: "auth0|target",
+                isGuestMigrationRecoveryInProgress: true
+            )
+        )
+        XCTAssertFalse(
+            AuthenticatedAccountIdentityPolicy.accepts(
+                candidateUserID: "auth0|target",
+                publishedUserID: nil,
+                pendingUserID: "auth0|other",
+                recoveryTargetUserID: "auth0|target",
+                isGuestMigrationRecoveryInProgress: true
+            )
+        )
+    }
+
+    func testReauthenticationIdentityUsesPublishedOrPendingAccountNormally() {
+        XCTAssertTrue(
+            AuthenticatedAccountIdentityPolicy.accepts(
+                candidateUserID: "auth0|published",
+                publishedUserID: "auth0|published",
+                pendingUserID: nil,
+                recoveryTargetUserID: nil,
+                isGuestMigrationRecoveryInProgress: false
+            )
+        )
+        XCTAssertTrue(
+            AuthenticatedAccountIdentityPolicy.accepts(
+                candidateUserID: "auth0|pending",
+                publishedUserID: nil,
+                pendingUserID: "auth0|pending",
+                recoveryTargetUserID: nil,
+                isGuestMigrationRecoveryInProgress: false
+            )
+        )
+        XCTAssertFalse(
+            AuthenticatedAccountIdentityPolicy.accepts(
+                candidateUserID: "auth0|pending",
+                publishedUserID: "auth0|published",
+                pendingUserID: "auth0|pending",
+                recoveryTargetUserID: nil,
+                isGuestMigrationRecoveryInProgress: false
+            )
+        )
+    }
+
+    func testAuthSessionGenerationSerializesRestoreAndRenewalCommits() {
+        let state = AuthCredentialCommitTestState()
+        let session = state.sessions.capture()
+        let restoreEntered = DispatchSemaphore(value: 0)
+        let allowRestoreToFinish = DispatchSemaphore(value: 0)
+        let renewalEntered = DispatchSemaphore(value: 0)
+        let restoreFinished = expectation(description: "Restore finished")
+        let renewalFinished = expectation(description: "Renewal finished")
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            _ = state.sessions.performIfCurrent(session) {
+                restoreEntered.signal()
+                allowRestoreToFinish.wait()
+                state.currentCredential = state.canonicalCredential
+            }
+            restoreFinished.fulfill()
+        }
+
+        XCTAssertEqual(restoreEntered.wait(timeout: .now() + 1), .success)
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            _ = state.sessions.performIfCurrent(session) {
+                renewalEntered.signal()
+                state.canonicalCredential = "renewed"
+                state.currentCredential = "renewed"
+            }
+            renewalFinished.fulfill()
+        }
+
+        XCTAssertEqual(
+            renewalEntered.wait(timeout: .now() + 0.1),
+            .timedOut,
+            "Renewal must not interleave between a persisted credential read and restore commit."
+        )
+
+        allowRestoreToFinish.signal()
+        wait(for: [restoreFinished, renewalFinished], timeout: 1)
+
+        XCTAssertEqual(state.canonicalCredential, "renewed")
+        XCTAssertEqual(state.currentCredential, "renewed")
+    }
+
+    func testInMemoryCredentialsStorageKeepsSnapshotWritesIsolated() {
+        let key = "credentials"
+        let canonicalData = Data("canonical".utf8)
+        let renewedData = Data("renewed".utf8)
+        let canonicalStorage = InMemoryCredentialsStorage(
+            entry: canonicalData,
+            forKey: key
+        )
+        let snapshotStorage = InMemoryCredentialsStorage(
+            entry: canonicalStorage.getEntry(forKey: key),
+            forKey: key
+        )
+
+        XCTAssertTrue(snapshotStorage.setEntry(renewedData, forKey: key))
+        XCTAssertEqual(snapshotStorage.getEntry(forKey: key), renewedData)
+        XCTAssertEqual(canonicalStorage.getEntry(forKey: key), canonicalData)
+
+        XCTAssertTrue(snapshotStorage.deleteEntry(forKey: key))
+        XCTAssertNil(snapshotStorage.getEntry(forKey: key))
+        XCTAssertEqual(canonicalStorage.getEntry(forKey: key), canonicalData)
     }
 
     @MainActor
@@ -914,6 +1278,421 @@ final class PhiBrowserTests: XCTestCase {
                 accountPhase: .done
             ),
             "Without a recoverable auth session, Phi should still present login."
+        )
+    }
+
+    func testOnboardingPhaseRawValuesSkipLegacyImportDataWithoutChangingDone() {
+        XCTAssertEqual(LoginController.Phase.login.rawValue, 0)
+        XCTAssertEqual(LoginController.Phase.setName.rawValue, 1)
+        XCTAssertEqual(LoginController.Phase.setTheme.rawValue, 2)
+        XCTAssertEqual(LoginController.Phase.layoutSelection.rawValue, 3)
+        XCTAssertEqual(LoginController.Phase.passwordManager.rawValue, 4)
+        XCTAssertEqual(LoginController.Phase.nextStep.rawValue, 5)
+        XCTAssertEqual(LoginController.Phase.done.rawValue, 6)
+    }
+
+    func testNextStepConsentRequiresLegalAgreementToBegin() {
+        var state = NextStepConsentState(locale: Locale(identifier: "en_US"))
+
+        XCTAssertFalse(state.hasAcceptedLegalTerms)
+        XCTAssertTrue(state.sharesUsageMetrics)
+        XCTAssertFalse(state.canBegin)
+
+        state.hasAcceptedLegalTerms = true
+        XCTAssertTrue(state.canBegin)
+
+        state.sharesUsageMetrics = false
+        XCTAssertTrue(state.canBegin)
+    }
+
+    func testNextStepMetricsConsentDefaultsByLocaleRegion() {
+        XCTAssertFalse(
+            NextStepConsentState(locale: Locale(identifier: "fr_FR")).sharesUsageMetrics
+        )
+        XCTAssertFalse(
+            NextStepConsentState(locale: Locale(identifier: "en_GB")).sharesUsageMetrics
+        )
+        XCTAssertFalse(
+            NextStepConsentState(locale: Locale(identifier: "de_CH")).sharesUsageMetrics
+        )
+        XCTAssertFalse(
+            NextStepConsentState(locale: Locale(identifier: "el_CY")).sharesUsageMetrics
+        )
+        XCTAssertFalse(
+            NextStepConsentState(locale: Locale(identifier: "en")).sharesUsageMetrics
+        )
+        XCTAssertTrue(
+            NextStepConsentState(locale: Locale(identifier: "en_US")).sharesUsageMetrics
+        )
+        XCTAssertTrue(
+            NextStepConsentState(locale: Locale(identifier: "zh_CN")).sharesUsageMetrics
+        )
+    }
+
+    @MainActor
+    func testNextStepGuideContentIntrinsicHeightGrowsForWrappedLocalizedCopy() {
+        let shortTitles = [
+            "Onboard your AI assistant",
+            "Import data from another browser",
+            "Have your AI assistant help you understand the fine print",
+            "Enjoy using Phi Browser 🎉"
+        ]
+        let longTitle = Array(
+            repeating: "A deliberately long localized onboarding instruction",
+            count: 10
+        ).joined(separator: " ")
+        let longTitles = [longTitle, shortTitles[1], longTitle, shortTitles[3]]
+        let shortController = NSHostingController(
+            rootView: NextStepGuideContentView(stepTitles: shortTitles)
+                .frame(width: NextStepGuideLayout.innerContentWidth)
+        )
+        let longController = NSHostingController(
+            rootView: NextStepGuideContentView(stepTitles: longTitles)
+                .frame(width: NextStepGuideLayout.innerContentWidth)
+        )
+        let fittingSize = CGSize(
+            width: NextStepGuideLayout.innerContentWidth,
+            height: .greatestFiniteMagnitude
+        )
+
+        let shortSize = shortController.sizeThatFits(in: fittingSize)
+        let longSize = longController.sizeThatFits(in: fittingSize)
+
+        XCTAssertGreaterThan(longSize.height, shortSize.height)
+    }
+
+    func testNextStepGuideOverflowIndicatorOnlyShowsWhileContentRemainsBelow() {
+        XCTAssertFalse(
+            NextStepGuideOverflow.shouldShowIndicator(
+                contentBottom: 450,
+                viewportHeight: 0
+            )
+        )
+        XCTAssertFalse(
+            NextStepGuideOverflow.shouldShowIndicator(
+                contentBottom: 350,
+                viewportHeight: 400
+            )
+        )
+        XCTAssertFalse(
+            NextStepGuideOverflow.shouldShowIndicator(
+                contentBottom: 400,
+                viewportHeight: 400
+            )
+        )
+        XCTAssertFalse(
+            NextStepGuideOverflow.shouldShowIndicator(
+                contentBottom: 401,
+                viewportHeight: 400
+            )
+        )
+        XCTAssertTrue(
+            NextStepGuideOverflow.shouldShowIndicator(
+                contentBottom: 450,
+                viewportHeight: 400
+            )
+        )
+    }
+
+    func testNextStepFinishButtonWidthExpandsForLongLocalizedTitles() {
+        let standardWidth = NextStepFinishButtonLayout.width(for: "Let's Begin")
+        let doubledWidth = NextStepFinishButtonLayout.width(
+            for: "Let's Begin Let's Begin"
+        )
+        let maximumWidth = NextStepFinishButtonLayout.width(
+            for: String(repeating: "A very long localized finish title ", count: 20)
+        )
+
+        XCTAssertEqual(standardWidth, NextStepFinishButtonLayout.minimumWidth)
+        XCTAssertGreaterThan(doubledWidth, standardWidth)
+        XCTAssertEqual(maximumWidth, NextStepFinishButtonLayout.maximumWidth)
+    }
+
+    @MainActor
+    func testNextStepTitleProvidesEnoughHeightForDisplayFont() {
+        let controller = NextStepViewController()
+
+        controller.loadView()
+        controller.view.layoutSubtreeIfNeeded()
+
+        XCTAssertEqual(controller.titleLabel.bounds.height, 64, accuracy: 0.001)
+        XCTAssertEqual(controller.titleLabel.maximumNumberOfLines, 1)
+        XCTAssertTrue(controller.titleLabel.cell?.usesSingleLineMode == true)
+    }
+
+    @MainActor
+    func testNextStepPlainConsentCopyCannotBeSelected() throws {
+        let row = OnboardingCheckboxRow(
+            title: "Help make Phi better by sharing usage metrics and crash reports",
+            isChecked: true
+        )
+        let titleLabel = try XCTUnwrap(
+            row.subviews.compactMap { $0 as? NSTextField }.first
+        )
+
+        XCTAssertFalse(titleLabel.isSelectable)
+        XCTAssertFalse(titleLabel.isEditable)
+        XCTAssertEqual(titleLabel.maximumNumberOfLines, 0)
+        XCTAssertEqual(titleLabel.lineBreakMode, .byWordWrapping)
+    }
+
+    @MainActor
+    func testNextStepLinkGradientUsesSpecifiedEndpointColors() throws {
+        let title = NSMutableAttributedString(string: "Privacy")
+        let range = NSRange(location: 0, length: title.length)
+
+        NextStepLinkGradient.apply(to: title, range: range)
+
+        let startColor = try XCTUnwrap(
+            title.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor
+        ).usingColorSpace(.sRGB)
+        let endColor = try XCTUnwrap(
+            title.attribute(.foregroundColor, at: title.length - 1, effectiveRange: nil) as? NSColor
+        ).usingColorSpace(.sRGB)
+        let resolvedStartColor = try XCTUnwrap(startColor)
+        let resolvedEndColor = try XCTUnwrap(endColor)
+
+        XCTAssertEqual(resolvedStartColor.redComponent, 148.0 / 255.0, accuracy: 0.001)
+        XCTAssertEqual(resolvedStartColor.greenComponent, 82.0 / 255.0, accuracy: 0.001)
+        XCTAssertEqual(resolvedStartColor.blueComponent, 249.0 / 255.0, accuracy: 0.001)
+        XCTAssertEqual(resolvedEndColor.redComponent, 232.0 / 255.0, accuracy: 0.001)
+        XCTAssertEqual(resolvedEndColor.greenComponent, 192.0 / 255.0, accuracy: 0.001)
+        XCTAssertEqual(resolvedEndColor.blueComponent, 255.0 / 255.0, accuracy: 0.001)
+    }
+
+    @MainActor
+    func testNextStepLinkTextViewDoesNotOverrideGradientForegroundColors() throws {
+        let title = NSMutableAttributedString(
+            string: "Privacy",
+            attributes: [.font: NSFont.systemFont(ofSize: 15)]
+        )
+        let range = NSRange(location: 0, length: title.length)
+        title.addAttribute(
+            .link,
+            value: try XCTUnwrap(URL(string: "https://phibrowser.com/privacy/")),
+            range: range
+        )
+        NextStepLinkGradient.apply(to: title, range: range)
+
+        let textView = NextStepLinkTextView(
+            attributedString: title,
+            preferredLayoutWidth: 200
+        )
+
+        XCTAssertTrue(textView.isSelectable)
+        XCTAssertNil(textView.linkTextAttributes?[.foregroundColor])
+        let textStorage = try XCTUnwrap(textView.textStorage)
+        XCTAssertNotNil(textStorage.attribute(.foregroundColor, at: 0, effectiveRange: nil))
+        XCTAssertNotNil(
+            textStorage.attribute(
+                .foregroundColor,
+                at: textStorage.length - 1,
+                effectiveRange: nil
+            )
+        )
+    }
+
+    @MainActor
+    func testNextStepLinkTextViewIntrinsicHeightGrowsWhenTextWraps() {
+        let title = NSAttributedString(
+            string: Array(
+                repeating: "A deliberately long localized legal agreement",
+                count: 4
+            ).joined(separator: " "),
+            attributes: [.font: NSFont.systemFont(ofSize: 15)]
+        )
+        let narrowTextView = NextStepLinkTextView(
+            attributedString: title,
+            preferredLayoutWidth: 120
+        )
+        let wideTextView = NextStepLinkTextView(
+            attributedString: title,
+            preferredLayoutWidth: 396
+        )
+
+        XCTAssertGreaterThan(
+            narrowTextView.intrinsicContentSize.height,
+            wideTextView.intrinsicContentSize.height
+        )
+    }
+
+    @MainActor
+    func testGuestPrivacyLegalAgreementUsesRequestedLinkTitlesAndURLs() throws {
+        let agreement = GuestPrivacyLegalAgreement.makeAttributedTitle(
+            format: "I agree to the %1$@ and %2$@",
+            privacyTitle: "Privacy Policy",
+            termsTitle: "Terms of Service"
+        )
+        let privacyRange = try XCTUnwrap(
+            agreement.string.range(of: "Privacy Policy")
+        )
+        let termsRange = try XCTUnwrap(
+            agreement.string.range(of: "Terms of Service")
+        )
+        let privacyLocation = NSRange(
+            privacyRange,
+            in: agreement.string
+        ).location
+        let termsLocation = NSRange(
+            termsRange,
+            in: agreement.string
+        ).location
+
+        XCTAssertEqual(
+            agreement.string,
+            "I agree to the Privacy Policy and Terms of Service"
+        )
+        XCTAssertEqual(
+            agreement.attribute(
+                .link,
+                at: privacyLocation,
+                effectiveRange: nil
+            ) as? URL,
+            URL(string: "http://phibrowser.com/privacy/")
+        )
+        XCTAssertEqual(
+            agreement.attribute(
+                .link,
+                at: termsLocation,
+                effectiveRange: nil
+            ) as? URL,
+            URL(string: "http://phibrowser.com/terms/")
+        )
+    }
+
+    @MainActor
+    func testGuestPrivacyGuideUsesPlainLargerNoticeText() {
+        let titles = [
+            "No AI features until you sign in",
+            "No Browser Memory either",
+            "Sign in whenever you're ready"
+        ]
+        let fittingSize = CGSize(
+            width: NextStepGuideLayout.contentWidth,
+            height: .greatestFiniteMagnitude
+        )
+        let guestGuide = NSHostingController(
+            rootView: GuestPrivacyGuideView(noticeTitles: titles)
+                .frame(width: NextStepGuideLayout.contentWidth, height: 260)
+        )
+
+        XCTAssertGreaterThan(guestGuide.sizeThatFits(in: fittingSize).height, 0)
+    }
+
+    @MainActor
+    func testGuestPrivacyPageRequiresLegalConsentBeforeBeginning() throws {
+        let controller = GuestPrivacyConfirmationViewController()
+
+        controller.loadView()
+
+        XCTAssertEqual(
+            controller.titleLabel.stringValue,
+            NSLocalizedString(
+                "oobe.guestPrivacy.title",
+                value: "Before we begin.",
+                comment: "Guest privacy confirmation - Page title shown before entering Guest Mode"
+            )
+        )
+        XCTAssertEqual(
+            controller.nextButton.title,
+            NSLocalizedString(
+                "oobe.guestPrivacy.beginButton",
+                value: "Let's Begin",
+                comment: "Guest privacy confirmation - Button that confirms the choices and enters Guest Mode"
+            )
+        )
+        XCTAssertFalse(controller.nextButton.isEnabled)
+
+        func checkboxRows(in view: NSView) -> [OnboardingCheckboxRow] {
+            view.subviews.flatMap { subview in
+                let current = (subview as? OnboardingCheckboxRow).map { [$0] }
+                    ?? []
+                return current + checkboxRows(in: subview)
+            }
+        }
+
+        let rows = checkboxRows(in: controller.view)
+        XCTAssertEqual(rows.count, 2)
+        let expectedStates = [false, NextStepConsentState().sharesUsageMetrics]
+        for (row, expectedState) in zip(rows, expectedStates) {
+            let checkbox = try XCTUnwrap(
+                row.subviews.compactMap { $0 as? NSButton }.first
+            )
+            XCTAssertEqual(
+                checkbox.accessibilityValue() as? Int,
+                expectedState
+                    ? NSControl.StateValue.on.rawValue
+                    : NSControl.StateValue.off.rawValue
+            )
+        }
+    }
+
+    @MainActor
+    func testOnboardingRoutesGuestIntentToPrivacyConfirmation() {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 640, height: 800),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        let windowController = OnboardingWindowController(window: window)
+        let loginViewController = windowController.loginViewController
+        loginViewController.isGuestModeActiveProvider = { false }
+        window.contentViewController = loginViewController
+
+        loginViewController.continueAsGuestAction()
+
+        XCTAssertTrue(
+            window.contentViewController
+                is GuestPrivacyConfirmationViewController
+        )
+    }
+
+    func testSkipOnboardingLaunchPolicyChoosesGuestModeAtTheOnboardingGate() {
+        XCTAssertTrue(
+            SkipOnboardingLaunchPolicy.shouldEnterGuestMode(
+                hasLaunchArgument: true,
+                canUseBrowser: false,
+                isAccountDeletionInProgress: false,
+                presentsGuestMigrationRecovery: false
+            ),
+            "A request to present onboarding should be answered with Guest entry when the skip argument is passed."
+        )
+        XCTAssertFalse(
+            SkipOnboardingLaunchPolicy.shouldEnterGuestMode(
+                hasLaunchArgument: false,
+                canUseBrowser: false,
+                isAccountDeletionInProgress: false,
+                presentsGuestMigrationRecovery: false
+            ),
+            "Without the launch argument the onboarding window must be presented."
+        )
+        XCTAssertFalse(
+            SkipOnboardingLaunchPolicy.shouldEnterGuestMode(
+                hasLaunchArgument: true,
+                canUseBrowser: true,
+                isAccountDeletionInProgress: false,
+                presentsGuestMigrationRecovery: false
+            ),
+            "A presentation requested from an already usable browser is a deliberate sign-in and must show."
+        )
+        XCTAssertFalse(
+            SkipOnboardingLaunchPolicy.shouldEnterGuestMode(
+                hasLaunchArgument: true,
+                canUseBrowser: false,
+                isAccountDeletionInProgress: true,
+                presentsGuestMigrationRecovery: false
+            ),
+            "An account-deletion launch stays gated regardless of the skip argument."
+        )
+        XCTAssertFalse(
+            SkipOnboardingLaunchPolicy.shouldEnterGuestMode(
+                hasLaunchArgument: true,
+                canUseBrowser: false,
+                isAccountDeletionInProgress: false,
+                presentsGuestMigrationRecovery: true
+            ),
+            "Guest-migration recovery keeps its journal-bound login presentation."
         )
     }
 
@@ -1176,6 +1955,12 @@ final class PhiBrowserTests: XCTestCase {
         XCTAssertEqual(actualColor.blueComponent, expectedColor.blueComponent, accuracy: 0.001, file: file, line: line)
         XCTAssertEqual(actualColor.alphaComponent, expectedColor.alphaComponent, accuracy: 0.001, file: file, line: line)
     }
+}
+
+private final class AuthCredentialCommitTestState: @unchecked Sendable {
+    let sessions = AuthSessionGeneration()
+    var canonicalCredential = "persisted"
+    var currentCredential: String?
 }
 
 private final class BookmarkMenuTestTarget: NSObject {

@@ -9,12 +9,17 @@ import PostHog
 struct AISettingView: View {
     @State private var connectorViewModel: AISettingsConnectorViewModel
     @State private var showDisableAIAlert = false
+    @State private var isGuest = ApplicationState.shared.isGuest
 
     @AppStorage(PhiPreferences.AISettings.phiAIEnabled.rawValue)
     private var phiAIEnabled: Bool = PhiPreferences.AISettings.phiAIEnabled.defaultValue
 
     init(connectorViewModel: AISettingsConnectorViewModel) {
         _connectorViewModel = State(initialValue: connectorViewModel)
+    }
+
+    private var aiFeaturesAvailable: Bool {
+        phiAIEnabled && !isGuest
     }
 
     private var aiEnabledBinding: Binding<Bool> {
@@ -33,13 +38,20 @@ struct AISettingView: View {
     var body: some View {
         ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 24) {
-                AIEnableToggleRow(isOn: aiEnabledBinding)
-                BrowserMemorySectionView(enabled: phiAIEnabled)
-                PhiSentinelSectionView(enabled: phiAIEnabled)
-                NewTabPageSectionView(enabled: phiAIEnabled)
-                AISidebarSectionView(enabled: phiAIEnabled)
-                ExternalConnectorsSectionView(connectorViewModel: connectorViewModel,
-                                              enabled: phiAIEnabled)
+                AIMasterControlSection(
+                    isOn: aiEnabledBinding,
+                    isGuest: isGuest,
+                    loginAction: logInToEnableAI
+                )
+                BrowserMemorySectionView(enabled: aiFeaturesAvailable)
+                PhiSentinelSectionView(enabled: aiFeaturesAvailable)
+                NewTabPageSectionView(enabled: aiFeaturesAvailable)
+                AISidebarSectionView(enabled: aiFeaturesAvailable)
+                ExternalConnectorsSectionView(
+                    connectorViewModel: connectorViewModel,
+                    enabled: aiFeaturesAvailable
+                )
+                PhiLinkSettingsSectionView(enabled: phiAIEnabled)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, 36)
@@ -56,6 +68,17 @@ struct AISettingView: View {
             PostHogSDK.shared.capture("ai_features_toggled", properties: [
                 "enabled": newValue,
             ])
+        }
+        .onReceive(
+            NotificationCenter.default.publisher(for: .browserAccessStateDidChange)
+                .receive(on: DispatchQueue.main)
+        ) { _ in
+            isGuest = ApplicationState.shared.isGuest
+            if ApplicationState.shared.isAuthenticated {
+                connectorViewModel.loadConnectionsIfNeeded()
+            } else {
+                connectorViewModel.suspendForUnauthenticatedAccess()
+            }
         }
         .alert(
             NSLocalizedString("settings.ai.disableFeatures.title", value: "Turn Off AI Features?",
@@ -75,24 +98,90 @@ struct AISettingView: View {
                                    comment: "AI settings - Alert message explaining consequences of disabling AI features"))
         }
     }
+
+    private func logInToEnableAI() {
+        LoginController.shared.showLoginWindowToEnableAI()
+    }
+}
+
+// MARK: - AI Master Controls
+
+private struct AIMasterControlSection: View {
+    @Binding var isOn: Bool
+    let isGuest: Bool
+    let loginAction: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if isGuest {
+                GuestAILoginPromptRow(loginAction: loginAction)
+            }
+
+            AIEnableToggleRow(
+                isOn: $isOn,
+                enabled: !isGuest
+            )
+        }
+    }
+}
+
+private struct GuestAILoginPromptRow: View {
+    let loginAction: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text(NSLocalizedString(
+                "settings.ai.guestLoginPrompt.message",
+                value: "Sign in to use AI features",
+                comment: "AI settings - Message above the AI master toggle when Guest Mode requires sign-in"
+            ))
+            .font(.system(size: 13))
+            .themedForeground(.textSecondary)
+
+            Spacer(minLength: 12)
+
+            Button(
+                NSLocalizedString(
+                    "settings.ai.guestLoginPrompt.loginButton",
+                    value: "Sign in",
+                    comment: "AI settings - Button in the Guest Mode AI prompt that opens sign-in"
+                ),
+                action: loginAction
+            )
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+        .padding(.vertical, 8)
+        .padding(.trailing, 12)
+    }
 }
 
 // MARK: - AI Enable Toggle (top-level, no container)
 
 private struct AIEnableToggleRow: View {
     @Binding var isOn: Bool
+    let enabled: Bool
+
+    private var effectiveBinding: Binding<Bool> {
+        Binding(
+            get: { enabled ? isOn : false },
+            set: { if enabled { isOn = $0 } }
+        )
+    }
 
     var body: some View {
         HStack {
             Text(NSLocalizedString("settings.ai.features.enableToggle", value: "Enable AI features in Phi Browser", comment: "AI settings - Master toggle to enable or disable all AI features in Phi Browser"))
                 .font(.system(size: 13))
                 .themedForeground(.textPrimary)
+                .opacity(enabled ? 1.0 : 0.4)
             Spacer(minLength: 12)
-            Toggle("", isOn: $isOn)
+            Toggle("", isOn: effectiveBinding)
                 .labelsHidden()
                 .toggleStyle(.switch)
                 .controlSize(.mini)
                 .themedTint(.themeColor)
+                .disabled(!enabled)
         }
         .padding(.vertical, 8)
         .padding(.trailing, 12)
@@ -138,7 +227,7 @@ private struct PhiSentinelSectionView: View {
         ) {
             AIContainerView {
                 AIToggleRow(
-                    title: NSLocalizedString("settings.ai.phiSentinel.autoLaunchToggle", value: "Launch Phi Sentinel automatically at login", comment: "AI settings - Toggle to auto-launch Phi Sentinel at system login"),
+                    title: NSLocalizedString("settings.ai.phiSentinel.autoLaunchToggle", value: "Launch Phi Sentinel when you sign in to your Mac", comment: "AI settings - Toggle to auto-launch Phi Sentinel when signing in to the Mac"),
                     isOn: $launchSentinelOnLogin,
                     enabled: enabled
                 )
@@ -213,8 +302,6 @@ private struct AISidebarSectionView: View {
         }
     }
 }
-
-// MARK: - External Data Connectors Section
 
 private struct ExternalConnectorsSectionView: View {
     @AppStorage(PhiPreferences.AISettings.enableConnectors.rawValue)

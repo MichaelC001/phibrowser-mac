@@ -83,17 +83,67 @@ struct AgentGrant: Identifiable {
     }
 }
 
+/// A standing refusal recorded from the consent prompt's deny options: the
+/// peer is turned away with no prompt at all until `expires` — or forever, for
+/// "Never ask again". `key` is an `AgentIdentity.key`, or nil for the
+/// "all agents" scope, which turns away every agent including ones never seen.
+///
+/// Unlike `CredentialGrant`, timed entries are persisted rather than dropped at
+/// relaunch. The asymmetry is deliberate: forgetting a *grant* fails safe (the
+/// agent must ask again), while forgetting a *denial* fails open (the agent the
+/// user just silenced starts prompting again after an unrelated restart).
+struct AgentDenial: Codable, Equatable, Identifiable {
+    /// nil = every agent.
+    let key: String?
+    /// nil = never expires.
+    let expires: Date?
+
+    var id: String {
+        (key ?? "*") + "@" + (expires.map { String($0.timeIntervalSince1970) } ?? "never")
+    }
+
+    var appliesToAllAgents: Bool { key == nil }
+    var isPermanent: Bool { expires == nil }
+    var isExpired: Bool { (expires ?? .distantFuture) <= Date() }
+
+    /// Whether this entry turns away the agent identified by `identityKey`.
+    func covers(_ identityKey: String) -> Bool { key == nil || key == identityKey }
+
+    /// Whether this entry makes `other` redundant — at least as broad in scope
+    /// and standing at least as long.
+    func supersedes(_ other: AgentDenial) -> Bool {
+        (key == nil || key == other.key)
+            && (expires ?? .distantFuture) >= (other.expires ?? .distantFuture)
+    }
+
+    /// Display name for the Developer settings "Blocked agents" list, reusing
+    /// `AgentGrant`'s key decoding so a blocked agent reads the same as an
+    /// allowed one.
+    var displayName: String {
+        guard let key else {
+            return NSLocalizedString("settings.developer.agentControl.blockedAgents.allAgentsName", value: "All agents", comment: "Developer settings - name of the blocked-agents entry that covers every agent")
+        }
+        return AgentGrant(key: key, remembered: false).displayName
+    }
+}
+
 enum AgentPeerIdentity {
-    /// Interpreters and shells that merely *host* an agent — never the
-    /// identity we present. The walk skips past these to the real launcher.
-    /// Membership is checked through `canonicalToolName`, so versioned
-    /// binaries ("python3.11") match their base entry.
+    /// Tools that merely *carry* an agent's work — interpreters, shells,
+    /// process wrappers, and the transports an agent reaches the socket
+    /// through. Never the identity we present: the walk skips past these to
+    /// the real launcher. Membership is checked through `canonicalToolName`,
+    /// so versioned binaries ("python3.11") match their base entry.
+    ///
+    /// `curl` earns its place the hard way — being Apple-signed, it looked
+    /// like a perfectly good identity and every hand-run or scripted request
+    /// resolved to "com.apple.curl", naming the pipe instead of whoever was
+    /// on the other end of it.
     private static let passthroughNames: Set<String> = [
         "node", "deno", "bun", "npm", "npx", "pnpm", "yarn", "corepack",
         "tsx", "ts-node", "uv", "uvx",
         "python", "ruby", "perl", "php",
         "sh", "bash", "zsh", "fish", "dash", "ksh", "csh", "tcsh",
-        "env", "login", "sudo", "xargs", "timeout",
+        "env", "login", "sudo", "xargs", "timeout", "curl",
     ]
 
     /// The subset of `passthroughNames` that run a SCRIPT as their first real
@@ -119,7 +169,15 @@ enum AgentPeerIdentity {
     }
 
     private static func isPassthroughName(_ name: String) -> Bool {
-        passthroughNames.contains(canonicalToolName(name))
+        let canonical = canonicalToolName(name)
+        if passthroughNames.contains(canonical) { return true }
+        // Homebrew's coreutils installs the GNU builds under a "g" prefix
+        // (gtimeout, gxargs, genv), which no more identifies an agent than
+        // the BSD tool it shadows. Only a name whose de-prefixed form is
+        // ALREADY passthrough matches, so "git" ("it") and "go" ("o") — and
+        // any other agent that happens to start with g — are untouched.
+        guard canonical.hasPrefix("g") else { return false }
+        return passthroughNames.contains(String(canonical.dropFirst()))
     }
 
     private static func isScriptInterpreterName(_ name: String) -> Bool {

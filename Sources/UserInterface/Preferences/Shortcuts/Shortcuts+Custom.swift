@@ -45,7 +45,30 @@ extension Shortcuts {
         case spaces = "Spaces"
         case help = "Help"
         
-        var title: String { rawValue }
+        var title: String {
+            switch self {
+            case .app:
+                return NSLocalizedString("settings.shortcuts.group.app", value: "App", comment: "Shortcuts settings - Section title for application commands")
+            case .file:
+                return NSLocalizedString("settings.shortcuts.group.file", value: "File", comment: "Shortcuts settings - Section title for file commands")
+            case .edit:
+                return NSLocalizedString("settings.shortcuts.group.edit", value: "Edit", comment: "Shortcuts settings - Section title for editing commands")
+            case .view:
+                return NSLocalizedString("settings.shortcuts.group.view", value: "View", comment: "Shortcuts settings - Section title for view commands")
+            case .history:
+                return NSLocalizedString("settings.shortcuts.group.history", value: "History", comment: "Shortcuts settings - Section title for browsing history commands")
+            case .bookmarks:
+                return NSLocalizedString("settings.shortcuts.group.bookmarks", value: "Bookmarks", comment: "Shortcuts settings - Section title for bookmark commands")
+            case .window:
+                return NSLocalizedString("settings.shortcuts.group.window", value: "Window", comment: "Shortcuts settings - Section title for window commands")
+            case .tab:
+                return NSLocalizedString("settings.shortcuts.group.tab", value: "Tab", comment: "Shortcuts settings - Section title for tab commands")
+            case .spaces:
+                return NSLocalizedString("settings.shortcuts.group.spaces", value: "Spaces", comment: "Shortcuts settings - Section title for Space commands")
+            case .help:
+                return NSLocalizedString("settings.shortcuts.group.help", value: "Help", comment: "Shortcuts settings - Section title for help commands")
+            }
+        }
         
         var commands: [CommandWrapper] {
             switch self {

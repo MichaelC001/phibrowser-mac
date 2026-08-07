@@ -651,6 +651,11 @@ struct SpacesStripView: View {
                         agentBadge(for: space.spaceId)
                             .offset(y: max(0, (rowHeight - Self.stripItemHeight) / 2))
                     }
+                    .overlay(alignment: .leading) {
+                        if isAgentGroupStart(index) {
+                            agentGroupDivider
+                        }
+                    }
                     .opacity(stripDraggingId == space.spaceId ? 0.5 : 1)
                     // `.clipped()` below is visual only — pips beyond the
                     // window would still swallow clicks/hovers aimed at the
@@ -713,6 +718,30 @@ struct SpacesStripView: View {
     /// Width of `count` uniform strip items plus the gaps between them.
     private func pipRowWidth(_ count: Int) -> CGFloat {
         count <= 0 ? 0 : CGFloat(count) * Self.stripItemWidth + CGFloat(count - 1) * Self.stripSpacing
+    }
+
+    /// True when the pip at `index` opens the agent-Space group — an agent pip
+    /// directly after a user pip — which draws the group divider on its
+    /// leading side. `SpaceManager` groups agent Spaces at the row's end, so
+    /// this holds for at most one pip in the settled order; mid-drag it tracks
+    /// the live rearrangement.
+    private func isAgentGroupStart(_ index: Int) -> Bool {
+        let spaces = stripOrderedSpaces
+        guard index > 0, index < spaces.count else { return false }
+        return spaces[index].isAnyAgentSpace && !spaces[index - 1].isAnyAgentSpace
+    }
+
+    /// Thin vertical rule splitting the strip into the user-Space and
+    /// agent-Space groups. Decorative only, drawn centered in the 4pt inter-pip
+    /// gap on the first agent pip's leading side — so the row's uniform-slot
+    /// arithmetic (`visiblePipCount`, viewport offsets, wheel steps) is
+    /// untouched.
+    private var agentGroupDivider: some View {
+        RoundedRectangle(cornerRadius: 0.5, style: .continuous)
+            .fill(Color(nsColor: .separatorColor))
+            .frame(width: 1, height: 14)
+            .offset(x: -(Self.stripSpacing + 1) / 2)
+            .allowsHitTesting(false)
     }
 
     /// `stripStartIndex` clamped so the window never runs past the end of the
@@ -1318,7 +1347,7 @@ struct SpacesStripView: View {
             format: NSLocalizedString("sidebar.deleteSpaceConfirmation.title", value: "Delete \u{201C}%@\u{201D}?", comment: "Title of the delete-Space confirmation"),
             space.name
         )
-        if AccountController.shared.account?.localStorage.pinnedTabScope() == .space {
+        if AccountController.shared.localDataAccount?.localStorage.pinnedTabScope() == .space {
             alert.informativeText = NSLocalizedString("sidebar.deleteSpaceConfirmation.spaceScopedMessage", value: "Bookmarks and pinned tabs belonging to this Space will also be removed. This action cannot be undone.",
                 comment: "Body of the delete-Space confirmation with Space-scoped pinned tabs"
             )
@@ -1377,9 +1406,11 @@ private struct SpacePickerPopup: View {
                             // Space can be deleted, and an Incognito Space's
                             // name is derived ("Incognito" / "Incognito N";
                             // it ends via Close Incognito Space instead).
-                            // Icon and theme remain user-changeable for it.
+                            // Its theme remains user-changeable; its icon is
+                            // editable when multiple Spaces exist.
                             isDeletable: space.spaceId != LocalStore.defaultSpaceId
                                 && !SpaceManager.isIncognitoSpaceId(space.spaceId),
+                            showsIconAction: manager.spaces.count > 1,
                             isRenamable: !SpaceManager.isIncognitoSpaceId(space.spaceId),
                             tint: iconColor(for: space),
                             profileName: profileDisplayName(for: space.profileId),
@@ -1629,11 +1660,12 @@ private struct SpacePickerRow: View {
     let space: SpaceModel
     let isActive: Bool
     let isDeletable: Bool
+    let showsIconAction: Bool
     /// False for Incognito Spaces, whose NAME is derived ("Incognito" /
     /// "Incognito N" — a rename would be a silent store no-op on their
-    /// runtime-only ids). Icon and theme stay editable everywhere —
-    /// `SpaceManager.changeIcon`/`setTheme` keep their choices outside
-    /// SwiftData.
+    /// runtime-only ids). Themes stay editable everywhere; the contextual icon
+    /// action is available when multiple Spaces exist. Both choices are kept
+    /// outside SwiftData by `SpaceManager.changeIcon`/`setTheme`.
     var isRenamable: Bool = true
     let tint: Color
     let profileName: String
@@ -1701,8 +1733,10 @@ private struct SpacePickerRow: View {
             if isRenamable {
                 Button(NSLocalizedString("sidebar.spacesContextMenu.renameAction", value: "Rename\u{2026}", comment: "Spaces context menu - Rename Space action")) { onRename() }
             }
-            Button(NSLocalizedString("sidebar.spacesContextMenu.changeIconAction", value: "Change Icon\u{2026}", comment: "Opens the icon/emoji picker for a Space")) {
-                showsIconPicker = true
+            if showsIconAction {
+                Button(NSLocalizedString("sidebar.spacesContextMenu.changeIconAction", value: "Change Icon\u{2026}", comment: "Opens the icon/emoji picker for a Space")) {
+                    showsIconPicker = true
+                }
             }
             Menu(NSLocalizedString("sidebar.spacesContextMenu.themeSubmenuTitle", value: "Change Theme", comment: "Spaces context menu - Change Theme submenu title")) {
                 Picker(NSLocalizedString("sidebar.spacesContextMenu.themePickerLabel", value: "Change Theme", comment: "Spaces context menu - Theme picker accessibility label"), selection: themeSelection) {

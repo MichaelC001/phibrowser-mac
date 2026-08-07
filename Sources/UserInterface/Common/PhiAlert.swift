@@ -603,9 +603,10 @@ private final class PhiAlertQuitConfirmationAction {
     var handler: (() -> Void)?
 }
 
-/// Presents a SwiftUI `PhiAlert` through AppKit as a window-attached sheet.
-/// Both asynchronous and synchronous entry points share the same window
-/// construction, theme subscription, and dismissal path.
+/// Presents a SwiftUI `PhiAlert` through AppKit as a window-attached sheet, as
+/// a non-modal panel attached to a window, or as a standalone centered panel.
+/// Every entry point shares the same window construction, theme subscription,
+/// and dismissal path.
 @MainActor
 final class PhiAlertPresenter {
     private static let synchronousEventPumpModes: [RunLoop.Mode] = [
@@ -618,11 +619,18 @@ final class PhiAlertPresenter {
         case none
         case sheet
         case standalone
+        case nonModal
     }
 
     private weak var sourceWindow: NSWindow?
     private var alertWindow: NSWindow?
     private var appearanceSubscription: AnyObject?
+    private var parentCloseObservation: NSObjectProtocol?
+    /// Strong self-reference held while a non-modal alert is on screen. A
+    /// sheet is kept alive by AppKit's sheet completion handler and the
+    /// synchronous styles by their calling frame; the non-modal style has
+    /// neither, and callers are free to discard the returned handle.
+    private var selfReferenceWhilePresented: PhiAlertPresenter?
     private var onDismiss: ((NSApplication.ModalResponse) -> Void)?
     private var presentationStyle = PresentationStyle.none
 
@@ -650,6 +658,29 @@ final class PhiAlertPresenter {
             presenter?.dismiss(response)
         }
         presenter.presentSheet(content: content(dismiss))
+        return presenter
+    }
+
+    /// Presents the alert as a floating panel attached to `parentWindow`
+    /// instead of a sheet, leaving that window fully usable: tab switching,
+    /// scrolling, and clicking all keep working while the panel is up. The
+    /// parent/child relationship keeps the panel above its window, moves it
+    /// with the window, hides it with the window, and ends the presentation
+    /// when the window closes.
+    @discardableResult
+    static func presentNonModally<Content: View>(
+        over parentWindow: NSWindow,
+        onDismiss: ((NSApplication.ModalResponse) -> Void)? = nil,
+        @ViewBuilder content: (PhiAlertDismissAction) -> Content
+    ) -> PhiAlertPresenter {
+        let presenter = PhiAlertPresenter(
+            sourceWindow: parentWindow,
+            onDismiss: onDismiss
+        )
+        let dismiss = PhiAlertDismissAction { [weak presenter] response in
+            presenter?.dismiss(response)
+        }
+        presenter.presentNonModal(content: content(dismiss))
         return presenter
     }
 
@@ -695,10 +726,30 @@ final class PhiAlertPresenter {
                 alertWindow.close()
                 completeDismissal(response)
             }
+        case .nonModal:
+            alertWindow.parent?.removeChildWindow(alertWindow)
+            alertWindow.close()
+            completeDismissal(response)
         case .none, .standalone:
             alertWindow.close()
             completeDismissal(response)
         }
+    }
+
+    /// Brings a presented alert back in front of its parent window. The
+    /// account flows call this from the guard that refuses a second
+    /// presentation, so clicking an entry point whose panel is already up
+    /// finds that panel instead of doing nothing.
+    ///
+    /// The parent comes forward first so the panel is not left floating above
+    /// a window buried behind another one, and the panel takes the keyboard:
+    /// the user clicked the entry point to answer the panel, and a recalled
+    /// panel that ignores typing is no better than a lost one.
+    func bringToFront() {
+        guard isPresented, let alertWindow else { return }
+
+        alertWindow.parent?.orderFront(nil)
+        alertWindow.makeKeyAndOrderFront(nil)
     }
 
     private func presentSheet<Content: View>(content: Content) {
@@ -726,6 +777,66 @@ final class PhiAlertPresenter {
         alertWindow.center()
         NSApp.activate(ignoringOtherApps: false)
         alertWindow.makeKeyAndOrderFront(nil)
+    }
+
+    private func presentNonModal<Content: View>(content: Content) {
+        guard let sourceWindow else { return }
+
+        let alertWindow = makeAlertWindow(
+            content: content,
+            themeProvider: sourceWindow.themeStateProvider
+        )
+        presentationStyle = .nonModal
+        isPresented = true
+        selfReferenceWhilePresented = self
+        // A borderless window has no title bar to drag it by, so the panel
+        // has to move from its background. The sheet path stays immovable.
+        alertWindow.isMovable = true
+        alertWindow.isMovableByWindowBackground = true
+        // AppKit sizes a sheet to its content when it attaches it; nothing
+        // does that for a panel, and the fitting size measured before the
+        // hosting view lays out can still be zero.
+        if let contentView = alertWindow.contentViewController?.view {
+            alertWindow.setContentSize(contentView.fittingSize)
+        }
+        alertWindow.setFrameOrigin(
+            centeredOrigin(for: alertWindow.frame.size, over: sourceWindow)
+        )
+        observeParentWindowClose(sourceWindow)
+        sourceWindow.addChildWindow(alertWindow, ordered: .above)
+        alertWindow.makeKeyAndOrderFront(nil)
+    }
+
+    /// Centered on the parent's content area rather than on the screen, which
+    /// would put the panel somewhere else entirely once the window is not on
+    /// the main display.
+    private func centeredOrigin(
+        for size: CGSize,
+        over parentWindow: NSWindow
+    ) -> CGPoint {
+        let contentRect = parentWindow.contentRect(
+            forFrameRect: parentWindow.frame
+        )
+        return CGPoint(
+            x: contentRect.midX - size.width / 2,
+            y: contentRect.midY - size.height / 2
+        )
+    }
+
+    /// The presenting caller tears its flow down from the dismissal
+    /// completion, so a parent window closing with a panel up has to run that
+    /// same completion — skipping it would leave the caller believing a panel
+    /// is still on screen and refusing the next attempt.
+    private func observeParentWindowClose(_ parentWindow: NSWindow) {
+        parentCloseObservation = NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification,
+            object: parentWindow,
+            queue: nil
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.dismiss(.cancel)
+            }
+        }
     }
 
     private func runSheetSynchronously<Content: View>(
@@ -817,10 +928,20 @@ final class PhiAlertPresenter {
         isPresented = false
         presentationStyle = .none
         appearanceSubscription = nil
+        if let parentCloseObservation {
+            NotificationCenter.default.removeObserver(parentCloseObservation)
+            self.parentCloseObservation = nil
+        }
         alertWindow = nil
+        // Kept on the stack until this returns: for a non-modal alert this is
+        // the reference the presenter lives on, and the completion below is
+        // free to drop every other one.
+        let selfReference = selfReferenceWhilePresented
+        selfReferenceWhilePresented = nil
         let completion = onDismiss
         onDismiss = nil
         completion?(response)
+        withExtendedLifetime(selfReference) {}
     }
 }
 
@@ -847,6 +968,35 @@ extension NSWindow {
         @ViewBuilder content: (PhiAlertDismissAction) -> Content
     ) -> PhiAlertPresenter {
         PhiAlertPresenter.present(
+            over: self,
+            onDismiss: onDismiss,
+            content: content
+        )
+    }
+
+    /// Presents the standard alert as a non-modal panel attached to this
+    /// window, which stays usable while the panel is up.
+    @discardableResult
+    func presentPhiAlertNonModally(
+        _ configuration: PhiAlertAppKitConfiguration,
+        onDismiss: ((NSApplication.ModalResponse) -> Void)? = nil
+    ) -> PhiAlertPresenter {
+        presentPhiAlertNonModally(onDismiss: onDismiss) { dismiss in
+            PhiAlertAppKitContent(
+                configuration: configuration,
+                dismiss: dismiss
+            )
+        }
+    }
+
+    /// Presents custom SwiftUI alert content as a non-modal panel using this
+    /// window's theme context.
+    @discardableResult
+    func presentPhiAlertNonModally<Content: View>(
+        onDismiss: ((NSApplication.ModalResponse) -> Void)? = nil,
+        @ViewBuilder content: (PhiAlertDismissAction) -> Content
+    ) -> PhiAlertPresenter {
+        PhiAlertPresenter.presentNonModally(
             over: self,
             onDismiss: onDismiss,
             content: content
@@ -1108,3 +1258,56 @@ extension PhiAlert where Icon == EmptyView, AlertContent == EmptyView, Actions =
     .background(Color(nsColor: .underPageBackgroundColor))
 }
 #endif
+
+/// Segmented option control matching the alert's rounded styling (a native
+/// segmented control would fight the material surface). Shared by the alerts
+/// that ask "for how long?" — agent access and credential approval — so the
+/// two prompts a user meets from the same agent look like one system.
+struct PhiAlertSegmentedPicker<Option: Hashable>: View {
+    let options: [Option]
+    @Binding var selection: Option
+    let title: KeyPath<Option, String>
+
+    @Environment(\.phiAppearance) private var appearance
+    @Namespace private var segmentNamespace
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(options, id: \.self) { option in
+                segment(option)
+            }
+        }
+        .padding(2)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(appearance.isLight ? Color.black.opacity(0.05) : Color.white.opacity(0.08))
+        )
+    }
+
+    private func segment(_ option: Option) -> some View {
+        let isSelected = selection == option
+        return Button {
+            withAnimation(.easeOut(duration: 0.15)) {
+                selection = option
+            }
+        } label: {
+            Text(option[keyPath: title])
+                .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
+                .themedForeground(.textPrimary)
+                .lineLimit(1)
+                .padding(.vertical, 5)
+                .frame(maxWidth: .infinity)
+                .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .background {
+            if isSelected {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(appearance.isLight ? Color.white : Color.white.opacity(0.22))
+                    .shadow(color: .black.opacity(appearance.isLight ? 0.12 : 0.3),
+                            radius: 1.5, y: 0.5)
+                    .matchedGeometryEffect(id: "selectedSegment", in: segmentNamespace)
+            }
+        }
+    }
+}

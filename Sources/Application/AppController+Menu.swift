@@ -8,6 +8,250 @@ import Cocoa
 import SwiftUI
 import UniformTypeIdentifiers
 
+// chrome/app/chrome_command_ids.h
+enum ChromiumMainMenuRole: Int {
+    case edit = 36004
+    case bookmarks = 40029
+    case help = 40244
+    case window = 34045
+    case view = 44000
+    case file = 44001
+    case app = 44002
+    case history = 46000
+    case tab = 46001
+    case profiles = 46100
+
+    static func resolve(_ item: NSMenuItem, helpMenu: NSMenu?) -> Self? {
+        if let role = Self(rawValue: item.tag) {
+            return role
+        }
+        // Chromium currently assigns IDC_HELP_MENU to no AppKit item. Its
+        // NSApplication helpMenu reference is the stable native fallback.
+        if let helpMenu = helpMenu, item.submenu === helpMenu {
+            return .help
+        }
+        return nil
+    }
+
+    func item(in menu: NSMenu) -> NSMenuItem? {
+        menu.items.first { $0.tag == rawValue }
+    }
+
+    func index(in menu: NSMenu) -> Int? {
+        menu.items.firstIndex { $0.tag == rawValue }
+    }
+}
+
+private final class SpaceThemeEditorPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
+}
+
+private final class SpaceThemeEditorPanelDragView: NSView {
+    override func mouseDown(with event: NSEvent) {
+        window?.performDrag(with: event)
+    }
+}
+
+private enum SpaceThemeEditorPanelPlacement {
+    case nearTrigger(NSPoint)
+    case windowTop
+}
+
+private final class SpaceThemeEditorMenuContext {
+    weak var browserState: BrowserState?
+    let placement: SpaceThemeEditorPanelPlacement
+
+    init(browserState: BrowserState?, placement: SpaceThemeEditorPanelPlacement) {
+        self.browserState = browserState
+        self.placement = placement
+    }
+}
+
+@MainActor
+private final class SpaceThemeEditorPanelPresenter {
+    static let shared = SpaceThemeEditorPanelPresenter()
+
+    private weak var parentWindow: NSWindow?
+    private var panel: SpaceThemeEditorPanel?
+    private var localEventMonitor: Any?
+    private var resignActiveObserver: NSObjectProtocol?
+
+    func present(
+        spaceId: String,
+        from window: NSWindow,
+        placement: SpaceThemeEditorPanelPlacement,
+        themeSource: ThemeStateProvider
+    ) {
+        dismiss()
+
+        let contentSize = SpaceThemeEditorView.contentSize
+        let panel = SpaceThemeEditorPanel(
+            contentRect: NSRect(origin: .zero, size: contentSize),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
+        panel.isFloatingPanel = true
+        panel.hidesOnDeactivate = false
+        panel.becomesKeyOnlyIfNeeded = true
+        panel.isMovable = true
+        panel.isMovableByWindowBackground = true
+        panel.collectionBehavior = [.transient, .fullScreenAuxiliary]
+        panel.contentViewController = ThemedHostingController(
+            rootView: SpaceThemeEditorView(spaceId: spaceId) { [weak self] in
+                self?.dismiss()
+            },
+            themeSource: themeSource
+        )
+        panel.setContentSize(contentSize)
+        if let contentView = panel.contentView {
+            let dragView = SpaceThemeEditorPanelDragView()
+            dragView.translatesAutoresizingMaskIntoConstraints = false
+            contentView.addSubview(dragView)
+            NSLayoutConstraint.activate([
+                dragView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+                dragView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+                dragView.topAnchor.constraint(equalTo: contentView.topAnchor),
+                dragView.heightAnchor.constraint(equalToConstant: 8),
+            ])
+        }
+        self.panel = panel
+        parentWindow = window
+
+        // NSMenu actions run inside AppKit's modal event-tracking loop. Wait
+        // until the menu has closed before ordering the child panel above its
+        // browser window.
+        DispatchQueue.main.async { [weak self, weak window, weak panel] in
+            guard let self,
+                  let window,
+                  let panel,
+                  self.panel === panel,
+                  window.isVisible else { return }
+
+            let origin = self.initialOrigin(
+                panelSize: panel.frame.size,
+                placement: placement,
+                window: window
+            )
+            panel.setFrameOrigin(origin)
+            window.addChildWindow(panel, ordered: .above)
+            panel.orderFront(nil)
+            self.installDismissMonitors()
+        }
+    }
+
+    private func initialOrigin(
+        panelSize: NSSize,
+        placement: SpaceThemeEditorPanelPlacement,
+        window: NSWindow
+    ) -> NSPoint {
+        let margin: CGFloat = 8
+
+        switch placement {
+        case .windowTop:
+            let visibleFrame = window.screen?.visibleFrame ?? window.frame
+            let topInset: CGFloat = 12
+            let x = min(
+                max(
+                    window.frame.midX - panelSize.width / 2,
+                    visibleFrame.minX + margin
+                ),
+                visibleFrame.maxX - panelSize.width - margin
+            )
+            let y = min(
+                max(
+                    window.frame.maxY - panelSize.height - topInset,
+                    visibleFrame.minY + margin
+                ),
+                visibleFrame.maxY - panelSize.height - margin
+            )
+            return NSPoint(x: x, y: y)
+
+        case let .nearTrigger(triggerScreenPoint):
+            let screen = NSScreen.screens.first { $0.frame.contains(triggerScreenPoint) }
+                ?? window.screen
+            let visibleFrame = screen?.visibleFrame ?? window.frame
+            let gap: CGFloat = 12
+
+            var x = triggerScreenPoint.x + gap
+            if x + panelSize.width > visibleFrame.maxX - margin {
+                x = triggerScreenPoint.x - panelSize.width - gap
+            }
+
+            var y = triggerScreenPoint.y - panelSize.height - gap
+            if y < visibleFrame.minY + margin {
+                y = triggerScreenPoint.y + gap
+            }
+
+            x = min(
+                max(x, visibleFrame.minX + margin),
+                visibleFrame.maxX - panelSize.width - margin
+            )
+            y = min(
+                max(y, visibleFrame.minY + margin),
+                visibleFrame.maxY - panelSize.height - margin
+            )
+            return NSPoint(x: x, y: y)
+        }
+    }
+
+    func dismiss() {
+        removeDismissMonitors()
+        if let panel {
+            parentWindow?.removeChildWindow(panel)
+            panel.orderOut(nil)
+        }
+        panel = nil
+        parentWindow = nil
+    }
+
+    private func installDismissMonitors() {
+        let mouseEvents: NSEvent.EventTypeMask = [
+            .leftMouseDown,
+            .rightMouseDown,
+            .otherMouseDown,
+        ]
+        localEventMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: mouseEvents.union(.keyDown)
+        ) { [weak self] event in
+            guard let self, let panel = self.panel else { return event }
+            if event.type == .keyDown, event.keyCode == 53 {
+                self.dismiss()
+            } else if (event.type == .leftMouseDown
+                        || event.type == .rightMouseDown
+                        || event.type == .otherMouseDown),
+                      event.window !== panel {
+                self.dismiss()
+            }
+            return event
+        }
+        resignActiveObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didResignActiveNotification,
+            object: NSApp,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.dismiss()
+            }
+        }
+    }
+
+    private func removeDismissMonitors() {
+        if let localEventMonitor {
+            NSEvent.removeMonitor(localEventMonitor)
+            self.localEventMonitor = nil
+        }
+        if let resignActiveObserver {
+            NotificationCenter.default.removeObserver(resignActiveObserver)
+            self.resignActiveObserver = nil
+        }
+    }
+}
+
 extension AppController {
     static let extensionInfoItemTag = 500002
     static let exportLogsItemTag = 500011
@@ -21,6 +265,7 @@ extension AppController {
     static let layoutModeTraditionalItemTag = 500007
     static let layoutModeTitleItemTag = 500008
     static let whatsNewItemTag = 500009
+    static let improveTranslationsItemTag = 500028
     static let bookmarksMenuItemTag = 500010
     static let bookmarksMenuIdentifier = NSUserInterfaceItemIdentifier("phi.bookmarks.menu")
     static let spacesNewProfileItemTag = 500015
@@ -30,6 +275,8 @@ extension AppController {
     // 500025: was 500036, which collided with spacesChangeProfileParentTag
     // (harmless across submenus, but tags must stay unique to grep sanely).
     static let agentTranscriptItemTag = 500025
+    static let uninstallPhiItemTag = 500026
+    static let debugMenuItemTag = 500027
     static let spacesProfileSeparatorTag = 500020
     static let deleteProfileSubmenuIdentifier = NSUserInterfaceItemIdentifier("phi.spaces.deleteProfile")
     static let spacesMenuItemTag = 500018
@@ -73,7 +320,9 @@ extension AppController {
 
         var hasBookmarksMenu = false
         for menuItem in mainMenu.items {
-            if let submenu = menuItem.submenu, menuItem.title == "View" {
+            let menuRole = ChromiumMainMenuRole.resolve(menuItem, helpMenu: NSApp.helpMenu)
+
+            if let submenu = menuItem.submenu, menuRole == .view {
                 submenu.items.forEach {
                     let tag = $0.tag
                     if [40009, 40250, 40259, 40282, 40296, 40251].contains(tag) {
@@ -199,11 +448,11 @@ extension AppController {
                 }
             } else
             
-            if menuItem.title == "Phi", let subMenu = menuItem.submenu {
+            if menuRole == .app, let subMenu = menuItem.submenu {
                 subMenu.items.removeAll { $0.tag == AppController.checkForUpdateItemTag }
 
                 for (index, item) in subMenu.items.enumerated() {
-                    if item.title == "Settings..." || item.tag == 40015 {
+                    if item.tag == CommandWrapper.IDC_OPTIONS.rawValue {
                         let checkForUpdateItem = NSMenuItem(title: NSLocalizedString("app.phiMenu.checkForUpdatesMenuItem", value: "Check for Update...", comment: "Phi menu - Menu item to check for app updates"),
                                                            action: #selector(checkForUpdate(_:)),
                                                            keyEquivalent: "")
@@ -213,13 +462,14 @@ extension AppController {
                         break
                     }
                 }
+
             } else
             
-            if menuItem.title == "Edit", let subMenu = menuItem.submenu {
+            if menuRole == .edit, let subMenu = menuItem.submenu {
                 installOrUpdateCopyURLMenuItem(in: subMenu)
             } else
 
-            if menuItem.title == "File", let subMenu = menuItem.submenu {
+            if menuRole == .file, let subMenu = menuItem.submenu {
                 subMenu.items.forEach { item in
                     if item.tag == CommandWrapper.IDC_SAVE_PAGE.rawValue {
                         item.keyEquivalent = ""
@@ -245,11 +495,11 @@ extension AppController {
                 }
             } else
             
-            if menuItem.title == "Profiles" || menuItem.tag == 46100 {
+            if menuRole == .profiles {
                 menuItem.isHidden = true
             }
 
-            switch BookmarkMainMenuItemRouting.action(title: menuItem.title, tag: menuItem.tag) {
+            switch BookmarkMainMenuItemRouting.action(tag: menuItem.tag) {
             case .configureCustomItem:
                 hasBookmarksMenu = true
                 configureBookmarksMenuItem(menuItem)
@@ -259,24 +509,32 @@ extension AppController {
                 break
             }
 
-            if menuItem.title == "Tab", let subMenu = menuItem.submenu {
-                let hiddenTitles = ["Pin Tab", "Group Tab", "Move Tab to New Window", "Close Other Tabs", "Close Tabs to the Right"]
+            if menuRole == .tab, let subMenu = menuItem.submenu {
+                let hiddenCommandTags: Set<Int> = [
+                    CommandWrapper.IDC_WINDOW_PIN_TAB.rawValue,
+                    CommandWrapper.IDC_WINDOW_GROUP_TAB.rawValue,
+                    CommandWrapper.IDC_MOVE_TAB_TO_NEW_WINDOW.rawValue,
+                    CommandWrapper.IDC_WINDOW_CLOSE_OTHER_TABS.rawValue,
+                    CommandWrapper.IDC_WINDOW_CLOSE_TABS_TO_RIGHT.rawValue
+                ]
                 subMenu.items.forEach { item in
-                    if hiddenTitles.contains(item.title) {
+                    if hiddenCommandTags.contains(item.tag) {
                         item.isHidden = true
                     }
                 }
             } else
             
-            if menuItem.title == "Help", let subMenu = menuItem.submenu {
+            if menuRole == .help, let subMenu = menuItem.submenu {
                 // Remove existing custom items to avoid duplication on menu rebuild
                 subMenu.items.removeAll {
                     $0.tag == AppController.extensionInfoItemTag ||
                     $0.tag == AppController.exportLogsItemTag ||
                     $0.tag == AppController.whatsNewItemTag ||
+                    $0.tag == AppController.improveTranslationsItemTag ||
                     $0.tag == AppController.manageUserDataHelpSeparatorTag ||
                     $0.tag == AppController.timeMachineBackupsParentItemTag ||
-                    $0.tag == AppController.manageUserDataParentItemTag
+                    $0.tag == AppController.manageUserDataParentItemTag ||
+                    $0.tag == AppController.uninstallPhiItemTag
                 }
                 
                 let extensionInfoItem = NSMenuItem(title: NSLocalizedString("app.helpMenu.extensionInfo", value: "Extension Info", comment: "Help menu - Menu item to show extension version info, only visible when holding Option key"),
@@ -314,6 +572,25 @@ extension AppController {
                     subMenu.addItem(whatsNewItem)
                 }
 
+                let improveTranslationsItem = NSMenuItem(
+                    title: NSLocalizedString(
+                        "app.helpMenu.improveTranslations",
+                        value: "Improve Translations for Phi Browser",
+                        comment: "Help menu - Menu item below What's New that opens Phi's translation contribution website"
+                    ),
+                    action: #selector(showImproveTranslations(_:)),
+                    keyEquivalent: ""
+                )
+                improveTranslationsItem.tag = AppController.improveTranslationsItemTag
+                improveTranslationsItem.target = self
+                if let whatsNewIndex = subMenu.items.firstIndex(where: {
+                    $0.tag == AppController.whatsNewItemTag
+                }) {
+                    subMenu.insertItem(improveTranslationsItem, at: whatsNewIndex + 1)
+                } else {
+                    subMenu.addItem(improveTranslationsItem)
+                }
+
                 let userDataSeparator = NSMenuItem.separator()
                 userDataSeparator.tag = AppController.manageUserDataHelpSeparatorTag
                 subMenu.addItem(userDataSeparator)
@@ -340,6 +617,19 @@ extension AppController {
                 userDataSubmenu.addItem(importUserDataItem)
                 manageUserDataItem.submenu = userDataSubmenu
                 subMenu.addItem(manageUserDataItem)
+
+                let uninstallItem = NSMenuItem(
+                    title: NSLocalizedString(
+                        "app.helpMenu.uninstallPhi",
+                        value: "Uninstall Phi...",
+                        comment: "Help menu - Menu item below Manage User Data that opens the critical confirmation for uninstalling Phi and its local data"
+                    ),
+                    action: #selector(uninstallPhi(_:)),
+                    keyEquivalent: ""
+                )
+                uninstallItem.tag = AppController.uninstallPhiItemTag
+                uninstallItem.target = self
+                subMenu.addItem(uninstallItem)
                 
                 subMenu.delegate = self
             }
@@ -351,7 +641,7 @@ extension AppController {
 
         installOrUpdateSpacesMenu(in: mainMenu)
 
-        if mainMenu.items.first(where: { $0.title == "*DEBUG*" }) == nil {
+        if mainMenu.items.first(where: { $0.tag == AppController.debugMenuItemTag }) == nil {
             let item = buildDebugMenuItem()
             #if DEBUG || NIGHTLY_BUILD
             mainMenu.addItem(item)
@@ -452,9 +742,9 @@ extension AppController {
         menuItem.tag = AppController.bookmarksMenuItemTag
         configureBookmarksMenuItem(menuItem)
 
-        if let historyIndex = mainMenu.items.firstIndex(where: { $0.title == "History" }) {
+        if let historyIndex = ChromiumMainMenuRole.history.index(in: mainMenu) {
             mainMenu.insertItem(menuItem, at: historyIndex + 1)
-        } else if let windowIndex = mainMenu.items.firstIndex(where: { $0.title == "Window" }) {
+        } else if let windowIndex = ChromiumMainMenuRole.window.index(in: mainMenu) {
             mainMenu.insertItem(menuItem, at: windowIndex)
         } else {
             mainMenu.addItem(menuItem)
@@ -572,7 +862,7 @@ extension AppController {
         item.target = self
 
         if let copyIndex = menu.items.firstIndex(where: {
-            $0.tag == CommandWrapper.IDC_CONTENT_CONTEXT_COPY.rawValue || $0.title == "Copy"
+            $0.tag == CommandWrapper.IDC_CONTENT_CONTEXT_COPY.rawValue
         }) {
             menu.insertItem(item, at: copyIndex + 1)
         } else {
@@ -780,6 +1070,13 @@ extension AppController {
 
     @objc func showWhatsNew(_ sender: Any?) {
         BrowserState.currentState()?.createTab("chrome://whats-new", focusAfterCreate: true)
+    }
+
+    @objc func showImproveTranslations(_ sender: Any?) {
+        BrowserState.currentState()?.createTab(
+            "https://i18n.phibrowser.com/",
+            focusAfterCreate: true
+        )
     }
 
     @objc func restoreTimeMachineBackup(_ sender: Any?) {
@@ -1045,9 +1342,9 @@ extension AppController {
 
         if isNew {
             let insertIndex: Int
-            if let viewIdx = mainMenu.items.firstIndex(where: { $0.title == "View" }) {
+            if let viewIdx = ChromiumMainMenuRole.view.index(in: mainMenu) {
                 insertIndex = viewIdx + 1
-            } else if let historyIdx = mainMenu.items.firstIndex(where: { $0.title == "History" }) {
+            } else if let historyIdx = ChromiumMainMenuRole.history.index(in: mainMenu) {
                 insertIndex = historyIdx
             } else {
                 insertIndex = mainMenu.items.count
@@ -1060,12 +1357,20 @@ extension AppController {
     /// `installOrUpdateSpacesMenu` after a main-menu swap and from
     /// `menuWillOpen` so each open reflects the current Spaces list and the
     /// active Space of the focused window.
-    /// Appends the active-Space actions (Rename, Change Icon, Edit Theme,
-    /// Change Profile) to `menu`, so other context menus — e.g. the sidebar /
-    /// tab-area menu — can offer the same Space controls as the Spaces menu.
+    /// Appends the active-Space actions (Rename, Edit Theme, Change Profile,
+    /// plus Change Icon when multiple Spaces exist) to `menu`, so other context
+    /// menus — e.g. the sidebar / tab-area menu — can offer the same Space
+    /// controls as the Spaces menu.
     /// Items target the controller and act on the currently active Space.
-    func appendActiveSpaceMenuItems(to menu: NSMenu) {
-        let activeSpace = currentActiveSpace()
+    func appendActiveSpaceMenuItems(
+        to menu: NSMenu,
+        browserState: BrowserState? = nil,
+        triggerScreenPoint: NSPoint? = nil
+    ) {
+        let targetSlot = browserState?.windowController?.slot ?? currentSpacesSlot()
+        let activeSpaceId = targetSlot?.activeSpaceId ?? SpaceManager.shared.activeSpaceId
+        let activeSpace = SpaceManager.shared.spaces.first { $0.spaceId == activeSpaceId }
+        let showsChangeIconItem = SpaceManager.shared.spaces.count > 1
 
         let newSpaceItem = NSMenuItem(
             title: NSLocalizedString("app.activeSpaceContextMenu.newSpaceAction", value: "New Space\u{2026}", comment: "Active Space context menu - Create a new Space"),
@@ -1083,21 +1388,32 @@ extension AppController {
         renameItem.target = self
         menu.addItem(renameItem)
 
-        let changeIconItem = NSMenuItem(
-            title: NSLocalizedString("app.tabAreaMenu.changeIcon", value: "Change Icon\u{2026}", comment: "Tab-area menu - opens the icon/emoji picker below the active Space's icon"),
-            action: #selector(requestActiveSpaceIconPicker(_:)),
-            keyEquivalent: ""
-        )
-        changeIconItem.target = self
-        menu.addItem(changeIconItem)
+        let changeIconItem: NSMenuItem?
+        if showsChangeIconItem {
+            let item = NSMenuItem(
+                title: NSLocalizedString("app.tabAreaMenu.changeIcon", value: "Change Icon\u{2026}", comment: "Tab-area menu - opens the icon/emoji picker below the active Space's icon"),
+                action: #selector(requestActiveSpaceIconPicker(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            menu.addItem(item)
+            changeIconItem = item
+        } else {
+            changeIconItem = nil
+        }
 
-        let editThemeParent = NSMenuItem(
-            title: NSLocalizedString("app.activeSpaceContextMenu.themeSubmenuTitle", value: "Edit Theme", comment: "Active Space context menu - Submenu to set a theme override for the active Space"),
-            action: nil,
+        let editThemeItem = NSMenuItem(
+            title: NSLocalizedString("app.activeSpaceContextMenu.themeSubmenuTitle", value: "Edit Theme", comment: "Active Space context menu - opens the theme editor for the active Space"),
+            action: #selector(requestActiveSpaceThemeEditor(_:)),
             keyEquivalent: ""
         )
-        editThemeParent.submenu = makeSpacesThemeSubmenu(for: activeSpace?.spaceId)
-        menu.addItem(editThemeParent)
+        editThemeItem.target = self
+        editThemeItem.representedObject = SpaceThemeEditorMenuContext(
+            browserState: browserState,
+            placement: triggerScreenPoint.map(SpaceThemeEditorPanelPlacement.nearTrigger)
+                ?? .windowTop
+        )
+        menu.addItem(editThemeItem)
 
         let changeProfileParent = NSMenuItem(
             title: NSLocalizedString("app.activeSpaceContextMenu.profileSubmenuTitle", value: "Change Profile", comment: "Active Space context menu - Submenu to re-bind the active Space to another profile"),
@@ -1134,7 +1450,8 @@ extension AppController {
         // mutate its workspace. New Space is left enabled (it doesn't touch the
         // agent Space).
         if focusedSpaceIsAgentControlled() {
-            [renameItem, changeIconItem, editThemeParent, changeProfileParent, deleteSpaceItem]
+            [renameItem, changeIconItem, editThemeItem, changeProfileParent, deleteSpaceItem]
+                .compactMap { $0 }
                 .forEach(Self.disableAgentLockedMenuItem)
         } else if focusedSpaceIsAgentSpace() {
             // The user took control, so most edits are allowed again — but
@@ -1267,6 +1584,7 @@ extension AppController {
         menu.removeAllItems()
         let activeSpace = currentActiveSpace()
         let activeSpaceId = activeSpace?.spaceId
+        let showsChangeIconItem = SpaceManager.shared.spaces.count > 1
 
         let newSpaceItem = NSMenuItem(
             title: NSLocalizedString("app.spacesMenu.newSpace", value: "New Space\u{2026}", comment: "Spaces menu - Create a new Space"),
@@ -1286,22 +1604,32 @@ extension AppController {
         renameItem.target = self
         menu.addItem(renameItem)
 
-        let changeIconItem = NSMenuItem(
-            title: NSLocalizedString("app.spacesMenu.changeIcon", value: "Change Icon\u{2026}", comment: "Spaces menu - opens the icon/emoji picker below the active Space's icon"),
-            action: #selector(requestActiveSpaceIconPicker(_:)),
-            keyEquivalent: ""
-        )
-        changeIconItem.target = self
-        menu.addItem(changeIconItem)
+        let changeIconItem: NSMenuItem?
+        if showsChangeIconItem {
+            let item = NSMenuItem(
+                title: NSLocalizedString("app.spacesMenu.changeIcon", value: "Change Icon\u{2026}", comment: "Spaces menu - opens the icon/emoji picker below the active Space's icon"),
+                action: #selector(requestActiveSpaceIconPicker(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            menu.addItem(item)
+            changeIconItem = item
+        } else {
+            changeIconItem = nil
+        }
 
-        let editThemeParent = NSMenuItem(
-            title: NSLocalizedString("app.spacesMenu.changeTheme", value: "Edit Theme", comment: "Spaces menu - Submenu to set a theme override for the active Space"),
-            action: nil,
+        let editThemeItem = NSMenuItem(
+            title: NSLocalizedString("app.spacesMenu.changeTheme", value: "Edit Theme", comment: "Spaces menu - opens the theme editor for the active Space"),
+            action: #selector(requestActiveSpaceThemeEditor(_:)),
             keyEquivalent: ""
         )
-        editThemeParent.tag = AppController.spacesChangeThemeParentTag
-        editThemeParent.submenu = makeSpacesThemeSubmenu(for: activeSpaceId)
-        menu.addItem(editThemeParent)
+        editThemeItem.tag = AppController.spacesChangeThemeParentTag
+        editThemeItem.target = self
+        editThemeItem.representedObject = SpaceThemeEditorMenuContext(
+            browserState: nil,
+            placement: .windowTop
+        )
+        menu.addItem(editThemeItem)
 
         let changeProfileParent = NSMenuItem(
             title: NSLocalizedString("app.spacesMenu.changeProfile", value: "Change Profile", comment: "Spaces menu - Submenu to re-bind the active Space to another profile"),
@@ -1325,7 +1653,8 @@ extension AppController {
         // mutate its workspace (mirrors the tab-area context menu). New Space
         // and the Next/Previous switchers below stay enabled.
         if focusedSpaceIsAgentControlled() {
-            [renameItem, changeIconItem, editThemeParent, changeProfileParent, deleteSpaceItem]
+            [renameItem, changeIconItem, editThemeItem, changeProfileParent, deleteSpaceItem]
+                .compactMap { $0 }
                 .forEach(Self.disableAgentLockedMenuItem)
         } else if focusedSpaceIsAgentSpace() {
             // Change Profile stays disabled for an agent Space even after the
@@ -1414,26 +1743,6 @@ extension AppController {
         rebuildDeleteProfileSubmenu(deleteSubmenu)
     }
 
-
-    private func makeSpacesThemeSubmenu(for spaceId: String?) -> NSMenu {
-        let menu = NSMenu(title: NSLocalizedString("app.spacesMenu.themeSubmenu.title", value: "Edit Theme", comment: "Spaces menu - Theme submenu title for the active Space"))
-        let pinnedId = spaceId.map { SpaceManager.shared.resolvedThemeId(forSpaceId: $0) }
-
-        for theme in ThemeManager.shared.orderedThemes {
-            let item = NSMenuItem(
-                title: theme.name,
-                action: #selector(selectSpaceTheme(_:)),
-                keyEquivalent: ""
-            )
-            item.target = self
-            item.representedObject = theme.id
-            item.state = (pinnedId == theme.id) ? .on : .off
-            item.image = .themeColorSwatch(for: theme)
-            menu.addItem(item)
-        }
-        return menu
-    }
-
     private func makeSpacesProfileSubmenu(for space: SpaceModel?) -> NSMenu {
         let menu = NSMenu(title: NSLocalizedString("app.spacesMenu.profileSubmenu.title", value: "Change Profile", comment: "Spaces menu - Profile submenu title for the active Space"))
         // The agent's fallback profile belongs to the agent — the user can't
@@ -1489,8 +1798,8 @@ extension AppController {
 
     /// True when `item` lives in the Tab, Bookmarks, or History top-level menu —
     /// the menus disabled wholesale while the focused Space is agent-controlled.
-    /// Bookmarks carries a stable identifier; Tab and History are matched by
-    /// title, as elsewhere in this file.
+    /// Bookmarks carries a stable identifier; Chromium-owned Tab and History
+    /// menus are identified through their owning top-level menu item's tag.
     func itemIsInAgentLockedMenu(_ item: NSMenuItem) -> Bool {
         // Walk up to the submenu that sits directly under the main menu.
         var top: NSMenu? = item.menu
@@ -1499,11 +1808,9 @@ extension AppController {
         }
         guard let topMenu = top else { return false }
         if topMenu.identifier == AppController.bookmarksMenuIdentifier { return true }
-        if topMenu.title == "Tab" || topMenu.title == "History" { return true }
-        // The submenu's own title isn't always the menu name; fall back to the
-        // owning main-menu item's title.
         if let owner = NSApp.mainMenu?.items.first(where: { $0.submenu === topMenu }) {
-            return owner.title == "Tab" || owner.title == "History"
+            let role = ChromiumMainMenuRole.resolve(owner, helpMenu: NSApp.helpMenu)
+            return role == .tab || role == .history
         }
         return false
     }
@@ -1554,11 +1861,22 @@ extension AppController {
         currentSpacesSlot()?.requestIconPicker()
     }
 
-    @objc func selectSpaceTheme(_ sender: Any?) {
-        guard let menuItem = sender as? NSMenuItem,
-              let space = currentActiveSpace(),
-              let themeId = menuItem.representedObject as? String else { return }
-        SpaceManager.shared.setTheme(forSpaceId: space.spaceId, themeId: themeId)
+    /// Opens the active Space's theme editor from the targeted browser window.
+    /// Presentation is deferred until menu tracking ends.
+    @MainActor @objc func requestActiveSpaceThemeEditor(_ sender: Any?) {
+        let context = (sender as? NSMenuItem)?.representedObject as? SpaceThemeEditorMenuContext
+        let browserState = context?.browserState
+        let slot = browserState?.windowController?.slot ?? currentSpacesSlot()
+        guard let spaceId = slot?.activeSpaceId,
+              let controller = browserState?.windowController ?? slot?.visibleController,
+              let window = controller.window else { return }
+
+        SpaceThemeEditorPanelPresenter.shared.present(
+            spaceId: spaceId,
+            from: window,
+            placement: context?.placement ?? .windowTop,
+            themeSource: controller.browserState.themeContext
+        )
     }
 
     @objc func selectSpaceProfile(_ sender: Any?) {
@@ -1578,7 +1896,7 @@ extension AppController {
             profile.displayName
         )
         let pinnedTabScope = MainActor.assumeIsolated {
-            AccountController.shared.account?.localStorage.pinnedTabScope() ?? .profile
+            AccountController.shared.localDataAccount?.localStorage.pinnedTabScope() ?? .profile
         }
         switch pinnedTabScope {
         case .space:
@@ -1609,7 +1927,7 @@ extension AppController {
             space.name
         )
         let usesSpaceScopedPinnedTabs = MainActor.assumeIsolated {
-            AccountController.shared.account?.localStorage.pinnedTabScope() == .space
+            AccountController.shared.localDataAccount?.localStorage.pinnedTabScope() == .space
         }
         if usesSpaceScopedPinnedTabs {
             alert.informativeText = NSLocalizedString("app.deleteSpaceConfirmation.spaceScopedMessage", value: "Bookmarks and pinned tabs belonging to this Space will also be removed. This action cannot be undone.",
@@ -1737,6 +2055,21 @@ extension AppController {
     // MARK: - Menu Validation
 
     @objc func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        if MainBrowserWindowControllersManager.shared
+            .isGuestTransitionInteractionBlocked {
+            let lifecycleSafeActions: [Selector] = [
+                #selector(orderFrontStandardAboutPanel(_:)),
+                #selector(NSApplication.terminate(_:)),
+                #selector(NSApplication.hide(_:)),
+                #selector(NSApplication.hideOtherApplications(_:)),
+                #selector(NSApplication.unhideAllApplications(_:)),
+            ]
+            if let action = item.action {
+                return lifecycleSafeActions.contains(action)
+            }
+            return false
+        }
+
         // Placeholder mode: tab-targeted menu items must not act on the
         // (now-empty) tab strip. Chromium-side CommandUpdater already disables
         // most of these because the placeholder isn't in TabStripModel; this
@@ -1814,7 +2147,7 @@ extension AppController {
         }
         
         if item.action == #selector(showPreferences(_:)) {
-            return LoginController.shared.isLoggedin()
+            return ApplicationState.shared.canUseBrowser
         }
         
         if item.action == #selector(checkForUpdate(_:)) {
@@ -1842,14 +2175,14 @@ extension AppController {
                 default:
                     break
                 }
-                return LoginController.shared.isLoggedin()
+                return ApplicationState.shared.canUseBrowser
             }
         }
 
         if item.action == #selector(toggleAgentAutoView(_:)) {
             if let menuItem = item as? NSMenuItem {
                 menuItem.state = PhiPreferences.AgentSpaces.autoViewEnabled ? .on : .off
-                return LoginController.shared.isLoggedin()
+                return ApplicationState.shared.canUseBrowser
             }
         }
 
@@ -1858,7 +2191,7 @@ extension AppController {
                 menuItem.state = MainActor.assumeIsolated {
                     AgentTranscriptPanelController.shared.isVisible
                 } ? .on : .off
-                return LoginController.shared.isLoggedin()
+                return ApplicationState.shared.canUseBrowser
             }
         }
 
@@ -1893,17 +2226,17 @@ extension AppController {
             if let menuItem = item as? NSMenuItem {
                 menuItem.isHidden = !spacesFeatureEnabled
             }
-            return spacesFeatureEnabled && LoginController.shared.isLoggedin()
+            return spacesFeatureEnabled && ApplicationState.shared.canUseBrowser
         }
         if item.action == #selector(newIncognitoSpaceFromMenu(_:)) {
             if let menuItem = item as? NSMenuItem {
                 menuItem.isHidden = !spacesFeatureEnabled
             }
-            return spacesFeatureEnabled && LoginController.shared.isLoggedin()
+            return spacesFeatureEnabled && ApplicationState.shared.canUseBrowser
         }
         if item.action == #selector(deleteSelectedProfile(_:)) {
             guard spacesFeatureEnabled,
-                  LoginController.shared.isLoggedin(),
+                  ApplicationState.shared.canUseBrowser,
                   let menuItem = item as? NSMenuItem,
                   let profile = menuItem.representedObject as? PhiBrowserProfile else {
                 return false
@@ -1914,7 +2247,7 @@ extension AppController {
             #selector(newSpaceFromMenu(_:)),
             #selector(renameActiveSpace(_:)),
             #selector(requestActiveSpaceIconPicker(_:)),
-            #selector(selectSpaceTheme(_:)),
+            #selector(requestActiveSpaceThemeEditor(_:)),
             #selector(selectSpaceProfile(_:)),
             #selector(deleteActiveSpace(_:)),
             #selector(closeIncognitoSpaceFromMenu(_:)),
@@ -1924,7 +2257,7 @@ extension AppController {
             #selector(openURLRulesEditor(_:)),
         ]
         if let action = item.action, spacesActions.contains(action) {
-            guard spacesFeatureEnabled, LoginController.shared.isLoggedin() else { return false }
+            guard spacesFeatureEnabled, ApplicationState.shared.canUseBrowser else { return false }
             // An Incognito Space's name, profile binding and existence are
             // fixed: its name is derived ("Incognito" / "Incognito N"), its
             // shared OTR profile can't be re-bound, and the Space ends via
@@ -1941,7 +2274,9 @@ extension AppController {
                SpaceManager.isIncognitoSpaceId(activeId) {
                 return false
             }
-            if action == #selector(renameActiveSpace(_:)) || action == #selector(requestActiveSpaceIconPicker(_:)) {
+            if action == #selector(renameActiveSpace(_:))
+                || action == #selector(requestActiveSpaceIconPicker(_:))
+                || action == #selector(requestActiveSpaceThemeEditor(_:)) {
                 return currentActiveSpace() != nil
             }
             if action == #selector(deleteActiveSpace(_:)) {
@@ -1949,17 +2284,6 @@ extension AppController {
                 // shared with the legacy per-profile root.
                 guard let space = currentActiveSpace() else { return false }
                 return space.spaceId != LocalStore.defaultSpaceId
-            }
-            if action == #selector(selectSpaceTheme(_:)) {
-                guard currentActiveSpace() != nil else { return false }
-                if let menuItem = item as? NSMenuItem {
-                    let pinnedId = currentActiveSpace().map {
-                        SpaceManager.shared.resolvedThemeId(forSpaceId: $0.spaceId)
-                    }
-                    let representedId = menuItem.representedObject as? String
-                    menuItem.state = (pinnedId == representedId) ? .on : .off
-                }
-                return true
             }
             if action == #selector(selectSpaceProfile(_:)) {
                 // The default space's profile can't change — its bookmark
@@ -2012,8 +2336,8 @@ extension AppController {
             }
             return !bookmark.isFolder
         }
-        let isLoggedIn = LoginController.shared.isLoggedin()
-        if !isLoggedIn {
+        let canUseBrowser = ApplicationState.shared.canUseBrowser
+        if !canUseBrowser {
             let allowedActions: [Selector] = [
                 #selector(orderFrontStandardAboutPanel(_:)),
                 #selector(NSApplication.terminate(_:)),
@@ -2028,7 +2352,8 @@ extension AppController {
                 #selector(exportLogs(_:)),
                 #selector(restoreTimeMachineBackup(_:)),
                 #selector(exportUserData(_:)),
-                #selector(importUserDataFromBackup(_:))
+                #selector(importUserDataFromBackup(_:)),
+                #selector(uninstallPhi(_:))
             ]
 
             if let action = item.action {
@@ -2057,7 +2382,30 @@ extension AppController {
         return ChromiumLauncher.sharedInstance().bridge?.validateUserInterfaceItem(fromMenu: item) ?? false
     }
     
+    // New-window/new-tab commands that spawn a window when none is open. They
+    // are dropped while a session restore is in flight so their Chromium window
+    // cannot race the restore's per-profile session commit (see below).
+    private static let windowlessSpawnCommandTags: Set<Int> = [
+        CommandWrapper.IDC_NEW_WINDOW.rawValue,
+        CommandWrapper.IDC_NEW_INCOGNITO_WINDOW.rawValue,
+        CommandWrapper.IDC_NEW_TAB.rawValue,
+    ]
+
     @IBAction @objc func commandDispatch(_ sender: Any?) {
+        guard !MainBrowserWindowControllersManager.shared
+            .isGuestTransitionInteractionBlocked else {
+            return
+        }
+        // A windowless session restore is in flight: dropping a new-window/tab
+        // command here keeps its Chromium window from racing the restore's
+        // per-profile commit (which would conclude the profile still has a
+        // window and suppress its restore). The user can reissue once the
+        // restored windows arrive.
+        if SpaceManager.shared.isSessionRestoreInFlight,
+           let tag = (sender as? NSMenuItem)?.tag,
+           Self.windowlessSpawnCommandTags.contains(tag) {
+            return
+        }
         // No key browser window handled this command, so it reached the app
         // delegate. Forward to PhiAppController (via the bridge), which contains
         // the no-window handling for File-menu commands like New Tab/New Window.

@@ -40,6 +40,14 @@ NSLocalizedString(
 
 ## Extraction and Catalog
 
+- This repository owns localization IDs, English source values, and translator
+  comments. Add only the `en` localization for new catalog entries.
+- Do not proactively author or update non-English localizations in
+  `Resources/Localizable.xcstrings`. Multilingual translations are maintained
+  by the dedicated translation repository and should enter this repository only
+  through that repository's synchronization workflow.
+- Preserve existing non-English localizations unless a translation-repository
+  synchronization explicitly updates them.
 - Developer-only strings under `#if DEBUG`, and strings used only by examples,
   samples, previews, or debug tools, must remain direct string literals instead
   of using `NSLocalizedString`.

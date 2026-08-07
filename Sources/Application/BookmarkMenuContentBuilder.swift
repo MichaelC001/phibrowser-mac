@@ -162,12 +162,12 @@ enum BookmarkMainMenuItemRouting: Equatable {
     case hideSystemItem
     case ignore
 
-    static func action(title: String, tag: Int) -> Self {
+    static func action(tag: Int) -> Self {
         if tag == AppController.bookmarksMenuItemTag {
             return .configureCustomItem
         }
 
-        if title == "Bookmarks" || tag == 40029 {
+        if tag == ChromiumMainMenuRole.bookmarks.rawValue {
             return .hideSystemItem
         }
 

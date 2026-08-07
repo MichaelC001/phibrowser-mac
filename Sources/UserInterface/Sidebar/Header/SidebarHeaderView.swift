@@ -34,6 +34,8 @@ class SidebarHeaderView: NSView, TitlebarAwareHitTestable {
     /// Currently available app update version.
     private var availableUpdateVersion: String?
     private var currentWidth: CGFloat = 0
+    private var isRefreshButtonHovered = false
+    private var didPlayRefreshAnimationForCurrentHover = false
 
     /// The mounted Spaces-switch row (owned by the sidebar view controller);
     /// the header positions it and toggles its visibility with the feature flag.
@@ -131,16 +133,21 @@ class SidebarHeaderView: NSView, TitlebarAwareHitTestable {
         return button
     }()
     
-    private lazy var refreshButton: HoverableButtonNSView = {
-        let image = NSImage.configureSymbolImage(systemName: "arrow.clockwise", pointSize: 13, weight: .regular, color: .black)
-        let config = HoverableButtonConfig(image: .sidebarReload,
-//                                           imageSize: .init(width:  16, height: 16),
-                                           displayMode: .imageOnly,
-                                           hoverBackgroundColor: .hover,
-                                           imageTintColor: .textPrimary,
-                                           cornerRadius: 4)
-        
-        let button = HoverableButtonNSView(config: config, target: self, selector: #selector(refreshButtonClicked))
+    private lazy var refreshButton: LottieAnimationNSView = {
+        let config = LottieAnimationViewConfig(
+            animationName: "refresh",
+            size: CGSize(width: 24, height: 24),
+            hoverBackgroundColor: Color(nsColor: .sidebarTabHovered),
+            cornerRadius: 4,
+            animationTrigger: .manual,
+            themedTintColor: .custom(light: .black, dark: .white),
+            reverseOnHoverExit: true
+        )
+        let button = LottieAnimationNSView(
+            config: config,
+            target: self,
+            selector: #selector(refreshButtonClicked)
+        )
         button.snp.makeConstraints { make in
             make.size.equalTo(NSSize(width: 24, height: 24))
         }
@@ -163,8 +170,48 @@ class SidebarHeaderView: NSView, TitlebarAwareHitTestable {
         return button
     }()
 
+    private lazy var refreshStopButtonContainer: HoverableView = {
+        let container = HoverableView()
+        container.backgroundColor = .clear
+        container.hoveredColor = .clear
+        container.selectedColor = .clear
+        container.responseToClickAction = false
+
+        container.addSubview(refreshButton)
+        container.addSubview(stopButton)
+
+        refreshButton.snp.makeConstraints { make in
+            make.edges.equalToSuperview()
+        }
+        stopButton.snp.makeConstraints { make in
+            make.edges.equalToSuperview()
+        }
+        container.snp.makeConstraints { make in
+            make.size.equalTo(NSSize(width: 24, height: 24))
+        }
+
+        container.hoverStateChanged = { [weak self, weak container] hovered in
+            guard let self, let container else { return }
+
+            let hoverChanged = hovered != self.isRefreshButtonHovered
+            self.isRefreshButtonHovered = hovered
+            guard container.responseToHoverAnimation, hoverChanged else { return }
+
+            if hovered {
+                guard self.stopButton.isHidden else { return }
+                self.didPlayRefreshAnimationForCurrentHover = true
+                self.refreshButton.triggerAnimation()
+            } else if self.didPlayRefreshAnimationForCurrentHover {
+                self.didPlayRefreshAnimationForCurrentHover = false
+                self.refreshButton.triggerReverseAnimation()
+            }
+        }
+
+        return container
+    }()
+
     private lazy var stackView: NSStackView = {
-        let stack = NSStackView(views: [backButton, forwardButton, refreshButton, stopButton])
+        let stack = NSStackView(views: [backButton, forwardButton, refreshStopButtonContainer])
         stack.orientation = .horizontal
         stack.alignment = .centerY
         stack.spacing = 1
@@ -261,7 +308,7 @@ class SidebarHeaderView: NSView, TitlebarAwareHitTestable {
         configureButtonAccessibility(stopButton, identifier: AccessibilityID.stopButton)
     }
 
-    private func configureButtonAccessibility(_ button: HoverableButtonNSView, identifier: String) {
+    private func configureButtonAccessibility(_ button: NSView, identifier: String) {
         button.setAccessibilityElement(true)
         button.setAccessibilityRole(.button)
         button.setAccessibilityIdentifier(identifier)

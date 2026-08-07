@@ -136,13 +136,21 @@ class SetNameViewController: OnboardingBaseViewController {
         }
         
         isLoading = true
-        let account = AccountController.shared.account
+        let account = LoginController.shared.accountForOnboarding
         
         Task {
             do {
-                let response = try await APIClient.shared.updateProfile(updates: .init(name: textField.stringValue))
+                guard let account else {
+                    throw APIError.invalidRequest(
+                        message: "No onboarding account is available."
+                    )
+                }
+                let response = try await APIClient.shared
+                    .updateOnboardingProfile(
+                        updates: .init(name: textField.stringValue),
+                        accountUserID: account.userID
+                    )
                 if response.code == 0,
-                   let account,
                    response.data.auth0_id == account.userID {
                     // chrome://settings is unreachable during onboarding, so
                     // updating the shared cache is sufficient; no live bridge

@@ -86,6 +86,7 @@ struct HeaderTrailingArea: View {
     let showDownload: Bool
     let showMemory: Bool
     let showFeedback: Bool
+    let feedbackIconOnly: Bool
     let showChat: Bool
     let isInPlaceholderMode: Bool
 
@@ -113,10 +114,14 @@ struct HeaderTrailingArea: View {
         static let downloadSlot = slotPadding + buttonSize
         static let memorySlot = slotPadding + buttonSize
         static let moreButtonSlot = slotPadding + buttonSize
-        /// FeedbackButton width in trailing area (100)
-        static let feedbackSlot: CGFloat = slotPadding + 100
-        /// ChatButton fixed width (60)
-        static let chatSlot: CGFloat = slotPadding + 60
+        static let feedbackButtonWidth: CGFloat = 100
+        static let feedbackIconWidth: CGFloat = 32
+        /// ChatButton's localized content width plus its leading spacing.
+        static var chatSlot: CGFloat { slotPadding + ChatButton.preferredContentWidth }
+
+        static func feedbackSlot(iconOnly: Bool) -> CGFloat {
+            slotPadding + (iconOnly ? feedbackIconWidth : feedbackButtonWidth)
+        }
     }
 
     private struct LayoutConfig {
@@ -162,7 +167,7 @@ struct HeaderTrailingArea: View {
         let allPinnedCost = CGFloat(pinnedExtensions.count) * Metrics.pinnedExtensionSlot
         let dlCost = showDownload ? Metrics.downloadSlot : 0
         let memoryCost = showMemory ? Metrics.memorySlot : 0
-        let fbCost = showFeedback ? Metrics.feedbackSlot : 0
+        let fbCost = showFeedback ? Metrics.feedbackSlot(iconOnly: feedbackIconOnly) : 0
 
         if allPinnedCost + dlCost + memoryCost + fbCost <= budget {
             return LayoutConfig(
@@ -183,7 +188,9 @@ struct HeaderTrailingArea: View {
 
         func currentCost() -> CGFloat {
             var cost: CGFloat = 0
-            if localShowFeedback { cost += Metrics.feedbackSlot }
+            if localShowFeedback {
+                cost += Metrics.feedbackSlot(iconOnly: feedbackIconOnly)
+            }
             if localShowDownload { cost += Metrics.downloadSlot }
             if localShowMemory { cost += Metrics.memorySlot }
             cost += CGFloat(visiblePinned) * Metrics.pinnedExtensionSlot
@@ -258,7 +265,8 @@ struct HeaderTrailingArea: View {
             if feedback {
                 FeedbackButtonSwiftUI(
                     action: onFeedbackTap,
-                    contentWidth: 100,
+                    isIconOnly: feedbackIconOnly,
+                    contentWidth: feedbackIconOnly ? nil : Metrics.feedbackButtonWidth,
                     contentHeight: HeaderTrailingLayout.rowHeight
                 )
                 .padding(.leading, 6)
@@ -267,7 +275,7 @@ struct HeaderTrailingArea: View {
             if showChat {
                 ChatButton(
                     action: onChatTap,
-                    contentWidth: 60,
+                    contentWidth: ChatButton.preferredContentWidth,
                     contentHeight: HeaderTrailingLayout.rowHeight
                 )
                 .background(chatAnchorBackground)

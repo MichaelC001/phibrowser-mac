@@ -510,6 +510,19 @@ class PinnedTabViewController: NSViewController {
         updateAllItemsSelectionState(browserState.focusingTab)
     }
 
+    /// Synchronously re-applies the current data and forces the pending
+    /// layout so the band is fully formed before a restored window fronts.
+    /// The restore front happens in the same main-thread turn as the state
+    /// application (T3B), while the collection view materializes cells only
+    /// on a layout pass — which a concealed window never gets before its
+    /// reveal — so without this the band shows empty for the first frame
+    /// and fills one cycle later.
+    func formRestoredContentNow() {
+        guard isActive, !isDragging else { return }
+        syncCurrentState()
+        view.layoutSubtreeIfNeeded()
+    }
+
     private func clearInactiveContent() {
         pinnedTabs = []
         pinnedExtensionItems = []

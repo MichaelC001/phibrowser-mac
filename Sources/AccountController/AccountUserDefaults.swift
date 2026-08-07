@@ -12,10 +12,13 @@ final class AccountUserDefaults {
     private let queue: DispatchQueue
     private var storage: [String: Any]
     
-    init(account: Account) {
+    init(account: Account, storeURL overrideStoreURL: URL? = nil) {
         self.account = account
-        let defaultsDir = account.userDataStorage.appendingPathComponent("defaults", isDirectory: true)
-        let fileURL = defaultsDir.appendingPathComponent("account_defaults.plist")
+        let fileURL = overrideStoreURL
+            ?? account.userDataStorage
+                .appendingPathComponent("defaults", isDirectory: true)
+                .appendingPathComponent("account_defaults.plist")
+        let defaultsDir = fileURL.deletingLastPathComponent()
         self.storeURL = fileURL
         self.queue = DispatchQueue(label: "com.phibrowser.accountDefaults.\(account.userID)")
         
@@ -158,6 +161,78 @@ final class AccountUserDefaults {
             try data.write(to: storeURL, options: .atomic)
         } catch {
             AppLogError("Failed to write account defaults: \(error.localizedDescription)")
+        }
+    }
+
+    /// Merges only the Space-scoped visual preferences that belong to Guest
+    /// data. Target values win so an account's existing appearance is never
+    /// overwritten by a Guest Space that mapped onto the same identifier.
+    ///
+    /// Unlike the UserDefaults-like setters above, this operation reports
+    /// persistence failures. Guest migration must not write its receipt until
+    /// both the SwiftData transaction and these selected defaults are durable.
+    func mergeGuestSpaceThemes(
+        _ guestThemes: GuestDataMigrationThemeSnapshot,
+        spaceIDMappings: [String: String]
+    ) throws {
+        try queue.sync {
+            var updatedStorage = storage
+            var themeIDs = (updatedStorage[DefaultsKey.spaceThemeIds.rawValue] as? [String: String]) ?? [:]
+            var saturations = (updatedStorage[DefaultsKey.spaceThemeSaturations.rawValue] as? [String: [String: Double]]) ?? [:]
+            var pureValues = (updatedStorage[DefaultsKey.spacePureThemeSliderValues.rawValue] as? [String: Double]) ?? [:]
+
+            for sourceSpaceID in spaceIDMappings.keys.sorted() {
+                guard let targetSpaceID = spaceIDMappings[sourceSpaceID] else { continue }
+                if themeIDs[targetSpaceID] == nil,
+                   let value = guestThemes.themeIDs[sourceSpaceID] {
+                    themeIDs[targetSpaceID] = value
+                }
+                if saturations[targetSpaceID] == nil,
+                   let value = guestThemes.saturations[sourceSpaceID] {
+                    saturations[targetSpaceID] = value
+                }
+                if pureValues[targetSpaceID] == nil,
+                   let value = guestThemes.pureSliderValues[sourceSpaceID] {
+                    pureValues[targetSpaceID] = value
+                }
+            }
+
+            updatedStorage[DefaultsKey.spaceThemeIds.rawValue] = themeIDs
+            updatedStorage[DefaultsKey.spaceThemeSaturations.rawValue] = saturations
+            updatedStorage[DefaultsKey.spacePureThemeSliderValues.rawValue] = pureValues
+            try persistLocked(updatedStorage)
+            storage = updatedStorage
+        }
+    }
+
+    private func persistLocked(_ updatedStorage: [String: Any]) throws {
+        let data = try PropertyListSerialization.data(
+            fromPropertyList: updatedStorage,
+            format: .xml,
+            options: 0
+        )
+        try data.write(to: storeURL, options: .atomic)
+    }
+
+    /// Reads every Guest-migrated preference under one queue lock so cleanup
+    /// cannot compare a mixture of values from different writes.
+    func guestDataMigrationThemeSnapshot()
+        -> GuestDataMigrationThemeSnapshot {
+        queue.sync {
+            GuestDataMigrationThemeSnapshot(
+                themeIDs: (
+                    storage[DefaultsKey.spaceThemeIds.rawValue]
+                        as? [String: String]
+                ) ?? [:],
+                saturations: (
+                    storage[DefaultsKey.spaceThemeSaturations.rawValue]
+                        as? [String: [String: Double]]
+                ) ?? [:],
+                pureSliderValues: (
+                    storage[DefaultsKey.spacePureThemeSliderValues.rawValue]
+                        as? [String: Double]
+                ) ?? [:]
+            )
         }
     }
 }

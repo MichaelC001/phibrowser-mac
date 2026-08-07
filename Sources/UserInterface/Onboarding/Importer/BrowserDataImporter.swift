@@ -40,10 +40,22 @@ class BrowserDataImporter {
     @Published private(set) var phase: Phase = .waiting
     @Published var status: String = ""
     
-    init(targetProfileId: String = LocalStore.defaultProfileId, targetSpaceId: String = LocalStore.defaultSpaceId, targetWindowId: Int? = nil) {
+    /// Resolves the store imported bookmarks are written into. Guest Mode routes
+    /// Spaces, bookmarks, and pinned tabs through the stable default account
+    /// rather than a published identity, so this must resolve the same way the
+    /// rest of the browser does and must not depend on a signed-in account.
+    private let localDataStoreProvider: () -> LocalStore?
+
+    init(targetProfileId: String = LocalStore.defaultProfileId,
+         targetSpaceId: String = LocalStore.defaultSpaceId,
+         targetWindowId: Int? = nil,
+         localDataStoreProvider: @escaping () -> LocalStore? = {
+             AccountController.shared.localDataAccount?.localStorage
+         }) {
         self.targetProfileId = targetProfileId
         self.targetSpaceId = targetSpaceId
         self.targetWindowId = targetWindowId
+        self.localDataStoreProvider = localDataStoreProvider
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(handleImportCompleted(_:)),
@@ -112,6 +124,9 @@ class BrowserDataImporter {
         let lockedSpaceId = targetSpaceId
         ImportTargetLock.shared.begin(into: lockedSpaceId)
         failedImports.removeAll()
+
+        AppLogInfo("Import started: browsers=\(options.map { Self.browserName(for: $0) }), "
+            + "profileId=\(targetProfileId), spaceId=\(targetSpaceId)")
 
         // Validate the file source before any destructive work: if its path is
         // missing/unreadable (the file was moved or deleted after picking, or a nil
@@ -231,17 +246,26 @@ class BrowserDataImporter {
                 self.importContinuations[option] = continuation
 
                 DispatchQueue.main.async {
+                    // Without a bridge there is nothing to dispatch to, and the
+                    // continuation stays unresolved, leaving the import in flight
+                    // forever — record it rather than failing silently.
+                    guard let bridge = ChromiumLauncher.sharedInstance().bridge else {
+                        // Named type rather than `Self` so the closure captures nothing.
+                        AppLogError("Import from \(BrowserDataImporter.browserName(for: option)) "
+                            + "was not dispatched: no Chromium bridge")
+                        return
+                    }
                     if option == .file {
                         // File import: Chromium sniffs the file type + parses it, staging
                         // the result into its BookmarkModel to be pulled back like the
                         // browser sources. Completion arrives via importCompleted(.file).
-                        ChromiumLauncher.sharedInstance().bridge?.importData(
+                        bridge.importData(
                             fromFilePath: importFilePath ?? "",
                             windowId: Int64(windowId)
                         )
                     } else {
                         let profile = sourceProfileDirectory ?? ""
-                        ChromiumLauncher.sharedInstance().bridge?.importBrowserData(
+                        bridge.importBrowserData(
                             from: option,
                             profile: profile,
                             dataTypes: dataTypes,
@@ -300,14 +324,14 @@ class BrowserDataImporter {
         if failedImports.isEmpty {
             status = NSLocalizedString("oobe.importBrowserData.progress.completed", value: "Import completed successfully", comment: "Browser data importer - Status message when all imports completed successfully")
         } else {
-            let failedBrowserNames = failedImports.map { browserName(for: $0) }.joined(separator: ", ")
+            let failedBrowserNames = failedImports.map { Self.browserName(for: $0) }.joined(separator: ", ")
             let format = NSLocalizedString("oobe.importBrowserData.progress.completedWithErrors", value: "Import completed with errors. Failed to import from: %@", comment: "Browser data importer - Status message when some imports failed, shows list of failed browsers")
             status = String(format: format, failedBrowserNames)
         }
     }
     
     /// Returns the user-facing browser name.
-    private func browserName(for type: BrowserType) -> String {
+    private static func browserName(for type: BrowserType) -> String {
         switch type {
         case .chrome:
             return "Chrome"
@@ -332,15 +356,29 @@ class BrowserDataImporter {
             ChromiumLauncher.sharedInstance().bridge?.getAllBookmarks(withWindowId: windowId.int64Value)
         }
 
-        await AccountController.shared.account?.localStorage.saveChromiumBookmarksToLocalStore(
-            bookmarkWrappers ?? [], profileId: targetProfileId, spaceId: targetSpaceId)
+        await persistImportedBookmarks(bookmarkWrappers ?? [], arcSpaceRoot: arcSpaceRoot)
+    }
+
+    /// Writes an imported tree into the local data store. Split out of the
+    /// snapshot step so it can be driven without the Chromium bridge.
+    func persistImportedBookmarks(
+        _ bookmarks: [BookmarkWrapper],
+        arcSpaceRoot: ArcDataParserTool.Bookmark?
+    ) async {
+        guard let store = localDataStoreProvider() else {
+            AppLogError("Imported bookmarks were dropped: no local data store is available")
+            return
+        }
+
+        await store.saveChromiumBookmarksToLocalStore(
+            bookmarks, profileId: targetProfileId, spaceId: targetSpaceId)
 
         if let arcSpaceRoot {
-            await AccountController.shared.account?.localStorage.saveArcBookmarksToLocalStore(
+            await store.saveArcBookmarksToLocalStore(
                 arcSpaceRoot, profileId: targetProfileId, spaceId: targetSpaceId)
         }
 
-        await AccountController.shared.account?.localStorage.reorderImportedBrowserFolders(
+        await store.reorderImportedBrowserFolders(
             profileId: targetProfileId, spaceId: targetSpaceId)
     }
 

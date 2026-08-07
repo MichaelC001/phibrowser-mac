@@ -53,8 +53,8 @@ enum WebContentConstant {
     static let contentEdgeSpacing = 4
 
     static func titleAwareAreaHeight(for layoutMode: LayoutMode) -> CGFloat {
-        // Performance content reaches the window top, so keep the draggable
-        // strip aligned with the panel's standard outer edge spacing.
+        // The collapsed performance top bar retains the panel's outer edge
+        // spacing as a non-web gap above WebContents.
         layoutMode == .performance ? edgesSpacing : 12
     }
 }
@@ -141,6 +141,8 @@ class WebContentViewController: NSViewController {
     private lazy var hostView = WebContentHostView()
     private lazy var webContentProgressBar = WebContentProgressBarView()
     private lazy var headerView = WebContentHeader(browserState: browserState)
+    private lazy var loginRequiredOverlayView = LoginRequiredOverlayView()
+    private var splitLoginRequiredViews: [Int: LoginRequiredOverlayView] = [:]
 
     var addressBarAnchorView: NSView? { headerView.addressBarAnchorView }
 
@@ -337,6 +339,7 @@ class WebContentViewController: NSViewController {
         // Restore focus after the view enters the hierarchy.
         restoreFocusForCurrentTab()
         flushDeferredContentUpdateIfPossible()
+        updateLoginRequiredPresentation(for: associatedTab)
         // If this controller became associated with a fullscreen tab before
         // its view was in a window (so applyContentFullscreenState bailed
         // out early), catch up now that hostView.window is available.
@@ -498,6 +501,20 @@ class WebContentViewController: NSViewController {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] state in
                 self?.updateGroupOverviewState(state)
+            }
+            .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(for: .browserAccessStateDidChange)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.updateLoginRequiredPresentation(for: self?.associatedTab)
+            }
+            .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.updateLoginRequiredPresentation(for: self?.associatedTab)
             }
             .store(in: &cancellables)
 
@@ -1114,6 +1131,9 @@ class WebContentViewController: NSViewController {
 
     private func updateContentForTab(_ tab: Tab?) {
         guard let tab else { return }
+        defer {
+            updateLoginRequiredPresentation(for: tab)
+        }
         if browserState?.groupOverviewState != nil {
             return
         }
@@ -1641,6 +1661,7 @@ class WebContentViewController: NSViewController {
         restorePerPaneDevToolsState(host: host, group: group)
         // Overlay a crash view on any pane whose tab's renderer has crashed.
         reconcileSplitCrashViews(host: host, group: group)
+        reconcileSplitLoginRequiredViews(host: host, group: group)
 
         let splitId = group.id
         host.onRatioCommit = { [weak self] newRatio in
@@ -1667,6 +1688,97 @@ class WebContentViewController: NSViewController {
     private var isSplitContentMounted: Bool {
         guard let currentSplitHost else { return false }
         return currentSplitHost.superview === hostView
+    }
+
+    private func shouldPresentLoginRequired(for tab: Tab) -> Bool {
+        guard tab.crashState == nil else { return false }
+        let surface: LoginRequiredSurface
+        if tab.isNTP {
+            surface = .newTabPage
+        } else if LoginRequiredPresentationPolicy.isBrowserMemoryURL(tab.url) {
+            surface = .browserMemory
+        } else {
+            return false
+        }
+        return LoginRequiredPresentationPolicy.shouldPresent(
+            for: surface,
+            isGuest: ApplicationState.shared.isGuest,
+            isPhiAIEnabled: PhiPreferences.AISettings.phiAIEnabled.loadValue()
+        )
+    }
+
+    private func updateLoginRequiredPresentation(for tab: Tab?) {
+        guard isViewLoaded,
+              view.window != nil,
+              browserState?.groupOverviewState == nil,
+              let tab else {
+            removeLoginRequiredPresentations()
+            return
+        }
+
+        if let group = activeSplitForCurrentTab(),
+           let host = currentSplitHost {
+            loginRequiredOverlayView.removeFromSuperview()
+            reconcileSplitLoginRequiredViews(host: host, group: group)
+            return
+        }
+
+        if let host = currentSplitHost {
+            host.detachLoginRequiredView(pane: .primary)
+            host.detachLoginRequiredView(pane: .secondary)
+        }
+        splitLoginRequiredViews.values.forEach { $0.removeFromSuperview() }
+        splitLoginRequiredViews.removeAll()
+
+        guard shouldPresentLoginRequired(for: tab) else {
+            loginRequiredOverlayView.removeFromSuperview()
+            return
+        }
+
+        guard loginRequiredOverlayView.superview !== hostView else { return }
+        loginRequiredOverlayView.translatesAutoresizingMaskIntoConstraints = true
+        loginRequiredOverlayView.autoresizingMask = [.width, .height]
+        loginRequiredOverlayView.frame = hostView.bounds
+        hostView.addSubview(loginRequiredOverlayView, positioned: .above, relativeTo: nil)
+    }
+
+    private func reconcileSplitLoginRequiredViews(
+        host: SplitPaneHostView,
+        group: SplitGroup
+    ) {
+        let liveTabIds = Set([group.primaryTabId, group.secondaryTabId])
+        for tabId in Array(splitLoginRequiredViews.keys) where !liveTabIds.contains(tabId) {
+            splitLoginRequiredViews[tabId]?.removeFromSuperview()
+            splitLoginRequiredViews[tabId] = nil
+        }
+
+        let panes: [(Int, SplitPaneHostView.Pane)] = [
+            (group.primaryTabId, .primary),
+            (group.secondaryTabId, .secondary)
+        ]
+        for (tabId, pane) in panes {
+            guard let tab = browserState?.tabs.first(where: { $0.guid == tabId }),
+                  shouldPresentLoginRequired(for: tab) else {
+                host.detachLoginRequiredView(pane: pane)
+                splitLoginRequiredViews[tabId]?.removeFromSuperview()
+                splitLoginRequiredViews[tabId] = nil
+                continue
+            }
+
+            let overlay = splitLoginRequiredViews[tabId] ?? LoginRequiredOverlayView()
+            splitLoginRequiredViews[tabId] = overlay
+            host.attachLoginRequiredView(pane: pane, loginRequiredView: overlay)
+        }
+    }
+
+    private func removeLoginRequiredPresentations() {
+        loginRequiredOverlayView.removeFromSuperview()
+        if let host = currentSplitHost {
+            host.detachLoginRequiredView(pane: .primary)
+            host.detachLoginRequiredView(pane: .secondary)
+        }
+        splitLoginRequiredViews.values.forEach { $0.removeFromSuperview() }
+        splitLoginRequiredViews.removeAll()
     }
 
     private func addWebContentView(_ contentView: NSView, tabId: Int) {
