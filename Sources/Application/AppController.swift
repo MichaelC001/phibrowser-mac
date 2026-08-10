@@ -9,7 +9,9 @@ import SwiftData
 import CocoaLumberjackSwift
 import Kingfisher
 import Auth0
+#if !PHI_OSS_BUILD
 import Sparkle
+#endif
 import WebKit
 import Settings
 import PostHog
@@ -26,6 +28,7 @@ import PostHog
     var settingsPanesIncludeDeveloper = false
 
     var container: ModelContainer?
+    #if !PHI_OSS_BUILD
     var updater: SPUUpdater?
     var sparkleUserDriver: PhiSparkleUserDriver?
     /// Sparkle update state
@@ -36,6 +39,7 @@ import PostHog
             }
         }
     }
+    #endif
     
     var menuObservation: NSKeyValueObservation?
 
@@ -77,35 +81,53 @@ import PostHog
         // whether its windows may be shown. The async refresh below can still
         // recover a fresher shared credential snapshot afterwards.
         resolveBrowserAccessFromAuthentication(checkChromiumLaunchStatus: true)
-        if ApplicationState.shared.isGuest {
+        if ApplicationState.shared.isGuest || !PhiBuildCapabilities.supportsAI {
             GuestModePreferences.disableAI()
         }
-        LoginController.shared.prepareGuestMigrationRecoveryBeforeChromiumLaunch()
         let permitsSentinelLaunch: Bool
-        if ApplicationState.shared.isGuest {
-            permitsSentinelLaunch =
-                AuthManager.shared
-                    .prepareGuestSessionBoundaryBeforeServiceLaunch(
-                        preserveLocalRecoveryCredentials:
-                            ApplicationState.shared
-                                .isGuestMigrationRecoveryInProgress
-                    )
+        if PhiBuildCapabilities.supportsAuthentication {
+            LoginController.shared.prepareGuestMigrationRecoveryBeforeChromiumLaunch()
+            if ApplicationState.shared.isGuest {
+                permitsSentinelLaunch =
+                    AuthManager.shared
+                        .prepareGuestSessionBoundaryBeforeServiceLaunch(
+                            preserveLocalRecoveryCredentials:
+                                ApplicationState.shared
+                                    .isGuestMigrationRecoveryInProgress
+                        )
+            } else {
+                permitsSentinelLaunch = true
+            }
+            LoginController.shared.refreshLoginStatusOnLaunching()
         } else {
             permitsSentinelLaunch = true
         }
-        LoginController.shared.refreshLoginStatusOnLaunching()
         
         //        ASWebAuthenticationSessionWebBrowserSessionManager.shared.sessionHandler = self
         
         ChromiumLauncher.sharedInstance().bridge?.applicationDidFinishLaunching(notification)
+        #if PHI_OSS_BUILD
+        ChromiumLauncher.sharedInstance().bridge?.setMetricsReportingEnabled(false) { effectiveEnabled in
+            if effectiveEnabled {
+                AppLogWarn("[OSS] Failed to disable Chromium metrics reporting")
+            }
+        }
+        #endif
+        
+        #if !PHI_OSS_BUILD
         SentinelTelemetryConsentPublisher.shared.start()
+        #endif
         
         //        ASWebAuthenticationSessionWebBrowserSessionManager.shared.sessionHandler = self
         
+        #if !PHI_OSS_BUILD
         setupSparkle()
+        #endif
         setupKinfisherCache()
         
+        #if !PHI_OSS_BUILD
         SentryService.setup()
+        #endif
         
         MemoryUsageMonitor.shared.start()
 
@@ -183,6 +205,7 @@ import PostHog
         // The startup takeover for the user-data removal mechanism runs in
         // main() (UserDataRemovalBootstrap), before Chromium reads any state.
 
+        #if !PHI_OSS_BUILD
         // Set up PostHog before `didFinishLaunchingNotification` fires so the
         // SDK can observe the app-opened lifecycle event. If either value is
         // missing the app runs without analytics.
@@ -205,6 +228,7 @@ import PostHog
         } else {
             AppLogInfo("PostHog: project token or host not set in PostHogConfig.generated.swift; skipping init")
         }
+        #endif
 
         chromiumBridge?.applicationWillFinishLaunching(notification)
     }
@@ -258,7 +282,9 @@ import PostHog
     }
     
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
-        if !ApplicationState.shared.canUseBrowser {
+        let canUseBrowser = !PhiBuildCapabilities.supportsAuthentication
+            || ApplicationState.shared.canUseBrowser
+        if !canUseBrowser {
             if !ApplicationState.shared.isGuestMigrationRecoveryInProgress {
                 LoginController.shared.showLoginWindow()
             }
@@ -306,8 +332,10 @@ import PostHog
     }
     
     func application(_ application: NSApplication, open urls: [URL]) {
-        for url in urls where AuthManager.shared.resumeExternalBrowserAuthentication(with: url) {
-            return
+        if PhiBuildCapabilities.supportsAuthentication {
+            for url in urls where AuthManager.shared.resumeExternalBrowserAuthentication(with: url) {
+                return
+            }
         }
 
         if !ApplicationState.shared.canUseBrowser {
@@ -416,7 +444,9 @@ import PostHog
     }
 
     @objc private func loginCompleted(_ notification: Notification) {
-        if LoginController.shared.isLoggedin() {
+        if !PhiBuildCapabilities.supportsAuthentication {
+            ApplicationState.shared.enterGuestMode()
+        } else if LoginController.shared.isLoggedin() {
             ApplicationState.shared.markSignedIn()
         } else {
             resolveBrowserAccessFromAuthentication(checkChromiumLaunchStatus: false)
@@ -479,6 +509,11 @@ import PostHog
     private func resolveBrowserAccessFromAuthentication(
         checkChromiumLaunchStatus: Bool
     ) {
+        guard PhiBuildCapabilities.supportsAuthentication else {
+            ApplicationState.shared.enterGuestMode()
+            return
+        }
+
         // A persisted Guest choice deliberately outranks credentials that were
         // staged but never committed. LoginController performs the one
         // identity-bound recovery when a migration journal exists; ordinary
