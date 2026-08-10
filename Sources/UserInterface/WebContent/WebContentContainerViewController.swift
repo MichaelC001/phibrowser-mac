@@ -1477,14 +1477,19 @@ class WebContentContainerViewController: NSViewController {
     
     /// Toggle AI Chat for the current tab
     /// This toggles the AI Chat state on the currently focused tab
-    func toggleAIChat() {
+    func toggleAIChat(trigger: BrowserState.AIChatSidebarOpenTrigger = .button) {
         guard browserState?.groupOverviewState == nil else { return }
         // Toggle on the current WebContentViewController (which will update the associated tab)
         if let controller = currentWebContentController {
-            controller.toggleAIChatInTraditionalLayout()
+            controller.toggleAIChatInTraditionalLayout(trigger: trigger)
         } else {
             // Fallback: directly toggle the focusingTab's state
-            browserState?.focusingTab?.toggleAIChat()
+            if let tab = browserState?.focusingTab {
+                if tab.aiChatCollapsed {
+                    browserState?.prepareAIChatSidebarOpen(trigger: trigger)
+                }
+                tab.toggleAIChat()
+            }
         }
     }
 

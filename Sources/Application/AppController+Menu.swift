@@ -876,7 +876,9 @@ extension AppController {
     }
     
     @objc func toggleChatbar(_ sendar: Any?) {
-        MainBrowserWindowControllersManager.shared.activeWindowController?.browserState.toggleAIChat()
+        MainBrowserWindowControllersManager.shared.activeWindowController?.browserState.toggleAIChat(
+            trigger: .shortcut
+        )
     }
 
     @MainActor

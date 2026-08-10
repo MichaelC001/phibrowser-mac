@@ -8,6 +8,12 @@ import Combine
 
 /// Window-scoped browser state for tabs, layout, and sidebar UI.
 class BrowserState {
+    enum AIChatSidebarOpenTrigger: String {
+        case button
+        case shortcut
+        case restore
+    }
+
     struct NormalTabRelativeOrderMove: Equatable {
         enum Anchor: Equatable {
             case before(Int)
@@ -248,6 +254,7 @@ class BrowserState {
     @Published var sidebarCollapsed = false
     @Published var sidebarWidth: CGFloat = 0
     @Published var aiChatCollapsed = true
+    private var pendingAIChatSidebarOpenTrigger: AIChatSidebarOpenTrigger = .restore
     @Published var isInFullScreenMode = false
     @Published var targetURL: String = ""
 
@@ -994,7 +1001,10 @@ class BrowserState {
     
     /// Toggle AI Chat for the currently focused tab
     /// The collapse state is now managed per-tab, not globally
-    func toggleAIChat(_ collapse: Bool? = nil) {
+    func toggleAIChat(
+        _ collapse: Bool? = nil,
+        trigger: AIChatSidebarOpenTrigger = .button
+    ) {
         guard collapse == true
                 || PhiPreferences.AISettings.phiAIEnabled.loadValue() else {
             return
@@ -1010,7 +1020,11 @@ class BrowserState {
         // Dispatch to the focusing tab's AI Chat state, mirroring to its split
         // partner so both panes of a split share one expand/collapse state.
         if let tab = focusingTab {
-            setAIChatCollapsed(for: tab, collapsed: collapse ?? !tab.aiChatCollapsed)
+            let nextCollapsed = collapse ?? !tab.aiChatCollapsed
+            if !nextCollapsed {
+                prepareAIChatSidebarOpen(trigger: trigger)
+            }
+            setAIChatCollapsed(for: tab, collapsed: nextCollapsed)
         }
 
         // Also update the global state for backward compatibility
@@ -1019,6 +1033,17 @@ class BrowserState {
         } else {
             aiChatCollapsed.toggle()
         }
+    }
+
+    /// Records an explicit open source until the visible chat controller
+    /// consumes it. State-driven openings use the default `.restore` source.
+    func prepareAIChatSidebarOpen(trigger: AIChatSidebarOpenTrigger) {
+        pendingAIChatSidebarOpenTrigger = trigger
+    }
+
+    func consumeAIChatSidebarOpenTrigger() -> AIChatSidebarOpenTrigger {
+        defer { pendingAIChatSidebarOpenTrigger = .restore }
+        return pendingAIChatSidebarOpenTrigger
     }
 
     /// Sets the AI Chat collapsed state for a tab, mirroring it to the tab's

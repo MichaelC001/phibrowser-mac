@@ -42,8 +42,33 @@
 
 import Cocoa
 import Combine
+import PostHog
 import SnapKit
 import SwiftUI
+
+struct AIChatSidebarMetricsSession {
+    enum Transition: Equatable {
+        case opened
+        case closed(durationSeconds: TimeInterval)
+    }
+
+    private var openedAtUptime: TimeInterval?
+
+    mutating func update(
+        isExpanded: Bool,
+        uptime: TimeInterval
+    ) -> Transition? {
+        if isExpanded {
+            guard openedAtUptime == nil else { return nil }
+            openedAtUptime = uptime
+            return .opened
+        }
+
+        guard let openedAtUptime else { return nil }
+        self.openedAtUptime = nil
+        return .closed(durationSeconds: max(0, uptime - openedAtUptime))
+    }
+}
 
 enum WebContentConstant {
     static let edgesSpacing: CGFloat = 8.0
@@ -105,6 +130,7 @@ class WebContentViewController: NSViewController {
     
     /// Flag to prevent reentrant updates between splitViewItem and tab state
     private var isUpdatingAIChatState = false
+    private var aiChatSidebarMetricsSession = AIChatSidebarMetricsSession()
     /// Last known expanded width for AI Chat sidebar.
     private var lastKnownAIChatWidth: CGFloat = 360
     /// Target width for the next expand animation.  Set before uncollapsing so
@@ -626,6 +652,7 @@ class WebContentViewController: NSViewController {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] isCollapsed in
                 guard let self else { return }
+                self.updateAIChatSidebarMetrics(isExpanded: !isCollapsed)
                 
                 // Ignore KVO while we are already synchronizing state ourselves.
                 guard !self.isUpdatingAIChatState else {
@@ -655,6 +682,11 @@ class WebContentViewController: NSViewController {
                 self.persistAIChatSidebarStateIfNeeded(for: self.associatedTab)
             }
             .store(in: &cancellables)
+
+        // The initial split-item state is synchronized before KVO is installed.
+        // Reconcile once so a restored expanded sidebar starts this tab's own
+        // metrics session even though the initial KVO value is dropped.
+        updateAIChatSidebarMetrics(isExpanded: !aiChatSplitViewItem.isCollapsed)
 
         // Track frame changes directly because split-view delegate callbacks are unreliable here.
         aiChatSplitViewItem.viewController.view.postsFrameChangedNotifications = true
@@ -1055,13 +1087,39 @@ class WebContentViewController: NSViewController {
     }
 
     /// Toggles the AI Chat panel when the associated tab allows it.
-    func toggleAIChatInTraditionalLayout() {
+    func toggleAIChatInTraditionalLayout(
+        trigger: BrowserState.AIChatSidebarOpenTrigger = .button
+    ) {
         guard browserState?.groupOverviewState == nil,
               associatedTab?.aiChatEnabled == true else {
             return
         }
+        if associatedTab?.aiChatCollapsed == true {
+            browserState?.prepareAIChatSidebarOpen(trigger: trigger)
+        }
         // Updating the tab model is enough; observers drive the UI update.
         associatedTab?.toggleAIChat()
+    }
+
+    private func updateAIChatSidebarMetrics(isExpanded: Bool) {
+        let transition = aiChatSidebarMetricsSession.update(
+            isExpanded: isExpanded,
+            uptime: ProcessInfo.processInfo.systemUptime
+        )
+
+        switch transition {
+        case .opened:
+            let trigger = browserState?.consumeAIChatSidebarOpenTrigger() ?? .restore
+            PostHogSDK.shared.capture("ai_sidebar_opened", properties: [
+                "trigger": trigger.rawValue,
+            ])
+        case let .closed(durationSeconds):
+            PostHogSDK.shared.capture("ai_sidebar_closed", properties: [
+                "duration_seconds": durationSeconds,
+            ])
+        case nil:
+            break
+        }
     }
 
     private func bindContentObservers(for tab: Tab) {
