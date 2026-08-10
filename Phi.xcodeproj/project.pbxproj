@@ -461,7 +461,6 @@
 		CCEB64CB2E98DD520036C763 /* InsetTableRowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCEB64CA2E98DD520036C763 /* InsetTableRowView.swift */; };
 		CCEF2CF42E57079000FDDEB2 /* WebContentHeader.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCEF2CF32E57079000FDDEB2 /* WebContentHeader.swift */; };
 		CCEF2D222E584F1700FDDEB2 /* URLProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCEF2D212E584F1700FDDEB2 /* URLProcessor.swift */; };
-		CCEF2D9C2E5F1A9900FDDEB2 /* AIChatViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCEF2D9B2E5F1A9900FDDEB2 /* AIChatViewController.swift */; };
 		CCF5D0A12F00000100ABCDEF /* TabDraggingSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCF5D0A22F00000100ABCDEF /* TabDraggingSession.swift */; };
 		CD1100060000000000000001 /* IconPickerSelection.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD1100010000000000000001 /* IconPickerSelection.swift */; };
 		CD1100070000000000000001 /* PhiIconCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD1100020000000000000001 /* PhiIconCatalog.swift */; };
@@ -1084,7 +1083,6 @@
 		CCEB64CA2E98DD520036C763 /* InsetTableRowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InsetTableRowView.swift; sourceTree = "<group>"; };
 		CCEF2CF32E57079000FDDEB2 /* WebContentHeader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebContentHeader.swift; sourceTree = "<group>"; };
 		CCEF2D212E584F1700FDDEB2 /* URLProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = URLProcessor.swift; sourceTree = "<group>"; };
-		CCEF2D9B2E5F1A9900FDDEB2 /* AIChatViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatViewController.swift; sourceTree = "<group>"; };
 		CCF5D0A22F00000100ABCDEF /* TabDraggingSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabDraggingSession.swift; sourceTree = "<group>"; };
 		CD1100010000000000000001 /* IconPickerSelection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IconPickerSelection.swift; sourceTree = "<group>"; };
 		CD1100020000000000000001 /* PhiIconCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhiIconCatalog.swift; sourceTree = "<group>"; };
@@ -2439,7 +2437,6 @@
 		CCEF2D982E5F1A6E00FDDEB2 /* Chat */ = {
 			isa = PBXGroup;
 			children = (
-				CCEF2D9B2E5F1A9900FDDEB2 /* AIChatViewController.swift */,
 				37EECF212F0F623A0022A176 /* EmbeddedChatViewController.swift */,
 			);
 			path = Chat;
@@ -3196,7 +3193,6 @@
 				54A1000B2FE000000000000B /* TimeMachinePackageDownloader.swift in Sources */,
 				FBD200012FD0000000000003 /* FeedbackV2.swift in Sources */,
 				AE00FFFE0000000000000002 /* PhiAgentEndpointResolver.swift in Sources */,
-				CCEF2D9C2E5F1A9900FDDEB2 /* AIChatViewController.swift in Sources */,
 				CC6335F72E4B29E000A176DA /* Logging.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -4149,16 +4145,11 @@
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 4;
-				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				ENABLE_HARDENED_RUNTIME = NO;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
 					"$(PROJECT_DIR)/Frameworks",
-				);
-				OTHER_LDFLAGS = (
-					"$(inherited)",
-					"-Wl,-dead_strip_dylibs",
-					"-Wl,-needed_framework,Phi\\ Framework",
 				);
 				GCC_PREPROCESSOR_DEFINITIONS = (
 					"$(inherited)",
@@ -4192,6 +4183,11 @@
 				MARKETING_VERSION = debug;
 				NIGHTLY_BUILD = 1;
 				OTHER_CFLAGS = "-DDEBUG";
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-Wl,-dead_strip_dylibs",
+					"-Wl,-needed_framework,Phi\\ Framework",
+				);
 				OTHER_SWIFT_FLAGS = "-DDEBUG -DNIGHTLY_BUILD";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				REGISTER_APP_GROUPS = NO;

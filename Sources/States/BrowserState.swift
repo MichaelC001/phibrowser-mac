@@ -1014,7 +1014,6 @@ class BrowserState {
         }
 
         // Also update the global state for backward compatibility
-        // (e.g., for AIChatViewController in non-traditional layout)
         if let collapse {
             aiChatCollapsed = collapse
         } else {
