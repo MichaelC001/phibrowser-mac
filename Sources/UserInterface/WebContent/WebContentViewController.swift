@@ -184,7 +184,8 @@ class WebContentViewController: NSViewController {
     private lazy var agentAnimationOverlay: EdgeFogOverlayView = {
         let overlay = EdgeFogOverlayView()
         overlay.alphaValue = 0
-        overlay.layer?.cornerRadius = 0
+        // The overlay owns its corner geometry: it matches the content panel's
+        // continuous curve so the lit edge lands on the same line.
         overlay.hitTestPassthroughHandler = { [weak self, weak overlay] point in
             guard let self, let overlay else { return false }
             return self.shouldPassThroughAgentAnimationOverlayHit(at: point, in: overlay)
@@ -583,13 +584,20 @@ class WebContentViewController: NSViewController {
         applyAgentSpaceOverlayTheme()
     }
 
-    /// The agent cursor is tinted from the window's theme (which carries any
-    /// Space-pinned theme); keep it in sync on theme and appearance changes.
+    /// The agent cursor and the operating mask are both tinted from the
+    /// window's theme (which carries any Space-pinned theme); keep them in sync
+    /// on theme and appearance changes. Each overlay mounts on its own
+    /// schedule, so they are themed independently.
     private func applyAgentSpaceOverlayTheme() {
-        guard agentSpaceOverlay.superview != nil,
-              let themeContext = browserState?.themeContext else { return }
-        agentSpaceOverlay.applyTheme(
-            themeContext.currentTheme, appearance: themeContext.currentAppearance)
+        guard let themeContext = browserState?.themeContext else { return }
+        let theme = themeContext.currentTheme
+        let appearance = themeContext.currentAppearance
+        if agentSpaceOverlay.superview != nil {
+            agentSpaceOverlay.applyTheme(theme, appearance: appearance)
+        }
+        if agentAnimationOverlay.superview != nil {
+            agentAnimationOverlay.applyTheme(theme, appearance: appearance)
+        }
     }
     
     // MARK: - AI Chat Observer
@@ -2654,6 +2662,7 @@ class WebContentViewController: NSViewController {
         // The cursor renders nothing until its theme colors are applied —
         // updateTheme() only fires on changes, so seed them at mount.
         applyAgentSpaceOverlayTheme()
+        raiseAgentSpaceOverlayAboveMask()
     }
 
     private func hideAgentSpaceOverlay() {
@@ -2701,28 +2710,44 @@ class WebContentViewController: NSViewController {
     private func showAgentAnimationOverlay() {
         if agentAnimationOverlay.superview == nil {
             agentAnimationOverlay.alphaValue = 0
-            agentAnimationOverlay.isAnimationPaused = false
             leftContainerView.addSubview(agentAnimationOverlay, positioned: .above, relativeTo: nil)
             agentAnimationOverlay.snp.makeConstraints { make in
                 make.edges.equalToSuperview()
             }
+            applyAgentSpaceOverlayTheme()
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = 0.3
                 self.agentAnimationOverlay.animator().alphaValue = 1
             }
         }
-        // In an agent Space the operating mask and the "Take control" overlay
-        // are both mounted; keep the latter on top so its button stays clickable
-        // over the mask (which otherwise captures the whole tab).
-        if agentSpaceOverlay.superview != nil {
-            leftContainerView.addSubview(agentSpaceOverlay, positioned: .above, relativeTo: agentAnimationOverlay)
-        }
+        raiseAgentSpaceOverlayAboveMask()
         if associatedTab === browserState?.focusingTab {
             view.window?.makeFirstResponder(agentAnimationOverlay)
         }
     }
 
+    /// The operating mask covers the whole tab, so the agent Space overlay —
+    /// which owns the control pill and its buttons — has to sit above it or the
+    /// pill renders under the wash and stops being clickable. The two overlays
+    /// mount on independent schedules (the mask follows the driven tab, the
+    /// pill follows the Space's task), so the order is re-asserted from both
+    /// mount paths rather than assumed from mount order. `relativeTo` names the
+    /// mask explicitly: ordering against `nil` is not reliably honored.
+    private func raiseAgentSpaceOverlayAboveMask() {
+        guard agentSpaceOverlay.superview != nil,
+              agentAnimationOverlay.superview != nil else { return }
+        leftContainerView.addSubview(
+            agentSpaceOverlay, positioned: .above, relativeTo: agentAnimationOverlay)
+    }
+
     private func shouldPassThroughAgentAnimationOverlayHit(at point: NSPoint, in overlay: NSView) -> Bool {
+        // The control pill sits above the mask and stays live in every layout
+        // mode — it is the only way to take control back, so the mask must
+        // never claim its input or its cursor.
+        if agentSpaceOverlay.superview != nil,
+           agentSpaceOverlay.containsControlPill(at: point, from: overlay) {
+            return true
+        }
         guard PhiPreferences.GeneralSettings.loadLayoutMode() != .performance else {
             return false
         }
@@ -2736,7 +2761,6 @@ class WebContentViewController: NSViewController {
             self.agentAnimationOverlay.animator().alphaValue = 0
         }, completionHandler: { [weak self] in
             guard let self else { return }
-            self.agentAnimationOverlay.isAnimationPaused = true
             self.agentAnimationOverlay.removeFromSuperview()
             self.restoreFocusForCurrentTab()
         })

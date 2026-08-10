@@ -1290,6 +1290,7 @@ final class AgentSpaceManager: ObservableObject {
         if let masked = task.maskedTabId {
             AgentAnimationManager.shared.setActive(false, for: masked)
         }
+        AgentPageTheme.shared.clear(windowId: task.windowId)
         ChromiumLauncher.sharedInstance().bridge?
             .setAgentMode(false, windowId: Int64(task.windowId))
         appendTranscript(taskId: taskId, kind: success ? .status : .error,
@@ -1322,6 +1323,7 @@ final class AgentSpaceManager: ObservableObject {
         if let masked = task.maskedTabId {
             AgentAnimationManager.shared.setActive(false, for: masked)
         }
+        AgentPageTheme.shared.clear(windowId: task.windowId)
         appendTranscript(taskId: task.taskId, kind: .status,
                          text: "Space deleted by the user — task ended")
         tasksBySpaceId[spaceId] = nil
@@ -1352,6 +1354,24 @@ final class AgentSpaceManager: ObservableObject {
         }
         task.maskedTabId = newMasked
         tasksBySpaceId[spaceId] = task
+        refreshOperatingPageTheme(for: task)
+    }
+
+    /// Layer 2 of the mask — the in-page recoloring — follows the same signal as
+    /// the native wash so the two can never disagree about who owns the page.
+    /// Scoped to the window rather than the masked tab: CDP addresses targets by
+    /// window, and every page in an agent window belongs to the agent anyway.
+    private func refreshOperatingPageTheme(for task: AgentTask) {
+        guard task.windowId != 0 else { return }
+        guard task.maskedTabId != nil else {
+            AgentPageTheme.shared.clear(windowId: task.windowId)
+            return
+        }
+        guard let themeContext = MainBrowserWindowControllersManager.shared
+                .getBrowserState(for: task.windowId)?.themeContext else { return }
+        let color = themeContext.currentTheme.color(
+            for: .themeColor, appearance: themeContext.currentAppearance)
+        AgentPageTheme.shared.apply(windowId: task.windowId, themeColor: color)
     }
 
     /// The Phi tab id of the agent window's currently active (operating) tab.

@@ -67,6 +67,147 @@ final class AppDevToolsPageSession: @unchecked Sendable {
     @MainActor
     static func open(targetId: String,
                      timeout: TimeInterval = 10) async throws -> AppDevToolsPageSession {
+        try await dial(endpoint: "/devtools/page/\(targetId)", timeout: timeout)
+    }
+
+    /// Dials the browser-level endpoint instead of a page's. Only the browser
+    /// endpoint answers `Target.getTargets` / `Browser.getWindowForTarget`, so
+    /// this is how the app resolves which page targets belong to one of its
+    /// windows before attaching to them individually.
+    ///
+    /// Chromium namespaces that endpoint with a per-launch GUID
+    /// (`/devtools/browser/<uuid>`); a bare `/devtools/browser` does NOT
+    /// upgrade. The path is therefore discovered from `/json/version` first —
+    /// the same handshake the phi-browser skill performs.
+    @MainActor
+    static func openBrowser(timeout: TimeInterval = 10) async throws -> AppDevToolsPageSession {
+        // The GUID is fixed for the life of the browser process, so discovery
+        // runs once rather than putting an HTTP round trip in front of every
+        // caller. A stale path (browser relaunched) fails the upgrade, which
+        // drops the cache and rediscovers.
+        if let cached = cachedBrowserEndpoint {
+            do {
+                return try await dial(endpoint: cached, timeout: timeout)
+            } catch {
+                cachedBrowserEndpoint = nil
+            }
+        }
+        let endpoint = try await browserEndpoint(timeout: timeout)
+        let session = try await dial(endpoint: endpoint, timeout: timeout)
+        cachedBrowserEndpoint = endpoint
+        return session
+    }
+
+    @MainActor private static var cachedBrowserEndpoint: String?
+
+    /// Reads `webSocketDebuggerUrl` from `/json/version` and keeps only its
+    /// path: the transport is this app's socket pair, not the host:port the
+    /// browser advertises there.
+    @MainActor
+    private static func browserEndpoint(timeout: TimeInterval) async throws -> String {
+        let body = try await httpGet(path: "/json/version", timeout: timeout)
+        guard let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+              let advertised = json["webSocketDebuggerUrl"] as? String,
+              let path = URLComponents(string: advertised)?.path, !path.isEmpty else {
+            throw SessionError.upgradeFailed
+        }
+        return path
+    }
+
+    /// One plain HTTP GET over a fresh injected fd. `Connection: close` lets the
+    /// body end at EOF, so the small JSON the discovery endpoints return needs
+    /// no chunked decoding.
+    @MainActor
+    private static func httpGet(path: String, timeout: TimeInterval) async throws -> Data {
+        var fds: [Int32] = [-1, -1]
+        guard socketpair(AF_UNIX, SOCK_STREAM, 0, &fds) == 0 else {
+            throw SessionError.transportUnavailable
+        }
+        let appFD = fds[0]
+        let attached = ChromiumLauncher.sharedInstance().bridge?
+            .attachDevToolsConnection(withFD: fds[1]) ?? false
+        guard attached else {
+            Darwin.close(appFD)
+            throw SessionError.transportUnavailable
+        }
+        // Blocking socket IO, kept off the main thread.
+        return try await withCheckedThrowingContinuation { cont in
+            DispatchQueue.global(qos: .userInitiated).async {
+                defer { Darwin.close(appFD) }
+                do {
+                    cont.resume(returning:
+                        try Self.exchange(fd: appFD, path: path, timeout: timeout))
+                } catch {
+                    cont.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    private static func exchange(fd: Int32, path: String,
+                                 timeout: TimeInterval) throws -> Data {
+        let request = "GET \(path) HTTP/1.1\r\nHost: localhost\r\n" +
+                      "Connection: close\r\n\r\n"
+        let out = [UInt8](request.utf8)
+        var sent = 0
+        while sent < out.count {
+            let written = out.withUnsafeBytes { raw -> Int in
+                Darwin.write(fd, raw.baseAddress!.advanced(by: sent), out.count - sent)
+            }
+            guard written > 0 else { throw SessionError.connectionClosed }
+            sent += written
+        }
+
+        let deadline = Date().addingTimeInterval(timeout)
+        var response = Data()
+        var chunk = [UInt8](repeating: 0, count: 4096)
+        var bodyStart: Int?
+        var expected: Int?
+
+        while Date() < deadline {
+            var descriptor = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+            let remaining = Int32(max(1, deadline.timeIntervalSinceNow * 1000))
+            guard poll(&descriptor, 1, remaining) > 0 else { break }
+            let read = Darwin.read(fd, &chunk, chunk.count)
+            if read < 0 { throw SessionError.connectionClosed }
+            if read == 0 { break }  // EOF.
+            response.append(contentsOf: chunk[0..<read])
+
+            if bodyStart == nil,
+               let separator = response.range(of: Data("\r\n\r\n".utf8)) {
+                bodyStart = separator.upperBound
+                expected = contentLength(
+                    in: String(decoding: response[..<separator.lowerBound], as: UTF8.self))
+            }
+            // Chromium's DevTools HTTP server keeps the connection alive
+            // whatever `Connection: close` asks for, so it never sends EOF —
+            // waiting for one would burn the whole timeout on every call.
+            // Content-Length is what actually ends the body.
+            if let start = bodyStart, let length = expected,
+               response.count - start >= length {
+                return response.subdata(in: start..<(start + length))
+            }
+        }
+
+        // No Content-Length (or the peer closed early): whatever arrived is it.
+        guard let start = bodyStart else { throw SessionError.timedOut }
+        return response.subdata(in: start..<response.endIndex)
+    }
+
+    private static func contentLength(in header: String) -> Int? {
+        for line in header.split(separator: "\r\n") {
+            let parts = line.split(separator: ":", maxSplits: 1)
+            guard parts.count == 2,
+                  parts[0].trimmingCharacters(in: .whitespaces).lowercased()
+                    == "content-length" else { continue }
+            return Int(parts[1].trimmingCharacters(in: .whitespaces))
+        }
+        return nil
+    }
+
+    @MainActor
+    private static func dial(endpoint: String,
+                             timeout: TimeInterval) async throws -> AppDevToolsPageSession {
         var fds: [Int32] = [-1, -1]
         guard socketpair(AF_UNIX, SOCK_STREAM, 0, &fds) == 0 else {
             throw SessionError.transportUnavailable
@@ -80,7 +221,7 @@ final class AppDevToolsPageSession: @unchecked Sendable {
             throw SessionError.transportUnavailable
         }
         let session = AppDevToolsPageSession(fd: appFD)
-        try await session.upgrade(targetId: targetId, timeout: timeout)
+        try await session.upgrade(endpoint: endpoint, timeout: timeout)
         return session
     }
 
@@ -121,7 +262,7 @@ final class AppDevToolsPageSession: @unchecked Sendable {
 
     // MARK: - Handshake
 
-    private func upgrade(targetId: String, timeout: TimeInterval) async throws {
+    private func upgrade(endpoint: String, timeout: TimeInterval) async throws {
         let key = Data((0..<16).map { _ in UInt8.random(in: 0...255) })
             .base64EncodedString()
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
@@ -131,7 +272,7 @@ final class AppDevToolsPageSession: @unchecked Sendable {
                 self.armTimeout(timeout)
                 self.startReadSource()
                 self.writeRaw(
-                    "GET /devtools/page/\(targetId) HTTP/1.1\r\n" +
+                    "GET \(endpoint) HTTP/1.1\r\n" +
                     "Host: localhost\r\n" +
                     "Upgrade: websocket\r\nConnection: Upgrade\r\n" +
                     "Sec-WebSocket-Key: \(key)\r\n" +

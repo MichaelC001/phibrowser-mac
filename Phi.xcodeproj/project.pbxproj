@@ -308,6 +308,7 @@
 		AE5ACE000000000000000013 /* AgentSpaceOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE5ACE000000000000000003 /* AgentSpaceOverlayView.swift */; };
 		AE5ACE000000000000000014 /* AgentSpaceRouter+Management.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE5ACE000000000000000004 /* AgentSpaceRouter+Management.swift */; };
 		AE5ACE000000000000000015 /* AgentSpaceRouter+Capture.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE5ACE000000000000000005 /* AgentSpaceRouter+Capture.swift */; };
+		AE5ACE000000000000000018 /* AgentPageTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE5ACE000000000000000008 /* AgentPageTheme.swift */; };
 		AE5ACE000000000000000016 /* AgentTranscriptStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE5ACE000000000000000006 /* AgentTranscriptStore.swift */; };
 		AE5ACE000000000000000017 /* AgentTranscriptPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE5ACE000000000000000007 /* AgentTranscriptPanel.swift */; };
 		B001795A2E49CF84007B4635 /* PhiChromiumCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00179592E49CF84007B4635 /* PhiChromiumCoordinator.swift */; };
@@ -918,6 +919,7 @@
 		AE5ACE000000000000000003 /* AgentSpaceOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentSpaceOverlayView.swift; sourceTree = "<group>"; };
 		AE5ACE000000000000000004 /* AgentSpaceRouter+Management.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AgentSpaceRouter+Management.swift"; sourceTree = "<group>"; };
 		AE5ACE000000000000000005 /* AgentSpaceRouter+Capture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AgentSpaceRouter+Capture.swift"; sourceTree = "<group>"; };
+		AE5ACE000000000000000008 /* AgentPageTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentPageTheme.swift; sourceTree = "<group>"; };
 		AE5ACE000000000000000006 /* AgentTranscriptStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentTranscriptStore.swift; sourceTree = "<group>"; };
 		AE5ACE000000000000000007 /* AgentTranscriptPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentTranscriptPanel.swift; sourceTree = "<group>"; };
 		B00179592E49CF84007B4635 /* PhiChromiumCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhiChromiumCoordinator.swift; sourceTree = "<group>"; };
@@ -1804,6 +1806,7 @@
 				AE5ACE000000000000000004 /* AgentSpaceRouter+Management.swift */,
 				B17DE0000000000000000025 /* AgentSpaceRouter+Credentials.swift */,
 				AE5ACE000000000000000005 /* AgentSpaceRouter+Capture.swift */,
+				AE5ACE000000000000000008 /* AgentPageTheme.swift */,
 				AE5ACE000000000000000006 /* AgentTranscriptStore.swift */,
 				AE5ACE000000000000000007 /* AgentTranscriptPanel.swift */,
 			);
@@ -3138,6 +3141,7 @@
 				B17DE000000000000000000D /* CredentialAuditLog.swift in Sources */,
 				B17DE0000000000000000B01 /* BitwardenSessionStore.swift in Sources */,
 				AE5ACE000000000000000015 /* AgentSpaceRouter+Capture.swift in Sources */,
+				AE5ACE000000000000000018 /* AgentPageTheme.swift in Sources */,
 				AE5ACE000000000000000016 /* AgentTranscriptStore.swift in Sources */,
 				AE5ACE000000000000000017 /* AgentTranscriptPanel.swift in Sources */,
 				AE5ACE000000000000000013 /* AgentSpaceOverlayView.swift in Sources */,
