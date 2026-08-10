@@ -158,6 +158,7 @@ class WebContentViewController: NSViewController {
 
     private var bookmarkBarHeightConstraint: Constraint?
     private weak var attachedBookmarkBar: BookmarkBar?
+    private var isBookmarkBarVisible = false
     private var leftContainerInsetConstraint: Constraint?
     private var splitViewLeadingConstraint: Constraint?
     private var nativeNtpController: NewTabViewController?
@@ -1133,6 +1134,7 @@ class WebContentViewController: NSViewController {
         guard let tab else { return }
         defer {
             updateLoginRequiredPresentation(for: tab)
+            updateHeaderAndBookmarkBarSeparators()
         }
         if browserState?.groupOverviewState != nil {
             return
@@ -2371,6 +2373,8 @@ class WebContentViewController: NSViewController {
             bookmarkBarSlotView.isHidden = true
             bookmarkBarHeightConstraint?.update(offset: 0)
             attachedBookmarkBar?.isHidden = true
+            isBookmarkBarVisible = false
+            updateHeaderAndBookmarkBarSeparators()
             return
         }
 
@@ -2402,6 +2406,17 @@ class WebContentViewController: NSViewController {
         bookmarkBarSlotView.isHidden = !shouldShowBookmarkBar
         bookmarkBarHeightConstraint?.update(offset: shouldShowBookmarkBar ? WebContentConstant.bookmarkBarHeight : 0)
         attachedBookmarkBar?.isHidden = !shouldShowBookmarkBar
+        isBookmarkBarVisible = shouldShowBookmarkBar
+        updateHeaderAndBookmarkBarSeparators()
+    }
+
+    private func updateHeaderAndBookmarkBarSeparators() {
+        let isSplitViewVisible = isSplitContentMounted
+        headerView.updateBottomSeparatorVisibility(
+            isSplitViewVisible: isSplitViewVisible,
+            isBookmarkBarVisible: isBookmarkBarVisible
+        )
+        attachedBookmarkBar?.showSeparator = !isSplitViewVisible
     }
 
     private func installAttachedBookmarkBarIfNeeded() {

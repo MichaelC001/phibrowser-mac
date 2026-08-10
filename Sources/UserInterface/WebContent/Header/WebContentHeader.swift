@@ -94,6 +94,23 @@ class WebContentHeader: NSView {
         return view
     }()
 
+    static func shouldShowBottomSeparator(
+        isSplitViewVisible: Bool,
+        isBookmarkBarVisible: Bool
+    ) -> Bool {
+        !isSplitViewVisible || isBookmarkBarVisible
+    }
+
+    func updateBottomSeparatorVisibility(
+        isSplitViewVisible: Bool,
+        isBookmarkBarVisible: Bool
+    ) {
+        bottomSeparator.isHidden = !Self.shouldShowBottomSeparator(
+            isSplitViewVisible: isSplitViewVisible,
+            isBookmarkBarVisible: isBookmarkBarVisible
+        )
+    }
+
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         setupHostingView()

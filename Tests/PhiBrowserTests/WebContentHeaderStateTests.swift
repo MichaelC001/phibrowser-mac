@@ -51,4 +51,31 @@ final class WebContentHeaderStateTests: XCTestCase {
             )
         }
     }
+
+    func testNonSplitHeaderShowsBottomSeparatorWithoutBookmarkBar() {
+        XCTAssertTrue(
+            WebContentHeader.shouldShowBottomSeparator(
+                isSplitViewVisible: false,
+                isBookmarkBarVisible: false
+            )
+        )
+    }
+
+    func testSplitHeaderWithoutBookmarkBarHidesBottomSeparator() {
+        XCTAssertFalse(
+            WebContentHeader.shouldShowBottomSeparator(
+                isSplitViewVisible: true,
+                isBookmarkBarVisible: false
+            )
+        )
+    }
+
+    func testSplitHeaderWithBookmarkBarShowsBottomSeparator() {
+        XCTAssertTrue(
+            WebContentHeader.shouldShowBottomSeparator(
+                isSplitViewVisible: true,
+                isBookmarkBarVisible: true
+            )
+        )
+    }
 }
