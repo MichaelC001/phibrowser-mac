@@ -105,7 +105,7 @@ struct ProfilesSettingsView: View {
                 Spacer(minLength: 4)
                 Text(count == 0
                      ? NSLocalizedString("settings.profiles.unusedStatus", value: "Not used", comment: "Profiles settings - tag for a profile with no Spaces")
-                     : spaceCountLabel(count))
+                     : Self.spaceCountLabel(count))
                     .font(.system(size: 11))
                     .themedForeground(.textSecondary)
             }
@@ -187,8 +187,16 @@ struct ProfilesSettingsView: View {
 
     // MARK: - Helpers
 
-    private func spaceCountLabel(_ count: Int) -> String {
-        String(format: NSLocalizedString("settings.profiles.boundSpaceCount", value: "%d Spaces", comment: "Profiles settings - Count of Spaces bound to a profile"), count)
+    static func spaceCountLabel(_ count: Int, bundle: Bundle = .main) -> String {
+        String.localizedStringWithFormat(
+            NSLocalizedString(
+                "settings.profiles.boundSpaceCount",
+                bundle: bundle,
+                value: "%d Spaces",
+                comment: "Profiles settings - Number of Spaces bound to a profile; %d is the number of Spaces"
+            ),
+            count
+        )
     }
 
     // MARK: - Actions

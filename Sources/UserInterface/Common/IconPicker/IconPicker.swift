@@ -336,16 +336,24 @@ struct IconPickerSelectionView: View {
     }
 }
 
-private enum IconPickerTab: CaseIterable, Hashable {
+enum IconPickerTab: CaseIterable, Hashable {
     case icon
     case emoji
 
     var title: String {
         switch self {
         case .icon:
-            return "Icon"
+            return NSLocalizedString(
+                "common.iconPicker.iconTabTitle",
+                value: "Icon",
+                comment: "Icon picker - Tab for choosing a Phi icon; translate using the locale's standard term for an icon"
+            )
         case .emoji:
-            return "Emoji"
+            return NSLocalizedString(
+                "common.iconPicker.emojiTabTitle",
+                value: "Emoji",
+                comment: "Icon picker - Tab for choosing an emoji; translate using the locale's standard term for emoji"
+            )
         }
     }
 }

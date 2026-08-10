@@ -92,19 +92,19 @@ final class ConnectorItemState: @MainActor Identifiable {
         return formatter
     }()
 
-    private static let displayDateFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "MMM dd, yyyy"
-        formatter.locale = Locale(identifier: "en_US")
-        return formatter
-    }()
-
-    private static func formatSyncTime(connectedAt: String) -> String {
+    static func formatSyncTime(
+        connectedAt: String,
+        locale: Locale = .autoupdatingCurrent
+    ) -> String {
         guard let date = iso8601Formatter.date(from: connectedAt)
                 ?? ISO8601DateFormatter().date(from: connectedAt) else {
             return NSLocalizedString("settings.ai.connectors.lastSync.invalidDateFallback", value: "Not connected", comment: "AI settings - Fallback last-sync text when the connection date is invalid")
         }
-        return displayDateFormatter.string(from: date)
+        let formatter = DateFormatter()
+        formatter.locale = locale
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .none
+        return formatter.string(from: date)
     }
 
     var actionTitle: String {

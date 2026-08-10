@@ -1016,6 +1016,7 @@ class DefaultBrowserSectionView: SettingItemBackgroundView {
         setDefaultButton.cell?.lineBreakMode = .byWordWrapping
         setDefaultButton.image = NSImage(systemSymbolName: "heart.fill", accessibilityDescription: nil)
         setDefaultButton.imagePosition = .imageLeading
+        setDefaultButton.setContentHuggingPriority(.required, for: .horizontal)
         setDefaultButton.target = self
         setDefaultButton.action = #selector(setDefaultTapped)
         addSubview(setDefaultButton)

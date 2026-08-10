@@ -98,6 +98,22 @@ final class DefaultBrowserSectionViewLayoutTests: XCTestCase {
         )
     }
 
+    func testShortButtonTitleKeepsItsIntrinsicWidth() throws {
+        let view = DefaultBrowserSectionView(viewModel: DefaultBrowserViewModel())
+        let button = try XCTUnwrap(view.subviews.compactMap { $0 as? NSButton }.first)
+        button.title = "Set as default"
+        view.frame = NSRect(x: 0, y: 0, width: 352, height: 56)
+
+        view.layoutSubtreeIfNeeded()
+
+        XCTAssertEqual(
+            button.frame.width,
+            button.intrinsicContentSize.width,
+            accuracy: 0.5
+        )
+        XCTAssertLessThan(button.frame.width, 145)
+    }
+
     private func renderButton(_ button: NSButton) throws -> NSBitmapImageRep {
         let representation = try XCTUnwrap(NSBitmapImageRep(
             bitmapDataPlanes: nil,

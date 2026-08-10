@@ -523,7 +523,9 @@ private struct ConnectorRowView: View {
             }
             manageButton
         }
-        .frame(width: 144, alignment: .trailing)
+        .frame(minWidth: 144, alignment: .trailing)
+        .fixedSize(horizontal: true, vertical: false)
+        .layoutPriority(1)
     }
 
     private var manageButton: some View {
@@ -540,6 +542,7 @@ private struct ConnectorRowView: View {
         .buttonStyle(.bordered)
         .controlSize(.small)
         .frame(minWidth: 92)
+        .fixedSize(horizontal: true, vertical: false)
         .disabled(!enabled || (connector.isLoading && !connector.isAuthorizationPending))
     }
 
