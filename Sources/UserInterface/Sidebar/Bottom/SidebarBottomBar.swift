@@ -6,6 +6,12 @@
 import SwiftUI
 import Combine
 
+enum SidebarBottomBarAnalyticsButton: String, CaseIterable {
+    case chat
+    case memory
+    case download
+}
+
 /// State model for the sidebar bottom bar.
 class SidebarBottomBarState: ObservableObject {
     /// Single-row height.
@@ -50,6 +56,7 @@ struct SidebarBottomBarSwiftUI: View {
     let onChatTap: () -> Void
     let onCardEntryTap: () -> Void
     let onMemoryTap: () -> Void
+    let onDownloadTap: () -> Void
     
     var body: some View {
         regularLayout
@@ -98,6 +105,7 @@ struct SidebarBottomBarSwiftUI: View {
         DownloadButtonView(
             viewModel: downloadViewModel,
             onTap: {
+                onDownloadTap()
                 state.isDownloadPopoverShown.toggle()
             }
         )
@@ -310,6 +318,7 @@ class SidebarBottomBarSwiftUIView: NSView {
     var onChatTap: (() -> Void)?
     var onCardEntryTap: (() -> Void)?
     var onMemoryTap: (() -> Void)?
+    var onDownloadTap: (() -> Void)?
     
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -333,7 +342,8 @@ class SidebarBottomBarSwiftUIView: NSView {
                 onBookmarkTap: { [weak self] in self?.onBookmarkTap?() },
                 onChatTap: { [weak self] in self?.onChatTap?() },
                 onCardEntryTap: { [weak self] in self?.onCardEntryTap?() },
-                onMemoryTap: { [weak self] in self?.onMemoryTap?() }
+                onMemoryTap: { [weak self] in self?.onMemoryTap?() },
+                onDownloadTap: { [weak self] in self?.onDownloadTap?() }
             )
         )
         hosting.translatesAutoresizingMaskIntoConstraints = false

@@ -1,6 +1,6 @@
 # Analytics
 
-Last updated: 2026-08-10
+Last updated: 2026-08-11
 
 Phi Browser emits product analytics to both [Countly](https://phi-browser-eaade70cfd902.flex.countly.com) (legacy) and [PostHog](https://us.posthog.com/project/385742) (current). Both pipelines run side-by-side; PostHog is the forward-looking source of truth.
 
@@ -84,7 +84,10 @@ Feature flag payloads are resolved through `ExperimentConfigProvider`. The live 
 
 ## Events
 
-All custom events are snake_case. Events prefixed `$` are auto-captured by the SDK.
+All custom events are snake_case. The custom-event rows below inventory names
+emitted by shipping Phi source, with duplicate call sites consolidated. Events
+prefixed `$` are auto-captured by the SDK; Countly-only and SDK-internal events
+are out of scope.
 
 | Event | Trigger | File |
 |-------|---------|------|
@@ -94,13 +97,47 @@ All custom events are snake_case. Events prefixed `$` are auto-captured by the S
 | `login_retried` | User tapped "Go back and try again" after failed/timed-out login | `Onboarding/Login/LoginViewController.swift` |
 | `user_logged_out` | User logged out; identity reset follows | `Onboarding/AuthManager.swift` |
 | `guest_mode_entered` | User successfully crossed the local credential boundary and entered Guest Mode | `Onboarding/LoginController.swift` |
-| `guest_mode_exited` | Guest account migration and authenticated account publication completed; `destination` is `signed_in` | `Onboarding/LoginController.swift` |
-| `onboarding_completed` | User tapped Next on welcome screen | `Onboarding/Welcome/OnboardingWelcomeViewController.swift` |
+| `guest_mode_exited` | Guest account migration and authenticated account publication completed; `trigger` is `account_setting` or `ai_setting` | `Onboarding/LoginController.swift` |
+| `oobe_step_viewed` | OOBE presents a semantic step; includes stable `step`, one-based `step_index`, and `is_guest` | `Onboarding/OOBEAnalyticsSession.swift` |
+| `oobe_step_completed` | The current OOBE step accepts its user action; includes the step properties and monotonic `duration_seconds` | `Onboarding/OOBEAnalyticsSession.swift` |
+| `oobe_finished` | Authenticated browser access is published or Guest entry succeeds; includes `is_guest`, `steps_completed`, and active `total_duration_seconds` | `Onboarding/OOBEAnalyticsSession.swift` |
+| `oobe_interrupted` | The user directly closes the OOBE window before success, or Phi terminates while it is active; includes the last step, active duration, and `reason` (`window_closed` or `app_terminated`) | `Onboarding/OOBEAnalyticsSession.swift` |
+| `onboarding_completed` | **Legacy compatibility event:** user tapped Next on the theme welcome screen. Its historical name and trigger remain unchanged; new OOBE events use the `oobe_` prefix | `Onboarding/Welcome/OnboardingWelcomeViewController.swift` |
+| `import_viewed` | The browser-data import window is presented or brought forward; `entry_point` is always `menu` | `MainBrowserWindow/MainBrowserWindowController+Actions.swift` |
+| `import_types_selected` | The user commits an import; emitted once per selected source with normalized `types`. File imports use an empty array because Chromium detects their contents | `Onboarding/Importer/BrowserDataImporter.swift` |
+| `import_started` | The importer accepts a non-reentrant run and locks its target; includes sorted `source_browsers` | `Onboarding/Importer/BrowserDataImporter.swift` |
+| `import_finished` | All selected Chromium sources and deferred bookmark persistence finish; includes aggregate success, stable failed sources, duration, and an optional low-cardinality `error_code` | `Onboarding/Importer/BrowserDataImporter.swift` |
+| `first_time_action` | An eligible product action first succeeds on this installation; `action` is one of `space_created`, `ai_sidebar_opened`, `import_finished`, `memory_opened`, `agent_task`, or `connector_connected`, with `seconds_since_install` | `Utilities/FirstTimeActionTracker.swift` |
+| `space_created` | A user-created Space succeeds; includes `total_spaces` and whether it uses a non-default profile | `Sidebar/Spaces/CreateSpacePanel.swift` |
+| `profile_created` | A non-fallback profile is successfully created; includes `total_profiles` | `States/ProfileManager.swift` |
+| `space_profile_changed` | A validated Space profile change begins; includes `total_profiles` | `States/Space/SpaceManager.swift` |
+| `space_switched` | A user-initiated switch activates a different Space; includes `total_spaces` | `States/Space/SpaceManager.swift` |
+| `space_deleted` | The user confirms deletion of a non-default Space from the sidebar or Settings | `Sidebar/Spaces/SpacesStripView.swift`, `Preferences/Spaces/SpacesSettingsView.swift` |
 | `ai_features_toggled` | User enabled/disabled AI features in settings | `Preferences/AISettings/AISettingView.swift` |
 | `connector_status` | Snapshot of each AI connector's connected/disconnected state, fired on refresh | `Preferences/AISettings/AISettingsConnectorViewModel.swift` |
 | `ai_sidebar_opened` | A tab's AI sidebar changed from collapsed to expanded; `trigger` is `button`, `shortcut`, or `restore` | `WebContent/WebContentViewController.swift` |
 | `ai_sidebar_closed` | A tab's AI sidebar changed from expanded to collapsed; includes that tab's `duration_seconds` dwell time | `WebContent/WebContentViewController.swift` |
-| `user_defaults_snapshot` | Launch-time snapshot of new-tab behavior, layout mode, appearance, default browser, proactive suggestions, and automatic current-tab context | `Application/AppControlle+LaunchInfo.swift` |
+| `agent_task_started` | An agent task record is created or rebound; includes `origin`, `persistent`, and normalized `agent_name` | `States/AgentSpace/AgentSpaceManager.swift` |
+| `agent_task_completed` | An active task ends through the completion path; includes the start properties and `success` | `States/AgentSpace/AgentSpaceManager.swift` |
+| `agent_user_space_command` | An agent command passes the user-space browsing-data permission gate; includes `command` and normalized `agent_name` | `Notifications/MessageCard/ExtensionMessageRouter.swift`, `States/AgentSpace/AgentSpaceRouter+Management.swift` |
+| `agent_credential_access_requested` | Agent credential access is evaluated; includes `kind`, `approved`, `prompted`, and normalized `agent_name` without credential scope or content | `States/CredentialAccessCoordinator.swift` |
+| `agent_credential_access_approved` | Credential access is approved by a prompt or existing grant; includes `kind`, `approval_type`, and normalized `agent_name` | `States/CredentialAccessCoordinator.swift` |
+| `scripting_command_invoked` | An allowlisted AppleScript command other than version checking returns; includes command, outcome, success, and bounded client attribution | `Application/Apple Scripts/PhiScriptCommands.swift` |
+| `language_changed` | Phi's General settings picker changes from one stored language preference to another; includes only `from` and `to` | `Preferences/General/GeneralSettingView.swift` |
+| `sidebar_button_tapped` | The regular or floating sidebar bottom bar accepts a tap; `button` is `chat`, `memory`, or `download` | `Sidebar/SidebarViewController.swift`, `WebContent/FloatingSidebar/FloatingSidebarViewController.swift` |
+| `user_defaults_snapshot` | Launch-time snapshot of new-tab behavior, layout mode, active process language (`app_language`), appearance, default browser, proactive suggestions, and automatic current-tab context | `Application/AppControlle+LaunchInfo.swift` |
+
+Import analytics never include source paths, browser profile names, Arc Space
+names, file names, or imported item counts. The current Chromium delegate
+reports only source and aggregate success, so per-type counts are unsupported.
+Bookmark persistence success uses the completion reported by the existing
+LocalStore async API; lower-level model save failures remain local logs rather
+than analytics failures.
+
+`language_changed` is emitted only by Phi's picker. A language change made in
+macOS System Settings is not observable as a user action inside the running
+process; the next launch's `user_defaults_snapshot.app_language` reports the
+language actually active for that process.
 
 Naming rule: **don't reuse PostHog-reserved names** (anything starting with `$`, or that collides with SDK-auto events like "app installed"). For features that could be ambiguous with app-level concepts (e.g. downloads), prefix with the feature scope (`file_download_*`, not `download_*`).
 

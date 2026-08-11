@@ -141,6 +141,21 @@ extension PhiPreferences.GeneralSettings {
     /// unchanged until Phi relaunches, even if the settings view is recreated.
     static let appLanguagePreferenceAtLaunch = loadAppLanguagePreference()
 
+    static func activeProcessAppLanguage(
+        preferredLocalizations: [String] = Bundle.main.preferredLocalizations
+    ) -> SupportedAppLanguage {
+        let supportedLocalizations = SupportedAppLanguage.allCases.map(
+            \.bundleLocalizationIdentifier
+        )
+        let resolvedLocalization = Bundle.preferredLocalizations(
+            from: supportedLocalizations,
+            forPreferences: preferredLocalizations
+        ).first
+        return SupportedAppLanguage.allCases.first {
+            $0.bundleLocalizationIdentifier == resolvedLocalization
+        } ?? .english
+    }
+
     /// Reasserts Phi's explicit language before Chromium or AppKit loads
     /// localized resources. macOS System Settings writes to the same
     /// `AppleLanguages` key, so an app-specific language change can otherwise

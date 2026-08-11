@@ -4,7 +4,20 @@
 // found in the LICENSE file.
 
 import AppKit
+import PostHog
 import SwiftUI
+
+enum AppLanguageAnalytics {
+    static func changeProperties(
+        from oldValue: AppLanguagePreference,
+        to newValue: AppLanguagePreference
+    ) -> [String: String] {
+        [
+            "from": oldValue.storageValue,
+            "to": newValue.storageValue,
+        ]
+    }
+}
 
 enum NewTabBehaviour: String, CaseIterable, Identifiable {
     case newTabPage
@@ -427,7 +440,15 @@ private struct LanguageSectionView: View {
                 SentinelLanguagePreferenceSync.publish(selection)
             }
         }
-        .onChange(of: selection) { _, newValue in
+        .onChange(of: selection) { oldValue, newValue in
+            guard oldValue != newValue else { return }
+            PostHogSDK.shared.capture(
+                "language_changed",
+                properties: AppLanguageAnalytics.changeProperties(
+                    from: oldValue,
+                    to: newValue
+                )
+            )
             PhiPreferences.GeneralSettings.saveAppLanguagePreference(newValue)
             SentinelLanguagePreferenceSync.publish(newValue)
             if newValue != PhiPreferences.GeneralSettings.appLanguagePreferenceAtLaunch {

@@ -468,6 +468,7 @@ struct CreateSpacePanel: View {
                 "total_spaces": manager.spaces.count,
                 "non_default_profile": profileId != LocalStore.defaultProfileId,
             ])
+            FirstTimeActionTracker.capture(.spaceCreated)
         }
         // Pin the chosen theme (and, when the user touched the slider, its
         // custom saturation or Pure brightness) to the new Space. Persisted

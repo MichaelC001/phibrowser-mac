@@ -275,6 +275,31 @@ final class AppLanguagePreferenceTests: XCTestCase {
         )
     }
 
+    func testActiveProcessLanguageUsesBundleLocalizationIdentifiers() {
+        XCTAssertEqual(
+            PhiPreferences.GeneralSettings.activeProcessAppLanguage(
+                preferredLocalizations: ["zh_CN"]
+            ),
+            .simplifiedChinese
+        )
+        XCTAssertEqual(
+            PhiPreferences.GeneralSettings.activeProcessAppLanguage(
+                preferredLocalizations: ["es"]
+            ),
+            .spanish
+        )
+    }
+
+    func testLanguageChangePropertiesContainOnlyFromAndTo() {
+        let properties = AppLanguageAnalytics.changeProperties(
+            from: .system,
+            to: .language(.japanese)
+        )
+
+        XCTAssertEqual(properties, ["from": "system", "to": "ja"])
+        XCTAssertNil(properties["source"])
+    }
+
     private var persistentAppleLanguages: [String]? {
         defaults.persistentDomain(forName: defaultsSuiteName)?["AppleLanguages"] as? [String]
     }

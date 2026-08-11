@@ -649,6 +649,7 @@ final class AgentSpaceManager: ObservableObject {
                     task.windowId = windowId
                     task.status = .running
                     self.tasksBySpaceId[spaceId] = task
+                    FirstTimeActionTracker.capture(.agentTask)
                 }
                 completion(spaceId, windowId)
                 // The task is running with a live window now — autoview may surface
@@ -753,6 +754,9 @@ final class AgentSpaceManager: ObservableObject {
                 "persistent": true,
                 "agent_name": AgentDriverBadge.telemetryName(agentName),
             ])
+            if status == .running {
+                FirstTimeActionTracker.capture(.agentTask)
+            }
         }
 
         for slot in SpaceManager.shared.slots {
@@ -802,6 +806,7 @@ final class AgentSpaceManager: ObservableObject {
                 task.windowId = windowId
                 task.status = .running
                 self.tasksBySpaceId[spaceId] = task
+                FirstTimeActionTracker.capture(.agentTask)
             }
             completion(spaceId, windowId)
             self.autoViewReevaluate(delay: 0.8)
