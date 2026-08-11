@@ -282,6 +282,8 @@
 		A71E00000000000000000004 /* CredentialApprovalAlert.swift in Sources */ = {isa = PBXBuildFile; fileRef = A71E00000000000000000003 /* CredentialApprovalAlert.swift */; };
 		A71E00000000000000000006 /* AgentAccessApprovalAlert.swift in Sources */ = {isa = PBXBuildFile; fileRef = A71E00000000000000000005 /* AgentAccessApprovalAlert.swift */; };
 		A7C021022FFD000000000002 /* ContextMenuEvent.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7C021012FFD000000000001 /* ContextMenuEvent.swift */; };
+		A81113410000000000000002 /* OOBEAnalyticsSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = A81113410000000000000001 /* OOBEAnalyticsSession.swift */; };
+		A81113410000000000000004 /* FirstTimeActionTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = A81113410000000000000003 /* FirstTimeActionTracker.swift */; };
 		A8F100012FF0000000000001 /* PhiUninstallCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8F100112FF0000000000011 /* PhiUninstallCore.swift */; };
 		A8F100022FF0000000000002 /* PhiUninstallSignatureVerifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8F100122FF0000000000012 /* PhiUninstallSignatureVerifier.swift */; };
 		A8F100032FF0000000000003 /* PhiUninstallHelperLauncher.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8F100132FF0000000000013 /* PhiUninstallHelperLauncher.swift */; };
@@ -308,9 +310,9 @@
 		AE5ACE000000000000000013 /* AgentSpaceOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE5ACE000000000000000003 /* AgentSpaceOverlayView.swift */; };
 		AE5ACE000000000000000014 /* AgentSpaceRouter+Management.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE5ACE000000000000000004 /* AgentSpaceRouter+Management.swift */; };
 		AE5ACE000000000000000015 /* AgentSpaceRouter+Capture.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE5ACE000000000000000005 /* AgentSpaceRouter+Capture.swift */; };
-		AE5ACE000000000000000018 /* AgentPageTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE5ACE000000000000000008 /* AgentPageTheme.swift */; };
 		AE5ACE000000000000000016 /* AgentTranscriptStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE5ACE000000000000000006 /* AgentTranscriptStore.swift */; };
 		AE5ACE000000000000000017 /* AgentTranscriptPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE5ACE000000000000000007 /* AgentTranscriptPanel.swift */; };
+		AE5ACE000000000000000018 /* AgentPageTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE5ACE000000000000000008 /* AgentPageTheme.swift */; };
 		B001795A2E49CF84007B4635 /* PhiChromiumCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00179592E49CF84007B4635 /* PhiChromiumCoordinator.swift */; };
 		B02586F52E42FD97001B08FC /* ChromiumLauncher.m in Sources */ = {isa = PBXBuildFile; fileRef = B02586EE2E42FD97001B08FC /* ChromiumLauncher.m */; };
 		B02586F62E42FD97001B08FC /* AppController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B02586F02E42FD97001B08FC /* AppController.swift */; };
@@ -895,6 +897,8 @@
 		A71E00000000000000000003 /* CredentialApprovalAlert.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CredentialApprovalAlert.swift; sourceTree = "<group>"; };
 		A71E00000000000000000005 /* AgentAccessApprovalAlert.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentAccessApprovalAlert.swift; sourceTree = "<group>"; };
 		A7C021012FFD000000000001 /* ContextMenuEvent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextMenuEvent.swift; sourceTree = "<group>"; };
+		A81113410000000000000001 /* OOBEAnalyticsSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OOBEAnalyticsSession.swift; sourceTree = "<group>"; };
+		A81113410000000000000003 /* FirstTimeActionTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FirstTimeActionTracker.swift; sourceTree = "<group>"; };
 		A8F100112FF0000000000011 /* PhiUninstallCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhiUninstallCore.swift; sourceTree = "<group>"; };
 		A8F100122FF0000000000012 /* PhiUninstallSignatureVerifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhiUninstallSignatureVerifier.swift; sourceTree = "<group>"; };
 		A8F100132FF0000000000013 /* PhiUninstallHelperLauncher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhiUninstallHelperLauncher.swift; sourceTree = "<group>"; };
@@ -919,9 +923,9 @@
 		AE5ACE000000000000000003 /* AgentSpaceOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentSpaceOverlayView.swift; sourceTree = "<group>"; };
 		AE5ACE000000000000000004 /* AgentSpaceRouter+Management.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AgentSpaceRouter+Management.swift"; sourceTree = "<group>"; };
 		AE5ACE000000000000000005 /* AgentSpaceRouter+Capture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AgentSpaceRouter+Capture.swift"; sourceTree = "<group>"; };
-		AE5ACE000000000000000008 /* AgentPageTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentPageTheme.swift; sourceTree = "<group>"; };
 		AE5ACE000000000000000006 /* AgentTranscriptStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentTranscriptStore.swift; sourceTree = "<group>"; };
 		AE5ACE000000000000000007 /* AgentTranscriptPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentTranscriptPanel.swift; sourceTree = "<group>"; };
+		AE5ACE000000000000000008 /* AgentPageTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentPageTheme.swift; sourceTree = "<group>"; };
 		B00179592E49CF84007B4635 /* PhiChromiumCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhiChromiumCoordinator.swift; sourceTree = "<group>"; };
 		B02586EC2E42FD97001B08FC /* PhiBrowser-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "PhiBrowser-Bridging-Header.h"; sourceTree = "<group>"; };
 		B02586ED2E42FD97001B08FC /* ChromiumLauncher.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = ChromiumLauncher.h; sourceTree = "<group>"; };
@@ -1975,6 +1979,7 @@
 				37289F142EFE602F0003624E /* ExperimentConfigProvider.swift */,
 				7B00AAAA000000040000A4B4 /* PostHogEnv.swift */,
 				7B00AAAA000000060000A6B6 /* PostHogConfig.generated.swift */,
+				A81113410000000000000003 /* FirstTimeActionTracker.swift */,
 			);
 			path = Utilities;
 			sourceTree = "<group>";
@@ -2032,6 +2037,7 @@
 				3758B1E42F962BA50036F2AF /* AuthManager+Provider.swift */,
 				373D84042F9D500100000001 /* AuthManager+Reauthentication.swift */,
 				CC24EF052E89223500CE9DD7 /* LoginController.swift */,
+				A81113410000000000000001 /* OOBEAnalyticsSession.swift */,
 				CC4351CA2ECAD650009D8FC3 /* OnboardingWindowController.swift */,
 				CCBF0C9E2ECB2CFD005E729B /* Importer */,
 				CCBF0C9D2ECB2CA0005E729B /* Login */,
@@ -2781,6 +2787,7 @@
 				C70000000000000000000012 /* CustomTooltip+Hosting.swift in Sources */,
 				C70000000000000000000013 /* CommandShortcutTooltipContent.swift in Sources */,
 				CCEF2D222E584F1700FDDEB2 /* URLProcessor.swift in Sources */,
+				A81113410000000000000004 /* FirstTimeActionTracker.swift in Sources */,
 				4D454D4F5259000000000001 /* MemoryUsageModels.swift in Sources */,
 				4D454D4F5259000000000004 /* MemoryUsageMonitor.swift in Sources */,
 				4D454D4F5259000000000006 /* ProcessMemorySampler.swift in Sources */,
@@ -2926,6 +2933,7 @@
 				CC6336032E4EE43200A176DA /* PhiLogging.m in Sources */,
 				CC2708982E7959DF00B65AB8 /* PinnedTabLayout.swift in Sources */,
 				CC4351CC2ECAD650009D8FC3 /* OnboardingWindowController.swift in Sources */,
+				A81113410000000000000002 /* OOBEAnalyticsSession.swift in Sources */,
 				CCBF0CA02ECB2D14005E729B /* ImportFromOtherBrowserViewController.swift in Sources */,
 				CC98F8A22E8BCE0900DAD237 /* AppController+Settings.swift in Sources */,
 				B0F370C92E43242F000B51F9 /* PhiSplitView.swift in Sources */,

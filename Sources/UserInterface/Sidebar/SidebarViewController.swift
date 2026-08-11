@@ -4,6 +4,7 @@
 // found in the LICENSE file.
 
 import Cocoa
+import PostHog
 import SnapKit
 import SwiftUI
 import Combine
@@ -79,13 +80,29 @@ class SidebarViewController: NSViewController {
                 NSSound.beep()
                 return
             }
+            PostHogSDK.shared.capture("sidebar_button_tapped", properties: [
+                "button": SidebarBottomBarAnalyticsButton.chat.rawValue,
+            ])
             self.state.toggleAIChat()
         }
         view.onCardEntryTap = { [weak self] in
             self?.showMessageCardTemporarily()
         }
         view.onMemoryTap = {
-            BrowserState.currentState()?.createTab("chrome://memory/memory.html", focusAfterCreate: true)
+            guard let state = BrowserState.currentState() else { return }
+            PostHogSDK.shared.capture("sidebar_button_tapped", properties: [
+                "button": SidebarBottomBarAnalyticsButton.memory.rawValue,
+            ])
+            state.createTab(
+                "chrome://memory/memory.html",
+                focusAfterCreate: true
+            )
+            FirstTimeActionTracker.capture(.memoryOpened)
+        }
+        view.onDownloadTap = {
+            PostHogSDK.shared.capture("sidebar_button_tapped", properties: [
+                "button": SidebarBottomBarAnalyticsButton.download.rawValue,
+            ])
         }
         return view
     }()

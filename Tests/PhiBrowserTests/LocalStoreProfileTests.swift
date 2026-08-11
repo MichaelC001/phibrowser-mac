@@ -614,8 +614,12 @@ final class LocalStoreProfileTests: XCTestCase {
         let bookmarksBar = StubBookmarkWrapper(
             title: "Lesezeichenleiste", isFolder: true, children: [importFolder])
 
-        await importer.persistImportedBookmarks([bookmarksBar], arcSpaceRoot: nil)
+        let persisted = await importer.persistImportedBookmarks(
+            [bookmarksBar],
+            arcSpaceRoot: nil
+        )
 
+        XCTAssertTrue(persisted)
         let top = store.fetchBookmarks(
             parentId: nil,
             profileId: LocalStore.defaultProfileId,
@@ -639,7 +643,12 @@ final class LocalStoreProfileTests: XCTestCase {
             children: [StubBookmarkWrapper(title: "Example", urlString: "https://example.com")]
         )
 
-        await importer.persistImportedBookmarks([bookmarksBar], arcSpaceRoot: nil)
+        let persisted = await importer.persistImportedBookmarks(
+            [bookmarksBar],
+            arcSpaceRoot: nil
+        )
+
+        XCTAssertFalse(persisted)
     }
 
     func testImportTargetLockTracksImportingSpaces() {

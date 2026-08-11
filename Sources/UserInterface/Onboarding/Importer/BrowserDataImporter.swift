@@ -5,7 +5,127 @@
 
 import Foundation
 import Combine
+import PostHog
 import SwiftData
+
+struct BrowserImportAnalytics {
+    enum ErrorCode: String {
+        case noWindow = "no_window"
+        case bridgeUnavailable = "bridge_unavailable"
+        case fileUnreadable = "file_unreadable"
+        case sourceImportFailed = "source_import_failed"
+        case bookmarkPersistenceFailed = "bookmark_persistence_failed"
+    }
+
+    typealias Capture = (_ event: String, _ properties: [String: Any]) -> Void
+
+    private let capture: Capture
+
+    init(capture: @escaping Capture = { event, properties in
+        PostHogSDK.shared.capture(event, properties: properties)
+    }) {
+        self.capture = capture
+    }
+
+    func captureMenuPresentation() {
+        capture("import_viewed", ["entry_point": "menu"])
+    }
+
+    func captureSelections(
+        sources: [BrowserType],
+        dataTypesPerBrowser: [BrowserType: [String]]?
+    ) {
+        for source in Self.sortedSources(sources) {
+            let selectedTypes: [String]
+            if source == .file {
+                selectedTypes = []
+            } else if let wireTypes = dataTypesPerBrowser?[source] {
+                selectedTypes = Self.normalizedDataTypes(wireTypes)
+            } else {
+                selectedTypes = Self.normalizedDataTypes(
+                    ImportDataType.availableTypes(for: source).map(\.rawValue)
+                )
+            }
+            capture("import_types_selected", [
+                "source_browser": Self.sourceName(source),
+                "types": selectedTypes,
+            ])
+        }
+    }
+
+    func captureStarted(sources: [BrowserType]) {
+        capture("import_started", [
+            "source_browsers": Self.sourceNames(sources),
+        ])
+    }
+
+    func captureFinished(
+        sources: [BrowserType],
+        failedSources: [BrowserType],
+        duration: TimeInterval,
+        errorCode: ErrorCode?
+    ) {
+        let failedSourceNames = Self.sourceNames(failedSources)
+        var properties: [String: Any] = [
+            "source_browsers": Self.sourceNames(sources),
+            "success": failedSourceNames.isEmpty,
+            "failed_sources": failedSourceNames,
+            "duration_seconds": max(0, duration),
+        ]
+        if let errorCode {
+            properties["error_code"] = errorCode.rawValue
+        }
+        capture("import_finished", properties)
+    }
+
+    static func sourceNames(_ sources: [BrowserType]) -> [String] {
+        sortedSources(sources).map(sourceName)
+    }
+
+    static func normalizedDataTypes(_ wireTypes: [String]) -> [String] {
+        Array(Set(wireTypes.compactMap { wireType in
+            switch wireType {
+            case ImportDataType.bookmarks.rawValue:
+                return "bookmarks"
+            case ImportDataType.history.rawValue:
+                return "history"
+            case ImportDataType.cookies.rawValue:
+                return "cookies"
+            case ImportDataType.extensions.rawValue:
+                return "extensions"
+            default:
+                return nil
+            }
+        })).sorted()
+    }
+
+    static func sourceName(_ source: BrowserType) -> String {
+        switch source {
+        case .chrome:
+            return "chrome"
+        case .safari:
+            return "safari"
+        case .arc:
+            return "arc"
+        case .file:
+            return "file"
+        @unknown default:
+            return "unknown"
+        }
+    }
+
+    private static func sortedSources(
+        _ sources: [BrowserType]
+    ) -> [BrowserType] {
+        var seen = Set<String>()
+        return sources.sorted {
+            sourceName($0) < sourceName($1)
+        }.filter {
+            seen.insert(sourceName($0)).inserted
+        }
+    }
+}
+
 class BrowserDataImporter {
     enum Phase {
         case waiting
@@ -33,7 +153,9 @@ class BrowserDataImporter {
     private(set) var isImporting = false
 
     // Continuations for active import requests, keyed by browser type.
-    private var importContinuations: [BrowserType: CheckedContinuation<Bool, Never>] = [:]
+    private var importContinuations: [
+        BrowserType: CheckedContinuation<SourceImportResult, Never>
+    ] = [:]
     private let continuationQueue = DispatchQueue(label: "com.phibrowser.import.continuation")
     
     private(set) var failedImports: [BrowserType] = []
@@ -45,17 +167,23 @@ class BrowserDataImporter {
     /// rather than a published identity, so this must resolve the same way the
     /// rest of the browser does and must not depend on a signed-in account.
     private let localDataStoreProvider: () -> LocalStore?
+    private let analytics: BrowserImportAnalytics
 
     init(targetProfileId: String = LocalStore.defaultProfileId,
          targetSpaceId: String = LocalStore.defaultSpaceId,
          targetWindowId: Int? = nil,
          localDataStoreProvider: @escaping () -> LocalStore? = {
              AccountController.shared.localDataAccount?.localStorage
+         },
+         analyticsCapture: @escaping BrowserImportAnalytics.Capture = {
+             event, properties in
+             PostHogSDK.shared.capture(event, properties: properties)
          }) {
         self.targetProfileId = targetProfileId
         self.targetSpaceId = targetSpaceId
         self.targetWindowId = targetWindowId
         self.localDataStoreProvider = localDataStoreProvider
+        self.analytics = BrowserImportAnalytics(capture: analyticsCapture)
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(handleImportCompleted(_:)),
@@ -104,12 +232,6 @@ class BrowserDataImporter {
         dataTypesPerBrowser: [BrowserType: [String]]? = nil,
         importFilePath: String? = nil
     ) async -> Bool {
-        // Prefer the caller-provided window so Chromium import state follows the initiating window/profile.
-        guard let windowId = targetWindowId ?? MainBrowserWindowControllersManager.shared.getFirstAvailableWindowId() else {
-            AppLogError("No available window for import")
-            return true
-        }
-
         // Reentrancy gate: a second start (rapid double-click, repeated action
         // dispatch, programmatic re-call) while an import is unresolved would
         // overwrite the BrowserType-keyed continuation and race the shared
@@ -124,6 +246,29 @@ class BrowserDataImporter {
         let lockedSpaceId = targetSpaceId
         ImportTargetLock.shared.begin(into: lockedSpaceId)
         failedImports.removeAll()
+        let sourceOptions = options
+        let startedAtUptime = ProcessInfo.processInfo.systemUptime
+        analytics.captureSelections(
+            sources: sourceOptions,
+            dataTypesPerBrowser: dataTypesPerBrowser
+        )
+        analytics.captureStarted(sources: sourceOptions)
+
+        // Prefer the caller-provided window so Chromium import state follows the initiating window/profile.
+        guard let windowId = targetWindowId ?? MainBrowserWindowControllersManager.shared.getFirstAvailableWindowId() else {
+            AppLogError("No available window for import")
+            failedImports = sourceOptions
+            updateCompletionStatus()
+            analytics.captureFinished(
+                sources: sourceOptions,
+                failedSources: failedImports,
+                duration: ProcessInfo.processInfo.systemUptime - startedAtUptime,
+                errorCode: .noWindow
+            )
+            isImporting = false
+            ImportTargetLock.shared.end(into: lockedSpaceId)
+            return true
+        }
 
         AppLogInfo("Import started: browsers=\(options.map { Self.browserName(for: $0) }), "
             + "profileId=\(targetProfileId), spaceId=\(targetSpaceId)")
@@ -134,6 +279,7 @@ class BrowserDataImporter {
         // clear the Chromium bookmark staging below nor start an import that can't
         // succeed. Surface it as a failed import so the skip isn't silent.
         var options = options
+        var runErrorCode: BrowserImportAnalytics.ErrorCode?
         if options.contains(.file) {
             let readable = importFilePath.map {
                 !$0.isEmpty && FileManager.default.isReadableFile(atPath: $0)
@@ -142,15 +288,17 @@ class BrowserDataImporter {
                 AppLogWarn("File import skipped: no readable file at \(importFilePath ?? "nil")")
                 options.removeAll { $0 == .file }
                 failedImports.append(.file)
+                runErrorCode = .fileUnreadable
             }
         }
 
         // Only clear bookmarks if at least one browser is importing bookmarks
-        let importingBookmarks = options.contains { option in
+        let bookmarkSources = options.filter { option in
             guard let types = dataTypesPerBrowser?[option] else { return true } // nil = import all
             return types.contains(ImportDataType.bookmarks.rawValue)
         }
-        if importingBookmarks {
+        let chromiumBookmarkSources = bookmarkSources.filter { $0 != .arc }
+        if !chromiumBookmarkSources.isEmpty {
             ChromiumLauncher.sharedInstance().bridge?.removeAllBookmarks(withWindowId: windowId.int64Value)
         }
 
@@ -173,16 +321,33 @@ class BrowserDataImporter {
             // .unknown Arc profile (nil dir) → bookmarks only; never import Default's data.
             let arcDataImportable = option != .arc || sourceProfileDirectory != nil
             if (option != .arc || !(bridgeDataTypes?.isEmpty ?? true)), arcDataImportable {
-                let success = await importData(option, windowId: windowId,
+                let result = await importData(option, windowId: windowId,
                     sourceProfileDirectory: sourceProfileDirectory, dataTypes: bridgeDataTypes,
                     importFilePath: importFilePath)
-                if !success { failedImports.append(option) }
-                AppLogInfo("Import from \(option) completed with success: \(success)")
+                switch result {
+                case .completed(let success):
+                    if !success {
+                        failedImports.append(option)
+                        if runErrorCode == nil {
+                            runErrorCode = .sourceImportFailed
+                        }
+                    }
+                    AppLogInfo("Import from \(option) completed with success: \(success)")
+                case .bridgeUnavailable:
+                    failedImports.append(option)
+                    if runErrorCode == nil {
+                        runErrorCode = .bridgeUnavailable
+                    }
+                }
             } else if option == .arc, !arcDataImportable, !(bridgeDataTypes?.isEmpty ?? true) {
                 // Deliberate, safe skip: the chosen Space's profile is unresolved
                 // (.unknown), so we import its bookmarks only and never fall back to
                 // Default's data. Surface it so the skip isn't silent.
                 AppLogWarn("Arc data import skipped for unresolved source profile; imported bookmarks only")
+                failedImports.append(.arc)
+                if runErrorCode == nil {
+                    runErrorCode = .sourceImportFailed
+                }
             }
         }
 
@@ -191,22 +356,51 @@ class BrowserDataImporter {
 
         updateCompletionStatus()
 
-        if importingBookmarks || arcSpaceRoot != nil {
-            Task { [weak self] in
-                if let self {
-                    await self.persistImportedBookmarksAfterSnapshot(
-                        windowId: windowId,
-                        arcSpaceRoot: arcSpaceRoot
+        if !bookmarkSources.isEmpty || arcSpaceRoot != nil {
+            Task {
+                let persistence = await self.persistImportedBookmarksAfterSnapshot(
+                    windowId: windowId,
+                    arcSpaceRoot: arcSpaceRoot,
+                    requiresChromiumSnapshot: !chromiumBookmarkSources.isEmpty
+                )
+                await MainActor.run {
+                    if !persistence.snapshotSucceeded {
+                        self.failedImports.append(
+                            contentsOf: chromiumBookmarkSources
+                        )
+                    }
+                    if !persistence.storeSucceeded {
+                        self.failedImports.append(contentsOf: bookmarkSources)
+                    }
+                    self.failedImports = Self.uniqueBrowserTypes(
+                        self.failedImports
                     )
-                    await MainActor.run { self.isImporting = false }
+                    self.updateCompletionStatus()
+                    self.analytics.captureFinished(
+                        sources: sourceOptions,
+                        failedSources: self.failedImports,
+                        duration: ProcessInfo.processInfo.systemUptime - startedAtUptime,
+                        errorCode: persistence.succeeded
+                            ? runErrorCode
+                            : runErrorCode ?? .bookmarkPersistenceFailed
+                    )
+                    if self.failedImports.isEmpty {
+                        FirstTimeActionTracker.capture(.importFinished)
+                    }
+                    self.isImporting = false
                 }
-                // Release the Space lock even if the importer was deallocated
-                // (its window can close right after startImportData returns);
-                // otherwise the Space stays locked until restart. `lockedSpaceId`
-                // is value-captured and the lock is global, so this needs no self.
                 ImportTargetLock.shared.end(into: lockedSpaceId)
             }
         } else {
+            analytics.captureFinished(
+                sources: sourceOptions,
+                failedSources: failedImports,
+                duration: ProcessInfo.processInfo.systemUptime - startedAtUptime,
+                errorCode: runErrorCode
+            )
+            if failedImports.isEmpty {
+                FirstTimeActionTracker.capture(.importFinished)
+            }
             isImporting = false
             ImportTargetLock.shared.end(into: lockedSpaceId)
         }
@@ -229,32 +423,37 @@ class BrowserDataImporter {
     }
     
     /// Imports data for one browser using a continuation-backed async flow.
+    private enum SourceImportResult {
+        case completed(Bool)
+        case bridgeUnavailable
+    }
+
+    @MainActor
     private func importData(
         _ option: BrowserType,
         windowId: Int,
         sourceProfileDirectory: String?,
         dataTypes: [String]?,
         importFilePath: String? = nil
-    ) async -> Bool {
+    ) async -> SourceImportResult {
+        guard let bridge = ChromiumLauncher.sharedInstance().bridge else {
+            AppLogError(
+                "Import from \(Self.browserName(for: option)) was not "
+                    + "dispatched: no Chromium bridge"
+            )
+            return .bridgeUnavailable
+        }
+
         return await withCheckedContinuation { continuation in
             continuationQueue.async { [weak self] in
                 guard let self = self else {
-                    continuation.resume(returning: false)
+                    continuation.resume(returning: .completed(false))
                     return
                 }
 
                 self.importContinuations[option] = continuation
 
                 DispatchQueue.main.async {
-                    // Without a bridge there is nothing to dispatch to, and the
-                    // continuation stays unresolved, leaving the import in flight
-                    // forever — record it rather than failing silently.
-                    guard let bridge = ChromiumLauncher.sharedInstance().bridge else {
-                        // Named type rather than `Self` so the closure captures nothing.
-                        AppLogError("Import from \(BrowserDataImporter.browserName(for: option)) "
-                            + "was not dispatched: no Chromium bridge")
-                        return
-                    }
                     if option == .file {
                         // File import: Chromium sniffs the file type + parses it, staging
                         // the result into its BookmarkModel to be pulled back like the
@@ -294,7 +493,7 @@ class BrowserDataImporter {
                 return
             }
             
-            continuation.resume(returning: success)
+            continuation.resume(returning: .completed(success))
         }
     }
     
@@ -346,28 +545,63 @@ class BrowserDataImporter {
         }
     }
 
+    private struct BookmarkPersistenceResult {
+        let snapshotSucceeded: Bool
+        let storeSucceeded: Bool
+
+        var succeeded: Bool {
+            snapshotSucceeded && storeSucceeded
+        }
+    }
+
     private func persistImportedBookmarksAfterSnapshot(
         windowId: Int,
-        arcSpaceRoot: ArcDataParserTool.Bookmark?
-    ) async {
+        arcSpaceRoot: ArcDataParserTool.Bookmark?,
+        requiresChromiumSnapshot: Bool
+    ) async -> BookmarkPersistenceResult {
         try? await Task.sleep(nanoseconds: 3 * 1_000_000_000)
 
-        let bookmarkWrappers = await MainActor.run {
-            ChromiumLauncher.sharedInstance().bridge?.getAllBookmarks(withWindowId: windowId.int64Value)
+        let bookmarkWrappers: [BookmarkWrapper]
+        let snapshotSucceeded: Bool
+        if requiresChromiumSnapshot {
+            let snapshot = await MainActor.run {
+                ChromiumLauncher.sharedInstance().bridge?.getAllBookmarks(
+                    withWindowId: windowId.int64Value
+                )
+            }
+            if let snapshot {
+                bookmarkWrappers = snapshot
+                snapshotSucceeded = true
+            } else {
+                AppLogError("Imported bookmarks were dropped: no Chromium bridge is available")
+                bookmarkWrappers = []
+                snapshotSucceeded = false
+            }
+        } else {
+            bookmarkWrappers = []
+            snapshotSucceeded = true
         }
 
-        await persistImportedBookmarks(bookmarkWrappers ?? [], arcSpaceRoot: arcSpaceRoot)
+        let storeSucceeded = await persistImportedBookmarks(
+            bookmarkWrappers,
+            arcSpaceRoot: arcSpaceRoot
+        )
+        return BookmarkPersistenceResult(
+            snapshotSucceeded: snapshotSucceeded,
+            storeSucceeded: storeSucceeded
+        )
     }
 
     /// Writes an imported tree into the local data store. Split out of the
     /// snapshot step so it can be driven without the Chromium bridge.
+    @discardableResult
     func persistImportedBookmarks(
         _ bookmarks: [BookmarkWrapper],
         arcSpaceRoot: ArcDataParserTool.Bookmark?
-    ) async {
+    ) async -> Bool {
         guard let store = localDataStoreProvider() else {
             AppLogError("Imported bookmarks were dropped: no local data store is available")
-            return
+            return false
         }
 
         await store.saveChromiumBookmarksToLocalStore(
@@ -380,6 +614,16 @@ class BrowserDataImporter {
 
         await store.reorderImportedBrowserFolders(
             profileId: targetProfileId, spaceId: targetSpaceId)
+        return true
+    }
+
+    private static func uniqueBrowserTypes(
+        _ browserTypes: [BrowserType]
+    ) -> [BrowserType] {
+        var seen = Set<String>()
+        return browserTypes.filter {
+            seen.insert(BrowserImportAnalytics.sourceName($0)).inserted
+        }
     }
 
     func loadChromiumProfiles(

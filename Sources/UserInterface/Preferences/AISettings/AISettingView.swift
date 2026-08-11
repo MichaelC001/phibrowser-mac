@@ -230,7 +230,12 @@ private struct BrowserMemorySectionView: View {
     }
 
     private func openBrowserMemoryPage() {
-        BrowserState.currentState()?.createTab("chrome://memory/memory.html", focusAfterCreate: true)
+        guard let state = BrowserState.currentState() else { return }
+        state.createTab(
+            "chrome://memory/memory.html",
+            focusAfterCreate: true
+        )
+        FirstTimeActionTracker.capture(.memoryOpened)
     }
 }
 

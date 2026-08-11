@@ -229,7 +229,7 @@ class AccountSettingViewController: NSViewController, SettingsPane {
         }
         accountView.loginAction = {
             Task { @MainActor in
-                LoginController.shared.showLoginWindow()
+                LoginController.shared.showLoginWindowFromAccountSettings()
             }
         }
         accountView.reauthenticationAction = {

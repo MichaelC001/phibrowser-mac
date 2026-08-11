@@ -238,6 +238,7 @@ import PostHog
         coldOpenURLForwardWorkItem = nil
         AppLogInfo("-------applicationWillTerminate----")
         MainActor.assumeIsolated {
+            LoginController.shared.recordOOBEAppTermination()
             SentinelLanguagePreferenceTerminationCoordinator
                 .prepareForPhiTermination()
         }

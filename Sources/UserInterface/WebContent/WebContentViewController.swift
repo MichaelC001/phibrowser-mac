@@ -1113,6 +1113,9 @@ class WebContentViewController: NSViewController {
             PostHogSDK.shared.capture("ai_sidebar_opened", properties: [
                 "trigger": trigger.rawValue,
             ])
+            if trigger != .restore {
+                FirstTimeActionTracker.capture(.aiSidebarOpened)
+            }
         case let .closed(durationSeconds):
             PostHogSDK.shared.capture("ai_sidebar_closed", properties: [
                 "duration_seconds": durationSeconds,

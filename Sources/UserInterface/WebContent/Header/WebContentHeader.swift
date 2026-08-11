@@ -430,7 +430,12 @@ class WebContentHeader: NSView {
     }
 
     @objc private func memoryButtonClicked() {
-        BrowserState.currentState()?.createTab("chrome://memory/memory.html", focusAfterCreate: true)
+        guard let state = BrowserState.currentState() else { return }
+        state.createTab(
+            "chrome://memory/memory.html",
+            focusAfterCreate: true
+        )
+        FirstTimeActionTracker.capture(.memoryOpened)
     }
 
     // MARK: - Public Methods
