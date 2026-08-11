@@ -1579,8 +1579,9 @@ extension AppController {
             item.keyEquivalentModifierMask = .init(rawValue: 0)
             return
         }
-        item.keyEquivalent = key.characters
-        item.keyEquivalentModifierMask = key.modifiers
+        let menuKey = key.menuKeyEquivalent
+        item.keyEquivalent = menuKey.characters
+        item.keyEquivalentModifierMask = menuKey.modifiers
     }
 
     fileprivate func rebuildSpacesMenu(_ menu: NSMenu) {

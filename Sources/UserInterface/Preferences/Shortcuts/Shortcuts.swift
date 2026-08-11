@@ -5,6 +5,7 @@
 
 import Foundation
 import AppKit
+import Carbon.HIToolbox
 
 struct Shortcuts {
     let command: CommandWrapper
@@ -137,12 +138,295 @@ enum CommandWrapper: Int, Equatable {
 }
 
 struct ShortcutsKey: Hashable {
+    struct EventKeys {
+        let canonical: ShortcutsKey
+        let legacy: ShortcutsKey?
+
+        var matchingKeys: [ShortcutsKey] {
+            if let legacy {
+                return [canonical, legacy]
+            }
+            return [canonical]
+        }
+    }
+
+    struct MenuKeyEquivalent: Equatable {
+        let characters: String
+        let modifiers: NSEvent.ModifierFlags
+    }
+
+    static let supportedModifierFlags: NSEvent.ModifierFlags = [
+        .command,
+        .option,
+        .shift,
+        .control,
+    ]
+
+    /// Chromium's Command-QWERTY layouts resolve shortcuts from the physical
+    /// ANSI key instead of the active layout's semantic character.
+    private static let qwertyLetterByANSIKeyCode: [UInt16: String] = [
+        UInt16(kVK_ANSI_A): "a", UInt16(kVK_ANSI_B): "b",
+        UInt16(kVK_ANSI_C): "c", UInt16(kVK_ANSI_D): "d",
+        UInt16(kVK_ANSI_E): "e", UInt16(kVK_ANSI_F): "f",
+        UInt16(kVK_ANSI_G): "g", UInt16(kVK_ANSI_H): "h",
+        UInt16(kVK_ANSI_I): "i", UInt16(kVK_ANSI_J): "j",
+        UInt16(kVK_ANSI_K): "k", UInt16(kVK_ANSI_L): "l",
+        UInt16(kVK_ANSI_M): "m", UInt16(kVK_ANSI_N): "n",
+        UInt16(kVK_ANSI_O): "o", UInt16(kVK_ANSI_P): "p",
+        UInt16(kVK_ANSI_Q): "q", UInt16(kVK_ANSI_R): "r",
+        UInt16(kVK_ANSI_S): "s", UInt16(kVK_ANSI_T): "t",
+        UInt16(kVK_ANSI_U): "u", UInt16(kVK_ANSI_V): "v",
+        UInt16(kVK_ANSI_W): "w", UInt16(kVK_ANSI_X): "x",
+        UInt16(kVK_ANSI_Y): "y", UInt16(kVK_ANSI_Z): "z",
+    ]
+
+    /// Chromium derives these US-ANSI unshifted/shifted characters from the
+    /// Carbon key code; keeping both forms is required for keys such as ] / }.
+    private static let qwertyNonLetterByANSIKeyCode:
+        [UInt16: (unshifted: String, shifted: String)] = [
+            UInt16(kVK_ANSI_0): ("0", ")"),
+            UInt16(kVK_ANSI_1): ("1", "!"),
+            UInt16(kVK_ANSI_2): ("2", "@"),
+            UInt16(kVK_ANSI_3): ("3", "#"),
+            UInt16(kVK_ANSI_4): ("4", "$"),
+            UInt16(kVK_ANSI_5): ("5", "%"),
+            UInt16(kVK_ANSI_6): ("6", "^"),
+            UInt16(kVK_ANSI_7): ("7", "&"),
+            UInt16(kVK_ANSI_8): ("8", "*"),
+            UInt16(kVK_ANSI_9): ("9", "("),
+            UInt16(kVK_ANSI_Grave): ("`", "~"),
+            UInt16(kVK_ANSI_Minus): ("-", "_"),
+            UInt16(kVK_ANSI_Equal): ("=", "+"),
+            UInt16(kVK_ANSI_LeftBracket): ("[", "{"),
+            UInt16(kVK_ANSI_RightBracket): ("]", "}"),
+            UInt16(kVK_ANSI_Backslash): ("\\", "|"),
+            UInt16(kVK_ANSI_Semicolon): (";", ":"),
+            UInt16(kVK_ANSI_Quote): ("'", "\""),
+            UInt16(kVK_ANSI_Comma): (",", "<"),
+            UInt16(kVK_ANSI_Period): (".", ">"),
+            UInt16(kVK_ANSI_Slash): ("/", "?"),
+        ]
+
+    /// Chromium switches these layouts to physical ANSI/QWERTY printable keys
+    /// while Command is held.
+    private static let commandQWERTYInputSourceIdentifiers: Set<String> = [
+        "com.apple.keylayout.DVORAK-QWERTYCMD",
+        "com.apple.keylayout.Dhivehi-QWERTY",
+        "com.apple.keylayout.Inuktitut-QWERTY",
+        "com.apple.keylayout.Cherokee-QWERTY",
+    ]
+
     let characters: String
     let modifiersRaw: UInt
 
     init(characters: String, modifiers: NSEvent.ModifierFlags) {
         self.characters = characters
         self.modifiersRaw = modifiers.rawValue
+    }
+
+    /// AppKit encodes Shift in printable key equivalents instead of the modifier mask.
+    var menuKeyEquivalent: MenuKeyEquivalent {
+        var menuModifiers = modifiers
+        guard menuModifiers.contains(.shift), isPrintableMenuCharacter else {
+            return MenuKeyEquivalent(characters: characters, modifiers: menuModifiers)
+        }
+
+        menuModifiers.remove(.shift)
+        return MenuKeyEquivalent(
+            characters: characters.uppercased(),
+            modifiers: menuModifiers
+        )
+    }
+
+    /// Resolves the ordered identities that shortcut recording and native
+    /// dispatch share.
+    static func eventKeys(
+        for event: NSEvent,
+        inputSourceIdentifier: String? = currentInputSourceIdentifier
+    ) -> EventKeys? {
+        let modifiers = event.modifierFlags.intersection(supportedModifierFlags)
+        let semanticKey = semanticEventKey(for: event, modifiers: modifiers)
+        let latinKey = latinEventKey(
+            for: event,
+            modifiers: modifiers,
+            inputSourceIdentifier: inputSourceIdentifier
+        )
+
+        guard let canonical = latinKey ?? semanticKey else { return nil }
+        // Prefer the layout-independent Latin key for new recordings and command
+        // lookup, while retaining the semantic key for existing non-Latin overrides.
+        let legacy = semanticKey.flatMap { $0 == canonical ? nil : $0 }
+        return EventKeys(canonical: canonical, legacy: legacy)
+    }
+
+    /// Returns the canonical key to persist for a captured event.
+    static func recordingKey(
+        for event: NSEvent,
+        inputSourceIdentifier: String? = currentInputSourceIdentifier
+    ) -> ShortcutsKey? {
+        guard let key = eventKeys(
+            for: event,
+            inputSourceIdentifier: inputSourceIdentifier
+        )?.canonical,
+              key.modifiersRaw != 0 else {
+            return nil
+        }
+        return key
+    }
+
+    static func resolvedInputSourceIdentifier(
+        textInputContextIdentifier: String?,
+        systemInputSourceIdentifier: () -> String?
+    ) -> String? {
+        if let textInputContextIdentifier {
+            return textInputContextIdentifier
+        }
+        return systemInputSourceIdentifier()
+    }
+
+    private static var currentInputSourceIdentifier: String? {
+        // The focused text context is the most precise source, but it can be nil
+        // when focus is outside an editable responder. TIS supplies Chromium's
+        // process-wide fallback for that case.
+        resolvedInputSourceIdentifier(
+            textInputContextIdentifier:
+                NSTextInputContext.current?.selectedKeyboardInputSource,
+            systemInputSourceIdentifier: { currentSystemInputSourceIdentifier }
+        )
+    }
+
+    private static var currentSystemInputSourceIdentifier: String? {
+        let inputSource = TISCopyCurrentKeyboardInputSource().takeRetainedValue()
+        guard let property = TISGetInputSourceProperty(
+            inputSource,
+            kTISPropertyInputSourceID
+        ) else {
+            return nil
+        }
+        return Unmanaged<CFString>
+            .fromOpaque(property)
+            .takeUnretainedValue() as String
+    }
+
+    private static func semanticEventKey(
+        for event: NSEvent,
+        modifiers: NSEvent.ModifierFlags
+    ) -> ShortcutsKey? {
+        // `charactersIgnoringModifiers` still reflects the active input source,
+        // so a non-Latin layout returns its local-script character here.
+        // Tab may also report different characters depending on Shift state.
+        if event.keyCode == UInt16(kVK_Tab) {
+            return ShortcutsKey(characters: "\t", modifiers: modifiers)
+        }
+        guard let characters = event.charactersIgnoringModifiers,
+              !characters.isEmpty else {
+            return nil
+        }
+        return ShortcutsKey(
+            characters: normalizedCharacters(characters),
+            modifiers: modifiers
+        )
+    }
+
+    private static func latinEventKey(
+        for event: NSEvent,
+        modifiers: NSEvent.ModifierFlags,
+        inputSourceIdentifier: String?
+    ) -> ShortcutsKey? {
+        let charactersIgnoringModifiers = event.charactersIgnoringModifiers ?? ""
+        let usesNonASCIICharacters = charactersIgnoringModifiers.utf16.first
+            .map { $0 > 0x7F } == true
+        // Some Apple Hebrew layouts report ASCII punctuation for letter keys,
+        // so script inspection alone cannot identify them.
+        let usesHebrewLayout = inputSourceIdentifier?
+            .hasPrefix("com.apple.keylayout.Hebrew") == true
+        let usesCommandQWERTYLayout = inputSourceIdentifier
+            .map(commandQWERTYInputSourceIdentifiers.contains) == true
+
+        // Some non-Latin layouts expose the menu-equivalent Latin character
+        // through `characters` while `charactersIgnoringModifiers` stays local.
+        // Do not use `characters` for ordinary ASCII-to-ASCII differences: those
+        // can represent intentional semantic layouts such as Dvorak.
+        if let characters = event.characters,
+           characters.utf16.count == 1,
+           let character = characters.utf16.first,
+           character >= 0x20,
+           character <= 0x7E {
+            // Mirror Chromium's observed AppKit exceptions for Hebrew Cmd-Q and
+            // Arabic PC/AZERTY Shift-Cmd-V. Both event strings are ASCII, so the
+            // input-source ID must distinguish them from intentional ASCII maps.
+            let usesHebrewCommandEquivalent = modifiers.contains(.command)
+                && usesHebrewLayout
+                && charactersIgnoringModifiers == "/"
+                && characters == "q"
+            let usesArabicCommandEquivalent = modifiers.contains(.command)
+                && (inputSourceIdentifier?.hasPrefix("com.apple.keylayout.ArabicPC") == true
+                    || inputSourceIdentifier?.hasPrefix("com.apple.keylayout.Arabic-AZERTY") == true)
+                && charactersIgnoringModifiers == "{"
+                && characters == "V"
+            let usesASCIIEquivalent = charactersIgnoringModifiers.isEmpty
+                || usesNonASCIICharacters
+                || usesHebrewCommandEquivalent
+                || usesArabicCommandEquivalent
+            if usesASCIIEquivalent {
+                return ShortcutsKey(
+                    characters: normalizedCharacters(characters),
+                    modifiers: modifiers
+                )
+            }
+        }
+
+        // Match Chromium's main-keyboard Command-QWERTY projection while
+        // Command is held. This is deliberately source-qualified; applying
+        // physical QWERTY to a normal Dvorak or non-Latin layout would change
+        // semantic shortcuts.
+        // TODO: Chromium applies this projection for every modifier combination.
+        // Non-Command custom IDC shortcuts can therefore mismatch on these rare
+        // layouts; mirror Chromium if Phi needs to support that configuration.
+        guard modifiers.contains(.command),
+              usesCommandQWERTYLayout,
+              let qwertyCharacter = commandQWERTYCharacter(
+                keyCode: event.keyCode,
+                shifted: modifiers.contains(.shift)
+              ) else {
+            return nil
+        }
+        return ShortcutsKey(
+            characters: normalizedCharacters(qwertyCharacter),
+            modifiers: modifiers
+        )
+    }
+
+    private static func commandQWERTYCharacter(
+        keyCode: UInt16,
+        shifted: Bool
+    ) -> String? {
+        if let letter = qwertyLetterByANSIKeyCode[keyCode] {
+            return shifted ? letter.uppercased() : letter
+        }
+        guard let characters = qwertyNonLetterByANSIKeyCode[keyCode] else {
+            return nil
+        }
+        return shifted ? characters.shifted : characters.unshifted
+    }
+
+    private static func normalizedCharacters(_ characters: String) -> String {
+        if characters == String(format: "%c", NSDeleteCharacter) {
+            return String(format: "%c", NSBackspaceCharacter)
+        }
+        if characters.count > 1 {
+            return String(characters.prefix(1)).lowercased()
+        }
+        return characters.lowercased()
+    }
+
+    private var isPrintableMenuCharacter: Bool {
+        guard characters.unicodeScalars.count == 1,
+              let scalar = characters.unicodeScalars.first else {
+            return false
+        }
+        return !CharacterSet.controlCharacters.contains(scalar)
+            && !(0xF700...0xF8FF).contains(scalar.value)
     }
 }
 
@@ -208,8 +492,11 @@ extension Shortcuts {
         .IDC_SHOW_DOWNLOADS: .init(characters: "j", modifiers: [.command, .shift]),
 
         // Tab
-        .IDC_SELECT_NEXT_TAB: .init(characters: "]", modifiers: [.command, .shift]),
-        .IDC_SELECT_PREVIOUS_TAB: .init(characters: "[", modifiers: [.command, .shift]),
+        // AppKit events carry Shift in printable characters. Keep Shift in the
+        // stored identity for display, but store the actual shifted character so
+        // `menuKeyEquivalent` can remove the modifier without guessing a layout.
+        .IDC_SELECT_NEXT_TAB: .init(characters: "}", modifiers: [.command, .shift]),
+        .IDC_SELECT_PREVIOUS_TAB: .init(characters: "{", modifiers: [.command, .shift]),
         .IDC_SELECT_TAB_0: .init(characters: "1", modifiers: .command),
         .IDC_SELECT_TAB_1: .init(characters: "2", modifiers: .command),
         .IDC_SELECT_TAB_2: .init(characters: "3", modifiers: .command),

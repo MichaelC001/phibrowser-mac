@@ -115,9 +115,10 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
         }
         
         if let key = state {
+            let menuKey = key.menuKeyEquivalent
             return [
-                "keyEquivalent": key.characters,
-                "modifierFlags": key.modifiersRaw
+                "keyEquivalent": menuKey.characters,
+                "modifierFlags": menuKey.modifiers.rawValue
             ]
         } else {
             return [
