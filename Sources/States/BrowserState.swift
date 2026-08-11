@@ -3502,8 +3502,23 @@ class BrowserState {
             return
         }
         if tab.title != newTitle {
+            // `tab.title` is @Published on the Tab itself and every title
+            // renderer (sidebar cells, pinned items, TabViewModel, group
+            // overview) subscribes to `tab.$title` directly, so this alone
+            // updates the UI.
+            //
+            // Deliberately NOT followed by `self.tabs = tabs`: the array's
+            // contents and order are unchanged, so republishing it says
+            // nothing new, but it wakes every `$tabs` subscriber — most
+            // expensively `WebContentContainerViewController`'s tab-CLOSURE
+            // detector, which builds two Sets over all tabs and rescans every
+            // web-content controller. That turned a title change into O(tabs)
+            // main-thread work. A page that retitles itself on a timer does
+            // that continuously, and the browser main thread is also
+            // Chromium's UI thread — so with enough continuously-active
+            // renderers the queue behind it grew until `agentSpace.*` calls
+            // (and CDP) blew past their client timeouts.
             tab.title = newTitle
-            self.tabs = tabs
         }
     }
     
