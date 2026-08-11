@@ -5,10 +5,42 @@
 
 import XCTest
 import AppKit
+import Carbon.HIToolbox
 import SwiftUI
 @testable import Phi
 
 final class PhiBrowserTests: XCTestCase {
+    private enum InputSource {
+        static let us = "com.apple.keylayout.US"
+        static let russian = "com.apple.keylayout.Russian"
+        static let dvorak = "com.apple.keylayout.Dvorak"
+        static let dvorakCommandQWERTY = "com.apple.keylayout.DVORAK-QWERTYCMD"
+        static let hebrewQWERTY = "com.apple.keylayout.Hebrew-QWERTY"
+        static let arabicAZERTY = "com.apple.keylayout.Arabic-AZERTY"
+    }
+
+    private func makeShortcutKeyEvent(
+        characters: String,
+        charactersIgnoringModifiers: String,
+        modifiers: NSEvent.ModifierFlags,
+        keyCode: UInt16 = UInt16(kVK_ANSI_C)
+    ) throws -> NSEvent {
+        try XCTUnwrap(
+            NSEvent.keyEvent(
+                with: .keyDown,
+                location: .zero,
+                modifierFlags: modifiers,
+                timestamp: 0,
+                windowNumber: 0,
+                context: nil,
+                characters: characters,
+                charactersIgnoringModifiers: charactersIgnoringModifiers,
+                isARepeat: false,
+                keyCode: keyCode
+            )
+        )
+    }
+
     func testCopyURLShortcutIsCustomizableFromEditShortcuts() {
         XCTAssertEqual(
             Shortcuts.DefaultShortcuts[.PHI_COPY_URL],
@@ -16,6 +48,596 @@ final class PhiBrowserTests: XCTestCase {
         )
         XCTAssertTrue(Shortcuts.Group.edit.commands.contains(.PHI_COPY_URL))
         XCTAssertEqual(CommandWrapper.PHI_COPY_URL.displayName, "Copy URL")
+    }
+
+    func testInputSourceIdentifierSelectionPrefersTextContextAndUsesSystemFallback() {
+        var systemLookupCount = 0
+        XCTAssertEqual(
+            ShortcutsKey.resolvedInputSourceIdentifier(
+                textInputContextIdentifier: InputSource.russian,
+                systemInputSourceIdentifier: {
+                    systemLookupCount += 1
+                    return InputSource.hebrewQWERTY
+                }
+            ),
+            InputSource.russian
+        )
+        XCTAssertEqual(systemLookupCount, 0)
+        XCTAssertEqual(
+            ShortcutsKey.resolvedInputSourceIdentifier(
+                textInputContextIdentifier: nil,
+                systemInputSourceIdentifier: {
+                    systemLookupCount += 1
+                    return InputSource.hebrewQWERTY
+                }
+            ),
+            InputSource.hebrewQWERTY
+        )
+        XCTAssertEqual(systemLookupCount, 1)
+    }
+
+    func testPhiShortcutMatchingFallsBackToASCIICommandCharacterForCyrillicInputSource() throws {
+        let event = try makeShortcutKeyEvent(
+            characters: "C",
+            charactersIgnoringModifiers: "\u{0421}",
+            modifiers: [.command, .shift]
+        )
+        let copyURLKey = try XCTUnwrap(Shortcuts.DefaultShortcuts[.PHI_COPY_URL])
+
+        let command = CommandDispatcher.matchedPhiCommand(
+            for: event,
+            shortcutMap: [copyURLKey: .PHI_COPY_URL],
+            inputSourceIdentifier: InputSource.russian
+        )
+
+        XCTAssertEqual(command, .PHI_COPY_URL)
+    }
+
+    func testCyrillicCommandCaptureMatchesLatinDefaultShortcut() throws {
+        let event = try makeShortcutKeyEvent(
+            characters: "C",
+            charactersIgnoringModifiers: "\u{0421}",
+            modifiers: [.command, .shift]
+        )
+        let recordedKey = try XCTUnwrap(
+            ShortcutsKey.recordingKey(
+                for: event,
+                inputSourceIdentifier: InputSource.russian
+            )
+        )
+        let copyURLKey = try XCTUnwrap(Shortcuts.DefaultShortcuts[.PHI_COPY_URL])
+
+        XCTAssertEqual(recordedKey, copyURLKey)
+        XCTAssertEqual(recordedKey.characters, "c")
+        XCTAssertEqual(recordedKey.displayString, "⌘⇧C")
+    }
+
+    func testCyrillicCommandCaptureUsesLatinShiftedMenuEquivalent() throws {
+        let event = try makeShortcutKeyEvent(
+            characters: "P",
+            charactersIgnoringModifiers: "\u{0417}",
+            modifiers: [.command, .shift],
+            keyCode: UInt16(kVK_ANSI_P)
+        )
+
+        let recordedKey = try XCTUnwrap(
+            ShortcutsKey.recordingKey(
+                for: event,
+                inputSourceIdentifier: InputSource.russian
+            )
+        )
+        let menuKey = recordedKey.menuKeyEquivalent
+
+        XCTAssertEqual(recordedKey.characters, "p")
+        XCTAssertEqual(recordedKey.modifiers, [.command, .shift])
+        XCTAssertEqual(recordedKey.displayString, "⌘⇧P")
+        XCTAssertEqual(menuKey.characters, "P")
+        XCTAssertEqual(menuKey.modifiers, [.command])
+    }
+
+    func testShiftedPrintableShortcutProjectsToSameMenuIdentity() {
+        let recordedKey = ShortcutsKey(
+            characters: "+",
+            modifiers: [.command, .shift]
+        )
+        let existingKey = ShortcutsKey(characters: "+", modifiers: [.command])
+
+        XCTAssertEqual(recordedKey.menuKeyEquivalent, existingKey.menuKeyEquivalent)
+    }
+
+    func testShortcutViewModelReportsMenuEquivalentConflict() throws {
+        let previousOverrides = Shortcuts.overridedShortcuts
+        defer { Shortcuts.overridedShortcuts = previousOverrides }
+        Shortcuts.overridedShortcuts = [
+            .IDC_BACK: ShortcutsKey(
+                characters: "+",
+                modifiers: [.command, .shift]
+            ),
+            .IDC_FORWARD: ShortcutsKey(
+                characters: "+",
+                modifiers: [.command]
+            ),
+        ]
+
+        let viewModel = ShortcutsViewModel()
+        let items = viewModel.sections.flatMap(\.items)
+        let backItem = try XCTUnwrap(
+            items.first { $0.command == .IDC_BACK }
+        )
+        let forwardItem = try XCTUnwrap(
+            items.first { $0.command == .IDC_FORWARD }
+        )
+
+        XCTAssertTrue(backItem.hasConflict)
+        XCTAssertTrue(forwardItem.hasConflict)
+    }
+
+    func testShiftedBracketDefaultsUseDistinctAppKitMenuIdentities() throws {
+        let backKey = try XCTUnwrap(Shortcuts.DefaultShortcuts[.IDC_BACK])
+        let forwardKey = try XCTUnwrap(Shortcuts.DefaultShortcuts[.IDC_FORWARD])
+        let previousTabKey = try XCTUnwrap(
+            Shortcuts.DefaultShortcuts[.IDC_SELECT_PREVIOUS_TAB]
+        )
+        let nextTabKey = try XCTUnwrap(
+            Shortcuts.DefaultShortcuts[.IDC_SELECT_NEXT_TAB]
+        )
+
+        XCTAssertEqual(previousTabKey.characters, "{")
+        XCTAssertEqual(previousTabKey.modifiers, [.command, .shift])
+        XCTAssertEqual(previousTabKey.menuKeyEquivalent.characters, "{")
+        XCTAssertEqual(previousTabKey.menuKeyEquivalent.modifiers, [.command])
+        XCTAssertNotEqual(previousTabKey.menuKeyEquivalent, backKey.menuKeyEquivalent)
+
+        XCTAssertEqual(nextTabKey.characters, "}")
+        XCTAssertEqual(nextTabKey.modifiers, [.command, .shift])
+        XCTAssertEqual(nextTabKey.menuKeyEquivalent.characters, "}")
+        XCTAssertEqual(nextTabKey.menuKeyEquivalent.modifiers, [.command])
+        XCTAssertNotEqual(nextTabKey.menuKeyEquivalent, forwardKey.menuKeyEquivalent)
+    }
+
+    func testShiftedBracketCaptureMatchesDefaultNextTabShortcut() throws {
+        let event = try makeShortcutKeyEvent(
+            characters: "]",
+            charactersIgnoringModifiers: "}",
+            modifiers: [.command, .shift],
+            keyCode: UInt16(kVK_ANSI_RightBracket)
+        )
+
+        let recordedKey = try XCTUnwrap(
+            ShortcutsKey.recordingKey(
+                for: event,
+                inputSourceIdentifier: InputSource.us
+            )
+        )
+
+        XCTAssertEqual(
+            recordedKey,
+            Shortcuts.DefaultShortcuts[.IDC_SELECT_NEXT_TAB]
+        )
+    }
+
+    func testShortcutViewModelPresentsBracketDefaultsWithoutFalseConflicts() throws {
+        let previousOverrides = Shortcuts.overridedShortcuts
+        defer { Shortcuts.overridedShortcuts = previousOverrides }
+        Shortcuts.overridedShortcuts = [:]
+
+        let viewModel = ShortcutsViewModel()
+        let items = viewModel.sections.flatMap(\.items)
+        let previousTabItem = try XCTUnwrap(
+            items.first { $0.command == .IDC_SELECT_PREVIOUS_TAB }
+        )
+        let nextTabItem = try XCTUnwrap(
+            items.first { $0.command == .IDC_SELECT_NEXT_TAB }
+        )
+
+        XCTAssertEqual(previousTabItem.shortcutDisplay, "⌘⇧[")
+        XCTAssertFalse(previousTabItem.hasConflict)
+        XCTAssertEqual(nextTabItem.shortcutDisplay, "⌘⇧]")
+        XCTAssertFalse(nextTabItem.hasConflict)
+    }
+
+    func testNativeMenuWriterProjectsDefaultShiftedPrintableShortcut() {
+        let command = CommandWrapper.PHI_TOGGLE_CHATBAR
+        let previousOverrides = Shortcuts.overridedShortcuts
+        defer { Shortcuts.overridedShortcuts = previousOverrides }
+        Shortcuts.overridedShortcuts.removeValue(forKey: command)
+
+        let item = NSMenuItem(
+            title: "Toggle Chatbar",
+            action: nil,
+            keyEquivalent: "s"
+        )
+        item.tag = command.rawValue
+        item.keyEquivalentModifierMask = [.command, .shift]
+
+        Shortcuts.updateShortcut(for: item)
+
+        XCTAssertEqual(item.keyEquivalent, "S")
+        XCTAssertEqual(item.keyEquivalentModifierMask, [.command])
+    }
+
+    func testPhiShortcutMatchingUsesShiftedPrintableExecutionIdentity() throws {
+        let event = try makeShortcutKeyEvent(
+            characters: "+",
+            charactersIgnoringModifiers: "+",
+            modifiers: [.command, .shift],
+            keyCode: UInt16(kVK_ANSI_Equal)
+        )
+        let existingKey = ShortcutsKey(characters: "+", modifiers: [.command])
+
+        XCTAssertEqual(
+            CommandDispatcher.matchedPhiCommand(
+                for: event,
+                shortcutMap: [existingKey: .PHI_COPY_URL],
+                inputSourceIdentifier: InputSource.us
+            ),
+            .PHI_COPY_URL
+        )
+    }
+
+    func testLatinAndCyrillicEventsResolveToSameCanonicalShortcut() throws {
+        let latinEvent = try makeShortcutKeyEvent(
+            characters: "C",
+            charactersIgnoringModifiers: "C",
+            modifiers: [.command, .shift]
+        )
+        let cyrillicEvent = try makeShortcutKeyEvent(
+            characters: "C",
+            charactersIgnoringModifiers: "\u{0421}",
+            modifiers: [.command, .shift]
+        )
+        let latinKeys = try XCTUnwrap(
+            ShortcutsKey.eventKeys(
+                for: latinEvent,
+                inputSourceIdentifier: InputSource.us
+            )
+        )
+        let cyrillicKeys = try XCTUnwrap(
+            ShortcutsKey.eventKeys(
+                for: cyrillicEvent,
+                inputSourceIdentifier: InputSource.russian
+            )
+        )
+        let shortcutMap = [latinKeys.canonical: CommandWrapper.PHI_COPY_URL]
+
+        XCTAssertEqual(cyrillicKeys.canonical, latinKeys.canonical)
+        XCTAssertNil(latinKeys.legacy)
+        XCTAssertEqual(
+            cyrillicKeys.legacy,
+            ShortcutsKey(characters: "\u{0441}", modifiers: [.command, .shift])
+        )
+        XCTAssertEqual(
+            CommandDispatcher.matchedPhiCommand(
+                for: latinEvent,
+                shortcutMap: shortcutMap,
+                inputSourceIdentifier: InputSource.us
+            ),
+            .PHI_COPY_URL
+        )
+        XCTAssertEqual(
+            CommandDispatcher.matchedPhiCommand(
+                for: cyrillicEvent,
+                shortcutMap: shortcutMap,
+                inputSourceIdentifier: InputSource.russian
+            ),
+            .PHI_COPY_URL
+        )
+    }
+
+    func testPhiShortcutMatchingPrefersCanonicalLatinBinding() throws {
+        let event = try makeShortcutKeyEvent(
+            characters: "C",
+            charactersIgnoringModifiers: "\u{0421}",
+            modifiers: [.command, .shift]
+        )
+        let cyrillicKey = ShortcutsKey(
+            characters: "\u{0441}",
+            modifiers: [.command, .shift]
+        )
+        let copyURLKey = try XCTUnwrap(Shortcuts.DefaultShortcuts[.PHI_COPY_URL])
+
+        let command = CommandDispatcher.matchedPhiCommand(
+            for: event,
+            shortcutMap: [
+                cyrillicKey: .PHI_NEW_CONVERSATION,
+                copyURLKey: .PHI_COPY_URL,
+            ],
+            inputSourceIdentifier: InputSource.russian
+        )
+
+        XCTAssertEqual(command, .PHI_COPY_URL)
+    }
+
+    func testPhiShortcutMatchingUsesLegacyNonLatinBindingWhenCanonicalIsUnassigned() throws {
+        let event = try makeShortcutKeyEvent(
+            characters: "C",
+            charactersIgnoringModifiers: "\u{0421}",
+            modifiers: [.command, .shift]
+        )
+        let cyrillicKey = ShortcutsKey(
+            characters: "\u{0441}",
+            modifiers: [.command, .shift]
+        )
+
+        let command = CommandDispatcher.matchedPhiCommand(
+            for: event,
+            shortcutMap: [cyrillicKey: .PHI_NEW_CONVERSATION],
+            inputSourceIdentifier: InputSource.russian
+        )
+
+        XCTAssertEqual(command, .PHI_NEW_CONVERSATION)
+    }
+
+    func testPhiShortcutMatchingDoesNotFallbackWhenIgnoringModifiersIsASCII() throws {
+        let event = try makeShortcutKeyEvent(
+            characters: "Z",
+            charactersIgnoringModifiers: ";",
+            modifiers: [.command, .shift],
+            keyCode: UInt16(kVK_ANSI_Z)
+        )
+        let physicalKey = ShortcutsKey(
+            characters: "z",
+            modifiers: [.command, .shift]
+        )
+
+        let command = CommandDispatcher.matchedPhiCommand(
+            for: event,
+            shortcutMap: [physicalKey: .PHI_COPY_URL],
+            inputSourceIdentifier: InputSource.dvorak
+        )
+
+        XCTAssertNil(command)
+    }
+
+    func testShortcutCaptureKeepsSemanticASCIICharacterForAlternateLayout() throws {
+        let event = try makeShortcutKeyEvent(
+            characters: "Z",
+            charactersIgnoringModifiers: ";",
+            modifiers: [.command, .shift],
+            keyCode: UInt16(kVK_ANSI_Z)
+        )
+
+        let recordedKey = try XCTUnwrap(
+            ShortcutsKey.recordingKey(
+                for: event,
+                inputSourceIdentifier: InputSource.dvorak
+            )
+        )
+
+        XCTAssertEqual(
+            recordedKey,
+            ShortcutsKey(characters: ";", modifiers: [.command, .shift])
+        )
+        XCTAssertEqual(
+            CommandDispatcher.matchedPhiCommand(
+                for: event,
+                shortcutMap: [recordedKey: .PHI_COPY_URL],
+                inputSourceIdentifier: InputSource.dvorak
+            ),
+            .PHI_COPY_URL
+        )
+    }
+
+    func testCommandQWERTYLayoutUsesPhysicalLatinKeyWithCommand() throws {
+        let event = try makeShortcutKeyEvent(
+            characters: "Z",
+            charactersIgnoringModifiers: ";",
+            modifiers: [.command, .shift],
+            keyCode: UInt16(kVK_ANSI_Z)
+        )
+        let physicalKey = ShortcutsKey(
+            characters: "z",
+            modifiers: [.command, .shift]
+        )
+
+        let recordedKey = try XCTUnwrap(
+            ShortcutsKey.recordingKey(
+                for: event,
+                inputSourceIdentifier: InputSource.dvorakCommandQWERTY
+            )
+        )
+
+        XCTAssertEqual(recordedKey, physicalKey)
+        XCTAssertEqual(
+            CommandDispatcher.matchedPhiCommand(
+                for: event,
+                shortcutMap: [physicalKey: .PHI_COPY_URL],
+                inputSourceIdentifier: InputSource.dvorakCommandQWERTY
+            ),
+            .PHI_COPY_URL
+        )
+    }
+
+    func testCommandQWERTYLayoutUsesPhysicalPunctuationWithCommand() throws {
+        let unshiftedEvent = try makeShortcutKeyEvent(
+            characters: "+",
+            charactersIgnoringModifiers: "+",
+            modifiers: [.command],
+            keyCode: UInt16(kVK_ANSI_RightBracket)
+        )
+        let shiftedEvent = try makeShortcutKeyEvent(
+            characters: "}",
+            charactersIgnoringModifiers: "+",
+            modifiers: [.command, .shift],
+            keyCode: UInt16(kVK_ANSI_RightBracket)
+        )
+        let unshiftedKey = ShortcutsKey(
+            characters: "]",
+            modifiers: [.command]
+        )
+        let shiftedKey = ShortcutsKey(
+            characters: "}",
+            modifiers: [.command, .shift]
+        )
+
+        XCTAssertEqual(
+            ShortcutsKey.recordingKey(
+                for: unshiftedEvent,
+                inputSourceIdentifier: InputSource.dvorakCommandQWERTY
+            ),
+            unshiftedKey
+        )
+        XCTAssertEqual(
+            ShortcutsKey.recordingKey(
+                for: shiftedEvent,
+                inputSourceIdentifier: InputSource.dvorakCommandQWERTY
+            ),
+            shiftedKey
+        )
+        XCTAssertEqual(shiftedKey.menuKeyEquivalent.characters, "}")
+        XCTAssertEqual(shiftedKey.menuKeyEquivalent.modifiers, [.command])
+        XCTAssertEqual(
+            CommandDispatcher.matchedPhiCommand(
+                for: shiftedEvent,
+                shortcutMap: [shiftedKey: .PHI_COPY_URL],
+                inputSourceIdentifier: InputSource.dvorakCommandQWERTY
+            ),
+            .PHI_COPY_URL
+        )
+    }
+
+    func testShortcutCaptureUsesASCIIEquivalentWithoutCommandWhenProvided() throws {
+        let event = try makeShortcutKeyEvent(
+            characters: "C",
+            charactersIgnoringModifiers: "\u{0421}",
+            modifiers: [.shift]
+        )
+        let shiftOnlyKey = ShortcutsKey(characters: "c", modifiers: [.shift])
+        let recordedKey = try XCTUnwrap(
+            ShortcutsKey.recordingKey(
+                for: event,
+                inputSourceIdentifier: InputSource.russian
+            )
+        )
+
+        let command = CommandDispatcher.matchedPhiCommand(
+            for: event,
+            shortcutMap: [shiftOnlyKey: .PHI_COPY_URL],
+            inputSourceIdentifier: InputSource.russian
+        )
+
+        XCTAssertEqual(recordedKey, shiftOnlyKey)
+        XCTAssertEqual(recordedKey.displayString, "⇧C")
+        XCTAssertEqual(command, .PHI_COPY_URL)
+    }
+
+    func testNonASCIICaptureKeepsSemanticKeyWithoutASCIIEquivalent() throws {
+        let event = try makeShortcutKeyEvent(
+            characters: "\u{041F}",
+            charactersIgnoringModifiers: "\u{041F}",
+            modifiers: [.control, .shift],
+            keyCode: UInt16(kVK_ANSI_G)
+        )
+        let recordedKey = try XCTUnwrap(
+            ShortcutsKey.recordingKey(
+                for: event,
+                inputSourceIdentifier: InputSource.russian
+            )
+        )
+        let semanticKey = ShortcutsKey(
+            characters: "\u{043F}",
+            modifiers: [.control, .shift]
+        )
+
+        XCTAssertEqual(recordedKey, semanticKey)
+        XCTAssertEqual(recordedKey.displayString, "⇧⌃П")
+        XCTAssertEqual(
+            CommandDispatcher.matchedPhiCommand(
+                for: event,
+                shortcutMap: [semanticKey: .PHI_FARRINGDON_TOGGLE],
+                inputSourceIdentifier: InputSource.russian
+            ),
+            .PHI_FARRINGDON_TOGGLE
+        )
+    }
+
+    func testPhiShortcutMatchingFallsBackWhenIgnoringModifiersIsEmpty() throws {
+        let event = try makeShortcutKeyEvent(
+            characters: "C",
+            charactersIgnoringModifiers: "",
+            modifiers: [.command, .shift]
+        )
+        let copyURLKey = try XCTUnwrap(Shortcuts.DefaultShortcuts[.PHI_COPY_URL])
+
+        let command = CommandDispatcher.matchedPhiCommand(
+            for: event,
+            shortcutMap: [copyURLKey: .PHI_COPY_URL],
+            inputSourceIdentifier: InputSource.russian
+        )
+
+        XCTAssertEqual(command, .PHI_COPY_URL)
+    }
+
+    func testHebrewCommandCaptureUsesInputSourceSpecificLatinEquivalent() throws {
+        let event = try makeShortcutKeyEvent(
+            characters: "q",
+            charactersIgnoringModifiers: "/",
+            modifiers: [.command],
+            keyCode: UInt16(kVK_ANSI_Q)
+        )
+
+        let hebrewKey = try XCTUnwrap(
+            ShortcutsKey.recordingKey(
+                for: event,
+                inputSourceIdentifier: InputSource.hebrewQWERTY
+            )
+        )
+        let nonHebrewKey = try XCTUnwrap(
+            ShortcutsKey.recordingKey(
+                for: event,
+                inputSourceIdentifier: InputSource.us
+            )
+        )
+
+        XCTAssertEqual(hebrewKey, ShortcutsKey(characters: "q", modifiers: [.command]))
+        XCTAssertEqual(nonHebrewKey, ShortcutsKey(characters: "/", modifiers: [.command]))
+        XCTAssertEqual(
+            CommandDispatcher.matchedPhiCommand(
+                for: event,
+                shortcutMap: [hebrewKey: .PHI_COPY_URL],
+                inputSourceIdentifier: InputSource.hebrewQWERTY
+            ),
+            .PHI_COPY_URL
+        )
+    }
+
+    func testArabicCommandCaptureUsesInputSourceSpecificLatinEquivalent() throws {
+        let event = try makeShortcutKeyEvent(
+            characters: "V",
+            charactersIgnoringModifiers: "{",
+            modifiers: [.command, .shift],
+            keyCode: UInt16(kVK_ANSI_V)
+        )
+
+        let arabicKey = try XCTUnwrap(
+            ShortcutsKey.recordingKey(
+                for: event,
+                inputSourceIdentifier: InputSource.arabicAZERTY
+            )
+        )
+        let nonArabicKey = try XCTUnwrap(
+            ShortcutsKey.recordingKey(
+                for: event,
+                inputSourceIdentifier: InputSource.us
+            )
+        )
+
+        XCTAssertEqual(
+            arabicKey,
+            ShortcutsKey(characters: "v", modifiers: [.command, .shift])
+        )
+        XCTAssertEqual(
+            nonArabicKey,
+            ShortcutsKey(characters: "{", modifiers: [.command, .shift])
+        )
+        XCTAssertEqual(
+            CommandDispatcher.matchedPhiCommand(
+                for: event,
+                shortcutMap: [arabicKey: .PHI_COPY_URL],
+                inputSourceIdentifier: InputSource.arabicAZERTY
+            ),
+            .PHI_COPY_URL
+        )
     }
 
     func testCopyURLShortcutKeycapsMatchMacModifierOrder() {
@@ -46,19 +668,22 @@ final class PhiBrowserTests: XCTestCase {
                 characters: String(format: "%c", NSBackTabCharacter),
                 charactersIgnoringModifiers: String(format: "%c", NSBackTabCharacter),
                 isARepeat: false,
-                keyCode: 48
+                keyCode: UInt16(kVK_Tab)
             )
         )
 
-        let keyChord = try XCTUnwrap(KeyChord(fromEvent: event))
-        let shortcut = ShortcutsKey(
-            characters: keyChord.characters,
-            modifiers: keyChord.modifiers
+        let shortcut = try XCTUnwrap(
+            ShortcutsKey.recordingKey(
+                for: event,
+                inputSourceIdentifier: InputSource.us
+            )
         )
 
-        XCTAssertEqual(keyChord.characters, "\t")
-        XCTAssertEqual(keyChord.modifiers, [.control, .shift])
+        XCTAssertEqual(shortcut.characters, "\t")
+        XCTAssertEqual(shortcut.modifiers, [.control, .shift])
         XCTAssertEqual(shortcut.displayString, "⇧⌃⇥")
+        XCTAssertEqual(shortcut.menuKeyEquivalent.characters, "\t")
+        XCTAssertEqual(shortcut.menuKeyEquivalent.modifiers, [.control, .shift])
     }
 
     func testThemeSnapshotRoundTripPreservesRGBAndStandardizesAlpha() {

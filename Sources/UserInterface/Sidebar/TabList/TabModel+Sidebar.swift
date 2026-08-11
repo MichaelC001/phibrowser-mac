@@ -352,8 +352,9 @@ extension Tab: ContextMenuRepresentable {
     private func applyCopyURLShortcut(to item: NSMenuItem) {
         item.tag = CommandWrapper.PHI_COPY_URL.rawValue
         guard let key = Shortcuts.key(for: .PHI_COPY_URL) else { return }
-        item.keyEquivalent = key.characters
-        item.keyEquivalentModifierMask = key.modifiers
+        let menuKey = key.menuKeyEquivalent
+        item.keyEquivalent = menuKey.characters
+        item.keyEquivalentModifierMask = menuKey.modifiers
     }
   
     @objc private func addToBookmarkFolder(_ menuItem: NSMenuItem) {

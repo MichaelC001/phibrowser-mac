@@ -478,14 +478,23 @@ extension CommandWrapper {
 
 extension Shortcuts {
     static func updateShortcut(for item: NSMenuItem) {
-        let tag = item.tag
-        let state = overrideState(for: tag)
-        guard let state else {
-            return
+        let effectiveKey: ShortcutsKey?
+        if let override = overrideState(for: item.tag) {
+            // The outer optional distinguishes an explicit disable from no override.
+            effectiveKey = override
+        } else {
+            guard let command = CommandWrapper(rawValue: item.tag),
+                  let defaultKey = DefaultShortcuts[command] else {
+                // Preserve menu items that do not participate in shortcut settings.
+                return
+            }
+            effectiveKey = defaultKey
         }
-        if let key = state {
-            item.keyEquivalent = key.characters
-            item.keyEquivalentModifierMask = key.modifiers
+
+        if let key = effectiveKey {
+            let menuKey = key.menuKeyEquivalent
+            item.keyEquivalent = menuKey.characters
+            item.keyEquivalentModifierMask = menuKey.modifiers
         } else {
             item.keyEquivalent = ""
             item.keyEquivalentModifierMask = .init(rawValue: 0)

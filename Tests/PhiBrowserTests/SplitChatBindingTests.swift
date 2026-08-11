@@ -114,4 +114,43 @@ final class SplitChatBindingTests: XCTestCase {
         XCTAssertNil(state.aiChatTabs[id1])
         XCTAssertTrue(state.aiChatTabs[id2] === chat)
     }
+
+    func testSidebarOpenTriggerIsConsumedOnce() throws {
+        let state = try makeState()
+
+        XCTAssertEqual(state.consumeAIChatSidebarOpenTrigger(), .restore)
+
+        state.prepareAIChatSidebarOpen(trigger: .shortcut)
+
+        XCTAssertEqual(state.consumeAIChatSidebarOpenTrigger(), .shortcut)
+        XCTAssertEqual(state.consumeAIChatSidebarOpenTrigger(), .restore)
+    }
+
+    func testSidebarMetricsSessionOnlyTracksVisibilityEdges() {
+        var session = AIChatSidebarMetricsSession()
+
+        XCTAssertEqual(session.update(isExpanded: true, uptime: 10), .opened)
+        XCTAssertNil(session.update(isExpanded: true, uptime: 20))
+        XCTAssertEqual(
+            session.update(isExpanded: false, uptime: 35),
+            .closed(durationSeconds: 25)
+        )
+        XCTAssertNil(session.update(isExpanded: false, uptime: 40))
+    }
+
+    func testSidebarMetricsSessionsTrackTabsIndependently() {
+        var tabASession = AIChatSidebarMetricsSession()
+        var tabBSession = AIChatSidebarMetricsSession()
+
+        XCTAssertEqual(tabASession.update(isExpanded: true, uptime: 10), .opened)
+        XCTAssertEqual(tabBSession.update(isExpanded: true, uptime: 20), .opened)
+        XCTAssertEqual(
+            tabBSession.update(isExpanded: false, uptime: 35),
+            .closed(durationSeconds: 15)
+        )
+        XCTAssertEqual(
+            tabASession.update(isExpanded: false, uptime: 50),
+            .closed(durationSeconds: 40)
+        )
+    }
 }
