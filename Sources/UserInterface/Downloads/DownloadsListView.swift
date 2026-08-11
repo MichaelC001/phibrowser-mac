@@ -52,6 +52,7 @@ struct DownloadsListView: View {
                         item: item,
                         isLast: index == downloadsManager.downloads.count - 1,
                         onCopyLink: { downloadsManager.copyLink($0) },
+                        onOpen: { openDownload($0) },
                         onShowInFinder: { downloadsManager.showInFinder($0) },
                         onPause: { downloadsManager.pauseDownload($0) },
                         onResume: { downloadsManager.resumeDownload($0) },
@@ -76,6 +77,14 @@ struct DownloadsListView: View {
                 .frame(height: 36)
             }
         )
+    }
+
+    private func openDownload(_ item: DownloadItem) {
+        guard item.state == .complete,
+              item.safetyState == .normal,
+              item.canOpenDownload else { return }
+
+        downloadsManager.openDownload(item)
     }
 }
 

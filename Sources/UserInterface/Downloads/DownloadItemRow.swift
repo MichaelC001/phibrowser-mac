@@ -10,6 +10,7 @@ struct DownloadItemRow: View {
     @State private var isHovered = false
     var isLast: Bool
     var onCopyLink: (DownloadItem) -> Void
+    var onOpen: (DownloadItem) -> Void
     var onShowInFinder: (DownloadItem) -> Void
     var onPause: (DownloadItem) -> Void
     var onResume: (DownloadItem) -> Void
@@ -24,13 +25,20 @@ struct DownloadItemRow: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(alignment: .center, spacing: 12) {
-                // File icon
-                fileIcon
-                
-                // File info
-                fileInfo
-                
-                Spacer(minLength: 0)
+                HStack(alignment: .center, spacing: 12) {
+                    // File icon
+                    fileIcon
+
+                    // File info
+                    fileInfo
+
+                    Spacer(minLength: 0)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+                .onTapGesture(count: 2) {
+                    onOpen(item)
+                }
                 
                 // Action buttons
                 actionButtons
@@ -280,8 +288,7 @@ struct DownloadItemRow: View {
     private var normalActionButtons: some View {
         switch item.state {
             case .inProgress:
-                DownloadActionButton(
-                    icon: .init(.copyLink),
+                DownloadCopyLinkButton(
                     action: { onCopyLink(item) },
                     tooltip: NSLocalizedString("downloads.item.inProgress.copyLinkButtonTooltip", value: "Copy Link", comment: "Download item - Tooltip for copying the link of an in-progress download")
                 )
@@ -300,8 +307,7 @@ struct DownloadItemRow: View {
                 )
                 
             case .complete:
-                DownloadActionButton(
-                    icon: .init(.copyLink),
+                DownloadCopyLinkButton(
                     action: { onCopyLink(item) },
                     tooltip: NSLocalizedString("downloads.item.completed.copyLinkButtonTooltip", value: "Copy Link", comment: "Download item - Tooltip for copying the link of a completed download")
                 )
@@ -326,8 +332,7 @@ struct DownloadItemRow: View {
 //                moreOptionsMenu
                 
             case .cancelled, .interrupted:
-                DownloadActionButton(
-                    icon: .init(.copyLink),
+                DownloadCopyLinkButton(
                     action: { onCopyLink(item) },
                     tooltip: NSLocalizedString("downloads.item.interrupted.copyLinkButtonTooltip", value: "Copy Link", comment: "Download item - Tooltip for copying the link of an interrupted download")
                 )
@@ -382,6 +387,31 @@ struct DownloadItemRow: View {
     }
 }
 
+// MARK: - Download Copy Link Button
+struct DownloadCopyLinkButton: View {
+    let action: () -> Void
+    let tooltip: String
+
+    @State private var showCopyConfirmation = false
+
+    var body: some View {
+        DownloadActionButton(
+            iconName: showCopyConfirmation ? "checkmark" : "link",
+            action: copyLink,
+            tooltip: tooltip
+        )
+    }
+
+    private func copyLink() {
+        action()
+        showCopyConfirmation = true
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+            showCopyConfirmation = false
+        }
+    }
+}
+
 // MARK: - Download Action Button
 struct DownloadActionButton: View {
     let iconName: String?
@@ -409,6 +439,7 @@ struct DownloadActionButton: View {
                     icon
                 } else if let iconName {
                     Image(systemName: iconName)
+                        .contentTransition(.symbolEffect(.replace, options: .speed(3)))
                         .font(.system(size: 12, weight: .medium))
                         .themedTint(.textPrimary)
                 }
@@ -438,6 +469,7 @@ struct DownloadItemRow_Previews: PreviewProvider {
                 item: PreviewDownloadItem.inProgress,
                 isLast: false,
                 onCopyLink: { _ in },
+                onOpen: { _ in },
                 onShowInFinder: { _ in },
                 onPause: { _ in },
                 onResume: { _ in },
@@ -450,6 +482,7 @@ struct DownloadItemRow_Previews: PreviewProvider {
                 item: PreviewDownloadItem.paused,
                 isLast: false,
                 onCopyLink: { _ in },
+                onOpen: { _ in },
                 onShowInFinder: { _ in },
                 onPause: { _ in },
                 onResume: { _ in },
@@ -462,6 +495,7 @@ struct DownloadItemRow_Previews: PreviewProvider {
                 item: PreviewDownloadItem.completed,
                 isLast: false,
                 onCopyLink: { _ in },
+                onOpen: { _ in },
                 onShowInFinder: { _ in },
                 onPause: { _ in },
                 onResume: { _ in },
@@ -474,6 +508,7 @@ struct DownloadItemRow_Previews: PreviewProvider {
                 item: PreviewDownloadItem.failed,
                 isLast: false,
                 onCopyLink: { _ in },
+                onOpen: { _ in },
                 onShowInFinder: { _ in },
                 onPause: { _ in },
                 onResume: { _ in },
@@ -486,6 +521,7 @@ struct DownloadItemRow_Previews: PreviewProvider {
                 item: PreviewDownloadItem.cancelled,
                 isLast: true,
                 onCopyLink: { _ in },
+                onOpen: { _ in },
                 onShowInFinder: { _ in },
                 onPause: { _ in },
                 onResume: { _ in },

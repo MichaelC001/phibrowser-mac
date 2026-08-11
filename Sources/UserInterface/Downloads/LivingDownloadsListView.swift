@@ -489,8 +489,7 @@ struct LivingDownloadItemView: View {
 
         case .complete:
             HStack(spacing: 4) {
-                DownloadActionButton(
-                    icon: .init(.copyLink),
+                DownloadCopyLinkButton(
                     action: { onCopyLink(item) },
                     tooltip: NSLocalizedString("downloads.livingItem.copyLinkButtonTooltip", value: "Copy Link", comment: "Tooltip for button to copy download URL in living downloads toast")
                 )
