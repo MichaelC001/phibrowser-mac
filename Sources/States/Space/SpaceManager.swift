@@ -2165,8 +2165,9 @@ final class SpaceManager: ObservableObject {
         )
     }
 
-    /// Mac-side switch for the lazy Space reopen (standard defaults, off by
-    /// default). Gates whether the next windowless reopen computes and sends
+    /// Mac-side switch for the lazy Space reopen (standard defaults, on by
+    /// default; an explicit `false` keeps the full-restore fallback leg).
+    /// Gates whether the next windowless reopen computes and sends
     /// an eager set — and, through the latch that reopen leaves behind
     /// (`lastReopenArmedLazyRestore`), whether that reopen's replay also drops
     /// activations while it runs (`reopenDropsActivations`). Those are the
@@ -2178,7 +2179,10 @@ final class SpaceManager: ObservableObject {
     /// exist.
     static let lazySpaceRestoreEnabledKey = "PhiLazySpaceRestoreEnabled"
     static var isLazySpaceRestoreEnabled: Bool {
-        UserDefaults.standard.bool(forKey: lazySpaceRestoreEnabledKey)
+        if UserDefaults.standard.object(forKey: lazySpaceRestoreEnabledKey) == nil {
+            return true
+        }
+        return UserDefaults.standard.bool(forKey: lazySpaceRestoreEnabledKey)
     }
 
     /// Whether the loaded framework knows the whole lazy-restore selector
