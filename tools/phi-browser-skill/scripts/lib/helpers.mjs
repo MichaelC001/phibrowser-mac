@@ -75,6 +75,19 @@ const state = {
 // much for the gap until the next heredoc round.
 const INTER_ROUND_KEEPALIVE_SECONDS = 30 * 60
 
+// DevTools Network capture retains every response BODY in the browser so
+// Network.getResponseBody can return it later. readNetwork only reads the
+// metadata events, waitForNetworkIdle only counts in-flight requests, and
+// scrapeMedia pulls bytes from the renderer cache via Page.getResourceContent
+// — nothing here ever fetches a captured body, so on a long-lived agent tab
+// that retention is pure growth. Cap it hard; a body evicted from the buffer
+// changes nothing any consumer sees.
+const NETWORK_CAPTURE_PARAMS = {
+  maxTotalBufferSize: 10 * 1024 * 1024,
+  maxResourceBufferSize: 5 * 1024 * 1024,
+  maxPostDataSize: 64 * 1024,
+}
+
 // ---------------------------------------------------------------------------
 // Connection / tunnel
 
@@ -1070,14 +1083,16 @@ async function attachTabNow(targetId) {
     })
   }
   armDialogListeners()
-  // While the USER controls the Space, attach stays passive — no tab
-  // activation, no viewport override below — so their live view never shifts
-  // under them; takeOver()/waitForAgentControl restores agent presentation.
-  const userDriving = state.task?.ownership === 'user'
+  // Attach stays passive — no tab activation, no viewport override below —
+  // whenever the USER owns what's on screen: while they hold control of an
+  // agent Space (takeOver()/waitForAgentControl restores agent presentation),
+  // and ALWAYS in a user-Space binding, where Target.activateTarget would
+  // flip the user's visible tab AND raise/focus their window mid-use
+  // (Chromium only skips window activation for agent-mode windows).
+  const userDriving = ctx?.kind === 'user' || state.task?.ownership === 'user'
   // Make the tab we're about to drive the window's active tab, so a watching
   // user sees the tab the agent operates and Phi can mask it. Activating a tab
-  // in an agent-mode window does not surface the hidden window (Chromium skips
-  // window activation for agent Spaces).
+  // in an agent-mode window does not surface the hidden window.
   if (!userDriving) {
     await client.send('Target.activateTarget', { targetId }).catch(() => {})
   }
@@ -1156,7 +1171,7 @@ async function attachTabNow(targetId) {
     const e = net.requests.get(p.requestId)
     if (e) e.size = Math.round(p.encodedDataLength)
   })
-  await client.send('Network.enable', {}, sessionId).catch(() => {})
+  await client.send('Network.enable', NETWORK_CAPTURE_PARAMS, sessionId).catch(() => {})
   // Restore this tab's viewport override if one was set earlier this round
   // (switching back keeps it); default = the real window size. Agent-window
   // tabs only — a user-Space tab is visible and needs no emulation.
@@ -1168,10 +1183,12 @@ async function attachTabNow(targetId) {
 }
 
 /** Switches the current tab; also activates it in the hidden window (keeps
- *  its renderer painting via the agent-mode visibility forcing). */
+ *  its renderer painting via the agent-mode visibility forcing). In a
+ *  user-Space binding the switch is attach-only: the tab selected on the
+ *  user's screen — and their window focus — are never touched. */
 export async function switchTab(targetId) {
   await guardAgentControl()
-  await attachTab(targetId)  // attachTab already activates the target
+  await attachTab(targetId)  // attachTab activates the target (agent windows only)
   const info = await pageInfo()
   logAction('switch tab', info && info.url ? shortUrl(info.url) : undefined)
   return info
@@ -1523,7 +1540,7 @@ export async function waitForNetworkIdle({ timeout = 30, idleMs = 500, maxInflig
   logAction('wait for network idle')
   const client = await cdpClient()
   const sid = requireSession()
-  await client.send('Network.enable', {}, sid).catch(() => {})
+  await client.send('Network.enable', NETWORK_CAPTURE_PARAMS, sid).catch(() => {})
   // Track by requestId so a redirect chain (same id) counts once and closes on
   // the single terminal loadingFinished/Failed.
   const inflight = new Set()
@@ -5611,6 +5628,32 @@ export function wait(seconds) {
   return new Promise((r) => setTimeout(r, seconds * 1000))
 }
 
+// A live page's JS heap only comes back to the OS on a low-memory signal, so
+// a long multi-round task lets the driven renderer climb across rounds and
+// only deflate when it happens to GC or navigate — which is how a runaway
+// Space renderer reaches multiple GB before righting itself. Force that GC at
+// each idle hand-back so the reclaim happens proactively. performance.memory
+// is the top frame's JS heap only (a coarse proxy for RSS), but a reading this
+// large AFTER a full GC means the live page is genuinely holding it — reload
+// the tab to drop it, since the next round re-observes from scratch anyway.
+const RENDERER_RELOAD_HEAP_BYTES = 2 * 1024 * 1024 * 1024
+
+async function reclaimAgentRenderer(client, sid) {
+  await client.send('HeapProfiler.collectGarbage', {}, sid, 10000).catch(() => {})
+  let heap = 0
+  try {
+    const { result } = await client.send('Runtime.evaluate', {
+      expression: 'performance.memory ? performance.memory.usedJSHeapSize : 0',
+      returnByValue: true,
+    }, sid, 5000)
+    heap = Number(result?.value) || 0
+  } catch {}
+  if (heap > RENDERER_RELOAD_HEAP_BYTES) {
+    logAction(`reclaimed Space renderer: JS heap ${(heap / 1e9).toFixed(1)} GB after GC — reloading tab`)
+    await client.send('Page.reload', {}, sid, 10000).catch(() => {})
+  }
+}
+
 export async function __dispose() {
   if (state.pingTimer) {
     clearInterval(state.pingTimer)
@@ -5628,6 +5671,11 @@ export async function __dispose() {
       taskId: state.task.taskId,
       ttlSeconds: INTER_ROUND_KEEPALIVE_SECONDS,
     }).catch(() => {})
+    // Reclaim the renderer's between-rounds bloat while the Space is idle —
+    // this runs only at hand-back, so it never races a live action.
+    if (state.sessionId) {
+      await reclaimAgentRenderer(state.cdp, state.sessionId).catch(() => {})
+    }
   }
   if (state.cdp) state.cdp.close()
   state.cdp = null
