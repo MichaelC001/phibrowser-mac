@@ -64,12 +64,11 @@ struct IconPicker: View {
         VStack(spacing: 0) {
             PhiSegmentedPicker(
                 IconPickerTab.allCases,
-                selection: $selectedTab,
-                equalSegmentWidths: true
+                selection: $selectedTab
             ) { tab in
                 Text(tab.title)
             }
-            .frame(width: IconPickerMetrics.segmentWidth, height: IconPickerMetrics.segmentHeight)
+            .frame(height: IconPickerMetrics.segmentHeight)
 
             IconPickerSearchField(
                 text: activeSearchText,
@@ -502,7 +501,6 @@ private enum IconPickerMetrics {
     static let height: CGFloat = 280
     static let topPadding: CGFloat = 8
     static let bottomPadding: CGFloat = 8
-    static let segmentWidth: CGFloat = 128
     static let segmentHeight: CGFloat = 26
     static let segmentToSearchSpacing: CGFloat = 8
     static let searchHeight: CGFloat = 24
