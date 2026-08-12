@@ -805,6 +805,116 @@ final class LazySpaceRestoreWiringTests: XCTestCase {
             .spawnPersistedSpaceWindow(restoreProducedNoWindow: false))
     }
 
+    // MARK: - Whether the settled reopen's fallback window claims its entry
+
+    /// The window a settled reopen owes the user used to stand alone always,
+    /// which left the saved entry it stands for unclaimed — and a slot that
+    /// claimed no entry owns no parked ghosts, so switching to one of that
+    /// entry's other Spaces opened an empty window while the saved one stayed
+    /// in the session file. `reopenFallbackWindowPlan` is the rule that lets
+    /// that window take the entry over instead, screened the way the
+    /// cold-start repair screens its own claim.
+    ///
+    /// The defaults describe the claiming shape; each test flips one input.
+    private static func fallbackPlan(
+        reopenArmedLazyRestore: Bool = true,
+        restoreProducedNoWindow: Bool = true,
+        landingIndex: Int? = 1,
+        restoreEntryCount: Int = 3,
+        landingEntryActiveSpaceId: String? = "space-a",
+        spawnSpaceId: String = "space-a",
+        spawnSpaceIsAutomaticSwitchTarget: Bool = true,
+        spawnSpaceSurfacedByAnotherSlot: Bool = false
+    ) -> SpaceManager.ReopenFallbackWindowPlan {
+        SpaceManager.reopenFallbackWindowPlan(
+            reopenArmedLazyRestore: reopenArmedLazyRestore,
+            restoreProducedNoWindow: restoreProducedNoWindow,
+            landingIndex: landingIndex,
+            restoreEntryCount: restoreEntryCount,
+            landingEntryActiveSpaceId: landingEntryActiveSpaceId,
+            spawnSpaceId: spawnSpaceId,
+            spawnSpaceIsAutomaticSwitchTarget: spawnSpaceIsAutomaticSwitchTarget,
+            spawnSpaceSurfacedByAnotherSlot: spawnSpaceSurfacedByAnotherSlot)
+    }
+
+    func testAnArmedReopenThatProducedNoWindowClaimsItsLandingEntry() {
+        XCTAssertEqual(Self.fallbackPlan(), .claimLandingEntry(index: 1))
+    }
+
+    func testNothingRestorableSpawnsPlainAsItAlwaysDid() {
+        // `restoreProducedNoWindow == false` is every other quadrant of
+        // `reopenSettleOutcome`: nothing replayed, so no entry is owed a
+        // window and the spawn stands alone exactly as before.
+        XCTAssertEqual(Self.fallbackPlan(restoreProducedNoWindow: false),
+                       .plainSpawn)
+    }
+
+    func testAnUnarmedReopenNeverClaims() {
+        // The explicit switch gate. `reopenSettleOutcome` does not read the
+        // arming latch, so "no window arrived" alone would also cover a reopen
+        // with the feature off, an older framework, or a record with nothing
+        // to gate — the leg REQUIREMENTS D10 keeps byte for byte as it is. The
+        // promise may not rest on an invariant nobody wrote down.
+        XCTAssertEqual(Self.fallbackPlan(reopenArmedLazyRestore: false),
+                       .plainSpawn)
+    }
+
+    func testASpawnLandingElsewhereThanTheEntrysActiveSpaceNeverClaims() {
+        // The persisted Space was deleted, so the spawn fell back to the first
+        // switchable one. Claiming the entry anyway would hand this window
+        // another window group's parked ghosts (ticket 26's (entry, Space)
+        // ownership).
+        XCTAssertEqual(Self.fallbackPlan(spawnSpaceId: "space-b"), .plainSpawn)
+        XCTAssertEqual(Self.fallbackPlan(landingEntryActiveSpaceId: nil),
+                       .plainSpawn)
+    }
+
+    func testARecordWithNoEntryOrAnOutOfRangeLandingIndexNeverClaims() {
+        // The floor under the whole rule: whatever the record says, the reopen
+        // still owes the user a window, and the plain spawn is what delivers
+        // it.
+        XCTAssertEqual(
+            Self.fallbackPlan(landingIndex: nil, restoreEntryCount: 0),
+            .plainSpawn)
+        XCTAssertEqual(Self.fallbackPlan(landingIndex: 3), .plainSpawn)
+        XCTAssertEqual(Self.fallbackPlan(landingIndex: -1), .plainSpawn)
+    }
+
+    func testASpaceAnotherSlotAlreadySurfacesIsNeverClaimed() {
+        // Screened the way `performColdStartRepair` screens it — a Space maps
+        // 1:1 to a window, so a second one for it would put the same Space on
+        // screen twice.
+        XCTAssertEqual(
+            Self.fallbackPlan(spawnSpaceSurfacedByAnotherSlot: true),
+            .plainSpawn)
+        // And the Space has to be one automatic switching may use at all.
+        XCTAssertEqual(
+            Self.fallbackPlan(spawnSpaceIsAutomaticSwitchTarget: false),
+            .plainSpawn)
+    }
+
+    func testSlotsInPlayNeverReachTheClaimingSpawn() {
+        // Why the guard above is not this leg's safety, stated as a test: the
+        // claim's precondition is the quadrant where no window arrived, and
+        // that quadrant means `slots` was empty (`isWindowlessWithHostedSlots`,
+        // the same predicate that routed the reopen here). With a slot in play
+        // the settle goes to the repair, or — with nothing restorable — to a
+        // spawn whose flag is false and which therefore cannot claim. So the
+        // Space-already-surfaced guard is constant-true here; what actually
+        // keeps this leg safe is the empty slot list plus the Space equality
+        // above.
+        XCTAssertEqual(
+            SpaceManager.reopenSettleOutcome(restoredAnyWindow: true,
+                                             isStillWindowless: false),
+            .repairSlotsWithAbsentActiveSpace)
+        XCTAssertEqual(
+            SpaceManager.reopenSettleOutcome(restoredAnyWindow: false,
+                                             isStillWindowless: false),
+            .spawnPersistedSpaceWindow(restoreProducedNoWindow: false))
+        XCTAssertEqual(Self.fallbackPlan(restoreProducedNoWindow: false),
+                       .plainSpawn)
+    }
+
     // MARK: - The park receipt (what chromium says it actually parked)
 
     func testReceiptReplacesThePredictionRatherThanMergingWithIt() {

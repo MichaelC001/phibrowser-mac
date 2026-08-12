@@ -1037,8 +1037,15 @@ final class SpaceManager: ObservableObject {
     /// windowless-reopen behavior when session restore is off, and the fallback
     /// when a restore turns up nothing. Returns false (declining the reopen)
     /// when no Space resolves, so Chromium's own handler runs.
+    ///
+    /// `restoreProducedNoWindow` is the settled reopen's anomaly quadrant (see
+    /// `reopenSettleOutcome`), and the only one where this window may claim a
+    /// saved entry instead of standing alone — see `reopenFallbackWindowPlan`.
+    /// Every other caller leaves it false and gets exactly today's plain spawn.
     @discardableResult
-    private func spawnPersistedSpaceWindow() -> Bool {
+    private func spawnPersistedSpaceWindow(
+        restoreProducedNoWindow: Bool = false
+    ) -> Bool {
         // Same resolution shape as `handleSpacesUpdate`'s fallback: the
         // persisted id when it names a live, automatically-switchable Space,
         // else the first such Space. `activate` refuses unknown spaceIds, so
@@ -1053,14 +1060,140 @@ final class SpaceManager: ObservableObject {
         }()
         guard let spaceId = resolved else { return false }
         AppLogInfo("[SpaceManager] windowless reopen — spawning persisted Space \(spaceId)")
-        let slot = createSlot(initialSpaceId: spaceId)
-        slot.activate(spaceId: spaceId, onActivationFailed: { [weak self] in
-            // Paired per `reclaimMintedSlot`, and pointedly here: a mint
-            // stranded on THIS path disables the very guard that routed the
-            // reopen into it.
-            self?.reclaimMintedSlot(slot, mintedForThisAttempt: true)
-        })
+        // Same landing rule as the classifier (`classifyRestoreWindows`): the
+        // marked entry, else entry 0 for a record written before the marker.
+        let landingIndex = restoreEntries.firstIndex(where: \.isLandingEntry)
+            ?? (restoreEntries.isEmpty ? nil : 0)
+        let plan = Self.reopenFallbackWindowPlan(
+            reopenArmedLazyRestore: lastReopenArmedLazyRestore,
+            restoreProducedNoWindow: restoreProducedNoWindow,
+            landingIndex: landingIndex,
+            restoreEntryCount: restoreEntries.count,
+            landingEntryActiveSpaceId: landingIndex
+                .map { restoreEntries[$0].activeSpaceId } ?? nil,
+            spawnSpaceId: spaceId,
+            spawnSpaceIsAutomaticSwitchTarget: spaces
+                .first(where: { $0.spaceId == spaceId })
+                .map(isAutomaticSwitchTarget) ?? false,
+            spawnSpaceSurfacedByAnotherSlot: slots.contains {
+                $0.windowController(for: spaceId) != nil
+            })
+        let claimedIndex: Int?
+        let slot: SpaceWindowSlot
+        switch plan {
+        case .claimLandingEntry(let index):
+            // The same claim the cold-start repair makes for an entry whose
+            // saved window never arrived (`performColdStartRepair`), and the
+            // same primitive: `slotForRestoreIndex` binds the entry to this
+            // slot, which is what lets the entry's parked siblings materialize
+            // into it on a later Space switch instead of spawning empty
+            // (REQUIREMENTS R5).
+            AppLogInfo("[SpaceManager] windowless reopen — the restore produced no window; claiming saved entry \(index) for the spawn on Space \(spaceId)")
+            claimedIndex = index
+            slot = slotForRestoreIndex(index, fallbackSpaceId: spaceId)
+        case .plainSpawn:
+            claimedIndex = nil
+            slot = createSlot(initialSpaceId: spaceId)
+        }
+        slot.activate(
+            spaceId: spaceId,
+            onActivationFailed: { [weak self] in
+                guard let self else { return }
+                // Order is load-bearing, and this is the same order
+                // `performColdStartRepair` unwinds its own claim in. The
+                // binding dropped here is what scopes `parkedGhostEntries(for:)`
+                // to the claimed entry, and `removeSlot` resolves that set as
+                // its FIRST step and can go on to destroy every ghost in it.
+                // Unbind first and the set is empty, so that path is
+                // structurally out of reach; unbind after and the only thing
+                // standing between a failed spawn and the user's saved sibling
+                // Spaces is the persist gate's refusal to write an empty
+                // snapshot. Identity-checked for the same reason it is there: a
+                // window that claimed this entry in the gap owns the binding
+                // now.
+                if let claimedIndex,
+                   self.restoredSlotsByIndex[claimedIndex] === slot {
+                    self.restoredSlotsByIndex.removeValue(forKey: claimedIndex)
+                }
+                // Paired per `reclaimMintedSlot`, and pointedly here: a mint
+                // stranded on THIS path disables the very guard that routed the
+                // reopen into it.
+                _ = self.reclaimMintedSlot(slot, mintedForThisAttempt: true)
+            },
+            // Only on the claim, and only because of it: claiming inherits the
+            // entry's fullscreen marker (`slotForRestoreIndex`), and
+            // `reconcileRestoreVisibility` is the marker's only consumer. A
+            // reopen spawn does not come back through session restore, so
+            // nothing else schedules that pass — the window would stay
+            // windowed where the cold-start leg's equivalent comes back
+            // fullscreen (REQUIREMENTS D13), and the unconsumed marker would
+            // latch this slot out of re-arming `.moveToActiveSpace` on its
+            // hidden siblings for the rest of the run (see the same call in
+            // `repairSlotsWithAbsentActiveSpace`, whose comment carries the
+            // mechanism). A plain spawn inherits nothing and is left exactly
+            // as it was.
+            onSwapSettled: claimedIndex == nil ? nil : { [weak slot] in
+                slot?.scheduleRestoreVisibilityReconcile()
+            })
         return true
+    }
+
+    /// Whether the fallback window a settled reopen owes the user may take
+    /// over the saved entry it stands for, or has to stand alone as it always
+    /// did.
+    ///
+    /// Standing alone is what leaves the entry's parked siblings unreachable:
+    /// they are scoped to the entry (`parkedGhostEntries`), so a slot that
+    /// claimed nothing materializes nothing, and switching to one of those
+    /// Spaces opens an empty window while the saved one stays in the session
+    /// file. Claiming is the cold-start repair's answer to the same shape, and
+    /// this is that answer's third call site rather than a second rule.
+    ///
+    /// The armed-reopen input is read explicitly rather than inferred from
+    /// `restoreProducedNoWindow`: `reopenSettleOutcome` does not consult the
+    /// latch, so "no window arrived" alone would also cover an UNARMED reopen
+    /// — the switch off, an older framework, a record with nothing to gate —
+    /// and REQUIREMENTS D10 keeps that leg exactly as it is today. An
+    /// invariant nobody wrote down is not what that promise may rest on.
+    ///
+    /// The three guards below the latch mirror `performColdStartRepair`'s
+    /// screening, one for one. The Space equality is the load-bearing one
+    /// here: claiming an entry that describes a different window group would
+    /// hand this window that group's ghosts (ticket 26's (entry, Space)
+    /// ownership). The last one — another slot already surfacing the Space —
+    /// is constant-true on this leg, since the branch is only reached while
+    /// `slots` is empty (`isWindowlessWithHostedSlots`); it is kept because it
+    /// costs nothing and is the shape the cold-start leg screens with, and it
+    /// must NOT be read as this leg's safety: that comes from the empty slot
+    /// list plus the Space equality. Pure and static so the rule is pinned by
+    /// table.
+    enum ReopenFallbackWindowPlan: Equatable {
+        /// Take over the saved entry at this index — its parked siblings
+        /// become materializable into the spawned window's slot.
+        case claimLandingEntry(index: Int)
+        /// Stand alone, exactly as this spawn always has.
+        case plainSpawn
+    }
+
+    static func reopenFallbackWindowPlan(
+        reopenArmedLazyRestore: Bool,
+        restoreProducedNoWindow: Bool,
+        landingIndex: Int?,
+        restoreEntryCount: Int,
+        landingEntryActiveSpaceId: String?,
+        spawnSpaceId: String,
+        spawnSpaceIsAutomaticSwitchTarget: Bool,
+        spawnSpaceSurfacedByAnotherSlot: Bool
+    ) -> ReopenFallbackWindowPlan {
+        guard reopenArmedLazyRestore, restoreProducedNoWindow,
+              let landingIndex, landingIndex >= 0,
+              landingIndex < restoreEntryCount,
+              let landingEntryActiveSpaceId,
+              landingEntryActiveSpaceId == spawnSpaceId,
+              spawnSpaceIsAutomaticSwitchTarget,
+              !spawnSpaceSurfacedByAnotherSlot
+        else { return .plainSpawn }
+        return .claimLandingEntry(index: landingIndex)
     }
 
     /// What a windowless reopen does once every profile's restore has settled.
@@ -1209,8 +1342,12 @@ final class SpaceManager: ObservableObject {
                 ) {
                 case .spawnPersistedSpaceWindow(let restoreProducedNoWindow):
                     // Nothing restorable, or nothing that made it to screen:
-                    // open a plain window.
-                    let spawned = self.spawnPersistedSpaceWindow()
+                    // open a plain window. The quadrant is carried into the
+                    // spawn because it decides one more thing there — whether
+                    // that window may claim the saved entry it stands for
+                    // (`reopenFallbackWindowPlan`).
+                    let spawned = self.spawnPersistedSpaceWindow(
+                        restoreProducedNoWindow: restoreProducedNoWindow)
                     if restoreProducedNoWindow {
                         // Loud, and the only trace this leaves: the restore
                         // succeeded on chromium's terms while not one window
@@ -2821,6 +2958,31 @@ final class SpaceManager: ObservableObject {
             windowId: windowId,
             spaceId: spaceId,
             restoreIndex: restoreIndexByWindowId.removeValue(forKey: windowId))
+    }
+
+    /// Retires the parked-ghost bookkeeping for a window the tab-restore stack
+    /// ("Reopen Closed Window") has just rebuilt in full.
+    ///
+    /// The mirror image of the prune Chromium arms when a replay hands a saved
+    /// window back: there the undo entry goes because the window came back as
+    /// a restored one, here the parked record goes because the window came
+    /// back through the undo entry. Keeping this half would hand the user the
+    /// same window group twice — once from the stack now, once more when they
+    /// switch to the Space whose record still says its window is parked
+    /// (REQUIREMENTS R4, D12).
+    ///
+    /// Unconditional by design: the two sides key on the same window id, and
+    /// Chromium has already dropped its half by the time this runs. For a
+    /// window nothing parked it is a no-op — and that is the ordinary case,
+    /// since most closed windows were never parked at all.
+    ///
+    /// Discarded, not migrated: the restored entry rebuilds the whole group,
+    /// so the record has nothing left to describe. When R3b lands (the saved
+    /// siblings hang back on the window they were saved with) this has to
+    /// become a migration onto the rebuilt window instead of a drop.
+    func retireParkedGhostReopenedFromUndoStack(windowId: Int) {
+        guard let record = consumeParkedGhost(windowId: windowId) else { return }
+        AppLogInfo("[SpaceManager] closed window \(windowId) came back through the undo stack — retired its parked ghost (Space \(record.spaceId))")
     }
 
     /// Puts a consumed record back, for the one caller that consumes before

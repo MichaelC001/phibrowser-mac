@@ -443,6 +443,28 @@ typedef NS_ENUM(NSInteger, PhiGhostMaterializeOutcome) {
                         windowId:(int64_t)windowId
             restoredFromWindowId:(int64_t)restoredFromWindowId
                  restoredSpaceId:(NSString * _Nullable)restoredSpaceId;
+/// Undo-stack variant of the above — preferred by the bridge when implemented.
+/// `restoredClosedWindowId` is non-zero only when the tab-restore stack
+/// re-created this window, and then carries the PREVIOUS session's windowId of
+/// the window that entry describes (stamped into the entry when it closed). It
+/// travels with `restoredSpaceId`: an entry carrying no Space reports neither.
+///
+/// It is NOT `restoredFromWindowId` and must not be matched against the restore
+/// snapshot. That one names a window session restore replayed into its saved
+/// slot; this one names a window the undo stack has just rebuilt as a brand-new
+/// window group, which claims no saved slot and consumes no snapshot entry.
+///
+/// Its one use: the client retires its own parked-ghost bookkeeping for that
+/// window. Chromium has already dropped the parked record for the same id
+/// before this call, so a client that keeps its half would send the user's next
+/// switch to that Space into a materialization that can only fail.
+- (void)mainBrowserWindowCreated:(NSWindow *)window
+                            type:(ChromiumBrowserType)browserType
+                       profileId:(NSString *)profileId
+                        windowId:(int64_t)windowId
+            restoredFromWindowId:(int64_t)restoredFromWindowId
+                 restoredSpaceId:(NSString * _Nullable)restoredSpaceId
+          restoredClosedWindowId:(int64_t)restoredClosedWindowId;
 // Relationship snapshot version increases monotonically per window.
 - (void)tabRelationshipSnapshotChanged:(NSDictionary *)snapshot
                              windowId:(int64_t)windowId

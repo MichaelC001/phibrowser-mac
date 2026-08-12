@@ -525,6 +525,31 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
                                  restoredSpaceId: nil)
     }
 
+    func mainBrowserWindowCreated(_ window: NSWindow, type browserType: ChromiumBrowserType, profileId: String, windowId: Int64, restoredFromWindowId: Int64, restoredSpaceId: String?, restoredClosedWindowId: Int64) {
+        // The undo stack rebuilt the whole window saved as
+        // `restoredClosedWindowId`, and Chromium dropped its parked record for
+        // that id before making this call. Retire this side's half first, so
+        // the placement below — and the snapshot persist a window arrival
+        // triggers — never runs against a record describing a window the user
+        // is looking at.
+        //
+        // Deliberately its own field rather than `restoredFromWindowId`: that
+        // one is matched against the restore snapshot
+        // (`claimRestoredWindow`), and this window claims no saved slot — it
+        // is a brand-new group the stack built. Feeding it there would consume
+        // the entry's index and re-point the slot the entry belongs to.
+        if restoredClosedWindowId > 0 {
+            SpaceManager.shared.retireParkedGhostReopenedFromUndoStack(
+                windowId: Int(restoredClosedWindowId))
+        }
+        mainBrowserWindowCreated(window,
+                                 type: browserType,
+                                 profileId: profileId,
+                                 windowId: windowId,
+                                 restoredFromWindowId: restoredFromWindowId,
+                                 restoredSpaceId: restoredSpaceId)
+    }
+
     func mainBrowserWindowCreated(_ window: NSWindow, type browserType: ChromiumBrowserType, profileId: String, windowId: Int64, restoredFromWindowId: Int64, restoredSpaceId: String?) {
         AppLogInfo("🌐 [Chromium] mainBrowserWindowCreated called - windowId: \(windowId), restoredFrom: \(restoredFromWindowId), restoredSpace: \(restoredSpaceId ?? "nil"), type: \(browserType.rawValue)")
 
