@@ -1603,6 +1603,31 @@ class BrowserState {
         return true
     }
 
+    /// Moves an explicit bookmark selection without depending on sidebar
+    /// selection state or activating the destination Space.
+    @discardableResult
+    @MainActor
+    func moveBookmarks(bookmarkGuids: [String], toSpaceId targetSpaceId: String) -> Bool {
+        guard let targetSpace = SpaceManager.shared.spaces.first(where: { $0.spaceId == targetSpaceId }) else {
+            return false
+        }
+        return moveBookmarks(bookmarkGuids: bookmarkGuids, to: targetSpace)
+    }
+
+    /// Moves an explicit bookmark selection while preserving live bookmark
+    /// cleanup and the existing cross-Space persistence semantics.
+    @discardableResult
+    @MainActor
+    func moveBookmarks(bookmarkGuids: [String], to targetSpace: SpaceModel) -> Bool {
+        guard let plan = spaceTransferPlan(tabs: [], bookmarkGuids: Set(bookmarkGuids)),
+              canMoveSpaceTransfer(plan, to: targetSpace, sourceHasSpaceSlot: false) else {
+            return false
+        }
+
+        commitBookmarkSpaceMove(plan, to: targetSpace)
+        return true
+    }
+
     @MainActor
     func canCloneMultiSelection(toSpaceId targetSpaceId: String) -> Bool {
         guard let targetSpace = SpaceManager.shared.spaces.first(where: { $0.spaceId == targetSpaceId }) else {

@@ -289,6 +289,9 @@ class BookmarkManager: ObservableObject {
     /// the post-absorption list rather than the one it replaces.
     @Published private(set) var didApplyFirstStoreDelivery = false
 
+    /// The immutable store/profile/Space tuple this manager was created for.
+    let scope: BookmarkManagementScope
+    
     /// Lookup table for bookmark guid -> bookmark instance.
     private var bookmarkIndex: [String: Bookmark] = [:]
     
@@ -304,6 +307,7 @@ class BookmarkManager: ObservableObject {
     
     init(with browseState: BrowserState) {
         self.browserState = browseState
+        self.scope = BookmarkManagementScope(browserState: browseState)
         self.rootFolder = Bookmark(folderTitle: "Bookmarks")
         guard !browseState.isIncognito else {
             // Incognito never subscribes, so nothing would ever flip the
@@ -578,10 +582,16 @@ class BookmarkManager: ObservableObject {
                                                 favicon: faviconDataForNewBookmark(url: primaryURL, explicitData: primaryFaviconData))
     }
 
-    func addFolder(title: String, to parent: Bookmark? = nil) {
+    func addFolder(title: String,
+                   to parent: Bookmark? = nil,
+                   guid: String? = nil) {
         guard let profileId = browserState?.profileId else { return }
         let spaceId = browserState?.spaceId ?? LocalStore.defaultSpaceId
-        browserState?.localStore.createDirectory(title: title, profileId: profileId, parentId: parent?.guid, spaceId: spaceId)
+        browserState?.localStore.createDirectory(title: title,
+                                                 profileId: profileId,
+                                                 parentId: parent?.guid,
+                                                 guid: guid,
+                                                 spaceId: spaceId)
     }
 
     /// Creates a new folder and marks it for inline editing.

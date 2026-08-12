@@ -219,6 +219,9 @@
 		8E0B00022FC0000000000001 /* BrowserState+GroupOverview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E0B00042FC0000000000001 /* BrowserState+GroupOverview.swift */; };
 		8E0B00052FC0000000000001 /* GroupOverviewViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E0B00072FC0000000000001 /* GroupOverviewViewController.swift */; };
 		8E0B00062FC0000000000001 /* GroupOverviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E0B00082FC0000000000001 /* GroupOverviewView.swift */; };
+		B06B4D010000000000000001 /* BookmarkManagementScope.swift in Sources */ = {isa = PBXBuildFile; fileRef = B06B4D110000000000000001 /* BookmarkManagementScope.swift */; };
+		B06B4D020000000000000002 /* BookmarkManagerProjection.swift in Sources */ = {isa = PBXBuildFile; fileRef = B06B4D120000000000000002 /* BookmarkManagerProjection.swift */; };
+		B06B4D030000000000000003 /* BookmarkManagerDropResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = B06B4D130000000000000003 /* BookmarkManagerDropResolver.swift */; };
 		8E21BB6A2FC5503D00378ABE /* PlaceholderShellViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E21BB692FC5503D00378ABE /* PlaceholderShellViewController.swift */; };
 		8E2A91272FB18051003E1F05 /* TabGroupDragContext.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E2A91252FB18051003E1F05 /* TabGroupDragContext.swift */; };
 		8E2A91282FB18051003E1F05 /* TabGroupDragController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E2A91262FB18051003E1F05 /* TabGroupDragController.swift */; };
@@ -847,6 +850,9 @@
 		8E0B00042FC0000000000001 /* BrowserState+GroupOverview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "BrowserState+GroupOverview.swift"; sourceTree = "<group>"; };
 		8E0B00072FC0000000000001 /* GroupOverviewViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupOverviewViewController.swift; sourceTree = "<group>"; };
 		8E0B00082FC0000000000001 /* GroupOverviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupOverviewView.swift; sourceTree = "<group>"; };
+		B06B4D110000000000000001 /* BookmarkManagementScope.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookmarkManagementScope.swift; sourceTree = "<group>"; };
+		B06B4D120000000000000002 /* BookmarkManagerProjection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookmarkManagerProjection.swift; sourceTree = "<group>"; };
+		B06B4D130000000000000003 /* BookmarkManagerDropResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookmarkManagerDropResolver.swift; sourceTree = "<group>"; };
 		8E21BB692FC5503D00378ABE /* PlaceholderShellViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaceholderShellViewController.swift; sourceTree = "<group>"; };
 		8E2A91252FB18051003E1F05 /* TabGroupDragContext.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabGroupDragContext.swift; sourceTree = "<group>"; };
 		8E2A91262FB18051003E1F05 /* TabGroupDragController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabGroupDragController.swift; sourceTree = "<group>"; };
@@ -1667,6 +1673,16 @@
 			path = GroupOverview;
 			sourceTree = "<group>";
 		};
+		B06B4D210000000000000001 /* BookmarkManager */ = {
+			isa = PBXGroup;
+			children = (
+				B06B4D110000000000000001 /* BookmarkManagementScope.swift */,
+				B06B4D120000000000000002 /* BookmarkManagerProjection.swift */,
+				B06B4D130000000000000003 /* BookmarkManagerDropResolver.swift */,
+			);
+			path = BookmarkManager;
+			sourceTree = "<group>";
+		};
 		8E6145812F753114001919BA /* LayoutSelection */ = {
 			isa = PBXGroup;
 			children = (
@@ -2465,6 +2481,7 @@
 				EAD000000000000000000029 /* ReaderStyle.swift */,
 				376CE2F12F2722480093D937 /* NativeNTP */,
 				8E0B00092FC0000000000001 /* GroupOverview */,
+				B06B4D210000000000000001 /* BookmarkManager */,
 				376195BE2F518DCF0094A78E /* FloatingSidebar */,
 				376195472F5152A30094A78E /* Header */,
 				8E486A762F3EEF8A00078DEC /* StatusURLViewModel.swift */,
@@ -2991,6 +3008,9 @@
 				376CE2F32F27226A0093D937 /* NewTabViewController.swift in Sources */,
 				8E0B00052FC0000000000001 /* GroupOverviewViewController.swift in Sources */,
 				8E0B00062FC0000000000001 /* GroupOverviewView.swift in Sources */,
+				B06B4D010000000000000001 /* BookmarkManagementScope.swift in Sources */,
+				B06B4D020000000000000002 /* BookmarkManagerProjection.swift in Sources */,
+				B06B4D030000000000000003 /* BookmarkManagerDropResolver.swift in Sources */,
 				B02586F52E42FD97001B08FC /* ChromiumLauncher.m in Sources */,
 				37686A9C2F10D61E00DC3990 /* UserDefaultsRegistration.swift in Sources */,
 				3769C6B32EFA540300A94DE0 /* GradientColorLabel.swift in Sources */,
