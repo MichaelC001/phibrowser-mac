@@ -2066,7 +2066,7 @@ final class SpaceManager: ObservableObject {
     /// ghost's own Space in the ghost's own slot, so `activate` finds a live
     /// window there and returns before it ever reaches the ghost row: an
     /// empty stand-in shadows the parked session for the rest of the run,
-    /// with no materialization and no alert to say so.
+    /// with no materialization and nothing to say so.
     ///
     /// Narrowed here rather than by dropping parked ids from the restore
     /// index when they are parked, because that index is what the persist
@@ -2885,6 +2885,15 @@ final class SpaceManager: ObservableObject {
                 // Unbind only our own mint: a stand-in window claiming by
                 // profile may have attached to this entry between the spawn
                 // request and this failure, and its binding must survive.
+                //
+                // Order is load-bearing: this unbind must stay ABOVE the
+                // reclaim below. The binding is what scopes
+                // `parkedGhostEntries(for:)` — `removeSlot`'s first step — to
+                // this entry's parked siblings, so reclaiming first hands
+                // them to the destroy path at the end of that same call.
+                // Nothing type-checks this either way round;
+                // `spawnPersistedSpaceWindow`'s own failure path carries the
+                // full reasoning and unwinds in this same order.
                 if self.restoredSlotsByIndex[entryIndex] === slot {
                     self.restoredSlotsByIndex.removeValue(forKey: entryIndex)
                 }
@@ -3108,9 +3117,9 @@ final class SpaceManager: ObservableObject {
         return steered
     }
 
-    /// How a failed materialization left the parked record — the only thing
-    /// the user has to be told apart, because it decides what switching to
-    /// the Space again will do.
+    /// How a failed materialization left the parked record — the one thing
+    /// about a failure worth telling apart, because it decides what switching
+    /// to the Space again will do.
     enum GhostMaterializeFailure: CaseIterable {
         /// Nothing is lost, only delayed: the Space's profile did not
         /// resolve, it failed to load, or Chromium refused for now (its
@@ -3125,8 +3134,8 @@ final class SpaceManager: ObservableObject {
     }
 
     /// What Chromium's answer means for the record: nil when the window was
-    /// rebuilt, otherwise the failure whose copy the user sees. Only "no such
-    /// ghost" retires the record — a refusal that leaves the ghost parked
+    /// rebuilt, otherwise the failure whose consequence gets logged. Only
+    /// "no such ghost" retires the record — a refusal that leaves the ghost parked
     /// must not, because the session file still describes that window and a
     /// Space without its record opens a fresh window beside it. An outcome
     /// this build does not know keeps the record for the same reason. Pure
@@ -3147,85 +3156,29 @@ final class SpaceManager: ObservableObject {
         }
     }
 
-    /// The three strings one failure alert shows. They are chosen together,
-    /// as one answer, because they are one surface: each outcome is its own
-    /// alert with its own localization keys, which is how the two sibling
-    /// Space refusals in this file (`deleteSpace`, `changeProfile`) are keyed
-    /// as well.
-    struct GhostMaterializeFailureAlertCopy {
-        let title: String
-        let message: String
-        let dismissButton: String
-    }
-
-    /// D7: a failed materialization is the one lazy-restore state with UI.
-    /// The two outcomes get different copy because they promise opposite
-    /// things — telling a user to "try switching again" after the record was
-    /// dropped describes an action that will silently open an empty Space
-    /// instead of their tabs. Pure and static so the choice is pinned by
-    /// table, the way the repo's other error copy is.
-    enum GhostMaterializeFailureCopy {
-        static func alert(
-            for outcome: GhostMaterializeFailure
-        ) -> GhostMaterializeFailureAlertCopy {
+    /// What a failed materialization left behind, in the words its log line
+    /// reports it in. The two outcomes get different text because they
+    /// promise opposite things — reading "switching again retries it" after
+    /// the record was dropped describes an action that will silently open an
+    /// empty Space instead of the user's tabs. Pure and static so the choice
+    /// is pinned by table, the way the other outcome rules here are.
+    ///
+    /// D7 used to put this on screen as an NSAlert keyed off
+    /// `spaces.spaceSwitch.reopenWindowFailed` / `.savedWindowGone`. Since the
+    /// 2026-08-12 ruling it is a log line only: both states are defensive, a
+    /// healthy system reaches neither, and the modal charged every user a
+    /// dialog for a failure they could not act on. What the alert carried and
+    /// this must keep carrying is the distinction — the two cases may not
+    /// collapse into one string.
+    enum GhostMaterializeFailureLog {
+        static func consequence(for outcome: GhostMaterializeFailure) -> String {
             switch outcome {
             case .recordKept:
-                return GhostMaterializeFailureAlertCopy(
-                    title: retryableTitle,
-                    message: retryableMessage,
-                    dismissButton: retryableDismissButton)
+                return "parked window kept, no window opened — switching to this Space again retries it"
             case .recordDropped:
-                return GhostMaterializeFailureAlertCopy(
-                    title: recordGoneTitle,
-                    message: recordGoneMessage,
-                    dismissButton: recordGoneDismissButton)
+                return "parked record dropped, no window opened — switching to this Space again opens a new, empty window"
             }
         }
-
-        private static let retryableTitle = NSLocalizedString("spaces.spaceSwitch.reopenWindowFailed.title", value: "Can’t reopen this Space’s window",
-            comment: "Spaces - Title of the alert shown when a Space's saved window could not be brought back this time"
-        )
-
-        private static let retryableMessage = NSLocalizedString("spaces.spaceSwitch.reopenWindowFailed.message", value: "The window saved for this Space couldn’t be reopened. Try switching to it again.",
-            comment: "Spaces - Body of the alert shown when a Space's saved window could not be brought back this time and switching again may still work"
-        )
-
-        private static let retryableDismissButton = NSLocalizedString("spaces.spaceSwitch.reopenWindowFailed.dismissButton", value: "OK",
-            comment: "Spaces - Dismiss button of the alert shown when a Space's saved window could not be brought back this time"
-        )
-
-        private static let recordGoneTitle = NSLocalizedString("spaces.spaceSwitch.savedWindowGone.title", value: "This Space’s saved window is gone",
-            comment: "Spaces - Title of the alert shown when a Space's saved window turned out to be no longer available at all"
-        )
-
-        private static let recordGoneMessage = NSLocalizedString("spaces.spaceSwitch.savedWindowGone.message", value: "The tabs saved for this Space are no longer available. Switching to it will open a new, empty window.",
-            comment: "Spaces - Body of the alert shown when a Space's saved window turned out to be no longer available at all, so switching again opens an empty window instead"
-        )
-
-        private static let recordGoneDismissButton = NSLocalizedString("spaces.spaceSwitch.savedWindowGone.dismissButton", value: "OK",
-            comment: "Spaces - Dismiss button of the alert shown when a Space's saved window turned out to be no longer available at all"
-        )
-    }
-
-    /// Presents the failure. Same presentation shape as the other
-    /// Space-operation refusals here (`deleteSpace`, `changeProfile`).
-    ///
-    /// Its one caller, `SpaceWindowSlot.failMaterialize`, reaches it from a
-    /// fresh turn of the runloop rather than straight out of a bridge
-    /// completion — a profile that was already loaded completes synchronously
-    /// inside Chromium's own call stack, where `runModal` would spin a nested
-    /// runloop in the middle of it. The hop lives there rather than here
-    /// because that caller also has to release the repeat gate AFTER the
-    /// modal returns, which it can only do around a synchronous call.
-    fileprivate static func presentGhostMaterializeFailureAlert(
-        _ outcome: GhostMaterializeFailure
-    ) {
-        let copy = GhostMaterializeFailureCopy.alert(for: outcome)
-        let alert = NSAlert()
-        alert.messageText = copy.title
-        alert.informativeText = copy.message
-        alert.addButton(withTitle: copy.dismissButton)
-        alert.runModal()
     }
 
     /// The profileId a Space is bound to, or nil if unknown. Reads the live
@@ -5088,8 +5041,8 @@ final class SpaceManager: ObservableObject {
         // live windows only. The re-entry finds no ghost and runs the
         // unchanged flow — which closes the just-materialized window like any
         // background window and replays its tabs on the new profile. A failed
-        // materialization aborts the change with everything as it was (alert
-        // shown by the materialize): re-binding anyway would strand the
+        // materialization aborts the change with everything as it was (logged
+        // by the materialize): re-binding anyway would strand the
         // parked window under a profile its Space no longer names.
         if let ghostWindowId = parkedGhostWindowId(forSpaceId: spaceId) {
             // The third fallback is the expected one here, not a defensive
@@ -7506,7 +7459,7 @@ final class SpaceWindowSlot: ObservableObject {
         // layout, `animated: false`, fullscreen slot, no visible previous
         // window) — the completion then presents the target instantly, which
         // un-conceals it (`makeKeyAndOrderFrontHidingSlotTabBar` reveals at
-        // its head). Failure keeps the slot as it is — alert shown by the
+        // its head). Failure keeps the slot as it is — logged by the
         // materialize, no fallback spawn (the session file may still
         // describe the parked window).
         if let ghostWindowId = manager.parkedGhostWindowId(forSpaceId: spaceId,
@@ -7538,7 +7491,7 @@ final class SpaceWindowSlot: ObservableObject {
                 }
                 guard ok else {
                     // Mid-slide the slide is left to land and restore the
-                    // leaving window; the failure alert is already on its way.
+                    // leaving window; the failure is already logged.
                     if let materializeSwitch {
                         materializeSwitch.spawnFailed()
                     } else {
@@ -7918,13 +7871,13 @@ final class SpaceWindowSlot: ObservableObject {
     /// still in flight) — is transient with the parked window still described
     /// by the session file, so the record has to survive: without it the next
     /// switch spawns an empty window that stands beside the parked one as a
-    /// doubled Space. Which of the two happened is what the failure alert
+    /// doubled Space. Which of the two happened is what the failure log line
     /// says (`GhostMaterializeFailure`).
     ///
     /// `completion` runs with the outcome once the attempt settles (the
     /// profile load may be asynchronous); on failure nothing is on screen,
-    /// an alert is on its way, and the records are exactly as retryable as
-    /// the failure was.
+    /// nothing is said to the user beyond the log line, and the records are
+    /// exactly as retryable as the failure was.
     func materializeParkedGhost(windowId: Int, spaceId: String,
                                 completion: @escaping (Bool) -> Void) {
         guard let manager else {
@@ -7944,22 +7897,25 @@ final class SpaceWindowSlot: ObservableObject {
                   .materializeGhostWindow(_:profileId:outcomeCompletion:))) else {
             // Unreachable in practice — records only exist when arming
             // probed the selector family — but a stale build combination
-            // must fail loudly rather than trap. No alert: this one is a
-            // build accident, not a state the user can act on.
+            // must fail loudly rather than trap. Logged as its own line
+            // rather than through `failMaterialize`: the repeat gate is not
+            // claimed yet, and this is a build accident rather than one of
+            // the two record outcomes.
             AppLogWarn("[SpaceWindowSlot] materialize(\(spaceId)): bridge unavailable or too old")
             completion(false)
             return
         }
         // Claimed here rather than after the profile resolves, so that EVERY
         // path from this point on — including the failing ones — holds the
-        // repeat gate until its alert has been dismissed (`failMaterialize`).
+        // repeat gate until the attempt has settled (`failMaterialize`).
         pendingSpawnSpaceIds.insert(spaceId)
         // The ghost was parked under the profile its Space is bound to —
         // an unresolvable binding means the record cannot be honored.
         guard let profileId = manager.boundProfileId(forSpaceId: spaceId),
               !profileId.isEmpty else {
-            AppLogWarn("[SpaceWindowSlot] materialize(\(spaceId)): no bound profile")
-            failMaterialize(.recordKept, spaceId: spaceId, completion: completion)
+            failMaterialize(.recordKept, spaceId: spaceId,
+                            reason: "no bound profile for ghost \(windowId)",
+                            completion: completion)
             return
         }
         // Captured before the (possibly asynchronous) profile load, exactly
@@ -7987,8 +7943,10 @@ final class SpaceWindowSlot: ObservableObject {
                 }
                 guard success else {
                     // Transient: the records stay, a later attempt may succeed.
-                    AppLogWarn("[SpaceWindowSlot] materialize(\(spaceId)): ensureProfileLoaded failed for \(profileId)")
-                    self.failMaterialize(.recordKept, spaceId: spaceId, completion: completion)
+                    self.failMaterialize(
+                        .recordKept, spaceId: spaceId,
+                        reason: "ensureProfileLoaded failed for \(profileId), ghost \(windowId)",
+                        completion: completion)
                     return
                 }
                 let consumed = manager.consumeParkedGhost(windowId: windowId)
@@ -8028,6 +7986,7 @@ final class SpaceWindowSlot: ObservableObject {
                 self.materializeConcealSpaceId = nil
                 manager.currentSpawn = nil
                 if let failure = SpaceManager.materializeFailure(for: outcome) {
+                    let reason: String
                     switch failure {
                     case .recordKept:
                         // Refused with the ghost still parked: put the
@@ -8039,11 +7998,12 @@ final class SpaceWindowSlot: ObservableObject {
                         if let consumed {
                             manager.reinstateParkedGhost(consumed)
                         }
-                        AppLogWarn("[SpaceWindowSlot] materialize(\(spaceId)): chromium refused ghost \(windowId) for now — record kept")
+                        reason = "chromium refused ghost \(windowId) for now"
                     case .recordDropped:
-                        AppLogError("[SpaceWindowSlot] materialize(\(spaceId)): chromium held no ghost \(windowId) — stale record dropped")
+                        reason = "chromium held no ghost \(windowId), the record was stale"
                     }
-                    self.failMaterialize(failure, spaceId: spaceId, completion: completion)
+                    self.failMaterialize(failure, spaceId: spaceId,
+                                         reason: reason, completion: completion)
                     return
                 }
                 self.pendingSpawnSpaceIds.remove(spaceId)
@@ -8053,38 +8013,49 @@ final class SpaceWindowSlot: ObservableObject {
         }
     }
 
-    /// Ends a failed materialization: reports it to the caller now, and puts
-    /// the alert up on the next turn of the runloop.
+    /// Ends a failed materialization: writes the one account of it, reports
+    /// it to the caller, and releases the repeat gate on the next turn of the
+    /// runloop.
     ///
-    /// Both halves of that are load-bearing. The alert is deferred because a
-    /// profile that was already loaded completes `ensureProfileLoaded`
-    /// synchronously from inside Chromium's own callback stack, where
-    /// `runModal` would spin a nested runloop in the middle of it. And the
-    /// repeat gate is held across the deferral AND the alert, because until
-    /// the user has seen and dismissed it the failure is not yet something
-    /// they can act on: a second activation of the same Space arriving in
-    /// that span used to open a window beside the alert — and on the
-    /// dropped-record branch an EMPTY one, since the record that routes an
-    /// activation to a materialization is exactly what has just gone.
+    /// The log line is this failure's whole surface — it used to be an alert.
+    /// `reason` says what refused, the consequence table says what that left
+    /// behind, and the severity follows the outcome, since a dropped record
+    /// is the branch where saved tabs are gone for good. Written here rather
+    /// than at the four refusal sites so that one failure stays one line.
     ///
-    /// The alert is not conditional on the slot surviving the hop: what it
-    /// reports is about the Space and its saved tabs, which outlive this
-    /// slot, and the dropped-record branch is precisely where staying silent
-    /// would leave the user with no account of where their tabs went.
+    /// The gate release keeps its one-turn deferral, but the span it covers
+    /// is now smaller than the alert's was, deliberately. What it still
+    /// covers is the caller's SYNCHRONOUS unwinding out of `completion(false)`
+    /// below — `reclaimMintedSlot`, the entry unbind, an un-animated
+    /// `onActivationFailed`. What it does NOT cover is the animated leg:
+    /// `spawnFailed` mid-slide only marks the switch failed and leaves the
+    /// restore to `slideSettled`, which lands after this release. That is the
+    /// gate staying inside its own responsibility — "a materialize attempt is
+    /// in flight for this Space", which by then is over — rather than growing
+    /// a second one. An activation arriving during the land-back is not a
+    /// race: `activate` force-settles the in-flight switch through
+    /// `verticalSwapCancel` (`SpawnSwitchAnimation.settle`) before it spawns.
     ///
     /// Residue, accepted: the gate is released by Space id, so an account
-    /// transition that re-keys the pending-spawn claim underneath a modal
+    /// transition that re-keys the pending-spawn claim inside that turn
     /// (`prepareAccountTransitionPendingWindow`) leaves the destination Space
     /// claimed until a window registers for it. Every asynchronous spawn in
     /// this class releases by id across its own await and carries the same
-    /// residue; what is new here is only how long the window stays open,
-    /// since a modal is bounded by the user rather than by a profile load.
+    /// residue.
     private func failMaterialize(_ outcome: SpaceManager.GhostMaterializeFailure,
                                  spaceId: String,
+                                 reason: String,
                                  completion: @escaping (Bool) -> Void) {
+        let line = "[SpaceWindowSlot] materialize(\(spaceId)): \(reason); "
+            + SpaceManager.GhostMaterializeFailureLog.consequence(for: outcome)
+        switch outcome {
+        case .recordKept:
+            AppLogWarn(line)
+        case .recordDropped:
+            AppLogError(line)
+        }
         completion(false)
         DispatchQueue.main.async { [weak self] in
-            SpaceManager.presentGhostMaterializeFailureAlert(outcome)
             self?.pendingSpawnSpaceIds.remove(spaceId)
         }
     }

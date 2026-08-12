@@ -20,8 +20,8 @@ import XCTest
 ///   * which parked window an activation of a Space materializes
 ///     (`parkedGhostWindowId(in:forSpaceId:)`) — including the deterministic
 ///     pick on a corrupt duplicate;
-///   * what a failed materialization tells the user
-///     (`GhostMaterializeFailureCopy`) — the two outcomes promise opposite
+///   * what a failed materialization reports
+///     (`GhostMaterializeFailureLog`) — the two outcomes promise opposite
 ///     things about switching again;
 ///   * what Chromium's answer does to the parked record
 ///     (`materializeFailure(for:)`) — a refusal that leaves the ghost parked
@@ -439,59 +439,59 @@ final class LazySpaceRestoreWiringTests: XCTestCase {
         )
     }
 
-    // MARK: - What a failed materialization tells the user
+    // MARK: - What a failed materialization reports
 
-    /// The two outcomes differ in the one way the user acts on: whether the
-    /// parked record survived. Kept, switching again retries the same window;
-    /// dropped, switching again opens an empty Space. One copy for both made
-    /// the second case a lie — it told the user to try again, and trying
-    /// again silently replaced their saved tabs with a blank window.
+    /// The two outcomes differ in the one way that decides what a second
+    /// switch does: whether the parked record survived. Kept, switching again
+    /// retries the same window; dropped, switching again opens an empty
+    /// Space. One text for both made the second case a lie — it invited a
+    /// retry that silently replaces the saved tabs with a blank window. The
+    /// surface is a log line rather than an alert now; the distinction it
+    /// carries is unchanged.
 
-    private static func copy(
+    private static func consequence(
         _ outcome: SpaceManager.GhostMaterializeFailure
-    ) -> SpaceManager.GhostMaterializeFailureAlertCopy {
-        SpaceManager.GhostMaterializeFailureCopy.alert(for: outcome)
+    ) -> String {
+        SpaceManager.GhostMaterializeFailureLog.consequence(for: outcome)
     }
 
-    func testEveryFailureHasCopy() {
+    func testEveryFailureHasAConsequence() {
         // Over `allCases`, not a hand-written pair: a third outcome added
-        // later has to bring its copy with it rather than silently escaping.
+        // later has to bring its own text with it rather than silently
+        // escaping.
         for outcome in SpaceManager.GhostMaterializeFailure.allCases {
-            XCTAssertFalse(Self.copy(outcome).title.isEmpty, "Missing title for \(outcome)")
-            XCTAssertFalse(Self.copy(outcome).message.isEmpty, "Missing message for \(outcome)")
-            XCTAssertFalse(Self.copy(outcome).dismissButton.isEmpty,
-                           "Missing dismiss button for \(outcome)")
+            XCTAssertFalse(Self.consequence(outcome).isEmpty,
+                           "Missing log consequence for \(outcome)")
         }
     }
 
     func testAKeptRecordInvitesAnotherAttempt() {
         XCTAssertTrue(
-            Self.copy(.recordKept).message
-                .localizedCaseInsensitiveContains("try switching to it again"),
-            "A record that survived the failure is worth retrying, and the copy has to say so")
+            Self.consequence(.recordKept)
+                .localizedCaseInsensitiveContains("switching to this Space again retries it"),
+            "A record that survived the failure is worth retrying, and the log has to say so")
     }
 
     func testADroppedRecordSaysSwitchingAgainOpensAnEmptyWindow() {
         // The specific promise that has to be there: not "try again", but
         // what actually happens next.
         XCTAssertTrue(
-            Self.copy(.recordDropped).message
+            Self.consequence(.recordDropped)
                 .localizedCaseInsensitiveContains("empty window"),
-            "A dropped record cannot be retried — the copy has to name what a second switch does")
+            "A dropped record cannot be retried — the log has to name what a second switch does")
     }
 
     func testTheTwoOutcomesNeverReadAlike() {
-        XCTAssertNotEqual(Self.copy(.recordKept).message, Self.copy(.recordDropped).message)
-        XCTAssertNotEqual(Self.copy(.recordKept).title, Self.copy(.recordDropped).title)
+        XCTAssertNotEqual(Self.consequence(.recordKept), Self.consequence(.recordDropped))
     }
 
     // MARK: - What Chromium's answer does to the parked record
 
     /// The record is the only thing between a refusal and a doubled Space:
     /// drop it and the next switch spawns a fresh window beside the one the
-    /// session file still describes, while the alert has already told the
-    /// user their tabs are gone. So only the one answer that means "nothing
-    /// will ever satisfy this intent" may retire it.
+    /// session file still describes, after the log has already recorded the
+    /// tabs as gone. So only the one answer that means "nothing will ever
+    /// satisfy this intent" may retire it.
 
     func testARebuiltGhostIsNotAFailure() {
         XCTAssertNil(SpaceManager.materializeFailure(for: .materialized))
