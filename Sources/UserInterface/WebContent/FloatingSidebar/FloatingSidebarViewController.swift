@@ -5,7 +5,6 @@
 
 import Combine
 import AppKit
-import PostHog
 import SnapKit
 /// Floating sidebar shown when the primary sidebar is collapsed in non-comfortable layouts.
 /// Lightweight mirror of SidebarViewController.
@@ -122,9 +121,7 @@ class FloatingSidebarViewController: NSViewController {
                 NSSound.beep()
                 return
             }
-            PostHogSDK.shared.capture("sidebar_button_tapped", properties: [
-                "button": SidebarBottomBarAnalyticsButton.chat.rawValue,
-            ])
+            FeatureEntryAnalytics.capture(.chat, surface: .sidebar)
             self.state.toggleAIChat()
         }
         view.onCardEntryTap = {
@@ -132,9 +129,7 @@ class FloatingSidebarViewController: NSViewController {
         }
         view.onMemoryTap = {
             guard let state = BrowserState.currentState() else { return }
-            PostHogSDK.shared.capture("sidebar_button_tapped", properties: [
-                "button": SidebarBottomBarAnalyticsButton.memory.rawValue,
-            ])
+            FeatureEntryAnalytics.capture(.memory, surface: .sidebar)
             state.createTab(
                 "chrome://memory/memory.html",
                 focusAfterCreate: true
@@ -142,9 +137,7 @@ class FloatingSidebarViewController: NSViewController {
             FirstTimeActionTracker.capture(.memoryOpened)
         }
         view.onDownloadTap = {
-            PostHogSDK.shared.capture("sidebar_button_tapped", properties: [
-                "button": SidebarBottomBarAnalyticsButton.download.rawValue,
-            ])
+            FeatureEntryAnalytics.capture(.download, surface: .sidebar)
         }
         return view
     }()

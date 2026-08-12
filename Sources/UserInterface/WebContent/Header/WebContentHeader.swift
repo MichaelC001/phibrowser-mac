@@ -192,6 +192,9 @@ class WebContentHeader: NSView {
             onMemoryTap: { [weak self] in
                 self?.memoryButtonClicked()
             },
+            onDownloadTap: { [weak self] in
+                self?.downloadButtonClicked()
+            },
             onOpenLocationBar: { [weak self] anchorView in
                 self?.unsafeBrowserWindowController?.openLocationBar(anchorView)
             },
@@ -422,6 +425,7 @@ class WebContentHeader: NSView {
             NSSound.beep()
             return
         }
+        FeatureEntryAnalytics.capture(.chat, surface: .webContentHeader)
         unsafeBrowserState?.toggleAIChat()
     }
 
@@ -431,11 +435,16 @@ class WebContentHeader: NSView {
 
     @objc private func memoryButtonClicked() {
         guard let state = BrowserState.currentState() else { return }
+        FeatureEntryAnalytics.capture(.memory, surface: .webContentHeader)
         state.createTab(
             "chrome://memory/memory.html",
             focusAfterCreate: true
         )
         FirstTimeActionTracker.capture(.memoryOpened)
+    }
+
+    private func downloadButtonClicked() {
+        FeatureEntryAnalytics.capture(.download, surface: .webContentHeader)
     }
 
     // MARK: - Public Methods
