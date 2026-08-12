@@ -191,6 +191,101 @@ final class LazySpaceRestoreWiringTests: XCTestCase {
         )
     }
 
+    // MARK: - Cold-start head (which profile Chromium replays first)
+
+    private static func preferred(
+        _ entries: [(isLandingEntry: Bool, windowMap: [Int: String])],
+        eager: Set<Int>,
+        profiles: [String: String]
+    ) -> [String] {
+        SpaceManager.coldStartPreferredProfileOrder(
+            entries: entries,
+            eagerWindowIds: eager,
+            profileIdForSpaceId: { profiles[$0] })
+    }
+
+    func testColdStartHeadNamesTheLandingEntrysOwnerFirst() {
+        // The landing entry is the group the user was last looking at, and its
+        // owner is the head Chromium has to replay first — whatever position
+        // the entry sits at in the record.
+        XCTAssertEqual(
+            Self.preferred(
+                [(isLandingEntry: false, windowMap: [1: "space-a"]),
+                 (isLandingEntry: true, windowMap: [2: "space-b"])],
+                eager: [1, 2],
+                profiles: ["space-a": "Default", "space-b": "Profile 1"]),
+            ["Profile 1", "Default"])
+    }
+
+    func testColdStartHeadFallsBackToSnapshotOrder() {
+        // No landing entry (a record written before that field existed): the
+        // snapshot order is this project's one deterministic ordering.
+        XCTAssertEqual(
+            Self.preferred(
+                [(isLandingEntry: false, windowMap: [1: "space-a"]),
+                 (isLandingEntry: false, windowMap: [2: "space-b"])],
+                eager: [1, 2],
+                profiles: ["space-a": "Default", "space-b": "Profile 1"]),
+            ["Default", "Profile 1"])
+    }
+
+    func testColdStartHeadOrdersWithinAnEntryByWindowId() {
+        // One group holding two eager windows on two profiles: ascending
+        // window id decides, so the answer cannot depend on dictionary order.
+        XCTAssertEqual(
+            Self.preferred(
+                [(isLandingEntry: true, windowMap: [9: "space-a", 4: "space-b"])],
+                eager: [4, 9],
+                profiles: ["space-a": "Default", "space-b": "Profile 1"]),
+            ["Profile 1", "Default"])
+    }
+
+    func testColdStartHeadNamesEachProfileOnce() {
+        // Two entries bound to the same profile: a repeated name would only
+        // have Chromium look the same profile up twice.
+        XCTAssertEqual(
+            Self.preferred(
+                [(isLandingEntry: true, windowMap: [1: "space-a"]),
+                 (isLandingEntry: false, windowMap: [2: "space-b"])],
+                eager: [1, 2],
+                profiles: ["space-a": "Default", "space-b": "Default"]),
+            ["Default"])
+    }
+
+    func testColdStartHeadIgnoresWindowsThatAreNotEager() {
+        // A parked window's owner is exactly the profile that must NOT lead:
+        // its replay hands nothing back, which is what puts the upstream
+        // fallback's blank window on screen beside the restored one.
+        XCTAssertEqual(
+            Self.preferred(
+                [(isLandingEntry: true, windowMap: [1: "space-a"]),
+                 (isLandingEntry: false, windowMap: [2: "space-b"])],
+                eager: [1],
+                profiles: ["space-a": "Default", "space-b": "Profile 1"]),
+            ["Default"])
+    }
+
+    func testColdStartHeadSkipsSpacesWithNoBoundProfile() {
+        // An unresolved binding names no profile, so it is skipped rather than
+        // guessed at; the next eager owner still leads.
+        XCTAssertEqual(
+            Self.preferred(
+                [(isLandingEntry: true, windowMap: [1: "space-gone"]),
+                 (isLandingEntry: false, windowMap: [2: "space-b"])],
+                eager: [1, 2],
+                profiles: ["space-b": "Profile 1"]),
+            ["Profile 1"])
+    }
+
+    func testColdStartHeadIsEmptyWhenNothingIsEager() {
+        // Empty is what `coldStartPreferredProfiles()` turns into nil: no
+        // answer, and Chromium keeps the replay order it already has.
+        XCTAssertTrue(Self.preferred(
+            [(isLandingEntry: true, windowMap: [1: "space-a"])],
+            eager: [],
+            profiles: ["space-a": "Default"]).isEmpty)
+    }
+
     // MARK: - Adoption (which live slots a landed write gives a saved entry)
 
     func testAdoptionPlanSkipsSlotsWithASavedEntry() {

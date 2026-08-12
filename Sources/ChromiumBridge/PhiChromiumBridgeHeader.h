@@ -584,6 +584,31 @@ typedef NS_ENUM(NSInteger, PhiGhostMaterializeOutcome) {
 /// full replay, exactly like the old selector's nil.
 - (nullable NSDictionary<NSString *, NSArray<NSNumber *> *> *)coldStartRestorePlan;
 
+/// Which profiles own the eager windows of THIS cold start — profile
+/// directory basenames, the landing group's owner first — or nil to keep the
+/// replay order Chromium already has (today's behaviour).
+///
+/// Asked ONCE per cold start, before any profile replays, synchronously on the
+/// main thread. Same gate, same classification and same tick as
+/// `coldStartRestorePlan`, so a profile named here is one whose replay is
+/// about to hand a window back; answer from memory and do not block.
+///
+/// Chromium replays its stored profile list in order and launches only the
+/// head of it synchronously. When THAT replay hands nothing back — which is
+/// what a profile whose every saved window is parked does — the upstream
+/// startup fallback opens a plain new-tab-page window, and it used to stand
+/// next to the window a later profile restored. Chromium moves the first name
+/// in this list that it is actually replaying to the head; a name it is not
+/// replaying is skipped, and an empty or unmatched list leaves the order
+/// exactly as it was.
+///
+/// This is a reordering, never a suppression: the fallback window still opens
+/// whenever a launch restores nothing at all, so answering here can only
+/// change WHICH profile leads, never whether a window appears.
+///
+/// Read-only and idempotent, like the pulls above.
+- (nullable NSArray<NSString *> *)coldStartPreferredProfiles;
+
 /// What Chromium has parked after a cold-start replay: profile directory
 /// basename → previous-session window ids, in adoption order — the whole
 /// ghost registry, exactly as `parkedCompletion:` reports it for a reopen.

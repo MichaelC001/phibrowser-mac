@@ -2432,6 +2432,93 @@ final class SpaceManager: ObservableObject {
         coldStartClassifiedAnswer()?.wireDictionary
     }
 
+    /// The profiles that own at least one eager window of THIS cold start, in
+    /// snapshot order with the landing group's owner first — or nil for "no
+    /// answer", which keeps the replay order Chromium already has.
+    ///
+    /// Chromium replays the stored profile list in order, and only the profile
+    /// at its head is replayed synchronously, on the path whose upstream
+    /// startup fallback opens a plain new-tab-page window when the replay
+    /// hands nothing back. That stored order records which profile opened the
+    /// FIRST window last run, which is not the profile whose Space the user
+    /// was last looking at — so a head whose every saved window is parked took
+    /// that fallback window while a sibling profile restored the real one:
+    /// two windows for one saved group.
+    ///
+    /// The answer comes from the same gate, the same classification and the
+    /// same tick as `coldStartRestorePlan()`, so a profile named here is one
+    /// this cold start is about to hand a window back for. That is the whole
+    /// correctness argument: the head is chosen by construction, not guessed
+    /// from what was last active.
+    ///
+    /// A LIST rather than one name, because the landing group's profile may
+    /// not be among the profiles Chromium replays at all (an ephemeral profile
+    /// never enters that list); Chromium then takes the next owner instead of
+    /// dropping the reorder.
+    ///
+    /// Read-only and idempotent like the pulls above, and nil on every path
+    /// they answer nil on — switch off, a reopen in flight, an empty record,
+    /// nothing eager — plus one of its own: no eager window resolves to a
+    /// bound profile.
+    func coldStartPreferredProfiles() -> [String]? {
+        let plan = coldStartClassifiedAnswer()
+        let preferred = plan.map { armed in
+            Self.coldStartPreferredProfileOrder(
+                entries: restoreEntries.map {
+                    (isLandingEntry: $0.isLandingEntry, windowMap: $0.windowMap)
+                },
+                eagerWindowIds: Set(armed.eagerWindowIds.map(\.intValue)),
+                profileIdForSpaceId: { boundProfileId(forSpaceId: $0) })
+        } ?? []
+        guard !preferred.isEmpty else {
+            // Answering nil looks exactly like the reorder not working, so
+            // every exit is named by its own value here rather than collapsed
+            // into one "no answer".
+            AppLogInfo("[SpaceManager] cold start head: no eager owner (lazy=\(Self.isLazySpaceRestoreEnabled), restoreInFlight=\(isSessionRestoreInFlight), entries=\(restoreEntries.count), eager=\(plan?.eagerWindowIds.count ?? -1), account=\(boundAccount != nil)) — keeping the stored replay order")
+            return nil
+        }
+        AppLogInfo("[SpaceManager] cold start head: \(preferred.joined(separator: ", ")) own this launch's eager windows")
+        return preferred
+    }
+
+    /// The pure half of `coldStartPreferredProfiles()`: which profiles own the
+    /// eager windows, in the order Chromium should try them.
+    ///
+    /// The landing entry first — that is the group the user was last looking
+    /// at, and its owner is the head this exists to install — then the other
+    /// entries in snapshot order, this project's one deterministic ordering of
+    /// the record; inside an entry, by ascending window id. Deduplicated: two
+    /// entries can be bound to the same profile, and a repeated name would
+    /// only have Chromium look the same profile up twice.
+    ///
+    /// Pure and static so the rule is pinned by table
+    /// (`LazySpaceRestoreWiringTests`).
+    static func coldStartPreferredProfileOrder(
+        entries: [(isLandingEntry: Bool, windowMap: [Int: String])],
+        eagerWindowIds: Set<Int>,
+        profileIdForSpaceId: (String) -> String?
+    ) -> [String] {
+        let ordered = entries.indices.sorted { lhs, rhs in
+            if entries[lhs].isLandingEntry != entries[rhs].isLandingEntry {
+                return entries[lhs].isLandingEntry
+            }
+            return lhs < rhs
+        }
+        var preferred: [String] = []
+        var seen: Set<String> = []
+        for index in ordered {
+            for windowId in entries[index].windowMap.keys.sorted()
+            where eagerWindowIds.contains(windowId) {
+                guard let spaceId = entries[index].windowMap[windowId],
+                      let profileId = profileIdForSpaceId(spaceId),
+                      !profileId.isEmpty,
+                      seen.insert(profileId).inserted else { continue }
+                preferred.append(profileId)
+            }
+        }
+        return preferred
+    }
+
     private func coldStartClassifiedAnswer() -> ArmedRestorePlan? {
         guard Self.isLazySpaceRestoreEnabled else { return nil }
         // Defence in depth behind the Chromium-side initiator check: a reopen
