@@ -7476,6 +7476,18 @@
         }
       }
     },
+    "app.bookmarksMenu.openManager" : {
+      "comment" : "Bookmarks menu - Menu item that opens the bookmark management page",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Bookmark Manager"
+          }
+        }
+      }
+    },
     "app.bookmarksMenu.title" : {
       "comment" : "Bookmarks menu - Menu title",
       "extractionState" : "extracted_with_value",
@@ -7535,6 +7547,86 @@
           }
         }
       }
+    },
+    "bookmarkManager.column.addressTitle" : {
+      "comment" : "Bookmark manager - Header for the bookmark address column",
+      "extractionState" : "extracted_with_value",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "new", "value" : "Address" } } }
+    },
+    "bookmarkManager.column.websiteTitle" : {
+      "comment" : "Bookmark manager - Header for the bookmark name column",
+      "extractionState" : "extracted_with_value",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "new", "value" : "Website" } } }
+    },
+    "bookmarkManager.contextMenu.editAction" : {
+      "comment" : "Bookmark manager context menu - Edit a single bookmark or folder",
+      "extractionState" : "extracted_with_value",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "new", "value" : "Edit" } } }
+    },
+    "bookmarkManager.contextMenu.openAction" : {
+      "comment" : "Bookmark manager context menu - Open a bookmark",
+      "extractionState" : "extracted_with_value",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "new", "value" : "Open" } } }
+    },
+    "bookmarkManager.deleteConfirmation.cancelAction" : {
+      "comment" : "Bookmark manager delete confirmation - Cancel button title",
+      "extractionState" : "extracted_with_value",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "new", "value" : "Cancel" } } }
+    },
+    "bookmarkManager.deleteConfirmation.deleteAction" : {
+      "comment" : "Bookmark manager delete confirmation - Destructive button title",
+      "extractionState" : "extracted_with_value",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "new", "value" : "Delete" } } }
+    },
+    "bookmarkManager.deleteConfirmation.message" : {
+      "comment" : "Bookmark manager - Explanation shown before deleting bookmark folders",
+      "extractionState" : "extracted_with_value",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "new", "value" : "Folders and everything inside them will be removed." } } }
+    },
+    "bookmarkManager.deleteConfirmation.title" : {
+      "comment" : "Bookmark manager - Title of the confirmation shown before deleting multiple bookmarks or a folder",
+      "extractionState" : "extracted_with_value",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "new", "value" : "Delete selected bookmarks?" } } }
+    },
+    "bookmarkManager.emptyState.message" : {
+      "comment" : "Bookmark manager - Empty state when the current Space has no bookmarks",
+      "extractionState" : "extracted_with_value",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "new", "value" : "No bookmarks in this Space" } } }
+    },
+    "bookmarkManager.faviconPlaceholderAccessibilityLabel" : {
+      "comment" : "Bookmark manager - Accessibility description for a placeholder website favicon",
+      "extractionState" : "extracted_with_value",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "new", "value" : "Website" } } }
+    },
+    "bookmarkManager.folder.multipleChildCount" : {
+      "comment" : "Bookmark manager Address column - child count for a folder containing zero or multiple items",
+      "extractionState" : "extracted_with_value",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "new", "value" : "%d items" } } }
+    },
+    "bookmarkManager.folder.singleChildCount" : {
+      "comment" : "Bookmark manager Address column - child count for a folder containing one item",
+      "extractionState" : "extracted_with_value",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "new", "value" : "1 item" } } }
+    },
+    "bookmarkManager.header.newFolderAction" : {
+      "comment" : "Bookmark manager - Button that creates a root bookmark folder",
+      "extractionState" : "extracted_with_value",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "new", "value" : "New Folder" } } }
+    },
+    "bookmarkManager.header.searchPlaceholder" : {
+      "comment" : "Bookmark manager - Search field placeholder",
+      "extractionState" : "extracted_with_value",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "new", "value" : "Search" } } }
+    },
+    "bookmarkManager.header.title" : {
+      "comment" : "Bookmark manager - Page title",
+      "extractionState" : "extracted_with_value",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "new", "value" : "Bookmarks" } } }
+    },
+    "bookmarkManager.search.emptyState" : {
+      "comment" : "Bookmark manager - Empty state when a search has no results",
+      "extractionState" : "extracted_with_value",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "new", "value" : "No matching bookmarks" } } }
     },
     "app.changeSpaceProfileConfirmation.appScopedMessage" : {
       "comment" : "Body of the change-Space-profile confirmation with App-scoped pinned tabs",
