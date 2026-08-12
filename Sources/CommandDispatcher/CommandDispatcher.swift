@@ -229,6 +229,12 @@ struct CommandDispatcher {
         case .IDC_BOOKMARK_THIS_TAB:
             windowController.toggleBookmark(nil)
             return true
+        case .IDC_SHOW_BOOKMARK_MANAGER:
+            guard !windowController.browserState.isIncognito else { return true }
+            windowController.browserState.openTab(
+                URLProcessor.processUserInput("phi://bookmarks")
+            )
+            return true
         case let c where c.rawValue >= CommandWrapper.IDC_SELECT_TAB_0.rawValue && c.rawValue <= CommandWrapper.IDC_SELECT_TAB_7.rawValue:
             MainBrowserWindowControllersManager.shared.findControllerWith(window: window)?.selectTabWithIndex(c.rawValue - CommandWrapper.IDC_SELECT_TAB_0.rawValue)
             return true

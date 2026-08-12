@@ -109,6 +109,10 @@ class WebContentViewController: NSViewController {
     /// partner's own VC won't mount the overlay). Kept off the shared
     /// cancellables so it can be cancelled independently on focus/split change.
     private var partnerCrashCancellable: AnyCancellable?
+    /// The focused split host also owns its partner's mounted content view. Watch
+    /// partner URL changes so entering or leaving a native URL renderer replaces
+    /// that pane immediately instead of waiting for a focus switch.
+    private var partnerContentCancellable: AnyCancellable?
     /// Saved superview reference while hostView is re-parented to window.contentView
     /// for HTML5 content fullscreen. Nil when not in fullscreen.
     private weak var savedHostViewSuperview: NSView?
@@ -117,6 +121,7 @@ class WebContentViewController: NSViewController {
     private var isSubscriptionsSetup = false
     private enum ContentMode: Equatable {
         case nativeNtp
+        case bookmarkManager
         case webContent
         case groupOverview(token: String)
     }
@@ -188,6 +193,7 @@ class WebContentViewController: NSViewController {
     private var leftContainerInsetConstraint: Constraint?
     private var splitViewLeadingConstraint: Constraint?
     private var nativeNtpController: NewTabViewController?
+    private var bookmarkManagerController: BookmarkManagerViewController?
     private var groupOverviewController: GroupOverviewViewController?
     /// Native renderer crash page, rebuilt per crash (it renders a fixed
     /// `CrashPageData` snapshot). Non-split only; split panes host their own
@@ -427,6 +433,18 @@ class WebContentViewController: NSViewController {
     private func focusWebContent() {
         guard let tab = associatedTab else {
             AppLogDebug("🔍 [Focus] focusWebContent - no tab or webView")
+            return
+        }
+
+        if shouldShowBookmarkManager(for: tab) {
+            guard browserState?.groupOverviewState == nil,
+                  tab.crashState == nil,
+                  browserState?.splitGroup(forTabId: tab.guid) == nil ||
+                  browserState?.focusingTab?.guid == tab.guid else {
+                return
+            }
+            showBookmarkManager(for: tab)
+            bookmarkManagerController?.focusContent()
             return
         }
 
@@ -1212,7 +1230,19 @@ class WebContentViewController: NSViewController {
             updateLoginRequiredPresentation(for: tab)
             updateHeaderAndBookmarkBarSeparators()
         }
+        let showsBookmarkManager = shouldShowBookmarkManager(for: tab)
+        // Tear down a solo manager as soon as its URL leaves the native route,
+        // even if this tab's controller is currently off-window. Background
+        // split members defer to the focused host's partner-URL subscription so
+        // their pane is replaced atomically instead of being removed in place.
+        if !showsBookmarkManager,
+           browserState?.splitGroup(forTabId: tab.guid) == nil {
+            hideBookmarkManagerIfNeeded()
+        }
         if browserState?.groupOverviewState != nil {
+            if !showsBookmarkManager {
+                hideBookmarkManagerIfNeeded()
+            }
             return
         }
         // For split members, only the focused VC may run this — same rule the
@@ -1242,6 +1272,9 @@ class WebContentViewController: NSViewController {
             return
         }
         deferredContentUpdateTabId = nil
+        if !showsBookmarkManager {
+            hideBookmarkManagerIfNeeded()
+        }
         // Crashed renderer takes priority over NTP / web content. When the split
         // host can actually be mounted, the per-pane crash overlay (Task 11)
         // handles it; otherwise (not in a split, partner pane not yet ready, or
@@ -1252,7 +1285,9 @@ class WebContentViewController: NSViewController {
             showCrashedPage(for: tab)
         } else {
             teardownCrashedPage()
-            if shouldShowNativeNtp(for: tab) {
+            if showsBookmarkManager {
+                showBookmarkManager(for: tab)
+            } else if shouldShowNativeNtp(for: tab) {
                 showNativeNtp(for: tab)
             } else if let webView = tab.webContentView {
                 showWebContent(webView, tabId: tab.guid)
@@ -1356,13 +1391,81 @@ class WebContentViewController: NSViewController {
         guard !tab.isInContentFullscreen,
               let group = browserState?.splitGroup(forTabId: tab.guid),
               let partner = partnerTab(for: group, ownTabId: tab.guid),
-              // A native-NTP partner is mountable even before (or without) a
-              // Chromium view — its pane renders the native NTP view (see
-              // `partnerPaneView(for:)`).
-              partner.webContentView != nil || partner.usesNativeNTP else {
+              // A native renderer partner is mountable even before (or without)
+              // a Chromium view; `partnerPaneView(for:)` resolves its real view.
+              partner.webContentView != nil ||
+              partner.usesNativeNTP ||
+              shouldShowBookmarkManager(for: partner) else {
             return false
         }
         return true
+    }
+
+    private func shouldShowBookmarkManager(for tab: Tab) -> Bool {
+        guard browserState?.isIncognito != true else { return false }
+        return BookmarkManagerRoute.matches(tab.url)
+    }
+
+    private func ensureBookmarkManagerController(
+        state: BrowserState
+    ) -> BookmarkManagerViewController {
+        if let existing = bookmarkManagerController {
+            return existing
+        }
+        let created = BookmarkManagerViewController(browserState: state)
+        bookmarkManagerController = created
+        return created
+    }
+
+    private func showBookmarkManager(for tab: Tab) {
+        guard let state = browserState else { return }
+
+        let controller = ensureBookmarkManagerController(state: state)
+        if controller.parent == nil {
+            addChild(controller)
+        }
+
+        // Match Native NTP's split ownership: only the focused pane installs the
+        // shared split host, while a partner lends this controller's view through
+        // `splitPaneContentView()`.
+        if let group = activeSplitForCurrentTab() {
+            guard view.window != nil else {
+                contentMode = .bookmarkManager
+                return
+            }
+            controller.view.snp.removeConstraints()
+            installSplitContent(
+                group: group,
+                ownTabId: tab.guid,
+                ownNativeView: controller.view
+            )
+            contentMode = .bookmarkManager
+            return
+        }
+
+        if controller.view.superview !== hostView {
+            if let existing = currentSplitHost {
+                existing.removeFromSuperview()
+                currentSplitHost = nil
+                teardownAllSplitCrashViews()
+            }
+            hostView.subviews.forEach { $0.removeFromSuperview() }
+            hostView.addSubview(controller.view)
+            controller.view.snp.remakeConstraints { make in
+                make.edges.equalToSuperview()
+            }
+        }
+        contentMode = .bookmarkManager
+    }
+
+    private func hideBookmarkManagerIfNeeded() {
+        guard let controller = bookmarkManagerController else { return }
+        controller.view.removeFromSuperview()
+        controller.removeFromParent()
+        bookmarkManagerController = nil
+        if contentMode == .bookmarkManager {
+            contentMode = nil
+        }
     }
 
     private func shouldShowNativeNtp(for tab: Tab) -> Bool {
@@ -1578,12 +1681,11 @@ class WebContentViewController: NSViewController {
         }
     }
 
-    /// (Re)bind the partner-crash subscription. Active only while this VC is the
-    /// focused member of a split — then it owns the split host and must react to
-    /// the OTHER pane's crash/recover, since the partner's own VC can't mount
-    /// the overlay. Cancels in every other case. Called on split + focus changes.
+    /// (Re)bind subscriptions for partner state owned by the focused split host.
+    /// The partner's own VC cannot safely remount while it is behind this one.
     func updatePartnerCrashSubscription() {
         partnerCrashCancellable = nil
+        partnerContentCancellable = nil
         guard let tab = associatedTab,
               let state = browserState,
               state.focusingTab?.guid == tab.guid,
@@ -1598,13 +1700,27 @@ class WebContentViewController: NSViewController {
             .sink { [weak self] _ in
                 self?.refreshSplitCrashOverlays()
             }
+        partnerContentCancellable = partner.$url
+            .removeDuplicates()
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.refreshContentForSplitPartnerURLChange()
+            }
     }
 
-    /// Drop the partner-crash subscription unconditionally (the container calls
-    /// this on the OUTGOING focused VC during a focus flip — its own observers
-    /// don't re-run, so it can't self-cancel).
+    /// Drop focused-host partner subscriptions unconditionally. The container
+    /// calls this on the outgoing focused VC because its observers do not re-run.
     func cancelPartnerCrashSubscription() {
         partnerCrashCancellable = nil
+        partnerContentCancellable = nil
+    }
+
+    private func refreshContentForSplitPartnerURLChange() {
+        guard let tab = associatedTab,
+              browserState?.focusingTab?.guid == tab.guid,
+              view.window != nil else { return }
+        updateContentForTab(tab)
     }
 
     /// Reconcile both panes' crash overlays against the currently-mounted split
@@ -1617,15 +1733,19 @@ class WebContentViewController: NSViewController {
         reconcileSplitCrashViews(host: host, group: group)
     }
 
-    /// The view representing this controller's tab inside a split pane: the
-    /// native incognito NTP view while the tab is showing it, the Chromium
-    /// web content view otherwise. Ensures the NTP controller exists and
-    /// reflects the tab, so the pane renders the real native NTP even while
-    /// this controller is not the focused one (the focused pane's controller
-    /// borrows this view into its own split host — the same stealing dance
-    /// `installSplitContent` already does with `Tab.webContentView`).
+    /// The view representing this controller's tab inside a split pane. Native
+    /// URL renderers stay owned by this tab's controller even when the focused
+    /// partner borrows their view into its split host.
     func splitPaneContentView() -> NSView? {
         guard let tab = associatedTab else { return nil }
+        if shouldShowBookmarkManager(for: tab), let state = browserState {
+            let controller = ensureBookmarkManagerController(state: state)
+            if controller.parent == nil {
+                addChild(controller)
+            }
+            return controller.view
+        }
+        hideBookmarkManagerIfNeeded()
         if shouldShowNativeNtp(for: tab), let state = browserState {
             let controller = ensureNativeNtpController(state: state)
             if controller.parent == nil {
@@ -1638,10 +1758,9 @@ class WebContentViewController: NSViewController {
     }
 
     /// The partner pane's content view, resolved through the partner tab's
-    /// own controller so a native-NTP partner contributes its native NTP
-    /// view rather than the underlying (blank-ish) Chromium chrome://newtab
-    /// contents. Falls back to the raw web content view when the container
-    /// lookup is unavailable (e.g. this controller not yet parented).
+    /// own controller so a native-rendered partner contributes its native view
+    /// rather than the hidden Chromium contents. Falls back to the raw web view
+    /// when the container lookup is unavailable.
     ///
     /// The lookup is `splitPaneCompanionController` — NOT the focus-switch
     /// get-or-create — because this runs inside `installSplitContent` and the

@@ -811,6 +811,7 @@ extension AppController {
             target: self,
             bookmarkThisTabAction: #selector(bookmarkThisTab(_:)),
             bookmarkAllTabsAction: #selector(bookmarkAllTabs(_:)),
+            bookmarkManagerAction: #selector(openBookmarkManager(_:)),
             exportBookmarksAction: #selector(exportBookmarks(_:)),
             openBookmarkAction: #selector(openBookmarkMenuItem(_:))
         )
@@ -994,6 +995,15 @@ extension AppController {
                                               url: url,
                                               faviconData: tab.liveFaviconData ?? tab.cachedFaviconData)
         }
+    }
+
+    @objc func openBookmarkManager(_ sender: Any?) {
+        guard let state = MainBrowserWindowControllersManager.shared
+            .activeWindowController?.browserState,
+              !state.isIncognito else {
+            return
+        }
+        state.openTab(URLProcessor.processUserInput("phi://bookmarks"))
     }
 
     @objc func openBookmarkMenuItem(_ sender: Any?) {
@@ -2193,6 +2203,12 @@ extension AppController {
         
         if item.action == #selector(showPreferences(_:)) {
             return ApplicationState.shared.canUseBrowser
+        }
+
+        if item.action == #selector(openBookmarkManager(_:)) {
+            return ApplicationState.shared.canUseBrowser &&
+                MainBrowserWindowControllersManager.shared.activeWindowController != nil &&
+                !isActiveWindowIncognito()
         }
         
         #if !PHI_OSS_BUILD
