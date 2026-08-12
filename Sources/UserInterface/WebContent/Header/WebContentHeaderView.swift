@@ -20,6 +20,7 @@ struct WebContentHeaderView: View {
     let onChatTap: () -> Void
     let onFeedbackTap: () -> Void
     let onMemoryTap: () -> Void
+    let onDownloadTap: () -> Void
     let onOpenLocationBar: (NSView?) -> Void
     var onAnchorResolved: ((NSView?) -> Void)?
     var onSidebarAnchorResolved: ((NSView?) -> Void)?
@@ -42,6 +43,7 @@ struct WebContentHeaderView: View {
         onChatTap: @escaping () -> Void,
         onFeedbackTap: @escaping () -> Void,
         onMemoryTap: @escaping () -> Void = {},
+        onDownloadTap: @escaping () -> Void = {},
         onOpenLocationBar: @escaping (NSView?) -> Void,
         onAnchorResolved: ((NSView?) -> Void)? = nil,
         onSidebarAnchorResolved: ((NSView?) -> Void)? = nil,
@@ -59,6 +61,7 @@ struct WebContentHeaderView: View {
         self.onChatTap = onChatTap
         self.onFeedbackTap = onFeedbackTap
         self.onMemoryTap = onMemoryTap
+        self.onDownloadTap = onDownloadTap
         self.onOpenLocationBar = onOpenLocationBar
         self.onAnchorResolved = onAnchorResolved
         self.onSidebarAnchorResolved = onSidebarAnchorResolved
@@ -109,6 +112,7 @@ struct WebContentHeaderView: View {
                     onFeedbackTap: onFeedbackTap,
                     onChatTap: onChatTap,
                     onMemoryTap: onMemoryTap,
+                    onDownloadTap: onDownloadTap,
                     onChatAnchorResolved: onChatAnchorResolved
                 )
                 .frame(height: HeaderTrailingLayout.rowHeight)

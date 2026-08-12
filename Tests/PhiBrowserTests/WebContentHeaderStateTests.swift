@@ -79,10 +79,17 @@ final class WebContentHeaderStateTests: XCTestCase {
         )
     }
 
-    func testSidebarBottomBarAnalyticsUsesOnlySupportedButtons() {
+    func testFeatureEntryAnalyticsUsesOnlySupportedButtons() {
         XCTAssertEqual(
-            SidebarBottomBarAnalyticsButton.allCases.map(\.rawValue),
-            ["chat", "memory", "download"]
+            FeatureEntryAnalytics.Button.allCases.map(\.rawValue),
+            ["chat", "memory", "download", "organize_tabs"]
+        )
+    }
+
+    func testFeatureEntryAnalyticsUsesStableSurfaces() {
+        XCTAssertEqual(
+            FeatureEntryAnalytics.Surface.allCases.map(\.rawValue),
+            ["sidebar", "web_content_header"]
         )
     }
 }

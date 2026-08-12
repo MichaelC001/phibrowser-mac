@@ -113,6 +113,7 @@ private struct TabStripFarringdonButton: View {
     var body: some View {
         LottieAnimationView(config: animationConfig, state: lottieState) {
             guard !isOrganizing else { return }
+            FeatureEntryAnalytics.capture(.organizeTabs, surface: .webContentHeader)
             FarringdonOrganizer.organizeFocusedWindow(eligibleTabCount: eligibleTabCount)
         }
         .frame(width: buttonSize, height: buttonSize)

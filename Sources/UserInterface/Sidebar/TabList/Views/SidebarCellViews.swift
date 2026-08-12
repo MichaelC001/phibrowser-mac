@@ -1307,10 +1307,11 @@ class NewTabButtonCellView: SidebarCellView {
     }()
 
     @objc private func cleanupButtonClicked() {
-        guard !cleanupButton.isOrganizing else { return }
+        guard !cleanupButton.isOrganizing, let cleanupAction else { return }
         // `cleanupAction` triggers the organize run, which posts
         // `.farringdonOrganizeDidStart`; the button animates via that observer.
-        cleanupAction?()
+        FeatureEntryAnalytics.capture(.organizeTabs, surface: .sidebar)
+        cleanupAction()
     }
 
     private lazy var iconView: LottieAnimationNSView = {

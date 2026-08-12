@@ -5,11 +5,28 @@
 
 import SwiftUI
 import Combine
+import PostHog
 
-enum SidebarBottomBarAnalyticsButton: String, CaseIterable {
-    case chat
-    case memory
-    case download
+@MainActor
+enum FeatureEntryAnalytics {
+    enum Button: String, CaseIterable {
+        case chat
+        case memory
+        case download
+        case organizeTabs = "organize_tabs"
+    }
+
+    enum Surface: String, CaseIterable {
+        case sidebar
+        case webContentHeader = "web_content_header"
+    }
+
+    static func capture(_ button: Button, surface: Surface) {
+        PostHogSDK.shared.capture("feature_entry_tapped", properties: [
+            "button": button.rawValue,
+            "surface": surface.rawValue,
+        ])
+    }
 }
 
 /// State model for the sidebar bottom bar.
