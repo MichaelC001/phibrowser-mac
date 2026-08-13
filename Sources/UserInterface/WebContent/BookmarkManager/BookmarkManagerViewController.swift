@@ -38,6 +38,11 @@ final class BookmarkManagerViewController: NSViewController {
         static let defaultWidthDifference: CGFloat = 160
     }
 
+    private enum Row {
+        static let regularHeight: CGFloat = 30
+        static let splitHeight: CGFloat = 58
+    }
+
     private final class BookmarkActionContext: NSObject {
         let guids: [String]
 
@@ -207,7 +212,7 @@ final class BookmarkManagerViewController: NSViewController {
         outlineView.headerView = NSTableHeaderView()
         outlineView.delegate = self
         outlineView.dataSource = self
-        outlineView.rowHeight = 30
+        outlineView.rowHeight = Row.regularHeight
         outlineView.indentationPerLevel = 18
         outlineView.intercellSpacing = .zero
         outlineView.gridStyleMask = .solidHorizontalGridLineMask
@@ -889,6 +894,14 @@ extension BookmarkManagerViewController: NSOutlineViewDataSource {
 }
 
 extension BookmarkManagerViewController: NSOutlineViewDelegate {
+    func outlineView(_ outlineView: NSOutlineView, heightOfRowByItem item: Any) -> CGFloat {
+        guard let bookmark = item as? Bookmark,
+              bookmark.secondaryUrl?.isEmpty == false else {
+            return Row.regularHeight
+        }
+        return Row.splitHeight
+    }
+
     func outlineView(
         _ outlineView: NSOutlineView,
         viewFor tableColumn: NSTableColumn?,
