@@ -42,8 +42,33 @@
 
 import Cocoa
 import Combine
+import PostHog
 import SnapKit
 import SwiftUI
+
+struct AIChatSidebarMetricsSession {
+    enum Transition: Equatable {
+        case opened
+        case closed(durationSeconds: TimeInterval)
+    }
+
+    private var openedAtUptime: TimeInterval?
+
+    mutating func update(
+        isExpanded: Bool,
+        uptime: TimeInterval
+    ) -> Transition? {
+        if isExpanded {
+            guard openedAtUptime == nil else { return nil }
+            openedAtUptime = uptime
+            return .opened
+        }
+
+        guard let openedAtUptime else { return nil }
+        self.openedAtUptime = nil
+        return .closed(durationSeconds: max(0, uptime - openedAtUptime))
+    }
+}
 
 enum WebContentConstant {
     static let edgesSpacing: CGFloat = 8.0
@@ -105,6 +130,7 @@ class WebContentViewController: NSViewController {
     
     /// Flag to prevent reentrant updates between splitViewItem and tab state
     private var isUpdatingAIChatState = false
+    private var aiChatSidebarMetricsSession = AIChatSidebarMetricsSession()
     /// Last known expanded width for AI Chat sidebar.
     private var lastKnownAIChatWidth: CGFloat = 360
     /// Target width for the next expand animation.  Set before uncollapsing so
@@ -158,6 +184,7 @@ class WebContentViewController: NSViewController {
 
     private var bookmarkBarHeightConstraint: Constraint?
     private weak var attachedBookmarkBar: BookmarkBar?
+    private var isBookmarkBarVisible = false
     private var leftContainerInsetConstraint: Constraint?
     private var splitViewLeadingConstraint: Constraint?
     private var nativeNtpController: NewTabViewController?
@@ -183,7 +210,8 @@ class WebContentViewController: NSViewController {
     private lazy var agentAnimationOverlay: EdgeFogOverlayView = {
         let overlay = EdgeFogOverlayView()
         overlay.alphaValue = 0
-        overlay.layer?.cornerRadius = 0
+        // The overlay owns its corner geometry: it matches the content panel's
+        // continuous curve so the lit edge lands on the same line.
         overlay.hitTestPassthroughHandler = { [weak self, weak overlay] point in
             guard let self, let overlay else { return false }
             return self.shouldPassThroughAgentAnimationOverlayHit(at: point, in: overlay)
@@ -582,13 +610,20 @@ class WebContentViewController: NSViewController {
         applyAgentSpaceOverlayTheme()
     }
 
-    /// The agent cursor is tinted from the window's theme (which carries any
-    /// Space-pinned theme); keep it in sync on theme and appearance changes.
+    /// The agent cursor and the operating mask are both tinted from the
+    /// window's theme (which carries any Space-pinned theme); keep them in sync
+    /// on theme and appearance changes. Each overlay mounts on its own
+    /// schedule, so they are themed independently.
     private func applyAgentSpaceOverlayTheme() {
-        guard agentSpaceOverlay.superview != nil,
-              let themeContext = browserState?.themeContext else { return }
-        agentSpaceOverlay.applyTheme(
-            themeContext.currentTheme, appearance: themeContext.currentAppearance)
+        guard let themeContext = browserState?.themeContext else { return }
+        let theme = themeContext.currentTheme
+        let appearance = themeContext.currentAppearance
+        if agentSpaceOverlay.superview != nil {
+            agentSpaceOverlay.applyTheme(theme, appearance: appearance)
+        }
+        if agentAnimationOverlay.superview != nil {
+            agentAnimationOverlay.applyTheme(theme, appearance: appearance)
+        }
     }
     
     // MARK: - AI Chat Observer
@@ -617,6 +652,7 @@ class WebContentViewController: NSViewController {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] isCollapsed in
                 guard let self else { return }
+                self.updateAIChatSidebarMetrics(isExpanded: !isCollapsed)
                 
                 // Ignore KVO while we are already synchronizing state ourselves.
                 guard !self.isUpdatingAIChatState else {
@@ -646,6 +682,11 @@ class WebContentViewController: NSViewController {
                 self.persistAIChatSidebarStateIfNeeded(for: self.associatedTab)
             }
             .store(in: &cancellables)
+
+        // The initial split-item state is synchronized before KVO is installed.
+        // Reconcile once so a restored expanded sidebar starts this tab's own
+        // metrics session even though the initial KVO value is dropped.
+        updateAIChatSidebarMetrics(isExpanded: !aiChatSplitViewItem.isCollapsed)
 
         // Track frame changes directly because split-view delegate callbacks are unreliable here.
         aiChatSplitViewItem.viewController.view.postsFrameChangedNotifications = true
@@ -1046,13 +1087,42 @@ class WebContentViewController: NSViewController {
     }
 
     /// Toggles the AI Chat panel when the associated tab allows it.
-    func toggleAIChatInTraditionalLayout() {
+    func toggleAIChatInTraditionalLayout(
+        trigger: BrowserState.AIChatSidebarOpenTrigger = .button
+    ) {
         guard browserState?.groupOverviewState == nil,
               associatedTab?.aiChatEnabled == true else {
             return
         }
+        if associatedTab?.aiChatCollapsed == true {
+            browserState?.prepareAIChatSidebarOpen(trigger: trigger)
+        }
         // Updating the tab model is enough; observers drive the UI update.
         associatedTab?.toggleAIChat()
+    }
+
+    private func updateAIChatSidebarMetrics(isExpanded: Bool) {
+        let transition = aiChatSidebarMetricsSession.update(
+            isExpanded: isExpanded,
+            uptime: ProcessInfo.processInfo.systemUptime
+        )
+
+        switch transition {
+        case .opened:
+            let trigger = browserState?.consumeAIChatSidebarOpenTrigger() ?? .restore
+            PostHogSDK.shared.capture("ai_sidebar_opened", properties: [
+                "trigger": trigger.rawValue,
+            ])
+            if trigger != .restore {
+                FirstTimeActionTracker.capture(.aiSidebarOpened)
+            }
+        case let .closed(durationSeconds):
+            PostHogSDK.shared.capture("ai_sidebar_closed", properties: [
+                "duration_seconds": durationSeconds,
+            ])
+        case nil:
+            break
+        }
     }
 
     private func bindContentObservers(for tab: Tab) {
@@ -1133,6 +1203,7 @@ class WebContentViewController: NSViewController {
         guard let tab else { return }
         defer {
             updateLoginRequiredPresentation(for: tab)
+            updateHeaderAndBookmarkBarSeparators()
         }
         if browserState?.groupOverviewState != nil {
             return
@@ -2371,6 +2442,8 @@ class WebContentViewController: NSViewController {
             bookmarkBarSlotView.isHidden = true
             bookmarkBarHeightConstraint?.update(offset: 0)
             attachedBookmarkBar?.isHidden = true
+            isBookmarkBarVisible = false
+            updateHeaderAndBookmarkBarSeparators()
             return
         }
 
@@ -2402,6 +2475,17 @@ class WebContentViewController: NSViewController {
         bookmarkBarSlotView.isHidden = !shouldShowBookmarkBar
         bookmarkBarHeightConstraint?.update(offset: shouldShowBookmarkBar ? WebContentConstant.bookmarkBarHeight : 0)
         attachedBookmarkBar?.isHidden = !shouldShowBookmarkBar
+        isBookmarkBarVisible = shouldShowBookmarkBar
+        updateHeaderAndBookmarkBarSeparators()
+    }
+
+    private func updateHeaderAndBookmarkBarSeparators() {
+        let isSplitViewVisible = isSplitContentMounted
+        headerView.updateBottomSeparatorVisibility(
+            isSplitViewVisible: isSplitViewVisible,
+            isBookmarkBarVisible: isBookmarkBarVisible
+        )
+        attachedBookmarkBar?.showSeparator = !isSplitViewVisible
     }
 
     private func installAttachedBookmarkBarIfNeeded() {
@@ -2639,6 +2723,7 @@ class WebContentViewController: NSViewController {
         // The cursor renders nothing until its theme colors are applied —
         // updateTheme() only fires on changes, so seed them at mount.
         applyAgentSpaceOverlayTheme()
+        raiseAgentSpaceOverlayAboveMask()
     }
 
     private func hideAgentSpaceOverlay() {
@@ -2686,28 +2771,44 @@ class WebContentViewController: NSViewController {
     private func showAgentAnimationOverlay() {
         if agentAnimationOverlay.superview == nil {
             agentAnimationOverlay.alphaValue = 0
-            agentAnimationOverlay.isAnimationPaused = false
             leftContainerView.addSubview(agentAnimationOverlay, positioned: .above, relativeTo: nil)
             agentAnimationOverlay.snp.makeConstraints { make in
                 make.edges.equalToSuperview()
             }
+            applyAgentSpaceOverlayTheme()
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = 0.3
                 self.agentAnimationOverlay.animator().alphaValue = 1
             }
         }
-        // In an agent Space the operating mask and the "Take control" overlay
-        // are both mounted; keep the latter on top so its button stays clickable
-        // over the mask (which otherwise captures the whole tab).
-        if agentSpaceOverlay.superview != nil {
-            leftContainerView.addSubview(agentSpaceOverlay, positioned: .above, relativeTo: agentAnimationOverlay)
-        }
+        raiseAgentSpaceOverlayAboveMask()
         if associatedTab === browserState?.focusingTab {
             view.window?.makeFirstResponder(agentAnimationOverlay)
         }
     }
 
+    /// The operating mask covers the whole tab, so the agent Space overlay —
+    /// which owns the control pill and its buttons — has to sit above it or the
+    /// pill renders under the wash and stops being clickable. The two overlays
+    /// mount on independent schedules (the mask follows the driven tab, the
+    /// pill follows the Space's task), so the order is re-asserted from both
+    /// mount paths rather than assumed from mount order. `relativeTo` names the
+    /// mask explicitly: ordering against `nil` is not reliably honored.
+    private func raiseAgentSpaceOverlayAboveMask() {
+        guard agentSpaceOverlay.superview != nil,
+              agentAnimationOverlay.superview != nil else { return }
+        leftContainerView.addSubview(
+            agentSpaceOverlay, positioned: .above, relativeTo: agentAnimationOverlay)
+    }
+
     private func shouldPassThroughAgentAnimationOverlayHit(at point: NSPoint, in overlay: NSView) -> Bool {
+        // The control pill sits above the mask and stays live in every layout
+        // mode — it is the only way to take control back, so the mask must
+        // never claim its input or its cursor.
+        if agentSpaceOverlay.superview != nil,
+           agentSpaceOverlay.containsControlPill(at: point, from: overlay) {
+            return true
+        }
         guard PhiPreferences.GeneralSettings.loadLayoutMode() != .performance else {
             return false
         }
@@ -2721,7 +2822,6 @@ class WebContentViewController: NSViewController {
             self.agentAnimationOverlay.animator().alphaValue = 0
         }, completionHandler: { [weak self] in
             guard let self else { return }
-            self.agentAnimationOverlay.isAnimationPaused = true
             self.agentAnimationOverlay.removeFromSuperview()
             self.restoreFocusForCurrentTab()
         })

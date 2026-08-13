@@ -48,9 +48,16 @@ enum SupportedAppLanguage: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Uses each language's own locale so the picker shows stable autonyms.
+    /// Uses each language's own locale so the picker shows stable autonyms,
+    /// title-cased for the picker's menu context.
     var displayName: String {
-        Locale(identifier: rawValue).localizedString(forIdentifier: rawValue) ?? rawValue
+        let locale = Locale(identifier: rawValue)
+        let localizedName = locale.localizedString(forIdentifier: rawValue) ?? rawValue
+        let firstWordEnd = localizedName.firstIndex(where: \.isWhitespace)
+            ?? localizedName.endIndex
+        let firstWord = String(localizedName[..<firstWordEnd]).capitalized(with: locale)
+
+        return firstWord + String(localizedName[firstWordEnd...])
     }
 }
 
@@ -133,6 +140,21 @@ extension PhiPreferences.GeneralSettings {
     /// The preference applied to the current process. This snapshot remains
     /// unchanged until Phi relaunches, even if the settings view is recreated.
     static let appLanguagePreferenceAtLaunch = loadAppLanguagePreference()
+
+    static func activeProcessAppLanguage(
+        preferredLocalizations: [String] = Bundle.main.preferredLocalizations
+    ) -> SupportedAppLanguage {
+        let supportedLocalizations = SupportedAppLanguage.allCases.map(
+            \.bundleLocalizationIdentifier
+        )
+        let resolvedLocalization = Bundle.preferredLocalizations(
+            from: supportedLocalizations,
+            forPreferences: preferredLocalizations
+        ).first
+        return SupportedAppLanguage.allCases.first {
+            $0.bundleLocalizationIdentifier == resolvedLocalization
+        } ?? .english
+    }
 
     /// Reasserts Phi's explicit language before Chromium or AppKit loads
     /// localized resources. macOS System Settings writes to the same

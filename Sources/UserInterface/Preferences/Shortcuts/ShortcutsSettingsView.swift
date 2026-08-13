@@ -181,8 +181,8 @@ struct ShortcutsSettingsView: View {
             return
         }
         
-        if let keyChord = KeyChord(fromEvent: event) {
-            viewModel.setCustomShortcut(for: command, keyChord: keyChord)
+        if let key = ShortcutsKey.recordingKey(for: event) {
+            viewModel.setCustomShortcut(for: command, key: key)
             cancelEditing()
         }
     }

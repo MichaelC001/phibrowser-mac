@@ -51,4 +51,45 @@ final class WebContentHeaderStateTests: XCTestCase {
             )
         }
     }
+
+    func testNonSplitHeaderShowsBottomSeparatorWithoutBookmarkBar() {
+        XCTAssertTrue(
+            WebContentHeader.shouldShowBottomSeparator(
+                isSplitViewVisible: false,
+                isBookmarkBarVisible: false
+            )
+        )
+    }
+
+    func testSplitHeaderWithoutBookmarkBarHidesBottomSeparator() {
+        XCTAssertFalse(
+            WebContentHeader.shouldShowBottomSeparator(
+                isSplitViewVisible: true,
+                isBookmarkBarVisible: false
+            )
+        )
+    }
+
+    func testSplitHeaderWithBookmarkBarShowsBottomSeparator() {
+        XCTAssertTrue(
+            WebContentHeader.shouldShowBottomSeparator(
+                isSplitViewVisible: true,
+                isBookmarkBarVisible: true
+            )
+        )
+    }
+
+    func testFeatureEntryAnalyticsUsesOnlySupportedButtons() {
+        XCTAssertEqual(
+            FeatureEntryAnalytics.Button.allCases.map(\.rawValue),
+            ["chat", "memory", "download", "organize_tabs"]
+        )
+    }
+
+    func testFeatureEntryAnalyticsUsesStableSurfaces() {
+        XCTAssertEqual(
+            FeatureEntryAnalytics.Surface.allCases.map(\.rawValue),
+            ["sidebar", "web_content_header"]
+        )
+    }
 }

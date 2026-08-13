@@ -79,13 +79,23 @@ class SidebarViewController: NSViewController {
                 NSSound.beep()
                 return
             }
+            FeatureEntryAnalytics.capture(.chat, surface: .sidebar)
             self.state.toggleAIChat()
         }
         view.onCardEntryTap = { [weak self] in
             self?.showMessageCardTemporarily()
         }
         view.onMemoryTap = {
-            BrowserState.currentState()?.createTab("chrome://memory/memory.html", focusAfterCreate: true)
+            guard let state = BrowserState.currentState() else { return }
+            FeatureEntryAnalytics.capture(.memory, surface: .sidebar)
+            state.createTab(
+                "chrome://memory/memory.html",
+                focusAfterCreate: true
+            )
+            FirstTimeActionTracker.capture(.memoryOpened)
+        }
+        view.onDownloadTap = {
+            FeatureEntryAnalytics.capture(.download, surface: .sidebar)
         }
         return view
     }()

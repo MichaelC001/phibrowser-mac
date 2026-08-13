@@ -92,19 +92,19 @@ final class ConnectorItemState: @MainActor Identifiable {
         return formatter
     }()
 
-    private static let displayDateFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "MMM dd, yyyy"
-        formatter.locale = Locale(identifier: "en_US")
-        return formatter
-    }()
-
-    private static func formatSyncTime(connectedAt: String) -> String {
+    static func formatSyncTime(
+        connectedAt: String,
+        locale: Locale = .autoupdatingCurrent
+    ) -> String {
         guard let date = iso8601Formatter.date(from: connectedAt)
                 ?? ISO8601DateFormatter().date(from: connectedAt) else {
             return NSLocalizedString("settings.ai.connectors.lastSync.invalidDateFallback", value: "Not connected", comment: "AI settings - Fallback last-sync text when the connection date is invalid")
         }
-        return displayDateFormatter.string(from: date)
+        let formatter = DateFormatter()
+        formatter.locale = locale
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .none
+        return formatter.string(from: date)
     }
 
     var actionTitle: String {
@@ -126,6 +126,7 @@ final class AISettingsConnectorViewModel {
     private var pendingAuthorizationPolls: [String: Task<Void, Never>] = [:]
     private var pendingAuthorizationTabGuids: [String: String] = [:]
     private var pendingAuthorizationTabIds: [Int: String] = [:]
+    private var connectionAttemptsInProgress: Set<String> = []
     private var tabCloseObserver: NotificationObserver?
 
     init() {
@@ -188,6 +189,7 @@ final class AISettingsConnectorViewModel {
 
         if result.lowercased() != "success",
            let connector = connectors.first(where: { $0.template.provider == provider }) {
+            connectionAttemptsInProgress.remove(provider)
             connector.errorMessage = error ?? NSLocalizedString("settings.ai.connectors.authorization.failureMessage", value: "Connector authorization failed.", comment: "AI settings - OAuth authorization failure")
         }
 
@@ -228,6 +230,13 @@ final class AISettingsConnectorViewModel {
             let response = try await apiClient.getOAuthConnections()
             guard ApplicationState.shared.isAuthenticated else { return }
             let connections = response.data.connections
+            let newlyConnectedProviders = Set(
+                connections.lazy.filter(\.connected).map(\.provider)
+            ).intersection(connectionAttemptsInProgress)
+            if !newlyConnectedProviders.isEmpty {
+                FirstTimeActionTracker.capture(.connectorConnected)
+                connectionAttemptsInProgress.subtract(newlyConnectedProviders)
+            }
             oauthConnections = connections
             cacheConnections(connections)
             updateConnectorStates()
@@ -260,6 +269,7 @@ final class AISettingsConnectorViewModel {
         let provider = connector.template.provider
         closePendingAuthorizationTab(provider: provider)
         cancelPendingAuthorizationPoll(provider: provider)
+        connectionAttemptsInProgress.insert(provider)
         connector.isLoading = true
         connector.isAuthorizationPending = true
 
@@ -272,6 +282,8 @@ final class AISettingsConnectorViewModel {
                 )
                 let tabGuid = Self.oauthTabGuid(provider: provider)
                 guard openAuthorizationURL(response.data.authURL, provider: provider, tabGuid: tabGuid) else {
+                    connectionAttemptsInProgress.remove(provider)
+                    connector.isAuthorizationPending = false
                     return
                 }
                 pendingAuthorizationTabGuids[provider] = tabGuid
@@ -279,6 +291,7 @@ final class AISettingsConnectorViewModel {
                 startPendingAuthorizationPoll(provider: provider)
                 AppLogInfo("[AISettings] Started OAuth authorization flow for provider: \(provider)")
             } catch {
+                connectionAttemptsInProgress.remove(provider)
                 connector.isLoading = false
                 connector.isAuthorizationPending = false
                 connector.errorMessage = error.localizedDescription
@@ -289,6 +302,7 @@ final class AISettingsConnectorViewModel {
 
     private func disconnect(_ connector: ConnectorItemState) {
         guard ApplicationState.shared.isAuthenticated else { return }
+        connectionAttemptsInProgress.remove(connector.template.provider)
         cancelPendingAuthorizationPoll(provider: connector.template.provider)
         connector.isLoading = true
 
@@ -385,6 +399,7 @@ final class AISettingsConnectorViewModel {
             }
 
             AppLogWarn("[AISettings] OAuth authorization polling timed out for provider: \(provider)")
+            connectionAttemptsInProgress.remove(provider)
             pendingAuthorizationPolls[provider] = nil
             pendingAuthorizationTabGuids[provider] = nil
             removePendingAuthorizationTabIds(provider: provider)
@@ -408,6 +423,7 @@ final class AISettingsConnectorViewModel {
         pendingAuthorizationPolls.removeAll()
         pendingAuthorizationTabGuids.removeAll()
         pendingAuthorizationTabIds.removeAll()
+        connectionAttemptsInProgress.removeAll()
         clearFinishedLoadingStates()
     }
 
@@ -436,6 +452,7 @@ final class AISettingsConnectorViewModel {
             if connectors.first(where: { $0.template.provider == provider })?.status.isConnected == true {
                 finishPendingAuthorization(provider: provider, closeTab: false)
             } else {
+                connectionAttemptsInProgress.remove(provider)
                 cancelPendingAuthorizationPoll(provider: provider)
                 setConnectorLoading(provider: provider, isLoading: false)
             }

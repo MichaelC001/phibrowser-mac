@@ -12,6 +12,7 @@ extension NSNotification.Name {
 
 class OnboardingWindowController: NSWindowController {
     private(set) var presentsGuestMigrationRecovery = false
+    private let analyticsSession = OOBEAnalyticsSession()
 
     private(set) lazy var loginViewController: LoginViewController = {
         let vc = LoginViewController()
@@ -48,7 +49,10 @@ class OnboardingWindowController: NSWindowController {
                     return
                 case .requiresAccountRecovery:
                     guard let self else { return }
-                    self.setContent(self.loginViewController)
+                    self.setContent(
+                        self.loginViewController,
+                        completesCurrentStep: false
+                    )
                 case .failed:
                     vc?.resetAfterGuestEntryFailure()
                 }
@@ -155,8 +159,67 @@ class OnboardingWindowController: NSWindowController {
     
     // MARK: - Content Management
 
-    private func setContent(_ vc: NSViewController) {
+    private func setContent(
+        _ vc: NSViewController,
+        completesCurrentStep: Bool = true
+    ) {
+        if completesCurrentStep {
+            analyticsSession.completeCurrentStep()
+        }
         window?.contentViewController = vc
+        recordCurrentStepViewed()
+    }
+
+    func recordCurrentStepViewed() {
+        guard window?.isVisible == true,
+              let viewController = window?.contentViewController,
+              let step = analyticsStep(for: viewController) else {
+            return
+        }
+        analyticsSession.present(step)
+    }
+
+    func completeAuthenticatedOOBE() {
+        analyticsSession.finish(isGuest: false)
+    }
+
+    func completeGuestOOBE() {
+        analyticsSession.finish(isGuest: true, stepsCompleted: 2)
+    }
+
+    func recordUserInterruption() {
+        analyticsSession.interrupt(reason: .windowClosed)
+    }
+
+    func recordAppTermination() {
+        analyticsSession.interrupt(reason: .appTerminated)
+    }
+
+    func suppressOOBEInterruption() {
+        analyticsSession.suppressInterruption()
+    }
+
+    private func analyticsStep(
+        for viewController: NSViewController
+    ) -> OOBEAnalyticsSession.Step? {
+        switch viewController {
+        case is LoginViewController:
+            return .login
+        case is SetNameViewController:
+            return .setName
+        case is OnboardingWelcomeViewController:
+            return .setTheme
+        case is LayoutSelectionViewController:
+            return .layoutSelection
+        case is PasswordManagerViewController:
+            return .passwordManager
+        case is NextStepViewController:
+            return .nextStep
+        case is GuestPrivacyConfirmationViewController:
+            return .guestPrivacy
+        default:
+            return nil
+        }
     }
     
     private func routeToCurrentPhase(using credentials: Credentials) {
@@ -217,6 +280,7 @@ class OnboardingWindowController: NSWindowController {
     }
 
     private func finish() {
+        analyticsSession.completeCurrentStep()
         LoginController.shared.phase = .done
 
         Task { @MainActor in

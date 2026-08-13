@@ -556,6 +556,7 @@ extension MainBrowserWindowController: NSMenuItemValidation {
 
     func showImportDataWindow() {
         let identifier = NSUserInterfaceItemIdentifier("Phi Import Data Window")
+        BrowserImportAnalytics().captureMenuPresentation()
         // The import window is a singleton. Re-invoking import from another Space
         // retargets the existing window to the current context — unless an import
         // is already running, in which case it is only brought forward so the

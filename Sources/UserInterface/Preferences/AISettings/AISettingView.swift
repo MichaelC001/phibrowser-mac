@@ -230,7 +230,12 @@ private struct BrowserMemorySectionView: View {
     }
 
     private func openBrowserMemoryPage() {
-        BrowserState.currentState()?.createTab("chrome://memory/memory.html", focusAfterCreate: true)
+        guard let state = BrowserState.currentState() else { return }
+        state.createTab(
+            "chrome://memory/memory.html",
+            focusAfterCreate: true
+        )
+        FirstTimeActionTracker.capture(.memoryOpened)
     }
 }
 
@@ -523,7 +528,9 @@ private struct ConnectorRowView: View {
             }
             manageButton
         }
-        .frame(width: 144, alignment: .trailing)
+        .frame(minWidth: 144, alignment: .trailing)
+        .fixedSize(horizontal: true, vertical: false)
+        .layoutPriority(1)
     }
 
     private var manageButton: some View {
@@ -540,6 +547,7 @@ private struct ConnectorRowView: View {
         .buttonStyle(.bordered)
         .controlSize(.small)
         .frame(minWidth: 92)
+        .fixedSize(horizontal: true, vertical: false)
         .disabled(!enabled || (connector.isLoading && !connector.isAuthorizationPending))
     }
 

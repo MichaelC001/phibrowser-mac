@@ -25,8 +25,9 @@ private func popUpControlClickMenu(for event: NSEvent, in view: NSView) -> Bool 
     return true
 }
 
-/// NSHostingView variant that ignores safe area insets.
-private final class SafeAreaIgnoringHostingView<Content: View>: NSHostingView<Content>, TitlebarAwareHitTestable {
+/// ThemedHostingView variant that ignores safe area insets while preserving
+/// the right-button cluster's titlebar hit-test behavior.
+private final class SafeAreaIgnoringHostingView: ThemedHostingView, TitlebarAwareHitTestable {
     override var safeAreaInsets: NSEdgeInsets {
         return NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
     }
@@ -184,7 +185,7 @@ final class TabStripBarController: NSViewController {
     private(set) lazy var tabStrip = TabStrip(browserState: browserState)
     
     /// Hosting view for the right-side button cluster.
-    private var rightButtonsHostingView: SafeAreaIgnoringHostingView<TabStripRightButtons>?
+    private var rightButtonsHostingView: SafeAreaIgnoringHostingView?
 
     /// Hosting view for the active-Space picker, pinned to the trailing edge
     /// of the tab strip row so it shares a horizontal line with the pinned
@@ -304,7 +305,10 @@ final class TabStripBarController: NSViewController {
                 self.handleSearchTabsTap(anchorView: anchorView ?? self.rightButtonsHostingView)
             }
         )
-        let hostingView = SafeAreaIgnoringHostingView(rootView: rightButtons)
+        let hostingView = SafeAreaIgnoringHostingView(
+            rootView: rightButtons,
+            themeSource: browserState.themeContext
+        )
         hostingView.setContentHuggingPriority(.required, for: .horizontal)
         hostingView.setContentCompressionResistancePriority(.required, for: .horizontal)
         rightButtonsHostingView = hostingView

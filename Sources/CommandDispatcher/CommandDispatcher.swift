@@ -6,13 +6,6 @@
 import Foundation
 import AppKit
 struct CommandDispatcher {
-    private static let shortcutModifierFlags: NSEvent.ModifierFlags = [
-        .command,
-        .option,
-        .shift,
-        .control,
-    ]
-
     // Shortcut -> Chromium command mapping for events handled on the native side.
     private static let shortcutCommandMap: [ShortcutsKey: CommandWrapper] = [
         ShortcutsKey(characters: "t", modifiers: [.command]): .IDC_NEW_TAB,
@@ -272,33 +265,19 @@ struct CommandDispatcher {
     
     @MainActor
     static func handleKeyEquivalent(_ event: NSEvent, window: NSWindow) -> Bool {
-        let modifiers = event.modifierFlags.intersection(shortcutModifierFlags)
-
         if MainBrowserWindowControllersManager.shared
             .isGuestTransitionInteractionBlocked {
             // Keep application lifecycle shortcuts available while every
             // browser command remains frozen behind the migration boundary.
-            if modifiers == [.command],
-               event.charactersIgnoringModifiers?.lowercased() == "q" {
+            if ShortcutsKey.eventKeys(for: event)?.canonical
+                == ShortcutsKey(characters: "q", modifiers: .command) {
                 return false
             }
             return true
         }
 
-        // Tab key may report different characters depending on Shift state.
-        let isTabKey = event.keyCode == 48
-        let characters: String
-        if isTabKey {
-            characters = "\t"
-        } else {
-            guard let chars = event.charactersIgnoringModifiers else { return false }
-            characters = normalizedShortcutCharacters(chars)
-        }
-
-        let key = ShortcutsKey(characters: characters, modifiers: modifiers)
-
         // PHI-only commands: intercepted before Chromium sees the event.
-        if let phiCommand = phiShortcutMap[key] {
+        if let phiCommand = matchedPhiCommand(for: event, shortcutMap: phiShortcutMap) {
             return dispatchCommand(phiCommand, to: window)
         }
 
@@ -313,14 +292,32 @@ struct CommandDispatcher {
         return false
     }
 
-    private static func normalizedShortcutCharacters(_ characters: String) -> String {
-        if characters == String(format: "%c", NSDeleteCharacter) {
-            return String(format: "%c", NSBackspaceCharacter)
+    static func matchedPhiCommand(
+        for event: NSEvent,
+        shortcutMap: [ShortcutsKey: CommandWrapper],
+        inputSourceIdentifier: String? = nil
+    ) -> CommandWrapper? {
+        let eventKeys: ShortcutsKey.EventKeys?
+        if let inputSourceIdentifier {
+            eventKeys = ShortcutsKey.eventKeys(
+                for: event,
+                inputSourceIdentifier: inputSourceIdentifier
+            )
+        } else {
+            eventKeys = ShortcutsKey.eventKeys(for: event)
         }
-        if characters.count > 1 {
-            return String(characters.prefix(1)).lowercased()
+        guard let eventKeys else { return nil }
+        for key in eventKeys.matchingKeys {
+            if let command = shortcutMap[key] {
+                return command
+            }
+            if let command = shortcutMap.first(where: {
+                $0.key.menuKeyEquivalent == key.menuKeyEquivalent
+            })?.value {
+                return command
+            }
         }
-        return characters.lowercased()
+        return nil
     }
     
     @MainActor

@@ -106,6 +106,11 @@ final class AppLanguagePreferenceTests: XCTestCase {
         )
     }
 
+    func testLanguagePickerTitleCasesFrenchAndSpanishAutonyms() {
+        XCTAssertEqual(SupportedAppLanguage.french.displayName, "Français")
+        XCTAssertEqual(SupportedAppLanguage.spanish.displayName, "Español")
+    }
+
     func testExplicitLanguagePreservesAndRestoresSystemPerAppLanguage() {
         defaults.set(["fr"], forKey: "AppleLanguages")
 
@@ -268,6 +273,31 @@ final class AppLanguagePreferenceTests: XCTestCase {
             ),
             .spanish
         )
+    }
+
+    func testActiveProcessLanguageUsesBundleLocalizationIdentifiers() {
+        XCTAssertEqual(
+            PhiPreferences.GeneralSettings.activeProcessAppLanguage(
+                preferredLocalizations: ["zh_CN"]
+            ),
+            .simplifiedChinese
+        )
+        XCTAssertEqual(
+            PhiPreferences.GeneralSettings.activeProcessAppLanguage(
+                preferredLocalizations: ["es"]
+            ),
+            .spanish
+        )
+    }
+
+    func testLanguageChangePropertiesContainOnlyFromAndTo() {
+        let properties = AppLanguageAnalytics.changeProperties(
+            from: .system,
+            to: .language(.japanese)
+        )
+
+        XCTAssertEqual(properties, ["from": "system", "to": "ja"])
+        XCTAssertNil(properties["source"])
     }
 
     private var persistentAppleLanguages: [String]? {

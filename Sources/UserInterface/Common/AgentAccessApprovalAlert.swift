@@ -7,10 +7,11 @@ import SwiftUI
 
 /// How long a refusal should stand, as picked in the agent access alert.
 ///
-/// Only the deny side is scoped. Allowing stays a straight two-way choice
-/// (this session / remembered) because widening a *grant* to every agent
-/// would hand any same-user process the browser without a prompt, while
-/// widening a *refusal* only ever turns agents away.
+/// Only refusals are scoped in *time*. Widening either answer to every agent is
+/// the alert's one shared switch instead, so the asymmetry that remains is a
+/// deliberate one: a widened refusal only ever turns agents away, while a
+/// widened grant hands the browser to any same-user process without a prompt,
+/// which is why the latter gets no timed middle ground and a warning of its own.
 enum AgentAccessDenyScope: CaseIterable {
     /// Refuse this connection; the next one asks again.
     case thisTime
@@ -43,8 +44,10 @@ enum AgentAccessDenyScope: CaseIterable {
 
 /// Outcome of the agent access alert, handed back to `AgentCDPListener`.
 enum AgentAccessChoice: Equatable {
-    case allowOnce
-    case allowAlways
+    /// Let the connection through. `remembered` is the difference between
+    /// "Allow Once" (this app session) and "Always Allow" (persisted);
+    /// `allAgents` widens the grant from the asking agent to every agent.
+    case allow(remembered: Bool, allAgents: Bool)
     case deny(scope: AgentAccessDenyScope, allAgents: Bool)
 }
 
@@ -54,9 +57,17 @@ enum AgentAccessChoice: Equatable {
 /// lets it do, and — because the socket answers whether or not the feature is
 /// switched on — says so when allowing would also turn it on.
 ///
-/// Deny carries the scope picker rather than the allow side: a user who is
+/// Deny carries the time-scope picker rather than the allow side: a user who is
 /// being asked by something they don't recognise wants to stop being asked,
 /// and sending them to Settings to arrange that is the failure this replaces.
+/// That picker is a second step, revealed by pressing Deny, so the first screen
+/// asks one question — allow this agent or not — and how long a refusal stands
+/// is only put to a user who has already refused.
+///
+/// "Apply to all agents" is one switch across both steps, not one per answer:
+/// it scopes *who* the decision covers, which is the same question whichever
+/// button is pressed, and a copy under each would ask it twice and leave the
+/// user to notice they mean different things.
 struct AgentAccessApprovalAlert: View {
     let agentName: String
     /// Signing summary for the identity row, e.g. "Team 87DQ3HMK5G · verified".
@@ -67,6 +78,8 @@ struct AgentAccessApprovalAlert: View {
 
     @State private var denyScope = AgentAccessDenyScope.thisTime
     @State private var allAgents = false
+    /// Second step: the user pressed Deny and is now picking how long it holds.
+    @State private var isChoosingDenyScope = false
     @State private var hasChosen = false
 
     @Environment(\.phiAppearance) private var appearance
@@ -79,35 +92,76 @@ struct AgentAccessApprovalAlert: View {
         } content: {
             VStack(alignment: .leading, spacing: 14) {
                 summaryCard
-                controlBanner
-                if opensGates {
-                    enablesFeatureNote
+                // The banners answer "should I allow this?", which the second
+                // step has already settled — the scope question takes their
+                // place rather than stacking under them, so the alert doesn't
+                // outgrow the height it was sized to at presentation.
+                if isChoosingDenyScope {
+                    denySection
+                } else {
+                    controlBanner
+                    if opensGates {
+                        enablesFeatureNote
+                    }
                 }
-                denySection
+                allAgentsSection
             }
         } actions: {
-            PhiAlertActions {
-                PhiAlertButton(
-                    NSLocalizedString("agentControl.connectionApproval.denyButton", value: "Deny", comment: "CDP consent - deny")
-                ) {
-                    choose(.deny(scope: denyScope, allAgents: allAgents && denyScope.isRemembered))
-                }
-                .keyboardShortcut(.cancelAction)
-            } secondaryAction: {
-                PhiAlertButton(
-                    NSLocalizedString("agentControl.connectionApproval.allowOnceButton", value: "Allow Once", comment: "CDP consent - allow for this session")
-                ) {
-                    choose(.allowOnce)
-                }
-            } primaryAction: {
-                PhiAlertButton(
-                    NSLocalizedString("agentControl.connectionApproval.alwaysAllowButton", value: "Always Allow", comment: "CDP consent - allow and remember"),
-                    role: .primary
-                ) {
-                    choose(.allowAlways)
-                }
-                .keyboardShortcut(.defaultAction)
+            if isChoosingDenyScope {
+                denyScopeActions
+            } else {
+                decisionActions
             }
+        }
+    }
+
+    /// First step: allow this agent, or move on to scoping a refusal.
+    private var decisionActions: some View {
+        PhiAlertActions {
+            PhiAlertButton(
+                NSLocalizedString("agentControl.connectionApproval.denyButton", value: "Deny", comment: "CDP consent - deny")
+            ) {
+                withAnimation(.easeOut(duration: 0.18)) { isChoosingDenyScope = true }
+            }
+            .keyboardShortcut(.cancelAction)
+        } secondaryAction: {
+            PhiAlertButton(
+                NSLocalizedString("agentControl.connectionApproval.allowOnceButton", value: "Allow Once", comment: "CDP consent - allow for this session")
+            ) {
+                choose(.allow(remembered: false, allAgents: allAgents))
+            }
+        } primaryAction: {
+            PhiAlertButton(
+                NSLocalizedString("agentControl.connectionApproval.alwaysAllowButton", value: "Always Allow", comment: "CDP consent - allow and remember"),
+                role: .primary
+            ) {
+                choose(.allow(remembered: true, allAgents: allAgents))
+            }
+            .keyboardShortcut(.defaultAction)
+        }
+    }
+
+    /// Second step. Back deliberately takes no `.cancelAction`: Escape already
+    /// reaches here from the first step, and binding it to Back as well would
+    /// leave Escape flipping between the two steps with no way out. Escape then
+    /// Return is the whole keyboard path to "deny, just this time".
+    private var denyScopeActions: some View {
+        PhiAlertActions {
+            PhiAlertButton(
+                NSLocalizedString("agentControl.connectionApproval.backButton", value: "Back", comment: "CDP consent - return from the deny scope step to the allow-or-deny decision")
+            ) {
+                withAnimation(.easeOut(duration: 0.18)) { isChoosingDenyScope = false }
+            }
+        } primaryAction: {
+            PhiAlertButton(
+                NSLocalizedString("agentControl.connectionApproval.denyButton", value: "Deny", comment: "CDP consent - deny"),
+                role: .primary
+            ) {
+                // A "Just this time" refusal records nothing, so there is
+                // nothing for the switch to widen.
+                choose(.deny(scope: denyScope, allAgents: allAgents && denyScope.isRemembered))
+            }
+            .keyboardShortcut(.defaultAction)
         }
     }
 
@@ -225,45 +279,49 @@ struct AgentAccessApprovalAlert: View {
         )
     }
 
-    // MARK: - Deny scope
+    // MARK: - All-agents scope
 
-    private var denySection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(NSLocalizedString("agentControl.connectionApproval.denyScope.label", value: "If you deny:",
-                                   comment: "CDP consent - label over the picker that scopes the Deny button"))
-                .font(.system(size: 12))
-                .themedForeground(.textSecondary)
-            PhiAlertSegmentedPicker(
-                options: AgentAccessDenyScope.allCases,
-                selection: $denyScope,
-                title: \.segmentTitle)
+    /// Widens whichever button is pressed from the asking agent to every agent,
+    /// so it stands across both steps. On the first it must stay live whatever
+    /// the eventual answer; on the second the answer is known, so it follows the
+    /// deny scope and goes inert for "Just this time", which records nothing to
+    /// widen.
+    ///
+    /// The warning is one-sided on purpose, and belongs to the first step only:
+    /// widening a refusal merely turns more agents away, while widening a grant
+    /// is the single answer here that stops the prompt appearing at all.
+    private var allAgentsSection: some View {
+        let isInert = isChoosingDenyScope && !denyScope.isRemembered
+        return VStack(alignment: .leading, spacing: 8) {
             allAgentsRow
-            if denyScope == .forever {
-                Text(NSLocalizedString("agentControl.connectionApproval.denyScope.reviewHint", value: "Blocked agents can be unblocked anytime in Settings ▸ Developer.",
-                                       comment: "CDP consent - hint shown when the permanent deny scope is selected"))
+                .disabled(isInert)
+                .opacity(isInert ? 0.4 : 1)
+            if allAgents, !isChoosingDenyScope {
+                Text(NSLocalizedString("agentControl.connectionApproval.allAgentsScope.allowWarning", value: "If you allow, every agent that connects gets full control without asking you. Reverse it anytime in Settings ▸ Developer.",
+                                       comment: "CDP consent - warning shown when the answer is widened to every agent, naming what that means on the allow side"))
                     .font(.system(size: 11))
-                    .themedForeground(.textTertiary)
+                    .foregroundStyle(Color(nsColor: .systemOrange))
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .animation(.easeOut(duration: 0.15), value: denyScope)
+        .animation(.easeOut(duration: 0.15), value: allAgents)
+        .animation(.easeOut(duration: 0.15), value: isInert)
     }
 
-    /// Widens the refusal from the asking agent to every agent. Inert while
-    /// "Just this time" is selected, which remembers nothing to widen.
     private var allAgentsRow: some View {
         HStack(spacing: 10) {
-            Image(systemName: "nosign")
+            Image(systemName: "person.3.fill")
                 .font(.system(size: 13, weight: .medium))
                 .themedForeground(.textSecondary)
                 .frame(width: 20)
             VStack(alignment: .leading, spacing: 2) {
-                Text(NSLocalizedString("agentControl.connectionApproval.denyScope.allAgentsTitle", value: "Apply to all agents",
-                                       comment: "CDP consent - all-agents deny row title"))
+                Text(NSLocalizedString("agentControl.connectionApproval.allAgentsScope.title", value: "Apply to all agents",
+                                       comment: "CDP consent - title of the switch that widens the answer from the asking agent to every agent"))
                     .font(.system(size: 12, weight: .medium))
                     .themedForeground(.textPrimary)
                 Text(String(
-                    format: NSLocalizedString("agentControl.connectionApproval.denyScope.allAgentsDescription", value: "Turn away every agent, not just “%@”.",
-                                              comment: "CDP consent - all-agents deny row explanation"),
+                    format: NSLocalizedString("agentControl.connectionApproval.allAgentsScope.description", value: "Your answer covers every agent, not just “%@”.",
+                                              comment: "CDP consent - explanation of the all-agents switch; %@ is the name of the agent asking for access"),
                     agentName))
                     .font(.system(size: 11))
                     .themedForeground(.textTertiary)
@@ -282,9 +340,30 @@ struct AgentAccessApprovalAlert: View {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(appearance.isLight ? Color.black.opacity(0.045) : Color.white.opacity(0.06))
         )
-        .disabled(!denyScope.isRemembered)
-        .opacity(denyScope.isRemembered ? 1 : 0.4)
     }
+
+    // MARK: - Deny scope
+
+    private var denySection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(NSLocalizedString("agentControl.connectionApproval.denyScope.label", value: "How long should Phi refuse?",
+                                   comment: "CDP consent - label over the picker that scopes the refusal, shown after the user presses Deny"))
+                .font(.system(size: 12))
+                .themedForeground(.textSecondary)
+            PhiAlertSegmentedPicker(
+                options: AgentAccessDenyScope.allCases,
+                selection: $denyScope,
+                title: \.segmentTitle)
+            if denyScope == .forever {
+                Text(NSLocalizedString("agentControl.connectionApproval.denyScope.reviewHint", value: "Blocked agents can be unblocked anytime in Settings ▸ Developer.",
+                                       comment: "CDP consent - hint shown when the permanent deny scope is selected"))
+                    .font(.system(size: 11))
+                    .themedForeground(.textTertiary)
+            }
+        }
+        .animation(.easeOut(duration: 0.15), value: denyScope)
+    }
+
 }
 
 #if DEBUG

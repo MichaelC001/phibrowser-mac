@@ -52,6 +52,29 @@ struct PostLoginAIEnableIntent {
     }
 }
 
+struct GuestModeExitAnalyticsContext {
+    enum Trigger: String {
+        case accountSetting = "account_setting"
+        case aiSetting = "ai_setting"
+    }
+
+    private(set) var pendingTrigger: Trigger?
+
+    mutating func request(_ trigger: Trigger) {
+        pendingTrigger = trigger
+    }
+
+    mutating func cancel() {
+        pendingTrigger = nil
+    }
+
+    mutating func consume(startedInGuestMode: Bool) -> Trigger? {
+        guard startedInGuestMode else { return nil }
+        defer { pendingTrigger = nil }
+        return pendingTrigger
+    }
+}
+
 enum GuestModeEntryResult {
     case enteredGuestMode
     case requiresAccountRecovery
@@ -108,6 +131,7 @@ class LoginController {
     private var guestMigrationRecoveryTargetUserID: String?
     private var requiresGuestMigrationTargetRecovery = false
     private var postLoginAIEnableIntent = PostLoginAIEnableIntent()
+    private var guestModeExitAnalyticsContext = GuestModeExitAnalyticsContext()
     private var preservesPostLoginAIEnableIntentOnClose = false
     @MainActor private var isCompletingAccountTransition = false
 
@@ -165,12 +189,15 @@ class LoginController {
 
         loginWindowController?.window?.makeKeyAndOrderFront(nil)
         loginWindowController?.window?.center()
+        loginWindowController?.recordCurrentStepViewed()
         closeObserver = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: loginWindowController?.window, queue: nil) { [weak self] _ in
             AppLogDebug("🔐 [Login] Login window will close notification received")
+            self?.loginWindowController?.recordUserInterruption()
             self?.auth0Manager.cancelOngoingWebAuthentication()
             self?.loginWindowController = nil
             if self?.preservesPostLoginAIEnableIntentOnClose != true {
                 self?.postLoginAIEnableIntent.cancel()
+                self?.guestModeExitAnalyticsContext.cancel()
             }
         }
         AppLogDebug("🔐 [Login] Login window displayed")
@@ -182,7 +209,18 @@ class LoginController {
             GuestModePreferences.disableAI()
             return
         }
+        if ApplicationState.shared.isGuest {
+            guestModeExitAnalyticsContext.request(.aiSetting)
+        }
         postLoginAIEnableIntent.request()
+        showLoginWindow()
+    }
+
+    @MainActor
+    func showLoginWindowFromAccountSettings() {
+        if ApplicationState.shared.isGuest {
+            guestModeExitAnalyticsContext.request(.accountSetting)
+        }
         showLoginWindow()
     }
 
@@ -340,6 +378,7 @@ class LoginController {
             }
         }
         PostHogSDK.shared.capture("guest_mode_entered")
+        loginWindowController?.completeGuestOOBE()
         closeLoginWindow()
         return .enteredGuestMode
     }
@@ -518,8 +557,12 @@ class LoginController {
     }
 
     private func captureGuestModeExitIfNeeded(_ startedInGuestMode: Bool) {
-        guard startedInGuestMode else { return }
-        PostHogSDK.shared.capture("guest_mode_exited")
+        guard let trigger = guestModeExitAnalyticsContext.consume(
+            startedInGuestMode: startedInGuestMode
+        ) else { return }
+        PostHogSDK.shared.capture("guest_mode_exited", properties: [
+            "trigger": trigger.rawValue,
+        ])
     }
     
     @discardableResult
@@ -581,12 +624,19 @@ class LoginController {
     func closeLoginWindow(preservingPostLoginAIEnableIntent: Bool = false) {
         if !preservingPostLoginAIEnableIntent {
             postLoginAIEnableIntent.cancel()
+            guestModeExitAnalyticsContext.cancel()
         }
         preservesPostLoginAIEnableIntentOnClose =
             preservingPostLoginAIEnableIntent
+        loginWindowController?.suppressOOBEInterruption()
         loginWindowController?.window?.close()
         loginWindowController = nil
         preservesPostLoginAIEnableIntentOnClose = false
+    }
+
+    @MainActor
+    func recordOOBEAppTermination() {
+        loginWindowController?.recordAppTermination()
     }
     
     @MainActor
@@ -910,6 +960,7 @@ class LoginController {
         guestMigrationRecoveryTargetUserID = nil
         requiresGuestMigrationTargetRecovery = false
         enableAIIfRequestedAfterLogin()
+        loginWindowController?.completeAuthenticatedOOBE()
         closeLoginWindow()
 
         if MainBrowserWindowControllersManager.shared.getFirstAvailableWindowId() == nil {

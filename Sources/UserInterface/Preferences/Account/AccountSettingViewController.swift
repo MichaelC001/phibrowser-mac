@@ -229,7 +229,12 @@ class AccountSettingViewController: NSViewController, SettingsPane {
         }
         accountView.loginAction = {
             Task { @MainActor in
-                LoginController.shared.showLoginWindow()
+                LoginController.shared.showLoginWindowFromAccountSettings()
+            }
+        }
+        accountView.reauthenticationAction = {
+            Task { @MainActor in
+                _ = await AuthManager.shared.reauthenticateExpiredSession()
             }
         }
         accountView.reauthenticationAction = {
@@ -1016,6 +1021,7 @@ class DefaultBrowserSectionView: SettingItemBackgroundView {
         setDefaultButton.cell?.lineBreakMode = .byWordWrapping
         setDefaultButton.image = NSImage(systemSymbolName: "heart.fill", accessibilityDescription: nil)
         setDefaultButton.imagePosition = .imageLeading
+        setDefaultButton.setContentHuggingPriority(.required, for: .horizontal)
         setDefaultButton.target = self
         setDefaultButton.action = #selector(setDefaultTapped)
         addSubview(setDefaultButton)

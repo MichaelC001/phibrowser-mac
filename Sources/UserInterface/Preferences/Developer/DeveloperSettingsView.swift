@@ -77,6 +77,10 @@ private struct AgentControlSectionView: View {
     // reversible somewhere the user can find it.
     @State private var blockedAgents: [AgentDenial] =
         AgentCDPListener.shared.blockedAgents()
+    // Blanket grant: every agent connects without a prompt. Reads on for both
+    // the persisted grant and a session-only one made at the consent prompt.
+    @State private var allAgentsAllowed: Bool =
+        AgentCDPListener.shared.allAgentsGranted
     @State private var userSpaceOperationsEnabled: Bool =
         PhiPreferences.AgentSpaces.userSpaceOperationsEnabled
     @ObservedObject private var profileManager = ProfileManager.shared
@@ -106,6 +110,7 @@ private struct AgentControlSectionView: View {
         .onAppear {
             allowedGrants = AgentCDPListener.shared.allowedGrants()
             blockedAgents = AgentCDPListener.shared.blockedAgents()
+            allAgentsAllowed = AgentCDPListener.shared.allAgentsGranted
             profileManager.refresh()
         }
     }
@@ -142,10 +147,12 @@ private struct AgentControlSectionView: View {
                 set: { newValue in
                     agentAccessEnabled = newValue
                     AgentCDPListener.shared.setEnabled(newValue)
-                    // Turning off clears the session grants, turning on lifts
-                    // every standing refusal; reflect both.
+                    // Turning off clears the session grants — the blanket one
+                    // included — and turning on lifts every standing refusal;
+                    // reflect all three.
                     allowedGrants = AgentCDPListener.shared.allowedGrants()
                     blockedAgents = AgentCDPListener.shared.blockedAgents()
+                    allAgentsAllowed = AgentCDPListener.shared.allAgentsGranted
                 }
             ))
             .labelsHidden()
@@ -177,6 +184,8 @@ private struct AgentControlSectionView: View {
             .padding(.vertical, 12)
             .frame(maxWidth: .infinity, alignment: .leading)
             Divider()
+            allAgentsRow
+            Divider()
             if allowedGrants.isEmpty {
                 emptyGrantsState
             } else {
@@ -190,14 +199,61 @@ private struct AgentControlSectionView: View {
         }
         .padding(.horizontal, 12)
         .settingsCardChrome()
+        .animation(.easeOut(duration: 0.15), value: allAgentsAllowed)
     }
 
+    /// The blanket grant, as a switch over the list rather than a row in it:
+    /// while it is on the entries below decide nothing, so it has to sit above
+    /// them and say so.
+    private var allAgentsRow: some View {
+        HStack(alignment: .top, spacing: 12) {
+            SettingsIconChip(systemName: "person.3.fill", color: .orange)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Text(NSLocalizedString("settings.developer.agentControl.allowAllAgents.title", value: "Allow all agents", comment: "Developer settings - Toggle title for the blanket grant that lets every agent connect"))
+                        .font(.system(size: 13))
+                        .themedForeground(.textPrimary)
+                    // Only a grant made with "Allow Once" at the consent
+                    // prompt is session-scoped; the switch itself persists.
+                    if allAgentsAllowed, AgentCDPListener.shared.allAgentsGrantIsSessionOnly {
+                        grantScopePill(remembered: false)
+                    }
+                }
+                Text(NSLocalizedString("settings.developer.agentControl.allowAllAgents.description", value: "Lets every agent connect without asking you, including ones Phi has never seen. The approval prompt stops appearing while this is on, and turning it on lifts any standing refusal. Applies immediately.", comment: "Developer settings - Security note for the blanket all-agents grant toggle"))
+                    .font(.system(size: 11))
+                    .themedForeground(.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 12)
+            Toggle("", isOn: Binding(
+                get: { allAgentsAllowed },
+                set: { newValue in
+                    allAgentsAllowed = newValue
+                    AgentCDPListener.shared.setAllAgentsGranted(newValue)
+                    // Turning it on clears every standing refusal; reflect it.
+                    blockedAgents = AgentCDPListener.shared.blockedAgents()
+                }
+            ))
+            .labelsHidden()
+            .toggleStyle(.switch)
+            .controlSize(.mini)
+            .themedTint(.themeColor)
+        }
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Empty list. What "empty" means depends on the switch above it: with the
+    /// blanket grant on, promising that Phi will ask for approval would be a
+    /// lie.
     private var emptyGrantsState: some View {
         VStack(spacing: 6) {
-            Image(systemName: "checkmark.shield")
+            Image(systemName: allAgentsAllowed ? "person.3.fill" : "checkmark.shield")
                 .font(.system(size: 18, weight: .medium))
                 .themedForeground(.textTertiary)
-            Text(NSLocalizedString("settings.developer.agentControl.allowedAgents.emptyMessage", value: "No agents approved yet. The first time one connects, Phi asks for your approval.", comment: "Developer settings - Empty state for the allowed CDP agent list"))
+            Text(allAgentsAllowed
+                 ? NSLocalizedString("settings.developer.agentControl.allowedAgents.allAllowedMessage", value: "Every agent is allowed, so none is approved individually.", comment: "Developer settings - Empty state for the allowed CDP agent list while the blanket all-agents grant is on")
+                 : NSLocalizedString("settings.developer.agentControl.allowedAgents.emptyMessage", value: "No agents approved yet. The first time one connects, Phi asks for your approval.", comment: "Developer settings - Empty state for the allowed CDP agent list"))
                 .font(.system(size: 11))
                 .themedForeground(.textTertiary)
                 .multilineTextAlignment(.center)

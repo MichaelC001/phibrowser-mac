@@ -5,6 +5,29 @@
 
 import SwiftUI
 import Combine
+import PostHog
+
+@MainActor
+enum FeatureEntryAnalytics {
+    enum Button: String, CaseIterable {
+        case chat
+        case memory
+        case download
+        case organizeTabs = "organize_tabs"
+    }
+
+    enum Surface: String, CaseIterable {
+        case sidebar
+        case webContentHeader = "web_content_header"
+    }
+
+    static func capture(_ button: Button, surface: Surface) {
+        PostHogSDK.shared.capture("feature_entry_tapped", properties: [
+            "button": button.rawValue,
+            "surface": surface.rawValue,
+        ])
+    }
+}
 
 /// State model for the sidebar bottom bar.
 class SidebarBottomBarState: ObservableObject {
@@ -50,6 +73,7 @@ struct SidebarBottomBarSwiftUI: View {
     let onChatTap: () -> Void
     let onCardEntryTap: () -> Void
     let onMemoryTap: () -> Void
+    let onDownloadTap: () -> Void
     
     var body: some View {
         regularLayout
@@ -98,6 +122,7 @@ struct SidebarBottomBarSwiftUI: View {
         DownloadButtonView(
             viewModel: downloadViewModel,
             onTap: {
+                onDownloadTap()
                 state.isDownloadPopoverShown.toggle()
             }
         )
@@ -310,6 +335,7 @@ class SidebarBottomBarSwiftUIView: NSView {
     var onChatTap: (() -> Void)?
     var onCardEntryTap: (() -> Void)?
     var onMemoryTap: (() -> Void)?
+    var onDownloadTap: (() -> Void)?
     
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -333,7 +359,8 @@ class SidebarBottomBarSwiftUIView: NSView {
                 onBookmarkTap: { [weak self] in self?.onBookmarkTap?() },
                 onChatTap: { [weak self] in self?.onChatTap?() },
                 onCardEntryTap: { [weak self] in self?.onCardEntryTap?() },
-                onMemoryTap: { [weak self] in self?.onMemoryTap?() }
+                onMemoryTap: { [weak self] in self?.onMemoryTap?() },
+                onDownloadTap: { [weak self] in self?.onDownloadTap?() }
             )
         )
         hosting.translatesAutoresizingMaskIntoConstraints = false

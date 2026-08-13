@@ -241,6 +241,7 @@ extension PhiPreferences {
         private static let developerModeKey = "PhiDeveloperModeEnabled"
         private static let cdpAgentAccessKey = "PhiCDPAgentAccessEnabled"
         private static let rememberedAgentGrantsKey = "PhiCDPRememberedAgentGrants"
+        private static let allAgentsGrantKey = "PhiCDPAllAgentsGranted"
         private static let agentDenialsKey = "PhiCDPAgentDenials"
         private static let autoViewKey = "PhiAgentSpaceAutoView"
         private static let userSpaceOperationsKey = "PhiAgentUserSpaceOperationsEnabled"
@@ -385,6 +386,21 @@ extension PhiPreferences {
                     UserDefaults.standard.set(Array(newValue), forKey: rememberedAgentGrantsKey)
                 }
             }
+        }
+
+        /// Blanket grant from the consent prompt's "Apply to all agents" allow
+        /// switch, taken with "Always Allow": every agent connects without a
+        /// prompt, including ones never seen before. The widest permission the
+        /// app can hold, so it is written only from that prompt, never on by
+        /// default, and outranked by every standing refusal (see
+        /// `AgentCDPListener.evaluate`). "Allow Once" widened the same way is
+        /// session-scoped and lives in the listener instead, dropped whenever
+        /// live access is revoked. Turning it off is the "All agents" row in
+        /// the Settings "Allowed agents" list, or the developer-mode
+        /// kill-switch, which forgets it with everything else.
+        static var allAgentsGranted: Bool {
+            get { UserDefaults.standard.bool(forKey: allAgentsGrantKey) }
+            set { UserDefaults.standard.set(newValue, forKey: allAgentsGrantKey) }
         }
 
         /// Standing refusals from the consent prompt's deny options — "Don't

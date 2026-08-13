@@ -191,6 +191,8 @@ extension AppController {
                 ? "ntp"
                 : "omnibox",
             "layout_mode": PhiPreferences.GeneralSettings.loadLayoutMode().rawValue,
+            "app_language": PhiPreferences.GeneralSettings
+                .activeProcessAppLanguage().rawValue,
             "appearance": Self.analyticsValue(for: appearance),
             "default_browser_name": defaultBrowser.name,
             "default_browser_bundle_id": defaultBrowser.bundleIdentifier ?? "unknown",

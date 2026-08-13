@@ -96,6 +96,30 @@ final class GuestModeUITests: XCTestCase {
         XCTAssertFalse(defaults.bool(forKey: GuestModePreferences.aiEnabledKey))
     }
 
+    func testGuestModeExitTriggerSurvivesUntilSuccessfulConsumption() {
+        var context = GuestModeExitAnalyticsContext()
+
+        context.request(.aiSetting)
+
+        XCTAssertNil(context.consume(startedInGuestMode: false))
+        XCTAssertEqual(context.pendingTrigger, .aiSetting)
+        XCTAssertEqual(
+            context.consume(startedInGuestMode: true)?.rawValue,
+            "ai_setting"
+        )
+        XCTAssertNil(context.pendingTrigger)
+    }
+
+    func testGuestModeExitTriggerCanBeCancelled() {
+        var context = GuestModeExitAnalyticsContext()
+
+        context.request(.accountSetting)
+        context.cancel()
+
+        XCTAssertNil(context.pendingTrigger)
+        XCTAssertNil(context.consume(startedInGuestMode: true))
+    }
+
     func testLoginRequiredPolicyFailsClosedForStaleEnabledGuestAIState() {
         for surface in [
             LoginRequiredSurface.newTabPage,

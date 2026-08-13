@@ -94,6 +94,23 @@ class WebContentHeader: NSView {
         return view
     }()
 
+    static func shouldShowBottomSeparator(
+        isSplitViewVisible: Bool,
+        isBookmarkBarVisible: Bool
+    ) -> Bool {
+        !isSplitViewVisible || isBookmarkBarVisible
+    }
+
+    func updateBottomSeparatorVisibility(
+        isSplitViewVisible: Bool,
+        isBookmarkBarVisible: Bool
+    ) {
+        bottomSeparator.isHidden = !Self.shouldShowBottomSeparator(
+            isSplitViewVisible: isSplitViewVisible,
+            isBookmarkBarVisible: isBookmarkBarVisible
+        )
+    }
+
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         setupHostingView()
@@ -174,6 +191,9 @@ class WebContentHeader: NSView {
             },
             onMemoryTap: { [weak self] in
                 self?.memoryButtonClicked()
+            },
+            onDownloadTap: { [weak self] in
+                self?.downloadButtonClicked()
             },
             onOpenLocationBar: { [weak self] anchorView in
                 self?.unsafeBrowserWindowController?.openLocationBar(anchorView)
@@ -405,6 +425,7 @@ class WebContentHeader: NSView {
             NSSound.beep()
             return
         }
+        FeatureEntryAnalytics.capture(.chat, surface: .webContentHeader)
         unsafeBrowserState?.toggleAIChat()
     }
 
@@ -413,7 +434,17 @@ class WebContentHeader: NSView {
     }
 
     @objc private func memoryButtonClicked() {
-        BrowserState.currentState()?.createTab("chrome://memory/memory.html", focusAfterCreate: true)
+        guard let state = BrowserState.currentState() else { return }
+        FeatureEntryAnalytics.capture(.memory, surface: .webContentHeader)
+        state.createTab(
+            "chrome://memory/memory.html",
+            focusAfterCreate: true
+        )
+        FirstTimeActionTracker.capture(.memoryOpened)
+    }
+
+    private func downloadButtonClicked() {
+        FeatureEntryAnalytics.capture(.download, surface: .webContentHeader)
     }
 
     // MARK: - Public Methods

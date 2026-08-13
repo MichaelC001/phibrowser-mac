@@ -118,6 +118,9 @@ final class AgentSpaceOverlayView: NSView {
             cursorFillLayer.colors = [themeColor.cgColor, themeColor.cgColor]
             cursorStrokeLayer.strokeColor = NSColor.white.cgColor
         }
+
+        accentFill = themeColor
+        applyPrimaryButtonTint(title: primaryButton.title)
     }
 
     /// The arrow glyph from the design, authored y-down in a
@@ -223,6 +226,49 @@ final class AgentSpaceOverlayView: NSView {
         button.translatesAutoresizingMaskIntoConstraints = false
     }
 
+    // MARK: - Primary action tint
+
+    /// Fill for the ownership-transfer button, from the Space theme. Held
+    /// because the button's title changes with ownership and every title change
+    /// discards the attributed string carrying its text color.
+    private var accentFill: NSColor?
+
+    /// Paints the primary action in the Space theme, so the one control that
+    /// transfers ownership reads as part of the mask rather than as a system
+    /// button sitting on top of it.
+    private func applyPrimaryButtonTint(title: String) {
+        guard let fill = accentFill else { return }
+        primaryButton.bezelColor = fill
+        primaryButton.attributedTitle = NSAttributedString(
+            string: title,
+            attributes: [
+                .foregroundColor: Self.onAccentColor(for: fill),
+                .font: NSFont.systemFont(ofSize: 11, weight: .semibold),
+            ])
+    }
+
+    /// The design's own rule for text on the primary color, so this button and
+    /// the buttons the page recoloring paints resolve their contrast the same
+    /// way rather than drifting apart.
+    private static func onAccentColor(for fill: NSColor) -> NSColor {
+        let color = fill.usingColorSpace(.sRGB) ?? fill
+        let high = max(color.redComponent, color.greenComponent, color.blueComponent)
+        let low = min(color.redComponent, color.greenComponent, color.blueComponent)
+        return (high + low) / 2 > 0.66
+            ? NSColor(srgbRed: 0x17 / 255, green: 0x15 / 255, blue: 0x1A / 255, alpha: 1)
+            : .white
+    }
+
+    /// True when `point` — in `sourceView`'s coordinates — lands on the control
+    /// pill. The pill is the only live control this overlay exposes, so the
+    /// operating mask mounted below it asks before claiming input or the
+    /// pointer, which would otherwise strand the user with no way to take
+    /// control back.
+    func containsControlPill(at point: NSPoint, from sourceView: NSView) -> Bool {
+        guard window != nil, !pill.isHidden, !pill.bounds.isEmpty else { return false }
+        return pill.bounds.contains(pill.convert(point, from: sourceView))
+    }
+
     // MARK: - Update
 
     func update(with task: AgentTask?) {
@@ -256,17 +302,20 @@ final class AgentSpaceOverlayView: NSView {
             captionLabel.textColor = .labelColor
         }
 
+        let primaryTitle: String
         switch ownership {
         case .agent:
-            primaryButton.title = "Take control"
+            primaryTitle = "Take control"
             primaryButton.isHidden = false
             secondaryButton.isHidden = true
         case .user:
-            primaryButton.title = "Hand back"
+            primaryTitle = "Hand back"
             secondaryButton.title = "Finish"
             primaryButton.isHidden = false
             secondaryButton.isHidden = false
         }
+        primaryButton.title = primaryTitle
+        applyPrimaryButtonTint(title: primaryTitle)
 
         if let point = task.cursor {
             // Cursor point is in view coordinates (converted by the mounter).

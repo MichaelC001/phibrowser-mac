@@ -25,7 +25,7 @@ class BookmarkBar: NSView {
     // Tracks the current drop index during drag-and-drop.
     private var lastDropIndex: Int = 0
 
-    var showSeparator: Bool = false {
+    var showSeparator: Bool = true {
         didSet {
             separatorView.isHidden = !showSeparator
         }
@@ -79,7 +79,7 @@ class BookmarkBar: NSView {
         let view = NSView()
         view.wantsLayer = true
         view.phiLayer?.setBackgroundColor(.separator)
-        view.isHidden = showSeparator
+        view.isHidden = !showSeparator
         return view
     }()
 

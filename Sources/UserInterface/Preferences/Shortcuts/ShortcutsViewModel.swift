@@ -37,7 +37,7 @@ class ShortcutsViewModel: ObservableObject {
                         command: command,
                         name: displayName(for: command),
                         shortcutKey: key,
-                        shortcutDisplay: key?.displayString ?? NSLocalizedString("settings.shortcuts.unassignedPlaceholder", value: "Add New", comment: "Shortcuts settings - Placeholder text when no shortcut is assigned"),
+                        shortcutDisplay: shortcutDisplay(for: command, key: key),
                         isOverridden: Shortcuts.isOverridden(command),
                         conflictingCommandNames: conflictingCommands.map { displayName(for: $0) },
                         searchKeywords: searchKeywords(for: command)
@@ -51,6 +51,40 @@ class ShortcutsViewModel: ObservableObject {
         
         sections = newSections
     }
+
+    private func shortcutDisplay(
+        for command: CommandWrapper,
+        key: ShortcutsKey?
+    ) -> String {
+        guard let key else {
+            return NSLocalizedString(
+                "settings.shortcuts.unassignedPlaceholder",
+                value: "Add New",
+                comment: "Shortcuts settings - Placeholder text when no shortcut is assigned"
+            )
+        }
+
+        // AppKit reports the shifted characters for these default events, so
+        // execution stores "{" and "}". Keep the settings label in the
+        // familiar physical-key notation without changing global key identity.
+        guard key == Shortcuts.DefaultShortcuts[command] else {
+            return key.displayString
+        }
+        switch command {
+        case .IDC_SELECT_PREVIOUS_TAB:
+            return ShortcutsKey(
+                characters: "[",
+                modifiers: key.modifiers
+            ).displayString
+        case .IDC_SELECT_NEXT_TAB:
+            return ShortcutsKey(
+                characters: "]",
+                modifiers: key.modifiers
+            ).displayString
+        default:
+            return key.displayString
+        }
+    }
     
     private func findConflictingCommands(for command: CommandWrapper, currentKey: ShortcutsKey?) -> [CommandWrapper] {
         guard let currentKey = currentKey else { return [] }
@@ -61,7 +95,7 @@ class ShortcutsViewModel: ObservableObject {
             guard otherCommand != command else { return }
             guard shouldShow(otherCommand) else { return }
             if let otherKey = Shortcuts.key(for: otherCommand),
-               otherKey == currentKey {
+               otherKey.menuKeyEquivalent == currentKey.menuKeyEquivalent {
                 conflicts.append(otherCommand)
             }
         }
@@ -101,9 +135,7 @@ class ShortcutsViewModel: ObservableObject {
         return Array(Set(keywords.map { $0.lowercased() }))
     }
     
-    func setCustomShortcut(for command: CommandWrapper, keyChord: KeyChord) {
-        let key = ShortcutsKey(characters: keyChord.characters, modifiers: keyChord.modifiers)
-        
+    func setCustomShortcut(for command: CommandWrapper, key: ShortcutsKey) {
         Shortcuts.override(key, for: command)
         rebuildSections()
     }
@@ -123,16 +155,6 @@ class ShortcutsViewModel: ObservableObject {
     func restoreAllShortcuts() {
         Shortcuts.restoreOverrides()
         rebuildSections()
-    }
-    
-    private func normalizeCharacters(_ characters: String) -> String {
-        if characters == String(format: "%c", NSDeleteCharacter) {
-            return String(format: "%c", NSBackspaceCharacter)
-        }
-        if characters.count > 1 {
-            return String(characters.prefix(1))
-        }
-        return characters.lowercased()
     }
 }
 
@@ -268,37 +290,5 @@ struct ShortcutItem: Identifiable {
     
     var hasConflict: Bool {
         !conflictingCommandNames.isEmpty
-    }
-}
-
-struct KeyChord {
-    let characters: String
-    let modifiers: NSEvent.ModifierFlags
-    
-    init?(fromEvent event: NSEvent) {
-        guard let chars = event.charactersIgnoringModifiers, !chars.isEmpty else {
-            return nil
-        }
-        
-        let relevantModifierFlags: NSEvent.ModifierFlags = [.command, .option, .shift, .control]
-        let modifiers = event.modifierFlags.intersection(relevantModifierFlags)
-        if modifiers.isEmpty {
-            return nil
-        }
-        
-        // Shift-Tab may arrive as NSBackTabCharacter. Store every physical Tab
-        // key as "\t" so recording matches CommandDispatcher's event lookup.
-        var normalizedChars = chars
-        if event.keyCode == 48 {
-            normalizedChars = "\t"
-        } else if chars == String(format: "%c", NSDeleteCharacter) {
-            normalizedChars = String(format: "%c", NSBackspaceCharacter)
-        } else if chars.count > 1 {
-            normalizedChars = String(chars.prefix(1))
-        }
-        normalizedChars = normalizedChars.lowercased()
-        
-        self.characters = normalizedChars
-        self.modifiers = modifiers
     }
 }

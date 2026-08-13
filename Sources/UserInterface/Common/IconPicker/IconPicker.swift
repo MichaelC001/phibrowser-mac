@@ -64,12 +64,11 @@ struct IconPicker: View {
         VStack(spacing: 0) {
             PhiSegmentedPicker(
                 IconPickerTab.allCases,
-                selection: $selectedTab,
-                equalSegmentWidths: true
+                selection: $selectedTab
             ) { tab in
                 Text(tab.title)
             }
-            .frame(width: IconPickerMetrics.segmentWidth, height: IconPickerMetrics.segmentHeight)
+            .frame(height: IconPickerMetrics.segmentHeight)
 
             IconPickerSearchField(
                 text: activeSearchText,
@@ -336,16 +335,24 @@ struct IconPickerSelectionView: View {
     }
 }
 
-private enum IconPickerTab: CaseIterable, Hashable {
+enum IconPickerTab: CaseIterable, Hashable {
     case icon
     case emoji
 
     var title: String {
         switch self {
         case .icon:
-            return "Icon"
+            return NSLocalizedString(
+                "common.iconPicker.iconTabTitle",
+                value: "Icon",
+                comment: "Icon picker - Tab for choosing a Phi icon; translate using the locale's standard term for an icon"
+            )
         case .emoji:
-            return "Emoji"
+            return NSLocalizedString(
+                "common.iconPicker.emojiTabTitle",
+                value: "Emoji",
+                comment: "Icon picker - Tab for choosing an emoji; translate using the locale's standard term for emoji"
+            )
         }
     }
 }
@@ -494,7 +501,6 @@ private enum IconPickerMetrics {
     static let height: CGFloat = 280
     static let topPadding: CGFloat = 8
     static let bottomPadding: CGFloat = 8
-    static let segmentWidth: CGFloat = 128
     static let segmentHeight: CGFloat = 26
     static let segmentToSearchSpacing: CGFloat = 8
     static let searchHeight: CGFloat = 24

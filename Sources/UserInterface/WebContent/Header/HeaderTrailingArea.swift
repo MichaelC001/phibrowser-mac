@@ -100,6 +100,7 @@ struct HeaderTrailingArea: View {
     let onFeedbackTap: () -> Void
     let onChatTap: () -> Void
     let onMemoryTap: () -> Void
+    let onDownloadTap: () -> Void
     var onChatAnchorResolved: ((NSView?) -> Void)? = nil
 
     private enum Metrics {
@@ -300,6 +301,7 @@ struct HeaderTrailingArea: View {
         case "feedback":
             onFeedbackTap()
         case "download":
+            onDownloadTap()
             isDownloadPopoverShown.toggle()
         case "memory":
             onMemoryTap()
@@ -339,6 +341,7 @@ struct HeaderTrailingArea: View {
             viewModel: downloadViewModel,
             useCircularHoverShape: true,
             onTap: {
+                onDownloadTap()
                 isDownloadPopoverShown.toggle()
             }
         )
