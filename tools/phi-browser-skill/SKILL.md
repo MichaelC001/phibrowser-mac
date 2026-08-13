@@ -58,7 +58,7 @@ The heredoc body is a Node.js script; all helpers below are preloaded.
 ## Execution contexts
 
 Every round binds ONE execution context — where the page helpers act — with a
-single call, `enterContext({ kind, … })`. There are two kinds, plus an
+single call, `enterContext({ kind, … })`. There are three kinds, plus an
 app-level surface that needs no binding:
 
 - **Agent Space** (the default) — `enterContext({ kind: 'agent', name })`: a
@@ -66,6 +66,12 @@ app-level surface that needs no binding:
   (ownership/handoff, keep-alive, `complete()`). `{ persistent: true }` makes
   it a lasting workspace instead of the ephemeral default — persistent is a
   *property of an agent Space*, not a separate kind. See "Task lifecycle".
+- **Shadow window** — `enterContext({ kind: 'shadow', name })`: a real
+  browser window on a real profile that the user CANNOT SEE — off-screen at
+  alpha 0, no pip, no transcript, no handoff, nobody watching. Page
+  automation is identical; what's gone is every way to involve the user. Only
+  when they explicitly ask for background work. See
+  `references/lifecycle.md` ▸ "Shadow windows".
 - **User Space** — `enterContext({ kind: 'user', space })`: the user's REAL,
   visible window. No ownership guard, keep-alive, or `complete()`. Reach for
   it ONLY when the user asks to work in their own Space. See
@@ -76,8 +82,15 @@ app-level surface that needs no binding:
   relevant.
 
 `currentContext()` returns the bound context (`{ kind, spaceId, windowId, … }`)
-or null; `contextKind()` is the bare `'agent' | 'user' | null`. Branch on
-these rather than assuming where you are.
+or null; `contextKind()` is the bare `'agent' | 'shadow' | 'user' | null`.
+Branch on these rather than assuming where you are.
+
+**Choosing between agent and shadow.** Agent Space is the default and the
+right answer whenever the task might need a human — a login, a captcha, a
+payment, a consequential choice — because it can hand off and the user can
+take over. A shadow window can do none of that: there is no one to ask. Pick
+it only when the user asked for work that stays out of their way, and if a
+human step turns up mid-run, stop, close the window, and say what's needed.
 
 ## Helpers
 
@@ -85,7 +98,8 @@ Core surface — full semantics in this file:
 
 - Context: `enterContext({kind, name?/space?, profile?, persistent?, create?,
   activate?})` (the one entry — agent returns the Space's `tabs` and
-  `pendingUserMessages`, user returns `tabs`/`created`), `currentContext()`,
+  `pendingUserMessages`, shadow returns `tabs`, user returns `tabs`/`created`),
+  `listShadowWindows()`, `closeShadowWindow(name)`, `currentContext()`,
   `contextKind()`, `listAgentSpaces()`, `listProfiles()`,
   `spaceStatus({shots})` (one-call digest of the current agent Space),
   `complete({success, message})`, `ping(ttlSeconds?)` — see "Task lifecycle"

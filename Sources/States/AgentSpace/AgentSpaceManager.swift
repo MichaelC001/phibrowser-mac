@@ -279,6 +279,14 @@ final class AgentSpaceManager: ObservableObject {
 
     private var spaceIdByTaskId: [String: String] = [:]
 
+    /// Shadow windows this manager opened, keyed by taskId. Space-less
+    /// siblings of `tasksBySpaceId`: same taskId namespace, same origin/
+    /// principal authorization, same keep-alive clock — but no Space, no pip
+    /// and no transcript, because the window is invisible (see
+    /// AgentSpaceManager+Shadow.swift). Kept here rather than in a manager of
+    /// their own so agent-driven windows have exactly one owner.
+    var shadowWindowsByTaskId: [String: ShadowWindow] = [:]
+
     /// User commands typed into the agent console, per task, until the driver
     /// drains them (`drainUserMessages`). Bounded so an unread console can't
     /// grow without limit; dropped with the task.
@@ -334,7 +342,7 @@ final class AgentSpaceManager: ObservableObject {
         tasksBySpaceId[spaceId] = task
     }
 
-    private func ensureKeepAliveSweep() {
+    func ensureKeepAliveSweep() {
         guard keepAliveSweepTimer == nil else { return }
         let timer = Timer(timeInterval: Self.keepAliveSweepInterval, repeats: true) { _ in
             MainActor.assumeIsolated { AgentSpaceManager.shared.sweepExpiredTasks() }
@@ -344,7 +352,7 @@ final class AgentSpaceManager: ObservableObject {
     }
 
     private func stopKeepAliveSweepIfIdle() {
-        guard tasksBySpaceId.isEmpty else { return }
+        guard tasksBySpaceId.isEmpty, shadowWindowsByTaskId.isEmpty else { return }
         keepAliveSweepTimer?.invalidate()
         keepAliveSweepTimer = nil
     }
@@ -364,6 +372,7 @@ final class AgentSpaceManager: ObservableObject {
             taskDidComplete(taskId: task.taskId, success: false, keep: false,
                             message: "expired: no agent activity")
         }
+        sweepExpiredShadowWindows(now: now)
         stopKeepAliveSweepIfIdle()
     }
 

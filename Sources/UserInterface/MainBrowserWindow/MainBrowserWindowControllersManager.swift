@@ -791,6 +791,17 @@ class MainBrowserWindowControllersManager: MainBrowserWindowLookup {
             // Space is closed.
             windowController.slot?.unregisterWindow(windowController, for: windowController.spaceId)
         }
+        // Shadow windows live outside slots entirely (see
+        // AgentSpaceManager+Shadow.swift). Chromium can still tear one down on
+        // its own — closing its last tab does, since shadow browsers skip
+        // placeholder mode — so drop the registry entry or a re-bind would
+        // hand its driver a dead windowId.
+        if windowController.browserType == .shadow {
+            MainActor.assumeIsolated {
+                AgentSpaceManager.shared.shadowWindowDidClose(
+                    windowId: windowController.windowId)
+            }
+        }
         windowControllers.remove(windowController)
         // Chromium keeps every window close pending until it is told the gesture
         // is over; a cascade in flight makes this a no-op (see

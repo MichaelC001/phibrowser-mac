@@ -212,20 +212,31 @@ function requireSession() {
 // currentContext() — never pokes state.task / state.userSpace directly — so
 // the distinction lives in exactly one place.
 
-/** 'agent' | 'user' | null — the bound context's kind. Allocation-free; used
- *  on the per-action hot path (guardAgentControl). */
-function contextKind() {
-  return state.task ? 'agent' : state.userSpace ? 'user' : null
+/** 'agent' | 'shadow' | 'user' | null — the bound context's kind.
+ *  Allocation-free; used on the per-action hot path (guardAgentControl).
+ *
+ *  A SHADOW context is a task like an agent Space — same taskId namespace,
+ *  keep-alive and complete() — so it rides `state.task` rather than a slot of
+ *  its own. Only its window differs: invisible, hence no pip, transcript or
+ *  ownership. */
+export function contextKind() {
+  if (state.task) return state.task.shadow ? 'shadow' : 'agent'
+  return state.userSpace ? 'user' : null
 }
 
 /**
  * The context this round is bound to, or null before any bind. Self-describing:
- *   { kind: 'agent', taskId, spaceId, windowId, ownership, persistent }
- *   { kind: 'user',  spaceId, name, windowId }
+ *   { kind: 'agent',  taskId, spaceId, windowId, ownership, persistent }
+ *   { kind: 'shadow', taskId, windowId }
+ *   { kind: 'user',   spaceId, name, windowId }
  * enterContext() returns the same shape (plus per-kind extras). Query it to
  * branch on where you are without reaching into module state.
  */
 export function currentContext() {
+  if (state.task?.shadow) {
+    return { kind: 'shadow', taskId: state.task.taskId,
+             windowId: state.task.windowId }
+  }
   if (state.task) {
     return { kind: 'agent', taskId: state.task.taskId, spaceId: state.task.spaceId,
              windowId: state.task.windowId, ownership: state.task.ownership,
@@ -248,6 +259,15 @@ async function guardAgentControl() {
   // working surface and they are inherently in control alongside the agent.
   // No takeover guard, no agent viewport, no task keep-alive.
   if (contextKind() === 'user') return
+  // A shadow window has no ownership either, for the opposite reason: it is
+  // invisible, so there is no "Take control" button and no user to honor.
+  // Nothing mirrors its size either (see resolveBaseViewport). Keep-alive
+  // still matters — more than for a Space, since a leaked shadow window is
+  // one the user cannot see to close.
+  if (contextKind() === 'shadow') {
+    await maybePing()
+    return
+  }
   const task = requireTask()
   // The cached bit is kept live by the ownershipChanged broadcast, but a single
   // dropped event would leave it stale as 'agent' while the user is actually
@@ -300,6 +320,12 @@ export async function listProfiles() {
  *       omit it for the ephemeral default. Full lifecycle (ownership/handoff,
  *       keep-alive, complete()). See references/lifecycle.md.
  *
+ *   enterContext({ kind: 'shadow', name, profile? })
+ *     — an INVISIBLE background window: no pip, no transcript, no handoff,
+ *       nobody watching. Only when the user explicitly asks for background
+ *       work; anything that might need a human belongs in an agent Space.
+ *       See references/lifecycle.md ▸ "Shadow windows".
+ *
  *   enterContext({ kind: 'user', space, profile?, create?, activate? })
  *     — the user's REAL, visible Space window. No ownership guard, keep-alive,
  *       or complete(); actions land in the user's live view. An unknown name
@@ -317,13 +343,16 @@ export async function enterContext(spec = {}) {
     return enterAgentContext(spec.name,
       { profile: spec.profile ?? '', persistent: spec.persistent ?? false })
   }
+  if (spec.kind === 'shadow') {
+    return enterShadowContext(spec.name, { profile: spec.profile ?? '' })
+  }
   if (spec.kind === 'user') {
     return enterUserContext(spec.space,
       { profile: spec.profile ?? '', create: spec.create ?? true,
         activate: spec.activate ?? false })
   }
-  throw new Error(
-    `enterContext: unknown kind ${JSON.stringify(spec.kind)} — use 'agent' or 'user'`)
+  throw new Error(`enterContext: unknown kind ${JSON.stringify(spec.kind)} — ` +
+                  "use 'agent', 'shadow', or 'user'")
 }
 
 /** @deprecated Use enterContext({kind:'agent', name, ...}). Thin back-compat
@@ -471,6 +500,100 @@ async function enterAgentContext(name, { profile = '', persistent = false } = {}
 }
 
 /**
+ * SHADOW-context impl (private — reach it via enterContext({kind:'shadow'})).
+ *
+ * A shadow window is Phi's background-execution primitive: a real browser
+ * window on a real profile — real cookies, real renderers, driven by every
+ * page helper exactly as a Space is — that the user CANNOT see. It sits
+ * off-screen at alpha 0, absent from the Space switcher, Mission Control and
+ * the Windows menu, and omitted from session restore.
+ *
+ * What that costs, and why the kind is explicit at the entry point: there is
+ * no pip, no transcript, no handoff and no takeover, so nothing here can ask
+ * the user anything. A login, a captcha, a payment, any consequential choice
+ * is unreachable — those belong in an agent Space, which can hand off.
+ *
+ * Re-binds by `name` like an agent Space. The feature is gated by Settings ▸
+ * Developer ▸ "Allow agents to operate your Spaces"; with it off every call
+ * fails `user_space_operations_disabled` and the answer is an agent Space,
+ * not a workaround.
+ */
+async function enterShadowContext(name, { profile = '' } = {}) {
+  if (!name || typeof name !== 'string') {
+    throw new Error("enterContext({kind:'shadow'}): `name` is required")
+  }
+  const { windowId } = await phiSend('agentSpace.shadow.create', {
+    taskId: name, profileId: profile,
+  })
+  // Rides state.task (see contextKind): a shadow context IS a task — same
+  // taskId, keep-alive and complete() — with `shadow` marking the one
+  // difference, that its window has no presence surfaces.
+  state.task = { taskId: name, windowId, shadow: true, ownership: 'agent' }
+  state.userSpace = null
+  state.ownerCheckedAt = Date.now()
+  state.sessionId = null
+  state.targetId = null
+  // Round-long heartbeat, as for an agent Space: per-action pings only fire
+  // while helpers run, so a long silent stretch inside one round would let
+  // the window lapse. Unref'd — never keeps the process alive.
+  if (!state.pingTimer) {
+    state.pingTimer = setInterval(() => { maybePing() }, 15000)
+    state.pingTimer.unref?.()
+  }
+  // A fresh window seeds its first tab shortly after the spawn returns; a
+  // re-bound one already has tabs. Poll rather than sleep a fixed interval,
+  // so a re-bind costs nothing.
+  let tabs = []
+  const deadline = Date.now() + 5000
+  for (;;) {
+    tabs = await listTabs()
+    if (tabs.length || Date.now() > deadline) break
+    await wait(0.2)
+  }
+  if (!tabs.length) {
+    throw new Error(`enterContext({kind:'shadow'}): window ${windowId} has no tabs`)
+  }
+  const last = readLastTargetId(name)
+  const tab = tabs.find((t) => t.targetId === last) ?? tabs[0]
+  await attachTab(tab.targetId)
+  return { kind: 'shadow', taskId: name, windowId,
+           tabs: tabs.map((t) => ({ ...t, current: t.targetId === state.targetId })) }
+}
+
+/** The shadow windows this driver has open, as
+ *  [{taskId, windowId, profileId, createdAt}]. Scoped to this agent — another
+ *  agent's background work is not listed. Use it to find and clean up windows
+ *  an earlier round abandoned. */
+export async function listShadowWindows() {
+  const { shadows } = await phiSend('agentSpace.shadow.list', {})
+  return shadows || []
+}
+
+/** Closes a shadow window by name without binding to it — the cleanup path
+ *  for one an earlier round left behind. Closing the CURRENT context's window
+ *  is `complete()`. */
+export async function closeShadowWindow(name) {
+  await phiSend('agentSpace.shadow.close', { taskId: String(name) })
+  if (state.task?.shadow && state.task.taskId === name) {
+    state.task = null
+    state.sessionId = null
+    state.targetId = null
+  }
+  return { closed: true }
+}
+
+/** Refuses the helpers that only mean something where the user can see and
+ *  reach the window. Loud, not silent: a task needing a handoff must move to
+ *  an agent Space, and quietly doing nothing would hide that. */
+function refuseInShadow(name) {
+  if (contextKind() !== 'shadow') return
+  throw new Error(
+    `${name}() needs an agent Space — this round is bound to a shadow window, ` +
+    'which has no pip, transcript, or user handoff. Use ' +
+    "enterContext({kind:'agent', name}) for anything the user must see or take over.")
+}
+
+/**
  * One-call digest of the CURRENT agent Space — situational awareness without
  * side effects. Returns {taskId, spaceId, windowId, ownership, status,
  * caption, keepAliveRemainingSeconds, viewportOverride, tabs}, plus `shot` (a
@@ -501,6 +624,10 @@ export async function spaceStatus({ shots = false } = {}) {
                     'record for a user Space) — in user-space mode use ' +
                     'listTabs(), userFocus(), or screenshot() instead')
   }
+  // A shadow window has no Space record either, and none of what this
+  // reports (pip status, ownership, caption) exists for it. listTabs() and
+  // listShadowWindows() cover what can be known.
+  refuseInShadow('spaceStatus')
   const task = requireTask()
   const tasks = await listAgentSpaces()
   const t = tasks.find((x) => x.taskId === task.taskId)
@@ -628,10 +755,16 @@ async function userWindowPanelSize(client) {
  *  5. FALLBACK_VIEWPORT.
  */
 async function resolveBaseViewport(client, sessionId, targetId) {
-  try {
-    const { width, height } = await phiSend('agentSpace.panelSize', {})
-    if (width > 0 && height > 0) return { width, height }
-  } catch {}
+  // Step 1 mirrors the user's window so a WATCHING user sees the page at the
+  // size their own window renders it. Nobody watches a shadow window, and
+  // unlike a hidden Space window it is Show()n off-screen at its own real
+  // frame — so its layout metrics (step 2) are genuine and win here.
+  if (contextKind() !== 'shadow') {
+    try {
+      const { width, height } = await phiSend('agentSpace.panelSize', {})
+      if (width > 0 && height > 0) return { width, height }
+    } catch {}
+  }
   if (sessionId) {
     try {
       await client.send('Emulation.clearDeviceMetricsOverride', {}, sessionId)
@@ -739,7 +872,13 @@ async function maybePing() {
   const now = Date.now()
   if (now - state.lastPingAt < 20000) return
   state.lastPingAt = now
-  phiSend('agentSpace.ping', { taskId: state.task.taskId }).catch(() => {})
+  phiSend(pingCall(), { taskId: state.task.taskId }).catch(() => {})
+}
+
+/** Keep-alive route for the bound context. Shadow windows are reclaimed by
+ *  the same sweep, on their own channel. */
+function pingCall() {
+  return contextKind() === 'shadow' ? 'agentSpace.shadow.ping' : 'agentSpace.ping'
 }
 
 /**
@@ -754,7 +893,7 @@ async function maybePing() {
 export async function ping(ttlSeconds) {
   const task = requireTask()
   state.lastPingAt = Date.now()
-  return phiSend('agentSpace.ping', {
+  return phiSend(pingCall(), {
     taskId: task.taskId,
     ...(ttlSeconds !== undefined ? { ttlSeconds: Number(ttlSeconds) } : {}),
   })
@@ -1323,7 +1462,9 @@ export async function openTab(url, { acceptCookies = true, reuseBlank = true } =
   // open, so the cost is ~one lookup for the new tab rather than one per tab in
   // the whole browser on every poll.
   const before = new Set(await pageTargetIds())
-  await phiSend('agentSpace.openTab', { taskId: task.taskId, url })
+  await phiSend(contextKind() === 'shadow'
+                  ? 'agentSpace.shadow.openTab' : 'agentSpace.openTab',
+                { taskId: task.taskId, url })
   const deadline = Date.now() + 15000
   while (Date.now() < deadline) {
     for (const targetId of await pageTargetIds()) {
@@ -3003,6 +3144,10 @@ export async function screenshot(path) {
  * only the active pane's page is filled in; the other pane shows its chrome.
  */
 export async function screenshotBrowser(path) {
+  // Nothing to photograph: a shadow window is alpha 0 and off-screen, so the
+  // native capture returns an empty frame. screenshot() still works — it
+  // captures the page through the renderer, not the screen.
+  refuseInShadow('screenshotBrowser')
   await maybeTrackWindowResize()
   await maybePing()
   logAction('screenshot browser window')
@@ -3495,6 +3640,7 @@ export async function setViewport({ width, height } = {}) {
 function mirrorCursor(x, y) {
   const task = state.task
   if (!task) return  // no overlay in user-space mode
+  if (contextKind() === 'shadow') return  // no overlay, no watcher
   phiSend('agentSpace.cursor', { taskId: task.taskId, x, y }).catch(() => {})
 }
 
@@ -3505,6 +3651,7 @@ function mirrorCursor(x, y) {
 function mirrorEffect(kind, props = {}) {
   const task = state.task
   if (!task) return  // no overlay in user-space mode
+  if (contextKind() === 'shadow') return  // no overlay, no watcher
   phiSend('agentSpace.effect', { taskId: task.taskId, kind, ...props }).catch(() => {})
 }
 
@@ -3516,6 +3663,7 @@ function mirrorEffect(kind, props = {}) {
 function logAction(text, detail) {
   const task = state.task
   if (!task) return
+  if (contextKind() === 'shadow') return  // no transcript console
   phiSend('agentSpace.log', {
     taskId: task.taskId,
     kind: 'action',
@@ -4083,9 +4231,10 @@ export async function dismissDialog(targetId, accept = false, promptText = undef
 // Presence / ownership / lifecycle
 
 export async function setStatus(caption) {
-  // User-space mode has no overlay pill or transcript console — narration
-  // belongs in chat there. Quiet no-op so shared flows need no branching.
-  if (contextKind() === 'user') return
+  // Neither user-space mode nor a shadow window has an overlay pill or
+  // transcript console — narration belongs in chat there. Quiet no-op (not a
+  // refusal) so shared flows need no branching, matching markError below.
+  if (contextKind() === 'user' || contextKind() === 'shadow') return
   const task = requireTask()
   await phiSend('agentSpace.setState', { taskId: task.taskId, caption: String(caption) })
 }
@@ -4104,6 +4253,7 @@ export const narrate = setStatus
  * hooks installed this is redundant. Unlike `narrate`, it does NOT touch the
  * overlay pill — it is pure transcript. Never mirror secrets. */
 export async function say(text, { role = 'assistant' } = {}) {
+  refuseInShadow('say')
   const task = requireTask()
   await phiSend('agentSpace.log', {
     taskId: task.taskId,
@@ -4120,6 +4270,7 @@ export async function say(text, { role = 'assistant' } = {}) {
  * narrate(...).
  */
 export async function readUserMessages() {
+  refuseInShadow('readUserMessages')
   const task = requireTask()
   const { messages } = await phiSend('agentSpace.readUserMessages', { taskId: task.taskId })
   return messages || []
@@ -4133,6 +4284,7 @@ export async function readUserMessages() {
  * first drain). Read-only besides the drain — safe while co-working.
  */
 export async function waitForUserMessage({ timeout = 300 } = {}) {
+  refuseInShadow('waitForUserMessage')
   const task = requireTask()
   const client = await cdpClient()
   const deadline = Date.now() + timeout * 1000
@@ -4168,6 +4320,7 @@ export async function waitForUserMessage({ timeout = 300 } = {}) {
 async function reportRunState(running) {
   const task = state.task
   if (!task) return
+  if (contextKind() === 'shadow') return  // no pip, so no badge to flip
   await phiSend('agentSpace.setState', {
     taskId: task.taskId,
     state: running ? 'running' : 'idle',
@@ -4175,12 +4328,14 @@ async function reportRunState(running) {
 }
 
 export async function markError(message) {
-  if (contextKind() === 'user') return  // no badge surface in user-space mode
+  // No badge surface in user-space mode, none behind a shadow window either.
+  if (contextKind() === 'user' || contextKind() === 'shadow') return
   const task = requireTask()
   await phiSend('agentSpace.markError', { taskId: task.taskId, message: String(message) })
 }
 
 export async function ownership() {
+  refuseInShadow('ownership')
   const task = requireTask()
   const { owner } = await phiSend('agentSpace.getOwnership', { taskId: task.taskId })
   task.ownership = owner
@@ -4192,6 +4347,7 @@ export async function ownership() {
  *  to do (e.g. "Sign in to your account, then hand back"); Phi shows it in a
  *  prompt with a one-click switch into the agent Space. */
 export async function handOff(message) {
+  refuseInShadow('handOff')
   const task = requireTask()
   await phiSend('agentSpace.handoff', {
     taskId: task.taskId,
@@ -4215,6 +4371,7 @@ export async function handOff(message) {
  * (a "continue" in chat) — this seizes the browser away from them.
  */
 export async function takeOver() {
+  refuseInShadow('takeOver')
   const task = requireTask()
   await phiSend('agentSpace.takeover', { taskId: task.taskId })
   task.ownership = 'agent'
@@ -4250,6 +4407,7 @@ export async function takeOver() {
  * hand-back watcher (see SKILL.md "Hand-back watcher").
  */
 export async function waitForAgentControl({ timeout = 600 } = {}) {
+  refuseInShadow('waitForAgentControl')
   const task = requireTask()
   const deadline = Date.now() + timeout * 1000
   while (Date.now() < deadline) {
@@ -4313,6 +4471,7 @@ export async function waitForAgentControl({ timeout = 600 } = {}) {
  * user in chat, start a background hand-back watcher, and end the round.
  */
 export async function handOffAndWait(message, { timeout = 100 } = {}) {
+  refuseInShadow('handOffAndWait')
   await handOff(message)
   try {
     return await waitForAgentControl({ timeout })
@@ -4351,6 +4510,16 @@ export async function complete({ success = true, message = undefined,
   // IS its own session boundary (the phibrowser CLI: the driving agent
   // outlives the invocation, so "defer until the session ends" would strand
   // the task for the whole grace window) passes {immediate: true} to close now.
+  // A shadow window has no transcript to land a closing line in and no pip to
+  // leave behind, so there is nothing to defer for: close it now. Reporting
+  // the result is the driving session's job, in chat.
+  if (contextKind() === 'shadow') {
+    await phiSend('agentSpace.shadow.close', { taskId: task.taskId })
+    state.task = null
+    state.sessionId = null
+    state.targetId = null
+    return { done: true }
+  }
   if (!immediate) try {
     const transcript = discoverSessionTranscript(task.taskId, agentRootPid())
     if (transcript) {
@@ -5739,7 +5908,7 @@ export async function __dispose() {
     // Buy the between-rounds grace: without it the Space would expire ~120s
     // after this round ends. A session that never comes back (crash, kill,
     // conversation abandoned) still lets the Space close on its own.
-    await phiSend('agentSpace.ping', {
+    await phiSend(pingCall(), {
       taskId: state.task.taskId,
       ttlSeconds: INTER_ROUND_KEEPALIVE_SECONDS,
     }).catch(() => {})
