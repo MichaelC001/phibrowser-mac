@@ -283,7 +283,7 @@ final class BookmarkManagerViewController: NSViewController {
             .store(in: &cancellables)
     }
 
-    private func rebuildProjection(animated: Bool) {
+    private func rebuildProjection(animated: Bool, completion: (() -> Void)? = nil) {
         guard isViewLoaded else { return }
         let selectedGuids = selectedBookmarkGuids()
         let next = BookmarkManagerProjection.make(
@@ -294,10 +294,14 @@ final class BookmarkManagerViewController: NSViewController {
         )
         projectionGeneration += 1
         let generation = projectionGeneration
+        let usesFullReload = isSearchMode(projection?.mode) || isSearchMode(next.mode)
+        if usesFullReload {
+            outlineView.resetDiffableSnapshot()
+        }
 
         outlineView.reloadWith(
             next.snapshot,
-            animated: animated,
+            animated: usesFullReload ? false : animated,
             updateDataSource: { [weak self] in
                 guard let self else { return }
                 self.projection = next
@@ -308,8 +312,19 @@ final class BookmarkManagerViewController: NSViewController {
                 self.restoreExpandedFolders()
                 self.restoreSelection(guids: selectedGuids)
                 self.beginPendingEditIfPossible()
+                completion?()
             }
         )
+    }
+
+    private func isSearchMode(_ mode: BookmarkManagerProjection.Mode?) -> Bool {
+        guard let mode else { return false }
+        switch mode {
+        case .tree:
+            return false
+        case .search:
+            return true
+        }
     }
 
     private func updateEmptyState(for projection: BookmarkManagerProjection) {
@@ -480,6 +495,17 @@ final class BookmarkManagerViewController: NSViewController {
                 action: #selector(openMenuItem(_:)),
                 context: BookmarkActionContext(guids: [bookmark.guid])
             ))
+            if isSearchMode(projection?.mode) {
+                menu.addItem(actionItem(
+                    title: NSLocalizedString(
+                        "bookmarkManager.contextMenu.showInFolderAction",
+                        value: "Show in Folder",
+                        comment: "Bookmark manager context menu - Reveal a bookmark search result in its containing folder"
+                    ),
+                    action: #selector(showInFolderMenuItem(_:)),
+                    context: BookmarkActionContext(guids: [bookmark.guid])
+                ))
+            }
             if let secondaryURL = bookmark.secondaryUrl, !secondaryURL.isEmpty {
                 if let primaryURL = bookmark.url {
                     menu.addItem(copyItem(
@@ -595,6 +621,49 @@ final class BookmarkManagerViewController: NSViewController {
               let bookmark = bookmarks(for: context.guids).first,
               !bookmark.isFolder else { return }
         browserState.openBookmark(bookmark)
+    }
+
+    @objc private func showInFolderMenuItem(_ sender: NSMenuItem) {
+        guard isSearchMode(projection?.mode),
+              let context = sender.representedObject as? BookmarkActionContext,
+              let guid = context.guids.first,
+              let bookmark = manager.bookmark(withGuid: guid),
+              !bookmark.isFolder else { return }
+
+        let ancestorGuids = ancestorFolderGuids(for: bookmark)
+        for ancestorGuid in ancestorGuids {
+            manager.bookmark(withGuid: ancestorGuid)?.isExpanded = true
+        }
+        searchField.stringValue = ""
+        rebuildProjection(animated: false) { [weak self] in
+            self?.revealBookmark(guid: guid, ancestorGuids: ancestorGuids)
+        }
+    }
+
+    private func ancestorFolderGuids(for bookmark: Bookmark) -> [String] {
+        var ancestorGuids: [String] = []
+        var parent = bookmark.parent
+        while let candidate = parent {
+            if candidate.isFolder, manager.bookmark(withGuid: candidate.guid) != nil {
+                ancestorGuids.append(candidate.guid)
+            }
+            parent = candidate.parent
+        }
+        return Array(ancestorGuids.reversed())
+    }
+
+    private func revealBookmark(guid: String, ancestorGuids: [String]) {
+        for ancestorGuid in ancestorGuids {
+            guard let folder = manager.bookmark(withGuid: ancestorGuid), folder.isFolder else { continue }
+            folder.isExpanded = true
+            outlineView.expandItem(folder)
+        }
+        guard let bookmark = manager.bookmark(withGuid: guid) else { return }
+        let row = outlineView.row(forItem: bookmark)
+        guard row >= 0 else { return }
+        outlineView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        outlineView.scrollRowToVisible(row)
+        view.window?.makeFirstResponder(outlineView)
     }
 
     @objc private func copyURLMenuItem(_ sender: NSMenuItem) {
@@ -803,7 +872,7 @@ final class BookmarkManagerViewController: NSViewController {
 
 extension BookmarkManagerViewController: NSSearchFieldDelegate {
     func controlTextDidChange(_ notification: Notification) {
-        rebuildProjection(animated: true)
+        rebuildProjection(animated: false)
     }
 }
 

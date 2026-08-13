@@ -7568,6 +7568,11 @@
       "extractionState" : "extracted_with_value",
       "localizations" : { "en" : { "stringUnit" : { "state" : "new", "value" : "Open" } } }
     },
+    "bookmarkManager.contextMenu.showInFolderAction" : {
+      "comment" : "Bookmark manager context menu - Reveal a bookmark search result in its containing folder",
+      "extractionState" : "extracted_with_value",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "new", "value" : "Show in Folder" } } }
+    },
     "bookmarkManager.deleteConfirmation.cancelAction" : {
       "comment" : "Bookmark manager delete confirmation - Cancel button title",
       "extractionState" : "extracted_with_value",
