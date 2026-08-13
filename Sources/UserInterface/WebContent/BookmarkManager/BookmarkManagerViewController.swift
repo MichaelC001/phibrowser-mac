@@ -34,6 +34,8 @@ final class BookmarkManagerViewController: NSViewController {
     private enum Column {
         static let website = NSUserInterfaceItemIdentifier("BookmarkManagerWebsite")
         static let address = NSUserInterfaceItemIdentifier("BookmarkManagerAddress")
+        static let minimumWidth: CGFloat = 100
+        static let defaultWidthDifference: CGFloat = 160
     }
 
     private final class BookmarkActionContext: NSObject {
@@ -68,6 +70,7 @@ final class BookmarkManagerViewController: NSViewController {
     private var projection: BookmarkManagerProjection?
     private var projectionGeneration = 0
     private var pendingEditGuid: String?
+    private var didConfigureInitialColumnWidths = false
     private var cancellables = Set<AnyCancellable>()
 
     private let outlineView = BookmarkManagerOutlineView()
@@ -88,11 +91,9 @@ final class BookmarkManagerViewController: NSViewController {
     }
 
     override func loadView() {
-        let root = ColoredVisualEffectView()
-        root.themedBackgroundColor = .windowOverlayBackground
-        root.material = .fullScreenUI
-        root.wantsLayer = true
-        view = root
+        view = NSView()
+        view.wantsLayer = true
+        view.phiLayer?.setBackgroundColor(.windowBackground)
         buildLayout()
     }
 
@@ -100,6 +101,11 @@ final class BookmarkManagerViewController: NSViewController {
         super.viewDidLoad()
         bindModel()
         rebuildProjection(animated: false)
+    }
+
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        configureInitialColumnWidthsIfNeeded()
     }
 
     func focusContent() {
@@ -125,6 +131,7 @@ final class BookmarkManagerViewController: NSViewController {
         newFolderButton.action = #selector(createRootFolder(_:))
         newFolderButton.translatesAutoresizingMaskIntoConstraints = false
 
+        searchField.backgroundColor = .clear
         searchField.placeholderString = NSLocalizedString(
             "bookmarkManager.header.searchPlaceholder",
             value: "Search",
@@ -137,6 +144,8 @@ final class BookmarkManagerViewController: NSViewController {
         scrollView.documentView = outlineView
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = false
+        scrollView.horizontalScrollElasticity = .none
+        scrollView.usesPredominantAxisScrolling = true
         scrollView.autohidesScrollers = true
         scrollView.drawsBackground = false
         scrollView.translatesAutoresizingMaskIntoConstraints = false
@@ -178,8 +187,8 @@ final class BookmarkManagerViewController: NSViewController {
             value: "Website",
             comment: "Bookmark manager - Header for the bookmark name column"
         )
-        websiteColumn.minWidth = 260
-        websiteColumn.width = 520
+        websiteColumn.minWidth = Column.minimumWidth
+        websiteColumn.width = Column.minimumWidth
         websiteColumn.resizingMask = [.autoresizingMask, .userResizingMask]
 
         let addressColumn = NSTableColumn(identifier: Column.address)
@@ -188,8 +197,8 @@ final class BookmarkManagerViewController: NSViewController {
             value: "Address",
             comment: "Bookmark manager - Header for the bookmark address column"
         )
-        addressColumn.minWidth = 280
-        addressColumn.width = 720
+        addressColumn.minWidth = Column.minimumWidth
+        addressColumn.width = Column.minimumWidth
         addressColumn.resizingMask = [.autoresizingMask, .userResizingMask]
 
         outlineView.addTableColumn(websiteColumn)
@@ -207,7 +216,10 @@ final class BookmarkManagerViewController: NSViewController {
         outlineView.selectionHighlightStyle = .regular
         outlineView.allowsMultipleSelection = true
         outlineView.allowsEmptySelection = true
-        outlineView.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
+        outlineView.allowsColumnReordering = false
+        outlineView.autoresizesOutlineColumn = false
+        outlineView.autoresizingMask = [.width]
+        outlineView.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
         outlineView.target = self
         outlineView.doubleAction = #selector(outlineDoubleClicked(_:))
         outlineView.registerForDraggedTypes([.phiBookmark, .bookmarks, .sourceWindowId])
@@ -218,11 +230,40 @@ final class BookmarkManagerViewController: NSViewController {
         }
     }
 
+    private func configureInitialColumnWidthsIfNeeded() {
+        guard !didConfigureInitialColumnWidths,
+              scrollView.contentSize.width > 0,
+              let websiteColumn = outlineView.tableColumn(withIdentifier: Column.website),
+              let addressColumn = outlineView.tableColumn(withIdentifier: Column.address) else {
+            return
+        }
+
+        outlineView.sizeLastColumnToFit()
+        let totalWidth = websiteColumn.width + addressColumn.width
+        let maximumDifference = max(0, totalWidth - Column.minimumWidth * 2)
+        let widthDifference = min(Column.defaultWidthDifference, maximumDifference)
+
+        // Uniform autoresizing preserves this initial difference while both
+        // columns continue to grow and shrink with the container.
+        outlineView.columnAutoresizingStyle = .noColumnAutoresizing
+        websiteColumn.width = (totalWidth - widthDifference) / 2
+        addressColumn.width = totalWidth - websiteColumn.width
+        outlineView.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
+        didConfigureInitialColumnWidths = true
+    }
+
     private func bindModel() {
         manager.$rootFolder
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.rebuildProjection(animated: true)
+            }
+            .store(in: &cancellables)
+
+        browserState.themeContext.themeAppearancePublisher
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _, _ in
+                self?.searchField.needsDisplay = true
             }
             .store(in: &cancellables)
 
@@ -268,6 +309,7 @@ final class BookmarkManagerViewController: NSViewController {
 
     private func updateEmptyState(for projection: BookmarkManagerProjection) {
         let isEmpty = projection.rootIDs.isEmpty
+        scrollView.isHidden = isEmpty
         emptyLabel.isHidden = !isEmpty
         guard isEmpty else { return }
         switch projection.mode {

@@ -138,12 +138,15 @@ final class BookmarkManagerCellView: NSTableCellView, NSTextFieldDelegate {
         iconStack.alignment = .centerY
         iconStack.spacing = 4
         iconStack.translatesAutoresizingMaskIntoConstraints = false
+        iconStack.setContentHuggingPriority(.required, for: .horizontal)
+        iconStack.setContentCompressionResistancePriority(.required, for: .horizontal)
         iconStack.addArrangedSubview(primaryIconView)
         iconStack.addArrangedSubview(secondaryIconView)
 
         valueField.translatesAutoresizingMaskIntoConstraints = false
         valueField.delegate = self
         valueField.font = .systemFont(ofSize: 13)
+        valueField.alignment = .left
         valueField.isEditable = false
         valueField.isSelectable = false
         valueField.isBordered = false
@@ -153,7 +156,8 @@ final class BookmarkManagerCellView: NSTableCellView, NSTextFieldDelegate {
         valueField.lineBreakMode = .byTruncatingTail
         valueField.cell?.isScrollable = true
         valueField.cell?.wraps = false
-        valueField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        valueField.setContentHuggingPriority(.init(1), for: .horizontal)
+        valueField.setContentCompressionResistancePriority(.init(1), for: .horizontal)
 
         addSubview(iconStack)
         addSubview(valueField)
