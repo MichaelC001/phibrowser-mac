@@ -50,6 +50,31 @@ class SideAddressBar: NSView {
         return button
     }()
 
+    private lazy var readerButton: HoverableButtonNSView = {
+        let config = HoverableButtonConfig(
+            imageSize: .init(width: 12, height: 12),
+            systemName: "doc.plaintext",
+            symbolWeight: .medium,
+            hoverBackgroundColor: .hover,
+            cornerRadius: 4
+        )
+        let button = HoverableButtonNSView(config: config) { [weak self] in
+            self?.toggleReaderView()
+        }
+        button.toolTip = NSLocalizedString("sidebar.addressBar.readerViewButtonTooltip", value: "Reader View", comment: "Sidebar address bar - Reader View button tooltip")
+        button.setCustomTooltip {
+            CommandShortcutTooltipContent(
+                title: NSLocalizedString("sidebar.addressBar.readerViewShortcutTooltip", value: "Reader View", comment: "Reader View shortcut tooltip title"),
+                command: .PHI_TOGGLE_READER
+            )
+        }
+        button.snp.makeConstraints { make in
+            make.size.equalTo(CGSize(width: 24, height: 24))
+        }
+        button.isHidden = true
+        return button
+    }()
+
     private lazy var extensionMenuHostingView: NSHostingView<ExtensionPopoverButton> = {
         let hosting = NSHostingView(rootView: ExtensionPopoverButton(extensionManager: nil))
         hosting.translatesAutoresizingMaskIntoConstraints = false
@@ -146,6 +171,24 @@ class SideAddressBar: NSView {
                 self.copyURLButton.isHidden = isPlaceholder
                 self.extensionMenuHostingView.isHidden = isPlaceholder
                 self.extensionIconsStackView.isHidden = isPlaceholder
+                self.updateReaderButtonVisibility()
+            }
+            .store(in: &cancellables)
+
+        // Reader View applies only to real web pages: internal pages have
+        // nothing to distill, and a PDF is deliberately declined. There is no
+        // page-side eligibility signal, so the URL is the only input.
+        $currentTab
+            .flatMap { tab -> AnyPublisher<String?, Never> in
+                guard let tab else {
+                    return Just(nil).eraseToAnyPublisher()
+                }
+                return tab.$url.eraseToAnyPublisher()
+            }
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.updateReaderButtonVisibility()
             }
             .store(in: &cancellables)
 
@@ -365,6 +408,23 @@ class SideAddressBar: NSView {
         NSPasteboard.general.setString(branded, forType: .string)
     }
 
+    private func toggleReaderView() {
+        guard let tab = currentTab,
+              let browserState = unsafeBrowserState else { return }
+        browserState.toggleReaderView(for: tab)
+    }
+
+    private func updateReaderButtonVisibility() {
+        let isPlaceholder = unsafeBrowserState?.isInPlaceholderMode ?? false
+        // Shares the extraction service's own test rather than repeating it,
+        // so the button and the feature cannot disagree about a URL. They did:
+        // this bar kept its own copy of "is this a real web page" and went on
+        // offering the reader on a PDF after extraction had begun refusing it.
+        let canOffer = ReaderExtractionService.canOfferReader(
+            forURLString: currentTab?.url)
+        readerButton.isHidden = isPlaceholder || !canOffer
+    }
+
     @objc private func extensionButtonClicked(_ sender: NSView) {
         guard let extensionId = sender.identifier?.rawValue else { return }
 
@@ -459,6 +519,7 @@ class SideAddressBar: NSView {
         }
         
         rightStackView.addArrangedSubview(extensionIconsStackView)
+        rightStackView.addArrangedSubview(readerButton)
         rightStackView.addArrangedSubview(copyURLButton)
         rightStackView.addArrangedSubview(extensionMenuHostingView)
         extensionMenuHostingView.snp.makeConstraints { make in

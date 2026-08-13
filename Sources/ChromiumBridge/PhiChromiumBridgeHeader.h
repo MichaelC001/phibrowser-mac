@@ -1599,6 +1599,35 @@ typedef NS_ENUM(NSInteger, PhiGhostMaterializeOutcome) {
 @property(nonatomic, assign, readonly) BOOL isSharingScreen;
 @property(nonatomic, assign, readonly) BOOL isInContentFullscreen;
 
+/// DevTools page target id for this tab, or nil when the contents are gone.
+/// Lets the app open its own CDP session on the tab through the FD-injection
+/// transport (`AppDevToolsPageSession`) — the app is the client, no listener
+/// and no consent prompt. Reader View uses it to run extraction inside the
+/// page; the credential autofill path takes the same id from its caller.
+/// Creating the agent host does not attach a debugger or show any UI.
+@property(nonatomic, copy, readonly, nullable) NSString* devToolsTargetId;
+
+/// Captures an accessibility snapshot of this tab and returns it as
+/// `{ rootId, nodes: [ { id, role, name, level, url, children } ], pageCount,
+/// complete }`, or nil when nothing could be captured.
+///
+/// Exists because the PDF plugin's subtree is unreachable any other way: it is
+/// only populated once the BROWSER pushes an AXMode containing kWebContents,
+/// which neither CDP's accessibility domain nor RequestAXTreeSnapshot does.
+/// Accessibility is enabled for the capture only and released immediately
+/// after; no screen reader is involved and no platform AT is enabled.
+///
+/// The plugin builds its tree page by page, so a long document would otherwise
+/// block the caller for seconds. `minimumPages` returns early once that many
+/// pages exist — pass 0 to wait for the whole document. `complete` reports
+/// whether the tree had stopped growing, so the caller knows to ask again.
+/// `timeoutMs` bounds the wait; pass 0 for the default. `completion` always
+/// runs, on the main thread.
+- (void)requestAccessibilityTreeSnapshotWithMinimumPages:(NSInteger)minimumPages
+                                               timeoutMs:(NSInteger)timeoutMs
+                                              completion:
+    (void (^)(NSDictionary<NSString*, id>* _Nullable snapshot))completion;
+
 - (void)close;
 - (void)reload;
 - (void)reloadBypassingCache;

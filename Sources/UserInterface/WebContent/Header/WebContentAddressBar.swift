@@ -11,6 +11,11 @@ final class WebContentAddressBarViewModel: ObservableObject {
     @Published var displayText: String = ""
     @Published var addressBarWidth: CGFloat = 0
     @Published var isInPlaceholderMode: Bool = false
+    /// Whether the reader affordance applies to this tab. Phase one has no
+    /// eligibility signal from the page, so this is only "the tab is showing a
+    /// real web page" — internal pages have nothing to distill.
+    @Published var isReaderApplicable: Bool = false
+    @Published var isReaderViewActive: Bool = false
 
     private weak var browserState: BrowserState?
     private var cancellables = Set<AnyCancellable>()
@@ -48,8 +53,23 @@ final class WebContentAddressBarViewModel: ObservableObject {
 
         guard let tab = currentTab else {
             displayText = ""
+            isReaderApplicable = false
+            isReaderViewActive = false
             return
         }
+
+        tab.$url
+            .map { ReaderExtractionService.canOfferReader(forURLString: $0) }
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .assign(to: \.isReaderApplicable, on: self)
+            .store(in: &cancellables)
+
+        tab.$isReaderViewActive
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .assign(to: \.isReaderViewActive, on: self)
+            .store(in: &cancellables)
 
         let alwaysShowURLPathPublisher = NotificationCenter.default
             .publisher(for: UserDefaults.didChangeNotification)
@@ -224,6 +244,7 @@ struct WebContentAddressBarView: View {
 
                 if !viewModel.isInPlaceholderMode {
                     HStack(spacing: 2) {
+                        readerButton
                         copyURLButton
                         menuButton
                     }
@@ -345,6 +366,26 @@ struct WebContentAddressBarView: View {
     }
 
     @ViewBuilder
+    private var readerButton: some View {
+        if viewModel.isReaderApplicable {
+            ReaderButtonView(
+                isActive: viewModel.isReaderViewActive,
+                action: {
+                    anchorView?.window?.customTooltipController.dismissAll()
+                    guard let tab = currentTab else { return }
+                    browserState?.toggleReaderView(for: tab)
+                }
+            )
+            .customTooltip {
+                CommandShortcutTooltipContent(
+                    title: NSLocalizedString("browser.webContentAddressBar.readerViewTooltip", value: "Reader View", comment: "Reader View shortcut tooltip title in the address bar"),
+                    command: .PHI_TOGGLE_READER
+                )
+            }
+        }
+    }
+
+    @ViewBuilder
     private var copyURLButton: some View {
         CopyURLButtonView(
             currentTab: currentTab,
@@ -405,6 +446,44 @@ struct WebContentAddressBarView: View {
         }
     }
 
+}
+
+/// Address-bar affordance for Reader View.
+///
+/// Unlike `CopyURLButtonView` this is not hover-gated: while a page can be
+/// read, the entry point stays visible, and it reads as selected while Reader
+/// View is on.
+private struct ReaderButtonView: View {
+    let isActive: Bool
+    let action: () -> Void
+
+    @State private var isButtonHovering = false
+    @Environment(\.phiTheme) private var theme
+    @Environment(\.phiAppearance) private var appearance
+
+    var body: some View {
+        Button(action: action) {
+            ZStack {
+                Circle()
+                    .fill(Color(.sidebarTabHovered))
+                    .frame(width: 24, height: 24)
+                    .opacity((isButtonHovering || isActive) ? 1 : 0)
+
+                Image(systemName: "doc.plaintext")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(
+                        ThemedColor.textPrimary.swiftUIColor(theme: theme,
+                                                             appearance: appearance))
+            }
+        }
+        .buttonStyle(.plain)
+        .frame(width: 24, height: 24)
+        .onHover { hovering in
+            isButtonHovering = hovering
+        }
+        .animation(.easeInOut(duration: 0.15), value: isButtonHovering)
+        .animation(.easeInOut(duration: 0.15), value: isActive)
+    }
 }
 
 private struct CopyURLButtonView: View {

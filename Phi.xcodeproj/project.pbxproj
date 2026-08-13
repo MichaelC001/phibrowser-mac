@@ -310,6 +310,7 @@
 		AE5ACE000000000000000013 /* AgentSpaceOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE5ACE000000000000000003 /* AgentSpaceOverlayView.swift */; };
 		AE5ACE000000000000000014 /* AgentSpaceRouter+Management.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE5ACE000000000000000004 /* AgentSpaceRouter+Management.swift */; };
 		AE5ACE000000000000000015 /* AgentSpaceRouter+Capture.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE5ACE000000000000000005 /* AgentSpaceRouter+Capture.swift */; };
+		EAD000000000000000000024 /* AgentSpaceRouter+Reader.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAD000000000000000000023 /* AgentSpaceRouter+Reader.swift */; };
 		AE5ACE000000000000000016 /* AgentTranscriptStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE5ACE000000000000000006 /* AgentTranscriptStore.swift */; };
 		AE5ACE000000000000000017 /* AgentTranscriptPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE5ACE000000000000000007 /* AgentTranscriptPanel.swift */; };
 		AE5ACE000000000000000018 /* AgentPageTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE5ACE000000000000000008 /* AgentPageTheme.swift */; };
@@ -489,6 +490,20 @@
 		DEBE00000000000000000005 /* DeveloperSettingViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEBE00000000000000000002 /* DeveloperSettingViewController.swift */; };
 		DEBE00000000000000000006 /* DeveloperSettingHostingViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEBE00000000000000000003 /* DeveloperSettingHostingViewController.swift */; };
 		DEBE00000000000000000007 /* DeveloperSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEBE00000000000000000004 /* DeveloperSettingsView.swift */; };
+		EAD000000000000000000002 /* Readability.js in Resources */ = {isa = PBXBuildFile; fileRef = EAD000000000000000000001 /* Readability.js */; };
+		EAD000000000000000000004 /* ReaderExtract.js in Resources */ = {isa = PBXBuildFile; fileRef = EAD000000000000000000003 /* ReaderExtract.js */; };
+		EAD000000000000000000012 /* ReaderExtractionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAD000000000000000000011 /* ReaderExtractionService.swift */; };
+		EAD000000000000000000014 /* BrowserState+Reader.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAD000000000000000000013 /* BrowserState+Reader.swift */; };
+		EAD000000000000000000016 /* ReaderDocumentBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAD000000000000000000015 /* ReaderDocumentBuilder.swift */; };
+		EAD00000000000000000002A /* ReaderStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAD000000000000000000029 /* ReaderStyle.swift */; };
+		EAD000000000000000000018 /* ReaderViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAD000000000000000000017 /* ReaderViewController.swift */; };
+		EAD00000000000000000001A /* ReaderAccessibilityExtractor.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAD000000000000000000019 /* ReaderAccessibilityExtractor.swift */; };
+		EAD00000000000000000001C /* URLPatternMatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAD00000000000000000001B /* URLPatternMatcher.swift */; };
+		EAD00000000000000000001E /* ReaderSiteRuleStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAD00000000000000000001D /* ReaderSiteRuleStore.swift */; };
+		EAD000000000000000000026 /* ReaderExportService.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAD000000000000000000025 /* ReaderExportService.swift */; };
+		EAD000000000000000000020 /* ReaderSiteRulesDownloader.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAD00000000000000000001F /* ReaderSiteRulesDownloader.swift */; };
+		EAD000000000000000000028 /* ReaderImageInliner.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAD000000000000000000027 /* ReaderImageInliner.swift */; };
+		EAD000000000000000000022 /* ReaderSiteRules.json in Resources */ = {isa = PBXBuildFile; fileRef = EAD000000000000000000021 /* ReaderSiteRules.json */; };
 		F01D3A000000000000000001 /* bookmark-folder-open.svg in Resources */ = {isa = PBXBuildFile; fileRef = F01D3A000000000000000011 /* bookmark-folder-open.svg */; };
 		F01D3A000000000000000002 /* bookmark-folder-closed.svg in Resources */ = {isa = PBXBuildFile; fileRef = F01D3A000000000000000012 /* bookmark-folder-closed.svg */; };
 		F7FD00000000000000000002 /* FullTitleDisplay.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7FD00000000000000000001 /* FullTitleDisplay.swift */; };
@@ -923,6 +938,7 @@
 		AE5ACE000000000000000003 /* AgentSpaceOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentSpaceOverlayView.swift; sourceTree = "<group>"; };
 		AE5ACE000000000000000004 /* AgentSpaceRouter+Management.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AgentSpaceRouter+Management.swift"; sourceTree = "<group>"; };
 		AE5ACE000000000000000005 /* AgentSpaceRouter+Capture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AgentSpaceRouter+Capture.swift"; sourceTree = "<group>"; };
+		EAD000000000000000000023 /* AgentSpaceRouter+Reader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AgentSpaceRouter+Reader.swift"; sourceTree = "<group>"; };
 		AE5ACE000000000000000006 /* AgentTranscriptStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentTranscriptStore.swift; sourceTree = "<group>"; };
 		AE5ACE000000000000000007 /* AgentTranscriptPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentTranscriptPanel.swift; sourceTree = "<group>"; };
 		AE5ACE000000000000000008 /* AgentPageTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentPageTheme.swift; sourceTree = "<group>"; };
@@ -1118,6 +1134,20 @@
 		DEBE00000000000000000003 /* DeveloperSettingHostingViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeveloperSettingHostingViewController.swift; sourceTree = "<group>"; };
 		DEBE00000000000000000004 /* DeveloperSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeveloperSettingsView.swift; sourceTree = "<group>"; };
 		E10000000000000000000001 /* PhiBrowser-OpenSource.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "PhiBrowser-OpenSource.entitlements"; sourceTree = "<group>"; };
+		EAD000000000000000000001 /* Readability.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = Readability.js; sourceTree = "<group>"; };
+		EAD000000000000000000003 /* ReaderExtract.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = ReaderExtract.js; sourceTree = "<group>"; };
+		EAD000000000000000000011 /* ReaderExtractionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderExtractionService.swift; sourceTree = "<group>"; };
+		EAD000000000000000000013 /* BrowserState+Reader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "BrowserState+Reader.swift"; sourceTree = "<group>"; };
+		EAD000000000000000000015 /* ReaderDocumentBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderDocumentBuilder.swift; sourceTree = "<group>"; };
+		EAD000000000000000000029 /* ReaderStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderStyle.swift; sourceTree = "<group>"; };
+		EAD000000000000000000017 /* ReaderViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderViewController.swift; sourceTree = "<group>"; };
+		EAD000000000000000000019 /* ReaderAccessibilityExtractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderAccessibilityExtractor.swift; sourceTree = "<group>"; };
+		EAD00000000000000000001B /* URLPatternMatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = URLPatternMatcher.swift; sourceTree = "<group>"; };
+		EAD00000000000000000001D /* ReaderSiteRuleStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderSiteRuleStore.swift; sourceTree = "<group>"; };
+		EAD000000000000000000025 /* ReaderExportService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderExportService.swift; sourceTree = "<group>"; };
+		EAD00000000000000000001F /* ReaderSiteRulesDownloader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderSiteRulesDownloader.swift; sourceTree = "<group>"; };
+		EAD000000000000000000027 /* ReaderImageInliner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderImageInliner.swift; sourceTree = "<group>"; };
+		EAD000000000000000000021 /* ReaderSiteRules.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = ReaderSiteRules.json; sourceTree = "<group>"; };
 		F01D3A000000000000000011 /* bookmark-folder-open.svg */ = {isa = PBXFileReference; lastKnownFileType = image.svg; path = "bookmark-folder-open.svg"; sourceTree = "<group>"; };
 		F01D3A000000000000000012 /* bookmark-folder-closed.svg */ = {isa = PBXFileReference; lastKnownFileType = image.svg; path = "bookmark-folder-closed.svg"; sourceTree = "<group>"; };
 		F7FD00000000000000000001 /* FullTitleDisplay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FullTitleDisplay.swift; sourceTree = "<group>"; };
@@ -1311,6 +1341,8 @@
 				8EB020143020000000000014 /* OblivionDataExportAPI.swift */,
 				8EB01BE23010BCED0043E59D /* OblivionDeletionAPI.swift */,
 				54A1001B2FE000000000001B /* TimeMachinePackageDownloader.swift */,
+				EAD00000000000000000001F /* ReaderSiteRulesDownloader.swift */,
+				EAD000000000000000000027 /* ReaderImageInliner.swift */,
 				AE00FFFE0000000000000001 /* PhiAgentEndpointResolver.swift */,
 			);
 			path = Networking;
@@ -1810,6 +1842,7 @@
 				AE5ACE000000000000000004 /* AgentSpaceRouter+Management.swift */,
 				B17DE0000000000000000025 /* AgentSpaceRouter+Credentials.swift */,
 				AE5ACE000000000000000005 /* AgentSpaceRouter+Capture.swift */,
+				EAD000000000000000000023 /* AgentSpaceRouter+Reader.swift */,
 				AE5ACE000000000000000008 /* AgentPageTheme.swift */,
 				AE5ACE000000000000000006 /* AgentTranscriptStore.swift */,
 				AE5ACE000000000000000007 /* AgentTranscriptPanel.swift */,
@@ -1900,6 +1933,9 @@
 				37F574472F7A7C5D00879867 /* PhiIcon.icon */,
 				CD11000A0000000000000001 /* Emoji/emoji-catalog.json */,
 				3787811E2FE942E40028969F /* TimeMachineRollbackPolicy.json */,
+				EAD000000000000000000001 /* Readability.js */,
+				EAD000000000000000000003 /* ReaderExtract.js */,
+				EAD000000000000000000021 /* ReaderSiteRules.json */,
 				CC99097B2EBC9F090046BC81 /* login-bg.mp4 */,
 				37B977D42EF3F62F007E0568 /* login-dot-bg.mp4 */,
 				CC4BFB922E9798ED00CC6162 /* Auth0.plist */,
@@ -2182,6 +2218,7 @@
 			children = (
 				CC59CE000001000000000002 /* SpaceManager.swift */,
 				CC4F00020000000000000002 /* URLRouter.swift */,
+				EAD00000000000000000001B /* URLPatternMatcher.swift */,
 			);
 			path = Space;
 			sourceTree = "<group>";
@@ -2409,6 +2446,11 @@
 				B17DE0000000000000000B02 /* BitwardenSessionStore.swift */,
 				376581F62EEA845700D3E031 /* BrowserState+Bookmark.swift */,
 				3703C9812F69558C00E7CF6D /* BrowserState+ToggleAI.swift */,
+				EAD000000000000000000011 /* ReaderExtractionService.swift */,
+				EAD000000000000000000019 /* ReaderAccessibilityExtractor.swift */,
+				EAD00000000000000000001D /* ReaderSiteRuleStore.swift */,
+				EAD000000000000000000025 /* ReaderExportService.swift */,
+				EAD000000000000000000013 /* BrowserState+Reader.swift */,
 				5F1A5A11AC1D000000000002 /* BrowserState+Split.swift */,
 				B0F370CA2E43261A000B51F9 /* EventBus.swift */,
 				AA10000000000000000000F5 /* TabSwitchManager.swift */,
@@ -2424,6 +2466,9 @@
 				8EA1FD952FEB74530060DCFF /* RendererCrashViewController.swift */,
 				8E5D8B002FDFFAD30039CBE3 /* WebContentSnapshotter.swift */,
 				8E21BB692FC5503D00378ABE /* PlaceholderShellViewController.swift */,
+				EAD000000000000000000015 /* ReaderDocumentBuilder.swift */,
+				EAD000000000000000000029 /* ReaderStyle.swift */,
+				EAD000000000000000000017 /* ReaderViewController.swift */,
 				376CE2F12F2722480093D937 /* NativeNTP */,
 				8E0B00092FC0000000000001 /* GroupOverview */,
 				376195BE2F518DCF0094A78E /* FloatingSidebar */,
@@ -2690,6 +2735,9 @@
 				CC99097C2EBC9F090046BC81 /* login-bg.mp4 in Resources */,
 				CC5C51F62FB5C5560044D255 /* credits.html in Resources */,
 				3787811F2FE942E40028969F /* TimeMachineRollbackPolicy.json in Resources */,
+				EAD000000000000000000002 /* Readability.js in Resources */,
+				EAD000000000000000000004 /* ReaderExtract.js in Resources */,
+				EAD000000000000000000022 /* ReaderSiteRules.json in Resources */,
 				CD11000B0000000000000001 /* Emoji/emoji-catalog.json in Resources */,
 				CC4BFB932E97991A00CC6162 /* Auth0.plist in Resources */,
 			);
@@ -2972,6 +3020,7 @@
 				CCAA000A2F00010000000001 /* TabDataModelSchemaV9.swift in Sources */,
 				CC4F00010000000000000001 /* LocalStore+SpaceURLRule.swift in Sources */,
 				CC4F00020000000000000001 /* URLRouter.swift in Sources */,
+				EAD00000000000000000001C /* URLPatternMatcher.swift in Sources */,
 				CC4F00030000000000000001 /* SpaceURLRulesEditor.swift in Sources */,
 				8EB01BE13010BCED0043E59D /* AccountDeletionController.swift in Sources */,
 				8EB01BE53010BCED0043E59D /* AccountDeletionCoordinator.swift in Sources */,
@@ -3119,6 +3168,14 @@
 				CCBF8F692E65A9D700B9A99E /* ExtensionList.swift in Sources */,
 				CC35D7942E7271CE00E1A970 /* LiquidGlassCompatible.swift in Sources */,
 				3703C9822F69558C00E7CF6D /* BrowserState+ToggleAI.swift in Sources */,
+				EAD000000000000000000012 /* ReaderExtractionService.swift in Sources */,
+				EAD00000000000000000001A /* ReaderAccessibilityExtractor.swift in Sources */,
+				EAD00000000000000000001E /* ReaderSiteRuleStore.swift in Sources */,
+				EAD000000000000000000026 /* ReaderExportService.swift in Sources */,
+				EAD000000000000000000014 /* BrowserState+Reader.swift in Sources */,
+				EAD000000000000000000016 /* ReaderDocumentBuilder.swift in Sources */,
+				EAD00000000000000000002A /* ReaderStyle.swift in Sources */,
+				EAD000000000000000000018 /* ReaderViewController.swift in Sources */,
 				5F1A5A11AC1D000000000001 /* BrowserState+Split.swift in Sources */,
 				5F1A5A11AC1D000000000003 /* SplitPaneHostView.swift in Sources */,
 				5F1A5A11AC1D000000000005 /* SplitTabDropContainer.swift in Sources */,
@@ -3149,6 +3206,7 @@
 				B17DE000000000000000000D /* CredentialAuditLog.swift in Sources */,
 				B17DE0000000000000000B01 /* BitwardenSessionStore.swift in Sources */,
 				AE5ACE000000000000000015 /* AgentSpaceRouter+Capture.swift in Sources */,
+				EAD000000000000000000024 /* AgentSpaceRouter+Reader.swift in Sources */,
 				AE5ACE000000000000000018 /* AgentPageTheme.swift in Sources */,
 				AE5ACE000000000000000016 /* AgentTranscriptStore.swift in Sources */,
 				AE5ACE000000000000000017 /* AgentTranscriptPanel.swift in Sources */,
@@ -3203,6 +3261,8 @@
 				8EB020043020000000000004 /* OblivionDataExportAPI.swift in Sources */,
 				8EB01BE33010BCED0043E59D /* OblivionDeletionAPI.swift in Sources */,
 				54A1000B2FE000000000000B /* TimeMachinePackageDownloader.swift in Sources */,
+				EAD000000000000000000020 /* ReaderSiteRulesDownloader.swift in Sources */,
+				EAD000000000000000000028 /* ReaderImageInliner.swift in Sources */,
 				FBD200012FD0000000000003 /* FeedbackV2.swift in Sources */,
 				AE00FFFE0000000000000002 /* PhiAgentEndpointResolver.swift in Sources */,
 				CC6335F72E4B29E000A176DA /* Logging.swift in Sources */,

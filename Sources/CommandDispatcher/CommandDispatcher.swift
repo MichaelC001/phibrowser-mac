@@ -27,6 +27,7 @@ struct CommandDispatcher {
         .PHI_SELECT_PREVIOUS_SPACE,
         .PHI_FARRINGDON_TOGGLE,
         .PHI_COPY_URL,
+        .PHI_TOGGLE_READER,
     ] + CommandWrapper.spaceSelectionCommands
 
     /// Commands swallowed while the focused tab shows the native NTP — it has no
@@ -194,6 +195,13 @@ struct CommandDispatcher {
             let copiedURLCount = state.selectedTabCountForURLCopy
             guard state.copySelectedTabURLs() else { return false }
             OverlayToastCenter.shared.showURLCopyConfirmation(copiedURLCount: copiedURLCount, in: state)
+            return true
+        case .PHI_TOGGLE_READER:
+            let state = windowController.browserState
+            guard let tab = state.focusingTab, !tab.isShowingNativeNTP else {
+                return false
+            }
+            state.toggleReaderView(for: tab)
             return true
         case let c where c.spaceSelectionIndex != nil:
             guard let index = c.spaceSelectionIndex else { return false }

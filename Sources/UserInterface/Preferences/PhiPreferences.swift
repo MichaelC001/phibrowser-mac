@@ -429,6 +429,60 @@ extension PhiPreferences {
 
     }
 
+    // MARK: - Reader View
+
+    enum Reader {
+        private static let fontSizeKey = "PhiReaderFontSize"
+
+        /// Body text size for the reader surface, in points. Set from the
+        /// controls inside Reader View rather than from Settings, so it stays
+        /// next to the text it changes. Clamped to the range the reader's
+        /// fixed content column stays readable at.
+        static var fontSize: Int {
+            get {
+                let stored = UserDefaults.standard.integer(forKey: Self.fontSizeKey)
+                guard stored != 0 else {
+                    return ReaderDocumentBuilder.defaultFontSize
+                }
+                return min(max(stored, ReaderDocumentBuilder.minFontSize),
+                           ReaderDocumentBuilder.maxFontSize)
+            }
+            set {
+                UserDefaults.standard.set(newValue, forKey: Self.fontSizeKey)
+            }
+        }
+
+        private static let widthKey = "PhiReaderWidth"
+        private static let themeKey = "PhiReaderTheme"
+        private static let typefaceKey = "PhiReaderTypeface"
+
+        /// Content column width. Set from inside Reader View, like the size.
+        static var width: ReaderStyle.Width {
+            get { read(Self.widthKey) ?? .normal }
+            set { UserDefaults.standard.set(newValue.rawValue, forKey: Self.widthKey) }
+        }
+
+        /// Reading background. Defaults to following the browser's appearance,
+        /// which is what the reader did before there was a choice.
+        static var theme: ReaderStyle.Theme {
+            get { read(Self.themeKey) ?? .matchBrowser }
+            set { UserDefaults.standard.set(newValue.rawValue, forKey: Self.themeKey) }
+        }
+
+        static var typeface: ReaderStyle.Typeface {
+            get { read(Self.typefaceKey) ?? .serif }
+            set { UserDefaults.standard.set(newValue.rawValue, forKey: Self.typefaceKey) }
+        }
+
+        /// A stored value that no longer names a case — an older or newer
+        /// build wrote it — falls back to the default rather than failing.
+        private static func read<T: RawRepresentable>(_ key: String) -> T?
+        where T.RawValue == String {
+            guard let raw = UserDefaults.standard.string(forKey: key) else { return nil }
+            return T(rawValue: raw)
+        }
+    }
+
     // MARK: - Theme Settings
 
     enum ThemeSettings: String, CaseIterable {

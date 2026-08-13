@@ -164,6 +164,13 @@ final class ExtensionMessageRouter {
         register(type: "agentSpace.openTab") { context in
             return AgentSpaceRouter.handleOpenTab(context: context)
         }
+        register(type: "agentSpace.readerArticle") { context in
+            AgentSpaceRouter.handleReaderArticle(context: context)
+        }
+        register(type: "agentSpace.readerDocument") { context in
+            AgentSpaceRouter.handleReaderDocument(context: context)
+        }
+
         register(type: "agentSpace.captureWindow") { context in
             return AgentSpaceRouter.handleCaptureWindow(context: context)
         }

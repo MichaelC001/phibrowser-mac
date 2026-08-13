@@ -16296,6 +16296,18 @@
         }
       }
     },
+    "app.viewMenu.toggleReaderView" : {
+      "comment" : "View menu - Menu item that switches the current page between Reader View and the normal page",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Toggle Reader View"
+          }
+        }
+      }
+    },
     "app.viewMenu.toggleSidebar" : {
       "comment" : "View menu - Menu item to show or hide the sidebar",
       "extractionState" : "extracted_with_value",
@@ -17789,6 +17801,318 @@
         }
       }
     },
+    "browser.readerView.export" : {
+      "comment" : "Reader View - Tooltip for the control that saves the article to a file",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Save Article"
+          }
+        }
+      }
+    },
+    "browser.readerView.exportArticle" : {
+      "comment" : "Reader View - Menu item that saves the distilled article as a single HTML file",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Save Article as HTML…"
+          }
+        }
+      }
+    },
+    "browser.readerView.exportOriginal" : {
+      "comment" : "Reader View - Menu item that saves the page the article came from as a single archive file",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Save Original Page…"
+          }
+        }
+      }
+    },
+    "browser.readerView.exportWaiting" : {
+      "comment" : "Reader View - Toast shown when saving has to wait for the rest of the content to be captured",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Finishing the page before saving…"
+          }
+        }
+      }
+    },
+    "browser.readerView.close" : {
+      "comment" : "Reader View - Tooltip for the control that returns to the original page",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Close Reader View"
+          }
+        }
+      }
+    },
+    "browser.readerView.decreaseTextSize" : {
+      "comment" : "Reader View - Tooltip for the control that makes article text smaller",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Decrease Text Size"
+          }
+        }
+      }
+    },
+    "browser.readerView.increaseTextSize" : {
+      "comment" : "Reader View - Tooltip for the control that makes article text larger",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Increase Text Size"
+          }
+        }
+      }
+    },
+    "browser.readerView.codeCopied" : {
+      "comment" : "Reader View - Toast shown after a code block is copied to the clipboard",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Code copied"
+          }
+        }
+      }
+    },
+    "browser.readerView.copyCode" : {
+      "comment" : "Reader View - Button on a code block that copies it to the clipboard",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Copy"
+          }
+        }
+      }
+    },
+    "browser.readerView.noArticleFound" : {
+      "comment" : "Reader View - Toast shown when the page has no article content to display",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "No article found on this page"
+          }
+        }
+      }
+    },
+    "browser.readerView.untitledArticle" : {
+      "comment" : "Reader View - Fallback file name when an article has no title",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Article"
+          }
+        }
+      }
+    },
+    "browser.readerView.style" : {
+      "comment" : "Reader View - Tooltip for the control that changes width, background and typeface",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Reading Style"
+          }
+        }
+      }
+    },
+    "browser.readerView.styleTheme" : {
+      "comment" : "Reader View - Style menu section for the reading background",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Background"
+          }
+        }
+      }
+    },
+    "browser.readerView.styleTypeface" : {
+      "comment" : "Reader View - Style menu section for the article typeface",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Typeface"
+          }
+        }
+      }
+    },
+    "browser.readerView.styleWidth" : {
+      "comment" : "Reader View - Style menu section for the content column width",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Width"
+          }
+        }
+      }
+    },
+    "browser.readerView.themeDark" : {
+      "comment" : "Reader View - Background option, always dark",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Dark"
+          }
+        }
+      }
+    },
+    "browser.readerView.themeLight" : {
+      "comment" : "Reader View - Background option, always light",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Light"
+          }
+        }
+      }
+    },
+    "browser.readerView.themeMatch" : {
+      "comment" : "Reader View - Background option that follows the browser's light or dark appearance",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Match Browser"
+          }
+        }
+      }
+    },
+    "browser.readerView.themeSepia" : {
+      "comment" : "Reader View - Background option, warm off-white paper",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Sepia"
+          }
+        }
+      }
+    },
+    "browser.readerView.typefaceSans" : {
+      "comment" : "Reader View - Typeface option, a sans-serif face for body text",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Sans Serif"
+          }
+        }
+      }
+    },
+    "browser.readerView.typefaceSerif" : {
+      "comment" : "Reader View - Typeface option, a serif face for body text",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Serif"
+          }
+        }
+      }
+    },
+    "browser.readerView.widthFull" : {
+      "comment" : "Reader View - Content width option, the article fills the window",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Full Width"
+          }
+        }
+      }
+    },
+    "browser.readerView.widthNarrow" : {
+      "comment" : "Reader View - Content width option, a column narrower than the default",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Narrow"
+          }
+        }
+      }
+    },
+    "browser.readerView.widthNormal" : {
+      "comment" : "Reader View - Content width option, the default reading column",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Normal"
+          }
+        }
+      }
+    },
+    "browser.readerView.widthWide" : {
+      "comment" : "Reader View - Content width option, a column wider than the default",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Wide"
+          }
+        }
+      }
+    },
+    "browser.readerView.unavailable" : {
+      "comment" : "Reader View - Toast shown when reader extraction could not run at all",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Reader View is unavailable on this page"
+          }
+        }
+      }
+    },
     "browser.splitDropHint.bottom" : {
       "comment" : "Drop-zone hint shown when dragging a tab over the bottom/secondary pane of a horizontal split to replace it",
       "extractionState" : "extracted_with_value",
@@ -18685,6 +19009,18 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "搜尋或輸入網址"
+          }
+        }
+      }
+    },
+    "browser.webContentAddressBar.readerViewTooltip" : {
+      "comment" : "Reader View shortcut tooltip title in the address bar",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Reader View"
           }
         }
       }
@@ -60544,6 +60880,18 @@
         }
       }
     },
+    "settings.shortcuts.command.toggleReaderView" : {
+      "comment" : "Shortcuts settings - Command title for switching the current page between Reader View and the normal page",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Toggle Reader View"
+          }
+        }
+      }
+    },
     "settings.shortcuts.command.toggleSidebar" : {
       "comment" : "Shortcuts settings - Command title for showing or hiding the sidebar",
       "extractionState" : "extracted_with_value",
@@ -64320,6 +64668,30 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "搜尋或輸入網址"
+          }
+        }
+      }
+    },
+    "sidebar.addressBar.readerViewButtonTooltip" : {
+      "comment" : "Sidebar address bar - Reader View button tooltip",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Reader View"
+          }
+        }
+      }
+    },
+    "sidebar.addressBar.readerViewShortcutTooltip" : {
+      "comment" : "Reader View shortcut tooltip title",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Reader View"
           }
         }
       }

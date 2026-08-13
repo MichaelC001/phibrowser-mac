@@ -334,6 +334,7 @@ extension AppController {
                     item.tag == CommandWrapper.PHI_TOGGLE_SIDEBAR.rawValue ||
                     item.tag == CommandWrapper.PHI_TOGGLE_CHATBAR.rawValue ||
                     item.tag == CommandWrapper.PHI_NEW_CONVERSATION.rawValue ||
+                    item.tag == CommandWrapper.PHI_TOGGLE_READER.rawValue ||
                     item.tag == AppController.viewMenuPhiSectionSeparatorTag ||
                     item.tag == AppController.toggleBookmarkBarItemTag ||
                     item.tag == AppController.toggleBookmarkBarOnNewTabItemTag ||
@@ -350,7 +351,20 @@ extension AppController {
                     topSeparator.tag = AppController.viewMenuPhiSectionSeparatorTag
                     submenu.addItem(topSeparator)
                 }
-                
+
+                let toggleReaderItem = NSMenuItem(title: NSLocalizedString("app.viewMenu.toggleReaderView", value: "Toggle Reader View", comment: "View menu - Menu item that switches the current page between Reader View and the normal page"),
+                                                  action: #selector(toggleReaderView(_:)),
+                                                  keyEquivalent: "r")
+                toggleReaderItem.keyEquivalentModifierMask = [.command, .option]
+                toggleReaderItem.tag = CommandWrapper.PHI_TOGGLE_READER.rawValue
+                Shortcuts.updateShortcut(for: toggleReaderItem)
+                toggleReaderItem.target = self
+                submenu.addItem(toggleReaderItem)
+
+                let readerSeparator = NSMenuItem.separator()
+                readerSeparator.tag = AppController.viewMenuPhiSectionSeparatorTag
+                submenu.addItem(readerSeparator)
+
                 let layoutTtitle = NSMenuItem.sectionHeader(title: NSLocalizedString("app.viewMenu.layoutModeSectionTitle", value: "Layout Mode", comment: "View menu - Layout mode section header in View menu"))
                 layoutTtitle.tag = AppController.layoutModeTitleItemTag
                 submenu.addItem(layoutTtitle)
@@ -879,6 +893,15 @@ extension AppController {
         MainBrowserWindowControllersManager.shared.activeWindowController?.browserState.toggleAIChat(
             trigger: .shortcut
         )
+    }
+
+    @MainActor
+    @objc func toggleReaderView(_ sender: Any?) {
+        guard let state = MainBrowserWindowControllersManager.shared.activeWindowController?.browserState,
+              let tab = state.focusingTab else {
+            return
+        }
+        state.toggleReaderView(for: tab)
     }
 
     @MainActor
@@ -2206,6 +2229,20 @@ extension AppController {
         if item.action == #selector(toggleAgentAutoView(_:)) {
             if let menuItem = item as? NSMenuItem {
                 menuItem.state = PhiPreferences.AgentSpaces.autoViewEnabled ? .on : .off
+                return ApplicationState.shared.canUseBrowser
+            }
+        }
+
+        if item.action == #selector(toggleReaderView(_:)) {
+            if let menuItem = item as? NSMenuItem {
+                let tab = MainActor.assumeIsolated {
+                    MainBrowserWindowControllersManager.shared
+                        .activeWindowController?.browserState.focusingTab
+                }
+                menuItem.state = (tab?.isReaderViewActive ?? false) ? .on : .off
+                // Nothing to distill on the native NTP: it has no WebContents,
+                // so there is no page to run extraction against.
+                guard let tab, !tab.isShowingNativeNTP else { return false }
                 return ApplicationState.shared.canUseBrowser
             }
         }

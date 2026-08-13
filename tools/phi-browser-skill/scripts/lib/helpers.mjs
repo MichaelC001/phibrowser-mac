@@ -1649,6 +1649,43 @@ export async function js(expression) {
   return evalInPage(String(expression))
 }
 
+/**
+ * Reader View extraction for the current tab: the page distilled to its
+ * article, through Phi's own pipeline rather than a scrape.
+ *
+ * Prefer this over `snapshotText()` when you want an ARTICLE — the prose of a
+ * post, a doc page, a PDF — rather than the page as a whole. It runs the same
+ * site rules, rung ladder, coverage gate and PDF accessibility path the reader
+ * button uses, so the boilerplate a scrape has to be told to ignore (nav,
+ * comment threads, related-post rails, cookie furniture) is already gone.
+ *
+ * Returns `{title, byline, siteName, lang, sourceURL, rung, coverage,
+ * htmlLength, contentHTML?, rule?, isComplete, pageCount?}`. `rung` is which
+ * strategy produced it — `rule` (a site rule from phi-reader-rules),
+ * `readability`, `structural`, or `accessibility` (PDFs) — and `coverage` is
+ * the fraction of the page's visible text that survived. Pass
+ * `{html: false}` when you only want the verdict; a long article's markup
+ * dwarfs everything else. `{complete: true}` waits for the whole of a long
+ * PDF rather than the first pages the reader opens with — slower, and only
+ * meaningful when `isComplete` came back false.
+ *
+ * Throws when the page is not an article. `no_article_detected` and
+ * `below_coverage_floor` are ordinary answers for a homepage, a search result,
+ * or an app screen — fall back to `snapshotText()` there.
+ */
+export async function readerArticle({ html = true, complete = false } = {}) {
+  const task = requireTask()
+  logAction('read article')
+  return phiSend('agentSpace.readerArticle', {
+    taskId: task.taskId,
+    targetId: state.targetId || undefined,
+    includeHTML: html,
+    complete,
+    // Extraction waits out a still-loading page and can fall through to a
+    // PDF accessibility capture, so it needs more room than a page call.
+    }, 45000)
+}
+
 export async function pageInfo() {
   if (state.openDialog) return { dialog: state.openDialog }
   return evalInPage(`(() => ({
@@ -3162,7 +3199,10 @@ async function readIoStream(client, sid, res) {
 }
 
 /** Saves the complete current page as one self-contained MHTML file via
- *  Page.captureSnapshot. Returns {file, bytes}. */
+ *  Page.captureSnapshot. Returns {file, bytes}.
+ *
+ *  A snapshot only embeds what the page has actually fetched, so on a page
+ *  that defers images until they scroll into view, scroll through it first. */
 export async function archivePage(path) {
   const client = await cdpClient()
   logAction('archive page')
@@ -3171,6 +3211,38 @@ export async function archivePage(path) {
   const file = path || join(tmpdir(), `phi-browser-${Date.now()}.mhtml`)
   writeFileSync(file, data)
   return { file, bytes: Buffer.byteLength(data) }
+}
+
+/** Saves the page distilled to its article as one standalone HTML file — the
+ *  reader's own export, not a re-render of a scrape. Returns
+ *  {file, bytes, title, rung, isComplete}.
+ *
+ *  Images are inlined by default, so the file opens with no network; pass
+ *  {inlineImages: false} to leave them as origin URLs. {complete: true} waits
+ *  for the whole of a paginated document (a long PDF) rather than the pages
+ *  the reader opens with. Throws for pages that are not articles, exactly as
+ *  readerArticle does. */
+export async function saveArticle(path, { complete = false, inlineImages = true } = {}) {
+  const task = requireTask()
+  logAction('save article')
+  const result = await phiSend('agentSpace.readerDocument', {
+    taskId: task.taskId,
+    targetId: state.targetId || undefined,
+    complete,
+    inlineImages,
+    // Extraction walks the page, and inlining refetches every image, so this
+    // needs more room than either alone.
+  }, 120000)
+  const file = path || join(tmpdir(), result.suggestedFileName
+    || `phi-browser-${Date.now()}.html`)
+  writeFileSync(file, result.document)
+  return {
+    file,
+    bytes: Buffer.byteLength(result.document),
+    title: result.title,
+    rung: result.rung,
+    isComplete: result.isComplete,
+  }
 }
 
 // In-page collector for scrapeMedia: media elements under `this` (or the top

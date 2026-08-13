@@ -101,6 +101,7 @@ extension Shortcuts {
                         .IDC_DEV_TOOLS_CONSOLE,
                         .PHI_TOGGLE_SIDEBAR,
                         .PHI_TOGGLE_CHATBAR,
+                        .PHI_TOGGLE_READER,
                         .PHI_NEW_CONVERSATION]
             case .history:
                 return [.IDC_HOME,
@@ -377,6 +378,7 @@ extension CommandWrapper {
         .PHI_NEW_CONVERSATION: .init(title: "New Conversation", keywords: ["new conversation", "new chat", "ai", "chat"]),
         .PHI_FARRINGDON_TOGGLE: .init(title: "Organize Tabs with AI", keywords: ["organize tabs", "tidy tabs", "group tabs", "clean", "farringdon", "ai"]),
         .PHI_COPY_URL: .init(title: "Copy URL", keywords: ["copy url", "copy link", "url"]),
+        .PHI_TOGGLE_READER: .init(title: "Toggle Reader View", keywords: ["reader", "reader view", "reading", "article", "distraction free"]),
         .PHI_SELECT_NEXT_SPACE: .init(title: "Next Space", keywords: ["space", "next space", "forward"]),
         .PHI_SELECT_PREVIOUS_SPACE: .init(title: "Previous Space", keywords: ["space", "previous space", "backward"]),
         .PHI_SELECT_SPACE_0: .init(title: "Go to Space 1", keywords: ["space", "space1"]),

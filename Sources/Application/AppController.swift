@@ -134,6 +134,11 @@ import PostHog
         DefaultExtensionManifestWriter.start()
         FeedbackOutboxUploader.shared.start()
 
+        // Reader View works with whatever corpus is on disk, so this only has
+        // to happen eventually. It carries no credentials and runs whether or
+        // not anyone is signed in.
+        ReaderSiteRuleStore.shared.refreshIfStale()
+
         // The agent CDP socket listens for the whole app session, whether or
         // not agent browser control is switched on: an agent that connects
         // while it is off gets a consent prompt offering to turn it on, rather

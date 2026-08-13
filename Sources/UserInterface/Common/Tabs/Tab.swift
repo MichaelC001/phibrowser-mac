@@ -101,6 +101,24 @@ class Tab: WebContentRepresentable {
     /// (the tab's `webContentView` is intentionally NOT niled on crash).
     @Published var crashState: CrashPageData?
 
+    /// Reader View state. In-memory and per tab: the reader is a presentation
+    /// mode over the live page, not a navigation, so nothing here is
+    /// persisted and no `TabDataModel` schema change is involved.
+    ///
+    /// `readerArticle` is the extracted content currently on screen; it is
+    /// cleared alongside the flag so leaving the reader drops the copy.
+    @Published var isReaderViewActive: Bool = false
+    /// True while extraction is in flight. Guards against a second request
+    /// from a double-click or a repeated shortcut.
+    @Published var isReaderViewLoading: Bool = false
+    @Published var readerArticle: ReaderArticle?
+    /// True while a second extraction runs behind the article on screen.
+    ///
+    /// The content host reads this: that pass walks the page to trip its
+    /// lazy-loader, which only works while the page is still rendering, so the
+    /// live content view stays mounted underneath the reader until it clears.
+    @Published var isReaderSettling: Bool = false
+
     /// Use native NTP rendering when the tab URL is an NTP URL.
     /// Only ever set for off-the-record tabs (see
     /// `BrowserState.consumePendingNativeNTP`). The flag is set after the
@@ -314,6 +332,7 @@ class Tab: WebContentRepresentable {
                 let previousURLString = self.url
                 self.url = urlString
                 self.clearFaviconDataIfPageURLChanged(from: previousURLString, to: urlString)
+                self.exitReaderViewIfPageURLChanged(from: previousURLString, to: urlString)
             }
             .store(in: &cancellables)
 
@@ -393,6 +412,32 @@ class Tab: WebContentRepresentable {
             "tabId=\(guid) oldURL=\(oldURLString) newURL=\(newURLString) " +
             "oldLiveBytes=\(oldLiveBytes) oldCachedBytes=\(oldCachedBytes)"
         )
+    }
+
+    /// Leaves Reader View when the tab navigates away from the page the
+    /// article was extracted from. Reader View renders a snapshot taken at
+    /// activation time, so keeping it up over a different page would show
+    /// content that no longer matches the tab's URL.
+    ///
+    /// In-page fragment changes are not navigations away, so compare the URL
+    /// with the fragment dropped.
+    private func exitReaderViewIfPageURLChanged(from oldURLString: String?,
+                                                to newURLString: String?) {
+        guard isReaderViewActive else { return }
+        guard Self.urlIgnoringFragment(oldURLString)
+                != Self.urlIgnoringFragment(newURLString) else {
+            return
+        }
+        isReaderViewActive = false
+        readerArticle = nil
+        isReaderSettling = false
+    }
+
+    private static func urlIgnoringFragment(_ urlString: String?) -> String? {
+        guard let urlString = normalizedNonEmptyURLString(urlString) else { return nil }
+        guard var components = URLComponents(string: urlString) else { return urlString }
+        components.fragment = nil
+        return components.string ?? urlString
     }
 
     private static func normalizedNonEmptyURLString(_ urlString: String?) -> String? {

@@ -262,6 +262,15 @@ private final class BookmarkLayoutTestWebContentWrapper: NSObject, WebContentWra
     @objc dynamic var isBeingMirrored = false
     @objc dynamic var isSharingScreen = false
     @objc dynamic var isInContentFullscreen = false
+    @objc dynamic var devToolsTargetId: String? = nil
+
+    func requestAccessibilityTreeSnapshot(
+        withMinimumPages minimumPages: Int,
+        timeoutMs: Int,
+        completion: @escaping ([String: Any]?) -> Void
+    ) {
+        completion(nil)
+    }
 
     private(set) var customValues: [String] = []
 
