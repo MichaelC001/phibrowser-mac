@@ -118,6 +118,14 @@ class Tab: WebContentRepresentable {
     /// lazy-loader, which only works while the page is still rendering, so the
     /// live content view stays mounted underneath the reader until it clears.
     @Published var isReaderSettling: Bool = false
+    /// Whether the address bar should draw its reader button for this tab.
+    ///
+    /// Re-judged when a load finishes and when the URL moves without one (an
+    /// SPA navigation) — see `refreshReaderOfferability`. Deliberately only
+    /// the button reads this: the View menu, the shortcut, and the page
+    /// context menu offer the reader regardless, so a page this misjudges
+    /// still opens through any of them.
+    @Published private(set) var isReaderOfferable: Bool = false
 
     /// Use native NTP rendering when the tab URL is an NTP URL.
     /// Only ever set for off-the-record tabs (see
@@ -201,6 +209,11 @@ class Tab: WebContentRepresentable {
     
     private var cancellables = Set<AnyCancellable>()
     private var faviconSnapshotUpdater: ((Data) -> Void)?
+    /// Held apart from `cancellables`, which `setupObservers` clears wholesale
+    /// on every wrapper swap; this pipeline watches the tab's own published
+    /// state and must outlive the wrapper bindings.
+    private var readerOfferabilityTrigger: AnyCancellable?
+    private var readerOfferabilityProbe: Task<Void, Never>?
     
     init(guid: Int = UUID().hashValue,
          url: String?,
@@ -223,6 +236,40 @@ class Tab: WebContentRepresentable {
         self.profileId = profileId
         self.cachedFaviconData = faviconData
         setupObservers(for: webContentView)
+        setupReaderOfferabilityTrigger()
+    }
+
+    /// Re-judges the reader button whenever the page plausibly changed: a
+    /// load finishing, or the URL moving without one (an SPA navigation).
+    /// Debounced so a redirect chain judges once, at its destination.
+    private func setupReaderOfferabilityTrigger() {
+        readerOfferabilityTrigger = Publishers.Merge(
+            $isLoading.removeDuplicates().filter { !$0 }.map { _ in () },
+            $url.removeDuplicates().map { _ in () }
+        )
+        .debounce(for: .milliseconds(300), scheduler: DispatchQueue.main)
+        .sink { [weak self] in
+            self?.refreshReaderOfferability()
+        }
+    }
+
+    /// Asks the extraction service whether the button is worth drawing, and
+    /// retries once for a page that mounts its article after `load` — an SPA
+    /// still hydrating — without polling beyond that.
+    private func refreshReaderOfferability(retrying: Bool = false) {
+        readerOfferabilityProbe?.cancel()
+        readerOfferabilityProbe = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let offered = await ReaderExtractionService.shared
+                .isReaderWorthOffering(for: self)
+            guard !Task.isCancelled else { return }
+            self.isReaderOfferable = offered
+            if !offered && !retrying {
+                try? await Task.sleep(nanoseconds: 2_500_000_000)
+                guard !Task.isCancelled else { return }
+                self.refreshReaderOfferability(retrying: true)
+            }
+        }
     }
     
     private func setupObservers<Wrapper: WebContentWrapper & NSObject>(for wrapper: Wrapper?) {

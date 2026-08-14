@@ -11,9 +11,9 @@ final class WebContentAddressBarViewModel: ObservableObject {
     @Published var displayText: String = ""
     @Published var addressBarWidth: CGFloat = 0
     @Published var isInPlaceholderMode: Bool = false
-    /// Whether the reader affordance applies to this tab. Phase one has no
-    /// eligibility signal from the page, so this is only "the tab is showing a
-    /// real web page" — internal pages have nothing to distill.
+    /// Whether the reader affordance applies to this tab. Mirrors
+    /// `Tab.isReaderOfferable`: a matching site rule, or Mozilla's
+    /// readerability heuristic passing in the live page.
     @Published var isReaderApplicable: Bool = false
     @Published var isReaderViewActive: Bool = false
 
@@ -58,8 +58,7 @@ final class WebContentAddressBarViewModel: ObservableObject {
             return
         }
 
-        tab.$url
-            .map { ReaderExtractionService.canOfferReader(forURLString: $0) }
+        tab.$isReaderOfferable
             .removeDuplicates()
             .receive(on: DispatchQueue.main)
             .assign(to: \.isReaderApplicable, on: self)

@@ -175,15 +175,15 @@ class SideAddressBar: NSView {
             }
             .store(in: &cancellables)
 
-        // Reader View applies only to real web pages: internal pages have
-        // nothing to distill, and a PDF is deliberately declined. There is no
-        // page-side eligibility signal, so the URL is the only input.
+        // The tab judges its own reader-worthiness per navigation (site rule
+        // or in-page readerability heuristic — see Tab.isReaderOfferable);
+        // this bar only mirrors the verdict.
         $currentTab
-            .flatMap { tab -> AnyPublisher<String?, Never> in
+            .flatMap { tab -> AnyPublisher<Bool, Never> in
                 guard let tab else {
-                    return Just(nil).eraseToAnyPublisher()
+                    return Just(false).eraseToAnyPublisher()
                 }
-                return tab.$url.eraseToAnyPublisher()
+                return tab.$isReaderOfferable.eraseToAnyPublisher()
             }
             .removeDuplicates()
             .receive(on: DispatchQueue.main)
@@ -416,13 +416,13 @@ class SideAddressBar: NSView {
 
     private func updateReaderButtonVisibility() {
         let isPlaceholder = unsafeBrowserState?.isInPlaceholderMode ?? false
-        // Shares the extraction service's own test rather than repeating it,
-        // so the button and the feature cannot disagree about a URL. They did:
-        // this bar kept its own copy of "is this a real web page" and went on
-        // offering the reader on a PDF after extraction had begun refusing it.
-        let canOffer = ReaderExtractionService.canOfferReader(
-            forURLString: currentTab?.url)
-        readerButton.isHidden = isPlaceholder || !canOffer
+        // The tab's verdict comes from the extraction service (site rule or
+        // readerability probe), not a local copy of the test, so the button
+        // and the feature cannot disagree about a page. They did once: this
+        // bar kept its own "is this a real web page" and went on offering the
+        // reader on a PDF after extraction had begun refusing it.
+        readerButton.isHidden = isPlaceholder
+            || !(currentTab?.isReaderOfferable ?? false)
     }
 
     @objc private func extensionButtonClicked(_ sender: NSView) {

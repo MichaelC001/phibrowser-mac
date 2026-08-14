@@ -86,25 +86,100 @@ final class ReaderExtractionService {
 
     private init() {}
 
-    /// Whether the reader has anything to offer for this URL, used to decide
-    /// whether the address bar shows its button at all.
+    /// Whether the reader could conceivably have anything to offer for this
+    /// URL — the fast gate under `isReaderWorthOffering`, and the whole test
+    /// for surfaces that cannot wait for a probe (the Chromium context menu
+    /// mirrors it).
     ///
     /// A PDF is excluded because extraction now declines one, and a button
     /// whose only outcome is "Reader View is unavailable on this page" is
     /// worse than no button.
     ///
-    /// The path extension is the only signal the client has: a tab's content
-    /// type does not cross the bridge, and asking the page itself would mean a
-    /// DevTools round trip on every load merely to decide whether to draw a
-    /// button. So a PDF served from a URL that does not end in .pdf still
-    /// shows the button, and still refuses when pressed — the refusal is the
-    /// guarantee, this is only the tidying.
+    /// The path extension is the only URL-side signal the client has: a tab's
+    /// content type does not cross the bridge. So a PDF served from a URL
+    /// that does not end in .pdf still passes here, and still refuses when
+    /// pressed — the refusal is the guarantee, this is only the tidying.
     nonisolated static func canOfferReader(forURLString urlString: String?) -> Bool {
         guard let urlString, !urlString.isEmpty, !urlString.isLocalUrlString,
               let url = URL(string: urlString) else {
             return false
         }
         return url.pathExtension.lowercased() != "pdf"
+    }
+
+    /// Whether the address bar should draw its reader button for this tab.
+    ///
+    /// Two signals past the URL gate, either sufficient:
+    ///
+    /// - a site rule matches, which covers exactly the pages the heuristic
+    ///   below misreads: paulgraham.com writes paragraphs as `<br><br>` with
+    ///   no `<p>` to count, Google Docs paints into a canvas, and a thread
+    ///   page is many short posts rather than one article
+    /// - Mozilla's `isProbablyReaderable` passes in the live page, which
+    ///   covers the long tail of sites nobody has written a rule for
+    ///
+    /// Only the button consults this. The View menu, the shortcut, and the
+    /// page context menu stay unconditional, so a wrong "no" here costs one
+    /// affordance rather than the feature: extraction's own refusal remains
+    /// the authority on what can actually be read.
+    func isReaderWorthOffering(for tab: Tab) async -> Bool {
+        guard Self.canOfferReader(forURLString: tab.url) else { return false }
+        if ReaderSiteRuleStore.shared.rule(forURLString: tab.url) != nil {
+            return true
+        }
+        return await probeIsProbablyReaderable(tab: tab)
+    }
+
+    /// Mozilla's readerability heuristic plus Phi's supplements — see
+    /// `ReaderProbe.js` for why the stock answer alone under-reports what the
+    /// ladder reads. Wrapped to always resolve: a page that throws inside the
+    /// probe counts as readerable, because the failure is ours, not evidence
+    /// about the page, and a refusal on press is the cheaper mistake.
+    private static let readerableExpression: String? = {
+        guard let readerable = try? loadScript(named: "Readability-readerable"),
+              let probe = try? loadScript(named: "ReaderProbe") else {
+            return nil
+        }
+        return """
+        (function() {
+        \(readerable)
+        \(probe)
+        try { return __phiIsProbablyReaderable(document); } catch (e) { return true; }
+        })()
+        """
+    }()
+
+    /// Asks the live page whether it probably holds an article.
+    ///
+    /// Failure shapes split by what they say about the page: no DevTools
+    /// target means there is no page to read (native surfaces) — nothing to
+    /// offer. Everything after that point — transport down, evaluate failed,
+    /// missing script — is our machinery failing, so the answer falls back
+    /// to "offer it" and the press-time refusal keeps the truth.
+    private func probeIsProbablyReaderable(tab: Tab) async -> Bool {
+        guard let wrapper = tab.webContentWrapper,
+              let targetId = wrapper.devToolsTargetId,
+              !targetId.isEmpty else {
+            return false
+        }
+        guard let expression = Self.readerableExpression else { return true }
+
+        guard let session = try? await AppDevToolsPageSession.open(targetId: targetId) else {
+            return true
+        }
+        defer { session.close() }
+
+        guard let reply = try? await session.command(
+            "Runtime.evaluate",
+            params: ["expression": expression, "returnByValue": true],
+            timeout: 10) else {
+            return true
+        }
+        guard reply["exceptionDetails"] == nil,
+              let value = (reply["result"] as? [String: Any])?["value"] as? Bool else {
+            return true
+        }
+        return value
     }
 
     /// Extracts an article, walking the page first unless told not to.
