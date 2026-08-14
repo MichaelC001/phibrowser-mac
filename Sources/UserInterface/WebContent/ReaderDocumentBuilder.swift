@@ -106,6 +106,65 @@ enum ReaderDocumentBuilder {
         return "(function(){var e=document.documentElement;\(writes)})()"
     }
 
+    // MARK: - Reading aloud
+
+    /// Every element that is a unit of speech. A block holding another one is
+    /// a container, not a passage — reading both would say its text twice.
+    private static let passageSelector =
+        "h1,h2,h3,h4,h5,h6,p,li,blockquote,pre,figcaption,dt,dd,td,th"
+
+    /// Numbers the article's readable blocks and hands back their text, in
+    /// reading order.
+    ///
+    /// Read out of the rendered document rather than out of the article's
+    /// markup because only the document knows what is on screen: a block
+    /// hidden by the images switch has no `offsetParent`, and what is spoken
+    /// should be what is shown.
+    static let speechPassagesScript = """
+    (function(){
+      var SELECTOR = '\(passageSelector)';
+      var nodes = document.querySelectorAll(SELECTOR);
+      var texts = [];
+      for (var i = 0; i < nodes.length; i++) {
+        var node = nodes[i];
+        node.removeAttribute('data-phi-say');
+        if (node.querySelector(SELECTOR)) { continue; }
+        if (!node.offsetParent) { continue; }
+        var text = (node.innerText || '').replace(/\\s+/g, ' ').trim();
+        if (!text) { continue; }
+        node.setAttribute('data-phi-say', String(texts.length));
+        texts.push(text);
+      }
+      return texts;
+    })()
+    """
+
+    /// Marks the block being spoken and brings it into view.
+    ///
+    /// Scrolled only when it has left the window: a reader who has scrolled
+    /// ahead to look at something is not asking to be dragged back every
+    /// paragraph.
+    static func speechHighlightScript(index: Int) -> String {
+        """
+        (function(){
+          var previous = document.querySelector('.phi-speaking');
+          if (previous) { previous.classList.remove('phi-speaking'); }
+          var node = document.querySelector('[data-phi-say="\(index)"]');
+          if (!node) { return; }
+          node.classList.add('phi-speaking');
+          var box = node.getBoundingClientRect();
+          if (box.top < 0 || box.bottom > window.innerHeight) {
+            node.scrollIntoView({block: 'center', behavior: 'smooth'});
+          }
+        })()
+        """
+    }
+
+    static let speechClearHighlightScript = """
+    (function(){var n=document.querySelector('.phi-speaking');\
+    if(n){n.classList.remove('phi-speaking');}})()
+    """
+
     /// The scheme the copy links use. `ReaderViewController` cancels these
     /// navigations and copies natively.
     static let copyScheme = "phi-reader"
@@ -429,6 +488,21 @@ enum ReaderDocumentBuilder {
         .phi-code:hover .phi-copy, .phi-copy:focus { opacity: 1; }
         .phi-copy:active { color: var(--phi-text); }
         @media (hover: none) { .phi-copy { opacity: 1; } }
+        /* The block being read aloud.
+           A tinted ground rather than a border or an inserted marker: it has
+           to read against seven palettes, and it must not move the text —
+           someone following along cannot afford a reflow at every paragraph.
+           The shadow spreads the same tint past the box's edges, which is
+           what padding would do at exactly that cost. `color-mix` keeps the
+           tint tied to each theme's own accent; the flat declaration before
+           it is what an engine without `color-mix` is left with. */
+        .phi-speaking {
+          background: var(--phi-surface);
+          background: color-mix(in srgb, var(--phi-accent) 15%, transparent);
+          box-shadow: 0 0 0 5px var(--phi-surface);
+          box-shadow: 0 0 0 5px color-mix(in srgb, var(--phi-accent) 15%, transparent);
+          border-radius: 3px;
+        }
         ul, ol { margin: 0 0 1.1em; padding-left: 1.4em; }
         li { margin-bottom: 0.4em; }
         hr { border: 0; border-top: 1px solid var(--phi-rule); margin: 2.2em 0; }

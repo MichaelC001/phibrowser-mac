@@ -29,6 +29,10 @@ final class ReaderViewController: NSViewController {
     var onNavigate: ((URL) -> Void)?
     /// Invoked after a code block is copied, so the owner can confirm it.
     var onDidCopyCode: (() -> Void)?
+    /// Invoked when reading aloud cannot start — nothing to read, or no voice
+    /// installed for the article's language. The owner shows the notice; this
+    /// surface has no place to put one.
+    var onSpeechUnavailable: (() -> Void)?
     /// Asks the owner to save the page the article came from. The owner holds
     /// the tab; this surface only holds the article.
     var onExportOriginalPage: (() -> Void)?
@@ -47,6 +51,22 @@ final class ReaderViewController: NSViewController {
     private var loadStartedAt: Date?
     /// Retains the theme subscription; dropping it unsubscribes.
     private var themeSubscription: AnyObject?
+
+    private lazy var speaker: ReaderSpeaker = {
+        let speaker = ReaderSpeaker()
+        speaker.onStateChange = { [weak self] state in
+            self?.updateSpeechControls()
+            if state == .idle {
+                self?.webView.evaluateJavaScript(
+                    ReaderDocumentBuilder.speechClearHighlightScript)
+            }
+        }
+        speaker.onPassageChange = { [weak self] index in
+            self?.webView.evaluateJavaScript(
+                ReaderDocumentBuilder.speechHighlightScript(index: index))
+        }
+        return speaker
+    }()
 
     private lazy var webView: WKWebView = {
         let configuration = WKWebViewConfiguration()
@@ -78,6 +98,50 @@ final class ReaderViewController: NSViewController {
         bar.layer?.cornerRadius = 10
         return bar
     }()
+
+    /// Play and pause are two buttons sharing one slot rather than one button
+    /// that changes its symbol: the shared control renders from a config
+    /// fixed at construction, and swapping which of the pair is hidden is
+    /// cheaper than teaching it to change.
+    private lazy var playButton = makeControl(
+        systemName: "speaker.wave.2",
+        label: NSLocalizedString(
+            "browser.readerView.readAloud",
+            value: "Read Aloud",
+            comment: "Reader View - Tooltip for the control that reads the article out loud"),
+        action: #selector(startOrResumeSpeech))
+
+    private lazy var pauseButton = makeControl(
+        systemName: "pause.fill",
+        label: NSLocalizedString(
+            "browser.readerView.pauseReading",
+            value: "Pause Reading",
+            comment: "Reader View - Tooltip for the control that pauses reading the article out loud"),
+        action: #selector(pauseSpeech))
+
+    private lazy var previousPassageButton = makeControl(
+        systemName: "backward.end.fill",
+        label: NSLocalizedString(
+            "browser.readerView.previousPassage",
+            value: "Previous Paragraph",
+            comment: "Reader View - Tooltip for the control that jumps reading back one paragraph"),
+        action: #selector(readPreviousPassage))
+
+    private lazy var nextPassageButton = makeControl(
+        systemName: "forward.end.fill",
+        label: NSLocalizedString(
+            "browser.readerView.nextPassage",
+            value: "Next Paragraph",
+            comment: "Reader View - Tooltip for the control that skips reading ahead one paragraph"),
+        action: #selector(readNextPassage))
+
+    private lazy var speechOptionsButton = makeControl(
+        systemName: "speedometer",
+        label: NSLocalizedString(
+            "browser.readerView.speechOptions",
+            value: "Speech Options",
+            comment: "Reader View - Tooltip for the control that changes the reading speed and voice"),
+        action: #selector(showSpeechMenu))
 
     private lazy var decreaseButton = makeControl(
         systemName: "textformat.size.smaller",
@@ -133,11 +197,22 @@ final class ReaderViewController: NSViewController {
             make.edges.equalToSuperview()
         }
 
-        let stack = NSStackView(views: [decreaseButton, increaseButton,
+        let stack = NSStackView(views: [previousPassageButton, playButton, pauseButton,
+                                        nextPassageButton, speechOptionsButton,
+                                        decreaseButton, increaseButton,
                                         styleButton, exportButton, closeButton])
         stack.orientation = .horizontal
         stack.spacing = 2
         stack.edgeInsets = NSEdgeInsets(top: 4, left: 6, bottom: 4, right: 6)
+        // The transport is its own group; without a gap it reads as one long
+        // row of unrelated symbols.
+        stack.setCustomSpacing(10, after: speechOptionsButton)
+        updateSpeechControls()
+
+        // Reaching the speed before starting, for anyone who already knows
+        // the default is too slow for them. The same menu the transport's own
+        // button opens, so there is nothing extra to learn.
+        playButton.secondaryAction = { [weak self] in self?.showSpeechMenu() }
 
         view.addSubview(controlBar)
         controlBar.addSubview(stack)
@@ -163,6 +238,17 @@ final class ReaderViewController: NSViewController {
         // window, so reapply it now that there is one.
         applyStyleInPlace()
     }
+
+    // Deliberately no `viewDidDisappear` hook.
+    //
+    // This surface is unmounted whenever its tab stops being the visible one,
+    // and stopping there ended the reading every time the reader looked at
+    // something else — which is the opposite of what reading aloud is for.
+    // Audio outlives the view that started it, as it does for a tab playing
+    // sound, and the tab is still there to go back to. Reading is ended by
+    // the things that actually end it: the reader closing (`teardownReaderView`
+    // calls `stopSpeaking`), the article being replaced under it, the
+    // transport, and the tab going away, which releases the speaker.
 
     // MARK: - Content
 
@@ -215,6 +301,11 @@ final class ReaderViewController: NSViewController {
     private func render() {
         applyHostBackground()
         guard let article else { return }
+        // The passage numbering lives in the document being replaced, so a
+        // reading in progress is about to lose its place. Ending it is the
+        // honest outcome; carrying on would read the old article's positions
+        // against the new one's blocks.
+        stopSpeaking()
         // Built at the default size and scaled by `pageZoom`; the rest of the
         // style rides on root attributes the stylesheet already covers.
         var rendered = style
@@ -282,6 +373,205 @@ final class ReaderViewController: NSViewController {
 
     @objc private func closeReader() {
         onDismiss?()
+    }
+
+    // MARK: - Reading aloud
+
+    /// Ends any reading. Public because the owner tears this surface down
+    /// without the view ever leaving a window, and speech that outlived the
+    /// reader would be a voice with no visible source.
+    func stopSpeaking() {
+        guard speaker.state.isActive else { return }
+        speaker.stop()
+    }
+
+    @objc private func startOrResumeSpeech() {
+        if speaker.state == .paused {
+            speaker.resume()
+            return
+        }
+        // The passages come out of the rendered document, so this has to wait
+        // for one: pressing play during the load would read an empty article.
+        webView.evaluateJavaScript(
+            ReaderDocumentBuilder.speechPassagesScript) { [weak self] value, error in
+            guard let self else { return }
+            guard let texts = value as? [String], !texts.isEmpty else {
+                AppLogDebug("[Reader] nothing to read aloud: \(error?.localizedDescription ?? "no passages")")
+                self.announceSpeechUnavailable()
+                return
+            }
+            self.speaker.start(texts: texts, articleLanguage: self.article?.lang)
+            guard self.speaker.hasUsableVoice else {
+                // Every language on the page came back with no installed
+                // voice. Starting anyway would look like a dead button.
+                self.speaker.stop()
+                self.announceSpeechUnavailable()
+                return
+            }
+        }
+    }
+
+    @objc private func pauseSpeech() {
+        speaker.pause()
+    }
+
+    @objc private func readPreviousPassage() {
+        speaker.skip(by: -1)
+    }
+
+    @objc private func readNextPassage() {
+        speaker.skip(by: 1)
+    }
+
+    /// The transport appears only once there is something to control; before
+    /// that the bar offers the single button that starts it.
+    private func updateSpeechControls() {
+        let isActive = speaker.state.isActive
+        playButton.isHidden = speaker.state == .speaking
+        pauseButton.isHidden = speaker.state != .speaking
+        previousPassageButton.isHidden = !isActive
+        nextPassageButton.isHidden = !isActive
+        speechOptionsButton.isHidden = !isActive
+    }
+
+    private func announceSpeechUnavailable() {
+        onSpeechUnavailable?()
+    }
+
+    /// Speed and voice.
+    ///
+    /// Voices are listed per language the article actually uses rather than
+    /// per language macOS installs, and choosing one binds it to that
+    /// language: a document that switches halfway needs a voice for each
+    /// half, and one global choice would read the other half in the wrong
+    /// one or not at all.
+    @objc private func showSpeechMenu() {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+
+        let speed = NSMenuItem(
+            title: NSLocalizedString(
+                "browser.readerView.speechSpeed", value: "Speed",
+                comment: "Reader View - Speech menu section for how fast the article is read"),
+            action: nil, keyEquivalent: "")
+        let speeds = NSMenu()
+        for value in ReaderSpeaker.speeds {
+            let item = NSMenuItem(title: Self.speedTitle(value),
+                                  action: #selector(selectSpeechSpeed(_:)),
+                                  keyEquivalent: "")
+            item.target = self
+            item.representedObject = value
+            item.state = value == speaker.speed ? .on : .off
+            speeds.addItem(item)
+        }
+        speed.submenu = speeds
+        menu.addItem(speed)
+
+        if let voices = speechVoiceMenu() {
+            let item = NSMenuItem(
+                title: NSLocalizedString(
+                    "browser.readerView.speechVoice", value: "Voice",
+                    comment: "Reader View - Speech menu section for which voice reads the article"),
+                action: nil, keyEquivalent: "")
+            item.submenu = voices
+            menu.addItem(item)
+        }
+
+        menu.addItem(.separator())
+        let stop = NSMenuItem(
+            title: NSLocalizedString(
+                "browser.readerView.stopReading", value: "Stop Reading",
+                comment: "Reader View - Menu item that stops reading the article out loud"),
+            action: #selector(stopSpeechFromMenu), keyEquivalent: "")
+        stop.target = self
+        stop.isEnabled = speaker.state.isActive
+        menu.addItem(stop)
+
+        let anchor = speechOptionsButton.isHidden ? playButton : speechOptionsButton
+        menu.popUp(positioning: nil,
+                   at: NSPoint(x: 0, y: anchor.bounds.height + 4),
+                   in: anchor)
+    }
+
+    /// Nil when the article is not being read yet — the languages are only
+    /// known once its blocks have been through the detector, and a voice list
+    /// for a language the page does not use is noise.
+    private func speechVoiceMenu() -> NSMenu? {
+        let languages = speaker.spokenLanguages
+        guard !languages.isEmpty else { return nil }
+        let menu = NSMenu()
+        for language in languages {
+            let voices = ReaderSpeaker.voices(forLanguage: language)
+            guard !voices.isEmpty else { continue }
+            // Named only when there is more than one, so the common
+            // single-language article does not gain a redundant heading.
+            if languages.count > 1 {
+                if menu.numberOfItems > 0 { menu.addItem(.separator()) }
+                let header = NSMenuItem(title: Self.languageTitle(language),
+                                        action: nil, keyEquivalent: "")
+                header.isEnabled = false
+                menu.addItem(header)
+            }
+            let chosen = speaker.voiceIdentifier(forLanguage: language)
+            let automatic = NSMenuItem(
+                title: NSLocalizedString(
+                    "browser.readerView.speechVoiceAutomatic", value: "Automatic",
+                    comment: "Reader View - Voice option that lets the system pick the voice for a language"),
+                action: #selector(selectSpeechVoice(_:)), keyEquivalent: "")
+            automatic.target = self
+            automatic.representedObject = SpeechVoiceChoice(language: language,
+                                                            identifier: nil)
+            automatic.state = chosen == nil ? .on : .off
+            menu.addItem(automatic)
+            for voice in voices {
+                let item = NSMenuItem(title: voice.name,
+                                      action: #selector(selectSpeechVoice(_:)),
+                                      keyEquivalent: "")
+                item.target = self
+                item.representedObject = SpeechVoiceChoice(language: language,
+                                                           identifier: voice.identifier)
+                item.state = chosen == voice.identifier ? .on : .off
+                menu.addItem(item)
+            }
+        }
+        return menu.numberOfItems > 0 ? menu : nil
+    }
+
+    /// Which voice, for which language — the pair a voice item has to carry,
+    /// since one action serves every language in the menu.
+    private struct SpeechVoiceChoice {
+        let language: String
+        let identifier: String?
+    }
+
+    @objc private func selectSpeechSpeed(_ sender: NSMenuItem) {
+        guard let speed = sender.representedObject as? Double else { return }
+        speaker.speed = speed
+    }
+
+    @objc private func selectSpeechVoice(_ sender: NSMenuItem) {
+        guard let choice = sender.representedObject as? SpeechVoiceChoice else { return }
+        speaker.setVoiceIdentifier(choice.identifier, forLanguage: choice.language)
+    }
+
+    @objc private func stopSpeechFromMenu() {
+        speaker.stop()
+    }
+
+    private static func speedTitle(_ speed: Double) -> String {
+        let formatted = speed == speed.rounded()
+            ? String(Int(speed))
+            : String(format: "%g", speed)
+        return String(format: NSLocalizedString(
+            "browser.readerView.speechSpeedValue", value: "%@×",
+            comment: "Reader View - A reading speed, where %@ is the multiple of normal speed such as 1 or 1.5"),
+                      formatted)
+    }
+
+    private static func languageTitle(_ language: String) -> String {
+        Locale.current.localizedString(forIdentifier: language)
+            ?? Locale.current.localizedString(forLanguageCode: language)
+            ?? language
     }
 
     // MARK: - Style
@@ -702,8 +992,27 @@ extension ReaderViewController: WKNavigationDelegate {
                         "\(Int(Date().timeIntervalSince(loadStartedAt) * 1000))ms")
             self.loadStartedAt = nil
         }
+        startSpeakingIfRequested()
         guard let offset = scrollOffsetToRestore, offset > 0 else { return }
         scrollOffsetToRestore = nil
         webView.evaluateJavaScript("window.scrollTo(0, \(offset))")
+    }
+
+    /// Development aid: `-phi-auto-reader-speak`, alongside the existing
+    /// `-phi-auto-reader`, starts reading as soon as the document is up.
+    ///
+    /// Reading aloud begins with a click on a control, and macOS refuses
+    /// synthesized clicks without an Accessibility grant, so without this the
+    /// speech path — passage extraction, language detection, voice choice,
+    /// the highlight following along — cannot be exercised unattended.
+    /// Debug builds only.
+    private func startSpeakingIfRequested() {
+        #if DEBUG
+        guard ProcessInfo.processInfo.arguments.contains("-phi-auto-reader-speak"),
+              !speaker.state.isActive else {
+            return
+        }
+        startOrResumeSpeech()
+        #endif
     }
 }

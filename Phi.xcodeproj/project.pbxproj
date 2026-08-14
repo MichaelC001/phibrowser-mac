@@ -498,6 +498,7 @@
 		EAD000000000000000000014 /* BrowserState+Reader.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAD000000000000000000013 /* BrowserState+Reader.swift */; };
 		EAD000000000000000000016 /* ReaderDocumentBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAD000000000000000000015 /* ReaderDocumentBuilder.swift */; };
 		EAD00000000000000000002A /* ReaderStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAD000000000000000000029 /* ReaderStyle.swift */; };
+		EAD00000000000000000002C /* ReaderSpeaker.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAD00000000000000000002B /* ReaderSpeaker.swift */; };
 		EAD000000000000000000018 /* ReaderViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAD000000000000000000017 /* ReaderViewController.swift */; };
 		EAD00000000000000000001A /* ReaderAccessibilityExtractor.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAD000000000000000000019 /* ReaderAccessibilityExtractor.swift */; };
 		EAD00000000000000000001C /* URLPatternMatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAD00000000000000000001B /* URLPatternMatcher.swift */; };
@@ -1144,6 +1145,7 @@
 		EAD000000000000000000013 /* BrowserState+Reader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "BrowserState+Reader.swift"; sourceTree = "<group>"; };
 		EAD000000000000000000015 /* ReaderDocumentBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderDocumentBuilder.swift; sourceTree = "<group>"; };
 		EAD000000000000000000029 /* ReaderStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderStyle.swift; sourceTree = "<group>"; };
+		EAD00000000000000000002B /* ReaderSpeaker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderSpeaker.swift; sourceTree = "<group>"; };
 		EAD000000000000000000017 /* ReaderViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderViewController.swift; sourceTree = "<group>"; };
 		EAD000000000000000000019 /* ReaderAccessibilityExtractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderAccessibilityExtractor.swift; sourceTree = "<group>"; };
 		EAD00000000000000000001B /* URLPatternMatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = URLPatternMatcher.swift; sourceTree = "<group>"; };
@@ -2474,6 +2476,7 @@
 				8E21BB692FC5503D00378ABE /* PlaceholderShellViewController.swift */,
 				EAD000000000000000000015 /* ReaderDocumentBuilder.swift */,
 				EAD000000000000000000029 /* ReaderStyle.swift */,
+				EAD00000000000000000002B /* ReaderSpeaker.swift */,
 				EAD000000000000000000017 /* ReaderViewController.swift */,
 				376CE2F12F2722480093D937 /* NativeNTP */,
 				8E0B00092FC0000000000001 /* GroupOverview */,
@@ -3181,6 +3184,7 @@
 				EAD000000000000000000014 /* BrowserState+Reader.swift in Sources */,
 				EAD000000000000000000016 /* ReaderDocumentBuilder.swift in Sources */,
 				EAD00000000000000000002A /* ReaderStyle.swift in Sources */,
+				EAD00000000000000000002C /* ReaderSpeaker.swift in Sources */,
 				EAD000000000000000000018 /* ReaderViewController.swift in Sources */,
 				5F1A5A11AC1D000000000001 /* BrowserState+Split.swift in Sources */,
 				5F1A5A11AC1D000000000003 /* SplitPaneHostView.swift in Sources */,

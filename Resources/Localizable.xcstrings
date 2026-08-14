@@ -18113,6 +18113,138 @@
         }
       }
     },
+    "browser.readerView.nextPassage" : {
+      "comment" : "Reader View - Tooltip for the control that skips reading ahead one paragraph",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Next Paragraph"
+          }
+        }
+      }
+    },
+    "browser.readerView.pauseReading" : {
+      "comment" : "Reader View - Tooltip for the control that pauses reading the article out loud",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Pause Reading"
+          }
+        }
+      }
+    },
+    "browser.readerView.previousPassage" : {
+      "comment" : "Reader View - Tooltip for the control that jumps reading back one paragraph",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Previous Paragraph"
+          }
+        }
+      }
+    },
+    "browser.readerView.readAloud" : {
+      "comment" : "Reader View - Tooltip for the control that reads the article out loud",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Read Aloud"
+          }
+        }
+      }
+    },
+    "browser.readerView.speechOptions" : {
+      "comment" : "Reader View - Tooltip for the control that changes the reading speed and voice",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Speech Options"
+          }
+        }
+      }
+    },
+    "browser.readerView.speechSpeed" : {
+      "comment" : "Reader View - Speech menu section for how fast the article is read",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Speed"
+          }
+        }
+      }
+    },
+    "browser.readerView.speechSpeedValue" : {
+      "comment" : "Reader View - A reading speed, where %@ is the multiple of normal speed such as 1 or 1.5",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%@×"
+          }
+        }
+      }
+    },
+    "browser.readerView.speechUnavailable" : {
+      "comment" : "Reader View - Toast shown when the article cannot be read aloud because macOS has no voice for its language",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "No voice is installed for this article's language"
+          }
+        }
+      }
+    },
+    "browser.readerView.speechVoice" : {
+      "comment" : "Reader View - Speech menu section for which voice reads the article",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Voice"
+          }
+        }
+      }
+    },
+    "browser.readerView.speechVoiceAutomatic" : {
+      "comment" : "Reader View - Voice option that lets the system pick the voice for a language",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Automatic"
+          }
+        }
+      }
+    },
+    "browser.readerView.stopReading" : {
+      "comment" : "Reader View - Menu item that stops reading the article out loud",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Stop Reading"
+          }
+        }
+      }
+    },
     "browser.readerView.highlightLinks" : {
       "comment" : "Reader View - Switch that tints and underlines links, or leaves them looking like body text",
       "extractionState" : "extracted_with_value",

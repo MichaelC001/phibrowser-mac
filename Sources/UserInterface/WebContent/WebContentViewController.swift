@@ -2089,6 +2089,15 @@ class WebContentViewController: NSViewController {
                     comment: "Reader View - Toast shown after a code block is copied to the clipboard"),
                 in: browserState)
         }
+        controller.onSpeechUnavailable = { [weak self] in
+            guard let self, let browserState = self.browserState else { return }
+            OverlayToastCenter.shared.show(
+                title: NSLocalizedString(
+                    "browser.readerView.speechUnavailable",
+                    value: "No voice is installed for this article's language",
+                    comment: "Reader View - Toast shown when the article cannot be read aloud because macOS has no voice for its language"),
+                in: browserState)
+        }
         controller.onNavigate = { [weak self] url in
             guard let self, let tab = self.associatedTab else { return }
             // Leave the reader first so the tab is showing live content by the
@@ -2102,6 +2111,9 @@ class WebContentViewController: NSViewController {
 
     private func teardownReaderView() {
         guard let controller = readerController else { return }
+        // Before the view goes, so the voice stops with the surface that
+        // started it rather than reading on over the live page.
+        controller.stopSpeaking()
         controller.view.removeFromSuperview()
         controller.removeFromParent()
         readerController = nil
