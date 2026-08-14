@@ -752,6 +752,206 @@
     return container;
   }
 
+  // --- Legacy markup ----------------------------------------------------------
+  // Pre-CSS pages write an article as one run of text: paragraphs separated by
+  // `<br><br>` rather than marked as paragraphs, and typography set with
+  // `<font>` rather than a stylesheet. Readability normalises both before it
+  // scores a page, so only its own rung ever benefited — a rule or structural
+  // extraction handed the reader the raw markup.
+  //
+  // That looked close enough while reading, which is why it went unnoticed:
+  // `<br><br>` leaves a gap where a paragraph break belongs. But the article
+  // had no block structure at all, and everything that thinks in blocks then
+  // had one block to think about. Reading paulgraham.com aloud found a single
+  // passage — the title — and stopped there, with thirteen thousand characters
+  // of essay below it in no element of their own.
+
+  // Elements that hold text without being a block of their own. A run of these
+  // between two paragraph breaks is what becomes a paragraph.
+  var INLINE_TAGS = {
+    A: 1, ABBR: 1, B: 1, BDI: 1, BDO: 1, BIG: 1, BR: 1, CITE: 1, CODE: 1,
+    DATA: 1, DEL: 1, DFN: 1, EM: 1, FONT: 1, I: 1, IMG: 1, INS: 1, KBD: 1,
+    LABEL: 1, MARK: 1, NOBR: 1, Q: 1, RUBY: 1, S: 1, SAMP: 1, SMALL: 1,
+    SPAN: 1, STRIKE: 1, STRONG: 1, SUB: 1, SUP: 1, TIME: 1, TT: 1, U: 1,
+    VAR: 1, WBR: 1
+  };
+
+  // Inline only if everything inside it is too: a link wrapping a card is a
+  // block whatever the tag says, and wrapping it in a paragraph would put a
+  // block inside a `p` for the reader's parser to tear apart again.
+  function isInlineNode(node) {
+    if (node.nodeType !== 1) {
+      // Text, and comments, which carry nothing and so end nothing.
+      return true;
+    }
+    if (!INLINE_TAGS[node.tagName]) {
+      return false;
+    }
+    for (var i = 0; i < node.childNodes.length; i++) {
+      if (!isInlineNode(node.childNodes[i])) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  function isBlankText(node) {
+    return node.nodeType === 3 && !/\S/.test(node.nodeValue || "");
+  }
+
+  function depthOf(node) {
+    var depth = 0;
+    while (node) {
+      node = node.parentNode;
+      depth++;
+    }
+    return depth;
+  }
+
+  function hasSpeakableContent(nodes) {
+    for (var i = 0; i < nodes.length; i++) {
+      if (!isBlankText(nodes[i]) && nodes[i].nodeName !== "BR") {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // Rewrites one element's children, making every run of two or more `<br>` a
+  // paragraph boundary. A lone `<br>` is left where it is: that is a line
+  // break inside a paragraph — an address, a verse — not the end of one.
+  function paragraphizeChildren(parent) {
+    var doc = parent.ownerDocument;
+    var source = [];
+    for (var i = 0; i < parent.childNodes.length; i++) {
+      source.push(parent.childNodes[i]);
+    }
+
+    var output = [];       // paragraphs, as arrays of nodes, and passed-through blocks
+    var buffer = [];       // the paragraph being gathered
+    var run = [];          // the break candidates seen since the last real node
+    var breaks = 0;        // how many of them were `<br>`
+    var boundaries = 0;    // runs that turned out to be paragraph breaks
+
+    function flush() {
+      if (!hasSpeakableContent(buffer)) {
+        buffer = [];
+        return;
+      }
+      output.push(buffer);
+      buffer = [];
+    }
+
+    // A run of two or more breaks ends the paragraph and is dropped with it;
+    // anything shorter was never a boundary, so it belongs to the text.
+    function resolveRun() {
+      if (breaks >= 2) {
+        boundaries++;
+        flush();
+      } else {
+        buffer = buffer.concat(run);
+      }
+      run = [];
+      breaks = 0;
+    }
+
+    for (var s = 0; s < source.length; s++) {
+      var node = source[s];
+      if (node.nodeName === "BR") {
+        run.push(node);
+        breaks++;
+        continue;
+      }
+      // Whitespace between two breaks is part of the gap, not of the text.
+      if (run.length && isBlankText(node)) {
+        run.push(node);
+        continue;
+      }
+      resolveRun();
+      if (isInlineNode(node)) {
+        buffer.push(node);
+        continue;
+      }
+      flush();
+      output.push(node);
+    }
+    resolveRun();
+    flush();
+
+    // Nothing here was a paragraph break — the breaks are all line breaks
+    // inside one. Leave the markup as the page wrote it.
+    if (!boundaries) {
+      return;
+    }
+    // Appending moves each node out of the parent, so what is left behind
+    // afterwards is exactly the breaks and the whitespace around them.
+    var rebuilt = doc.createDocumentFragment();
+    for (var o = 0; o < output.length; o++) {
+      if (!Array.isArray(output[o])) {
+        rebuilt.appendChild(output[o]);
+        continue;
+      }
+      var block = doc.createElement("p");
+      for (var n = 0; n < output[o].length; n++) {
+        block.appendChild(output[o][n]);
+      }
+      rebuilt.appendChild(block);
+    }
+
+    // A paragraph that turns out to hold several is *replaced* by them rather
+    // than filled with them. `p` inside `p` does not survive the round trip
+    // through the reader's parser, and nesting divisions instead would leave
+    // the text in an element nothing downstream treats as prose — read aloud
+    // would skip the whole passage, which is the bug this pass exists to fix.
+    if (parent.tagName === "P" && parent.parentNode) {
+      parent.parentNode.replaceChild(rebuilt, parent);
+      return;
+    }
+    while (parent.firstChild) {
+      parent.removeChild(parent.firstChild);
+    }
+    parent.appendChild(rebuilt);
+  }
+
+  function normalizeLegacyMarkup(container) {
+    // Collected before anything moves: paragraphizing rewrites the children of
+    // each parent, which invalidates a live list part way through.
+    var brs = container.querySelectorAll("br");
+    var parents = [];
+    for (var i = 0; i < brs.length; i++) {
+      var parent = brs[i].parentNode;
+      // Preformatted text keeps its own line breaks. Nothing in it is a
+      // paragraph boundary.
+      if (!parent || parents.indexOf(parent) >= 0 || parent.closest("pre")) {
+        continue;
+      }
+      parents.push(parent);
+    }
+    // Innermost first. A `<font>` full of `<br><br>` is inline until its own
+    // paragraphs exist; grouped the other way round, the enclosing cell would
+    // wrap the whole essay in one paragraph and then fill it with more,
+    // leaving `p` inside `p` for the reader's parser to pull apart again.
+    parents.sort(function (a, b) { return depthOf(b) - depthOf(a); });
+    for (var p = 0; p < parents.length; p++) {
+      paragraphizeChildren(parents[p]);
+    }
+
+    // `<font>` is a stylesheet written into the markup, and the reader has its
+    // own — the same reason `style` attributes go in `sanitizeInto`. Left in
+    // place it wins over both reading-style controls on these pages: the essay
+    // stayed 13px Verdana whatever typeface or text size was chosen.
+    var fonts = container.querySelectorAll("font");
+    for (var f = 0; f < fonts.length; f++) {
+      var font = fonts[f];
+      var span = container.ownerDocument.createElement("span");
+      while (font.firstChild) {
+        span.appendChild(font.firstChild);
+      }
+      font.parentNode && font.parentNode.replaceChild(span, font);
+    }
+    return container;
+  }
+
   // Mutates the container into its final form. Callers measure it *after*
   // this rather than before: boilerplate stripping, script removal and
   // sanitising all take text out, so a length taken first counts words the
@@ -766,6 +966,9 @@
     // anything else looks at it.
     reissueNotionTables(container);
     stripBoilerplate(container, keepDiscussion);
+    // After stripping, so furniture is gone before the prose is grouped, and
+    // before sanitising, which scrubs attributes off whatever shape is left.
+    normalizeLegacyMarkup(container);
     absolutizeInto(container);
     sanitizeInto(container);
     return container;
