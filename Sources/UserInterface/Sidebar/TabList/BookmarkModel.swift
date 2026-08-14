@@ -274,7 +274,21 @@ extension Bookmark: CustomDebugStringConvertible {
 
 class BookmarkManager: ObservableObject {
     @Published private(set) var rootFolder: Bookmark
-    
+
+    /// Whether the store has delivered its first bookmark payload for this
+    /// window. True for an EMPTY payload too, and true from the start for
+    /// windows that never subscribe (incognito) — anything keyed on this must
+    /// not wait for a delivery that will never come.
+    ///
+    /// The sidebar's restore gate keys the tab list's first paint on it:
+    /// until the payload lands, `BrowserState.updateNormalTabs` cannot tell
+    /// which restored tabs are bookmark-backed and projects them as ordinary
+    /// tabs. Flipped at the END of the subscription's work in both branches,
+    /// after `syncAllBookmarksOpenedState()` has re-projected `normalTabs`,
+    /// so a subscriber reading that projection at signal time already sees
+    /// the post-absorption list rather than the one it replaces.
+    @Published private(set) var didApplyFirstStoreDelivery = false
+
     /// Lookup table for bookmark guid -> bookmark instance.
     private var bookmarkIndex: [String: Bookmark] = [:]
     
@@ -291,7 +305,13 @@ class BookmarkManager: ObservableObject {
     init(with browseState: BrowserState) {
         self.browserState = browseState
         self.rootFolder = Bookmark(folderTitle: "Bookmarks")
-        guard !browseState.isIncognito else { return }
+        guard !browseState.isIncognito else {
+            // Incognito never subscribes, so nothing would ever flip the
+            // delivery signal. Report it satisfied instead of leaving every
+            // consumer waiting on a payload that cannot arrive.
+            didApplyFirstStoreDelivery = true
+            return
+        }
         browseState.localStore.createDefaultRootDir(profileId: browseState.profileId, spaceId: browseState.spaceId)
         Task { @MainActor in
             browseState.localStore.bookmarksPublisher(profileId: browseState.profileId, spaceId: browseState.spaceId)
@@ -303,6 +323,7 @@ class BookmarkManager: ObservableObject {
                         self.applyNonLayoutUpdates(from: bookmarks)
                         self.browserState?.syncAllBookmarksOpenedState()
                         self.browserState?.pruneMultiSelectionBookmarks()
+                        self.noteFirstStoreDelivery()
                         return
                     }
 
@@ -312,12 +333,23 @@ class BookmarkManager: ObservableObject {
                     self.rebuildIndex()
                     self.browserState?.syncAllBookmarksOpenedState()
                     self.browserState?.pruneMultiSelectionBookmarks()
+                    self.noteFirstStoreDelivery()
                 }
                 .store(in: &cancellables)
         }
-       
+
     }
-    
+
+    /// Records that the store's first payload has been applied. Called last
+    /// in both branches above — never earlier — because the whole point of
+    /// the signal is that `syncAllBookmarksOpenedState()` has already run:
+    /// a consumer that paints on it must see the tab projection this
+    /// delivery produced, not the one it corrects.
+    private func noteFirstStoreDelivery() {
+        guard !didApplyFirstStoreDelivery else { return }
+        didApplyFirstStoreDelivery = true
+    }
+
     /// Saves the set of currently expanded folders.
     private func saveExpandedState() {
         expandedFolderGuids.removeAll()

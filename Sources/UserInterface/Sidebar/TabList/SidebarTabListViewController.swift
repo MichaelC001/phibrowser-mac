@@ -251,6 +251,37 @@ class SidebarTabListViewController: NSViewController {
     private var scrollAnimationGeneration: Int = 0
     private var scrollScheduleGeneration: Int = 0
     private var isActive = false
+
+    /// Restore gate: while armed, the outline holds its current snapshot
+    /// rather than paint a tab list that is knowingly wrong.
+    ///
+    /// A restored window's tabs are applied in one synchronous transaction,
+    /// but `BrowserState.updateNormalTabs` can only tell which of them are
+    /// bookmark-backed after the bookmark store has delivered. Before that,
+    /// `openedBookmarkGuids` is empty and every such tab projects as an
+    /// ordinary tab — it lands in the tab section only to be absorbed into a
+    /// bookmark row a turn later, which reads as tabs jumping out of the
+    /// list. Armed by the restore transaction, opened by the store's first
+    /// delivery (`bookmarkSectionDidApplyFirstStoreDelivery`) or by the
+    /// timeout below.
+    ///
+    /// The pinned band is deliberately NOT gated: it reads `pinnedTabs`,
+    /// loaded synchronously at state creation, and owes nothing to the
+    /// bookmark store — so a restored window still reveals with its
+    /// favourites in place (see `PinnedTabViewController.formRestoredContentNow`).
+    ///
+    /// Survives deactivation on purpose. A layout switch that deactivates and
+    /// reactivates this controller mid-gate must not drop it: `activate()`
+    /// refreshes, and an ungated refresh there paints exactly the
+    /// pre-absorption list the gate exists to keep off screen.
+    private var restoreOutlineGateIsArmed = false
+    /// Invalidates an in-flight gate timeout when the gate opens or re-arms.
+    private var restoreOutlineGateGeneration: UInt = 0
+    /// Ceiling on the gate. Every path that opens it runs on the main thread,
+    /// so a delivery that never arrives (released store container mid-guest
+    /// migration, cancelled task) would otherwise hold the list empty for the
+    /// window's lifetime.
+    private static let restoreOutlineGateTimeout: TimeInterval = 1.0
     private var bookmarkEditRequestGeneration = 0
     private var lastBookmarkRenameClick: (guid: String, timestamp: TimeInterval)?
     
@@ -450,8 +481,11 @@ class SidebarTabListViewController: NSViewController {
         }
         isActive = true
         setupBindings()
-        bookmarkSectionController.setActive(true)
+        // Before the bookmark section: activating it can report an
+        // already-applied store delivery, which opens the restore gate and
+        // paints — and that paint has to find both sections filled.
         tabSectionController.browserState = browserState
+        bookmarkSectionController.setActive(true)
         refreshAllItems()
     }
 
@@ -466,6 +500,11 @@ class SidebarTabListViewController: NSViewController {
     }
 
     private func clearInactiveUIState() {
+        // The restore gate is NOT cleared here. Nothing re-arms it — the
+        // restore transaction that arms it fires once — so dropping it on
+        // deactivation would let the next `activate()` paint the
+        // pre-absorption list. Its own release path and timeout still own its
+        // lifetime, and both no-op while inactive.
         allItems = []
         lastAcceptedOutlineSnapshot = nil
         focusedBookmarkPresentation = nil
@@ -510,6 +549,19 @@ class SidebarTabListViewController: NSViewController {
         afterReload: ((_ outlineStructureChanged: Bool) -> Void)? = nil
     ) -> Bool {
         guard isActive else { return false }
+        // Restore gate (see `restoreOutlineGateIsArmed`). Bailing here rather
+        // than at each call site covers every path into the outline —
+        // including `activate()`'s own refresh — for the few hundred
+        // milliseconds the bookmark payload is outstanding. `afterReload`
+        // work is skipped with the paint it belonged to: the cell pushes have
+        // no realized cell to reach (a row built by the release's paint takes
+        // its members from `configure(with:)`), and the release re-runs the
+        // visibility half itself.
+        //
+        // NOTE for future callers: the returned `false` now means "gated" as
+        // well as "data source unchanged". Anything that branches on it to
+        // run work the reload would otherwise have run must handle both.
+        guard !restoreOutlineGateIsArmed else { return false }
         let items = makeAllItems()
         let resolvedPresentationState = presentationState
             ?? nextFloatingBookmarkPresentationState(
@@ -618,6 +670,49 @@ class SidebarTabListViewController: NSViewController {
             }
         )
         return didUpdateDataSource
+    }
+
+    /// Holds the outline until the bookmark store's first delivery, so a
+    /// restored window's tab list is painted once, already knowing which of
+    /// its tabs belong to bookmark rows.
+    private func armRestoreOutlineGate() {
+        guard !restoreOutlineGateIsArmed else { return }
+        restoreOutlineGateIsArmed = true
+        restoreOutlineGateGeneration &+= 1
+        let generation = restoreOutlineGateGeneration
+        AppLogDebug("[SIDEBAR_RESTORE_GATE] armed, waiting for the bookmark store's first delivery")
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.restoreOutlineGateTimeout) { [weak self] in
+            guard let self, self.restoreOutlineGateGeneration == generation else { return }
+            AppLogWarn(
+                "[SIDEBAR_RESTORE_GATE] timed out after " +
+                "\(Self.restoreOutlineGateTimeout)s; painting the tab list " +
+                "before the bookmark projection is known"
+            )
+            self.releaseRestoreOutlineGate()
+        }
+    }
+
+    /// Opens the gate and paints once. The tab items are rebuilt first,
+    /// because the delivery that opened the gate re-projected `normalTabs`
+    /// while the section still held the pre-absorption list; the single
+    /// refresh that follows then carries both sections. Unanimated — this is
+    /// the restored window's first list, not a change to one.
+    ///
+    /// The trailing closure replaces the visibility half of the `afterReload`
+    /// work the gated paint never ran. Its cell-push half is deliberately not
+    /// repeated: those rows are built fresh by this very paint and take their
+    /// members from `configure(with:)`.
+    private func releaseRestoreOutlineGate() {
+        guard restoreOutlineGateIsArmed else { return }
+        restoreOutlineGateIsArmed = false
+        restoreOutlineGateGeneration &+= 1
+        AppLogDebug("[SIDEBAR_RESTORE_GATE] opened")
+        tabSectionController.rebuildItemsWithoutNotifyingDelegate()
+        refreshAllItems(animated: false) { [weak self] _ in
+            guard let self else { return }
+            self.updateNewTabCleanupVisibility()
+            self.clearFloatingProxyIfTabClosed()
+        }
     }
 
     static func hasOutlineStructureChanges(
@@ -3908,6 +4003,11 @@ extension SidebarTabListViewController: BookmarkSectionDelegate {
         outlineView.autosaveName = "SidebarTabList"
         syncBookmarkExpandedFlags()
     }
+
+    func bookmarkSectionDidApplyFirstStoreDelivery() {
+        guard isActive else { return }
+        releaseRestoreOutlineGate()
+    }
 }
 
 extension SidebarTabListViewController: TabSectionDelegate {
@@ -3938,6 +4038,13 @@ extension SidebarTabListViewController: TabSectionDelegate {
     
     func tabSectionDidUpdate(with change: TabSectionChange) {
         guard isActive else { return }
+        // Only the restore transaction can deliver a whole window's tabs
+        // before this window's bookmarks exist; tabs arriving one at a time
+        // in steady state are never gated.
+        if change.isRestoreTransaction,
+           !bookmarkSectionController.hasAppliedFirstStoreDelivery {
+            armRestoreOutlineGate()
+        }
         guard change.rootItemsChanged else {
             selectActiveTab()
             applyFocusingSelection(for: browserState.focusingTab)

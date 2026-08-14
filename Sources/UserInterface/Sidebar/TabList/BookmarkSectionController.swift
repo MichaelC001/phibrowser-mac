@@ -14,7 +14,14 @@ class BookmarkSectionController: NSObject {
     private(set) var bookmarkItems: [SidebarItem] = []
     private(set) var expandedFolders: Set<String> = []
     private(set) var isInitialDataLoaded = false
-    
+
+    /// Mirrors `BookmarkManager.didApplyFirstStoreDelivery` while this
+    /// section is active. Distinct from `isInitialDataLoaded`, which tracks
+    /// the first NON-EMPTY tree: a profile with no bookmarks at all still
+    /// gets a delivery, and consumers that must not stall forever have to key
+    /// on the delivery rather than on there being rows.
+    private(set) var hasAppliedFirstStoreDelivery = false
+
     weak var delegate: BookmarkSectionDelegate?
     
     init(browserState: BrowserState) {
@@ -44,8 +51,23 @@ class BookmarkSectionController: NSObject {
             }
             .store(in: &cancellables)
         refreshBookmarkItems(bookmarkManager.rootFolder, notifyDelegate: false)
+        // Subscribed LAST, after `bookmarkItems` is filled. On a
+        // re-activation the delivery has usually already happened, so this
+        // reports it the moment it is subscribed — and the consumer paints on
+        // that report. Subscribing earlier would have it paint an outline
+        // whose bookmark section is still the empty one `deactivateBindings`
+        // left behind.
+        bookmarkManager.$didApplyFirstStoreDelivery
+            .filter { $0 }
+            .prefix(1)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                self.hasAppliedFirstStoreDelivery = true
+                self.delegate?.bookmarkSectionDidApplyFirstStoreDelivery()
+            }
+            .store(in: &cancellables)
     }
-    
+
     private func deactivateBindings() {
         guard isActive else { return }
         isActive = false
@@ -53,6 +75,7 @@ class BookmarkSectionController: NSObject {
         bookmarkItems = []
         expandedFolders.removeAll()
         isInitialDataLoaded = false
+        hasAppliedFirstStoreDelivery = false
     }
 
     private func refreshBookmarkItems(_ root: Bookmark, notifyDelegate: Bool) {
@@ -198,5 +221,15 @@ class BookmarkSectionController: NSObject {
 
 protocol BookmarkSectionDelegate: AnyObject {
     func bookmarkSectionDidUpdate()
+    /// The first NON-EMPTY bookmark tree has been built. Kept separate from
+    /// the delivery signal below because the outline's autosave name may only
+    /// be assigned once there are rows to expand — assigning it against an
+    /// empty outline would persist an empty expanded-item set over the user's
+    /// saved one.
     func bookmarkSectionInitialDataDidLoad()
+    /// The store's FIRST payload for this window has been applied — an empty
+    /// one included, and immediately for windows that never subscribe. Fires
+    /// exactly once per activation, after the payload has re-projected the
+    /// window's tab list.
+    func bookmarkSectionDidApplyFirstStoreDelivery()
 }
