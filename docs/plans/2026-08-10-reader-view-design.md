@@ -388,15 +388,30 @@ mode, group overview, and split partners.
 
 ### Eligibility
 
-Dropping `DistillabilityObserver` removes the push signal that would tell the
-button whether the page is an article. Phase one does not gate on eligibility:
-the command is always available, and a failed extraction reports that no
-article was found. Opening a CDP session per navigation purely to test
-eligibility is not justified.
+The button (and only the button) gates on eligibility; the menu, shortcut,
+and context menu stay unconditional, with extraction's own refusal as the
+authority. Three signals decide it, cheapest first — see
+`ReaderExtractionService.isReaderWorthOffering`:
 
-If the always-available affordance proves noisy, the cheapest upgrade is to
-run `isProbablyReaderable` over CDP on load settle for the active tab only,
-debounced. Restoring the framework-side observer is a last resort.
+1. a site rule matches (`ReaderSiteRuleStore`);
+2. Chromium's native distillability verdict is positive. The framework-side
+   `DistillabilityObserver` — dropped in phase one, restored once the
+   per-navigation probe cost was real — subscribes in
+   `PhiWebContentsObserver` and pushes upstream DOM Distiller's AdaBoost
+   verdict (computed in Blink during layout, after parse and again after
+   load) to the KVO property `WebContentWrapper.isDistillable`. It is
+   positive-only: upstream suppresses short articles and non-HTTPS pages,
+   so NO falls through rather than concluding anything. A rising edge also
+   re-judges the button (`Tab.setupObservers`), which covers articles that
+   hydrate after the load-settle probe and its one-shot retry gave up;
+3. `isProbablyReaderable` (plus Phi's supplements) over CDP, as before —
+   now reached only when neither cheaper signal answered, so article pages
+   normally pay no probe at all.
+
+The renderer-side agent is enabled by forcing
+`--enable-distillability-service` for Phi in
+`ChromeContentBrowserClient::AppendExtraCommandLineSwitches`, the same way
+Android does.
 
 ### Menu and shortcut
 

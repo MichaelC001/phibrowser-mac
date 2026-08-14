@@ -1605,6 +1605,16 @@ typedef NS_ENUM(NSInteger, PhiGhostMaterializeOutcome) {
 @property(nonatomic, assign, readonly) BOOL isSharingScreen;
 @property(nonatomic, assign, readonly) BOOL isInContentFullscreen;
 
+/// Chromium's native verdict on whether this tab's page is a distillable
+/// article — upstream DOM Distiller's AdaBoost model over features Blink
+/// computes during layout, delivered after parse and again after load, so
+/// reading it costs nothing and no script is injected. Positive-only for
+/// Reader View: upstream suppresses short articles and non-HTTPS pages, so
+/// NO means "no native verdict", never "not readable" — the extraction
+/// probe stays the authority on that side. Reset to NO when a new page
+/// commits; a same-document (SPA) navigation keeps the last verdict.
+@property(nonatomic, assign, readonly) BOOL isDistillable;
+
 /// DevTools page target id for this tab, or nil when the contents are gone.
 /// Lets the app open its own CDP session on the tab through the FD-injection
 /// transport (`AppDevToolsPageSession`) — the app is the client, no listener

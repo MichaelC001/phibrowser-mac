@@ -120,11 +120,13 @@ class Tab: WebContentRepresentable {
     @Published var isReaderSettling: Bool = false
     /// Whether the address bar should draw its reader button for this tab.
     ///
-    /// Re-judged when a load finishes and when the URL moves without one (an
-    /// SPA navigation) — see `refreshReaderOfferability`. Deliberately only
-    /// the button reads this: the View menu, the shortcut, and the page
-    /// context menu offer the reader regardless, so a page this misjudges
-    /// still opens through any of them.
+    /// Re-judged when a load finishes, when the URL moves without one (an
+    /// SPA navigation), and when Chromium's native distillability verdict
+    /// turns positive — see `refreshReaderOfferability` and the
+    /// `isDistillable` sink in `setupObservers`. Deliberately only the
+    /// button reads this: the View menu, the shortcut, and the page context
+    /// menu offer the reader regardless, so a page this misjudges still
+    /// opens through any of them.
     @Published private(set) var isReaderOfferable: Bool = false
 
     /// Use native NTP rendering when the tab URL is an NTP URL.
@@ -309,7 +311,24 @@ class Tab: WebContentRepresentable {
         wrapper.publisher(for: \.loadProgress)
             .assign(to: \.loadingProgress, on: self)
             .store(in: &cancellables)
-        
+
+        // Chromium's native distillability verdict (see `isDistillable` in
+        // the bridge header). A rising edge re-judges the button:
+        // `isReaderWorthOffering` answers from the flag without opening a
+        // CDP probe. The verdict lands after parse and again after load, so
+        // it can arrive well after `isLoading` fell — a hydrating SPA —
+        // which is exactly the case the one-shot retry in
+        // `refreshReaderOfferability` gives up on. NO never rescinds: it
+        // means "no native verdict", and the probe's judgement stands.
+        wrapper.publisher(for: \.isDistillable)
+            .removeDuplicates()
+            .filter { $0 }
+            .sink { [weak self] _ in
+                guard let self, !self.isReaderOfferable else { return }
+                self.refreshReaderOfferability()
+            }
+            .store(in: &cancellables)
+
         wrapper.publisher(for: \.canGoBack)
             .assign(to: \.canGoBack, on: self)
             .store(in: &cancellables)

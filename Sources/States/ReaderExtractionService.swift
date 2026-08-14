@@ -109,14 +109,20 @@ final class ReaderExtractionService {
 
     /// Whether the address bar should draw its reader button for this tab.
     ///
-    /// Two signals past the URL gate, either sufficient:
+    /// Three signals past the URL gate, any one sufficient, cheapest first:
     ///
-    /// - a site rule matches, which covers exactly the pages the heuristic
-    ///   below misreads: paulgraham.com writes paragraphs as `<br><br>` with
-    ///   no `<p>` to count, Google Docs paints into a canvas, and a thread
-    ///   page is many short posts rather than one article
+    /// - a site rule matches, which covers exactly the pages the heuristics
+    ///   misread: paulgraham.com writes paragraphs as `<br><br>` with no
+    ///   `<p>` to count, Google Docs paints into a canvas, and a thread page
+    ///   is many short posts rather than one article
+    /// - Chromium's native distillability verdict is positive: computed in
+    ///   Blink during layout and pushed over the bridge, so consulting it
+    ///   costs nothing — an article page never pays for a probe. It is
+    ///   positive-only by construction (upstream suppresses short articles
+    ///   and non-HTTPS pages), so a NO is no evidence and falls through
     /// - Mozilla's `isProbablyReaderable` passes in the live page, which
-    ///   covers the long tail of sites nobody has written a rule for
+    ///   covers what the verdict withholds and the long tail of sites
+    ///   nobody has written a rule for
     ///
     /// Only the button consults this. The View menu, the shortcut, and the
     /// page context menu stay unconditional, so a wrong "no" here costs one
@@ -125,6 +131,9 @@ final class ReaderExtractionService {
     func isReaderWorthOffering(for tab: Tab) async -> Bool {
         guard Self.canOfferReader(forURLString: tab.url) else { return false }
         if ReaderSiteRuleStore.shared.rule(forURLString: tab.url) != nil {
+            return true
+        }
+        if tab.webContentWrapper?.isDistillable == true {
             return true
         }
         return await probeIsProbablyReaderable(tab: tab)
