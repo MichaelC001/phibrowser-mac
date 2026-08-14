@@ -51,13 +51,23 @@ final class BookmarkManagerViewController: NSViewController {
         }
     }
 
-    private final class MoveActionContext: NSObject {
+    private final class SpaceTransferActionContext: NSObject {
         let guids: [String]
         let targetSpaceId: String
 
         init(guids: [String], targetSpaceId: String) {
             self.guids = guids
             self.targetSpaceId = targetSpaceId
+        }
+    }
+
+    private final class GroupActionContext: NSObject {
+        let guids: [String]
+        let groupToken: String
+
+        init(guids: [String], groupToken: String) {
+            self.guids = guids
+            self.groupToken = groupToken
         }
     }
 
@@ -129,11 +139,11 @@ final class BookmarkManagerViewController: NSViewController {
         newFolderButton.title = NSLocalizedString(
             "bookmarkManager.header.newFolderAction",
             value: "New Folder",
-            comment: "Bookmark manager - Button that creates a root bookmark folder"
+            comment: "Bookmark manager - Button that creates a folder at the root or inside the selected folder"
         )
         newFolderButton.bezelStyle = .rounded
         newFolderButton.target = self
-        newFolderButton.action = #selector(createRootFolder(_:))
+        newFolderButton.action = #selector(createFolderFromHeader(_:))
         newFolderButton.translatesAutoresizingMaskIntoConstraints = false
 
         searchField.backgroundColor = .clear
@@ -406,20 +416,26 @@ final class BookmarkManagerViewController: NSViewController {
     private func beginPendingEditIfPossible() {
         guard let guid = pendingEditGuid,
               let bookmark = manager.bookmark(withGuid: guid) else { return }
-        if let parent = bookmark.parent {
-            outlineView.expandItem(parent)
+        let ancestorGuids = ancestorFolderGuids(for: bookmark)
+        for ancestorGuid in ancestorGuids {
+            guard let folder = manager.bookmark(withGuid: ancestorGuid) else { continue }
+            folder.isExpanded = true
+            outlineView.expandItem(folder)
         }
         pendingEditGuid = nil
         DispatchQueue.main.async { [weak self] in
+            self?.revealBookmark(guid: guid, ancestorGuids: ancestorGuids)
             self?.startEditing(guid: guid, column: .website)
         }
     }
 
-    @objc private func createRootFolder(_ sender: Any?) {
-        createFolder(in: nil)
+    @objc private func createFolderFromHeader(_ sender: Any?) {
+        let selected = bookmarks(for: selectedBookmarkGuids())
+        let parent = selected.count == 1 && selected[0].isFolder ? selected[0] : nil
+        createFolder(in: parent, targetIndex: parent == nil ? nil : 0)
     }
 
-    private func createFolder(in parent: Bookmark?) {
+    private func createFolder(in parent: Bookmark?, targetIndex: Int? = nil) {
         if !searchField.stringValue.isEmpty {
             searchField.stringValue = ""
             rebuildProjection(animated: true)
@@ -434,7 +450,8 @@ final class BookmarkManagerViewController: NSViewController {
                 comment: "Default name for new bookmark folder"
             ),
             to: parent,
-            guid: guid
+            guid: guid,
+            targetIndex: targetIndex
         )
     }
 
@@ -460,8 +477,9 @@ final class BookmarkManagerViewController: NSViewController {
 
         let menu = NSMenu()
         if selected.count > 1 {
-            appendMoveMenu(to: menu, guids: guids)
-            appendDeleteItem(to: menu, guids: guids, addsSeparator: !menu.items.isEmpty)
+            appendMultiSelectionActions(to: menu, guids: guids, bookmarks: selected)
+            appendSpaceTransferMenus(to: menu, guids: guids, isMultiple: true)
+            appendDeleteItem(to: menu, bookmarks: selected, isMultiple: true)
             return menu
         }
 
@@ -469,11 +487,11 @@ final class BookmarkManagerViewController: NSViewController {
         if bookmark.isFolder {
             menu.addItem(actionItem(
                 title: NSLocalizedString(
-                    "bookmarkManager.contextMenu.editAction",
-                    value: "Edit",
-                    comment: "Bookmark manager context menu - Edit a single bookmark or folder"
+                    "sidebar.bookmarkContextMenu.renameAction",
+                    value: "Rename...",
+                    comment: "Bookmark Rename menu item"
                 ),
-                action: #selector(editMenuItem(_:)),
+                action: #selector(renameMenuItem(_:)),
                 context: BookmarkActionContext(guids: [bookmark.guid])
             ))
             menu.addItem(actionItem(
@@ -486,26 +504,6 @@ final class BookmarkManagerViewController: NSViewController {
                 context: BookmarkActionContext(guids: [bookmark.guid])
             ))
         } else {
-            menu.addItem(actionItem(
-                title: NSLocalizedString(
-                    "bookmarkManager.contextMenu.openAction",
-                    value: "Open",
-                    comment: "Bookmark manager context menu - Open a bookmark"
-                ),
-                action: #selector(openMenuItem(_:)),
-                context: BookmarkActionContext(guids: [bookmark.guid])
-            ))
-            if isSearchMode(projection?.mode) {
-                menu.addItem(actionItem(
-                    title: NSLocalizedString(
-                        "bookmarkManager.contextMenu.showInFolderAction",
-                        value: "Show in Folder",
-                        comment: "Bookmark manager context menu - Reveal a bookmark search result in its containing folder"
-                    ),
-                    action: #selector(showInFolderMenuItem(_:)),
-                    context: BookmarkActionContext(guids: [bookmark.guid])
-                ))
-            }
             if let secondaryURL = bookmark.secondaryUrl, !secondaryURL.isEmpty {
                 if let primaryURL = bookmark.url {
                     menu.addItem(copyItem(
@@ -535,20 +533,134 @@ final class BookmarkManagerViewController: NSViewController {
                     url: url
                 ))
             }
+
+            if bookmark.secondaryUrl?.isEmpty != false {
+                menu.addItem(actionItem(
+                    title: NSLocalizedString(
+                        "sidebar.bookmarkContextMenu.renameAction",
+                        value: "Rename...",
+                        comment: "Bookmark Rename menu item"
+                    ),
+                    action: #selector(renameMenuItem(_:)),
+                    context: BookmarkActionContext(guids: [bookmark.guid])
+                ))
+            }
             menu.addItem(actionItem(
                 title: NSLocalizedString(
-                    "bookmarkManager.contextMenu.editAction",
-                    value: "Edit",
-                    comment: "Bookmark manager context menu - Edit a single bookmark or folder"
+                    "sidebar.bookmarkContextMenu.editAction",
+                    value: "Edit...",
+                    comment: "Edit bookmark url menu item title"
                 ),
                 action: #selector(editMenuItem(_:)),
                 context: BookmarkActionContext(guids: [bookmark.guid])
             ))
+            menu.addItem(actionItem(
+                title: NSLocalizedString(
+                    "sidebar.bookmarkContextMenu.openInNewTabAction",
+                    value: "Open in New Tab",
+                    comment: "Open in New Tab menu item"
+                ),
+                action: #selector(openInNewTabMenuItem(_:)),
+                context: BookmarkActionContext(guids: [bookmark.guid])
+            ))
+            if isSearchMode(projection?.mode) {
+                menu.addItem(actionItem(
+                    title: NSLocalizedString(
+                        "bookmarkManager.contextMenu.showInFolderAction",
+                        value: "Show in Folder",
+                        comment: "Bookmark manager context menu - Reveal a bookmark search result in its containing folder"
+                    ),
+                    action: #selector(showInFolderMenuItem(_:)),
+                    context: BookmarkActionContext(guids: [bookmark.guid])
+                ))
+            }
         }
 
-        appendMoveMenu(to: menu, guids: guids)
-        appendDeleteItem(to: menu, guids: guids, addsSeparator: true)
+        appendSpaceTransferMenus(to: menu, guids: guids, isMultiple: false)
+        appendDeleteItem(to: menu, bookmarks: selected, isMultiple: false)
         return menu
+    }
+
+    private func appendMultiSelectionActions(
+        to menu: NSMenu,
+        guids: [String],
+        bookmarks: [Bookmark]
+    ) {
+        let roots = rootBookmarks(for: guids)
+        if roots.contains(where: { !$0.isFolder }) {
+            menu.addItem(actionItem(
+                title: NSLocalizedString(
+                    "common.tabMultiSelectionContextMenu.duplicateTabsAction",
+                    value: "Duplicate Tabs",
+                    comment: "Tab multi-selection context menu - duplicate all selected tabs"
+                ),
+                action: #selector(duplicateBookmarksMenuItem(_:)),
+                context: BookmarkActionContext(guids: guids)
+            ))
+            menu.addItem(actionItem(
+                title: NSLocalizedString(
+                    "common.tabMultiSelectionContextMenu.copyLinksAction",
+                    value: "Copy Links",
+                    comment: "Tab multi-selection context menu - copy links of all selected tabs"
+                ),
+                action: #selector(copyBookmarkLinksMenuItem(_:)),
+                context: BookmarkActionContext(guids: guids)
+            ))
+        }
+
+        guard !bookmarks.contains(where: \.isFolder) else { return }
+        appendSeparatorIfNeeded(to: menu)
+
+        if browserState.canCreateGroupFromBookmarks(bookmarkGuids: guids) {
+            menu.addItem(actionItem(
+                title: NSLocalizedString(
+                    "common.tabMultiSelectionContextMenu.addToNewGroupAction",
+                    value: "Add Tabs to New Group",
+                    comment: "Tab multi-selection context menu - create a new tab group from selected tabs"
+                ),
+                action: #selector(createGroupFromBookmarksMenuItem(_:)),
+                context: BookmarkActionContext(guids: guids)
+            ))
+        }
+
+        let groups = orderedGroupsInStripOrder().filter {
+            browserState.canAddBookmarks(bookmarkGuids: guids, toGroup: $0.token)
+        }
+        guard !groups.isEmpty else { return }
+        let parent = NSMenuItem(
+            title: NSLocalizedString(
+                "common.tabMultiSelectionContextMenu.moveToGroupSubmenu",
+                value: "Move Tabs to Group",
+                comment: "Tab multi-selection context menu - submenu to move selected tabs to an existing tab group"
+            ),
+            action: nil,
+            keyEquivalent: ""
+        )
+        let submenu = NSMenu()
+        for group in groups {
+            let memberCount = browserState.normalTabs.lazy.filter { $0.groupToken == group.token }.count
+            let item = actionItem(
+                title: group.displayTitle(memberCount: memberCount),
+                action: #selector(addBookmarksToGroupMenuItem(_:)),
+                context: GroupActionContext(guids: guids, groupToken: group.token)
+            )
+            item.image = NSImage.tabGroupColorSwatch(for: group.color)
+            submenu.addItem(item)
+        }
+        parent.submenu = submenu
+        menu.addItem(parent)
+    }
+
+    private func orderedGroupsInStripOrder() -> [WebContentGroupInfo] {
+        var seen = Set<String>()
+        var ordered: [WebContentGroupInfo] = []
+        for tab in browserState.normalTabs {
+            guard let token = tab.groupToken,
+                  seen.insert(token).inserted,
+                  let group = browserState.groups[token] else { continue }
+            ordered.append(group)
+        }
+        return ordered
     }
 
     private func actionItem(
@@ -570,29 +682,63 @@ final class BookmarkManagerViewController: NSViewController {
         )
     }
 
-    private func appendMoveMenu(to menu: NSMenu, guids: [String]) {
-        guard PhiPreferences.GeneralSettings.spacesFeatureEnabled.loadValue(),
-              !browserState.isIncognito else { return }
-        let targets = SpaceManager.shared.spaces.filter {
-            $0.spaceId != scope.spaceId && !SpaceManager.isIncognitoSpaceId($0.spaceId)
-        }
-        guard !targets.isEmpty else { return }
+    private func appendSpaceTransferMenus(to menu: NSMenu, guids: [String], isMultiple: Bool) {
+        let spaces = SpaceManager.shared.spaces
+        let moveTargets = spaces.filter { browserState.canMoveBookmarks(bookmarkGuids: guids, to: $0) }
+        let cloneTargets = spaces.filter { browserState.canCloneBookmarks(bookmarkGuids: guids, to: $0) }
+        guard !moveTargets.isEmpty || !cloneTargets.isEmpty else { return }
 
-        let parent = NSMenuItem(
-            title: NSLocalizedString(
-                "sidebar.bookmarkContextMenu.moveToSpaceSubmenu",
-                value: "Move to Space",
-                comment: "Bookmark context menu - Submenu to move this bookmark or folder to another Space"
-            ),
-            action: nil,
-            keyEquivalent: ""
-        )
+        appendSeparatorIfNeeded(to: menu)
+        if !moveTargets.isEmpty {
+            appendSpaceSubmenu(
+                to: menu,
+                title: NSLocalizedString(
+                    isMultiple
+                        ? "common.tabMultiSelectionContextMenu.moveToSpaceSubmenu"
+                        : "sidebar.bookmarkContextMenu.moveToSpaceSubmenu",
+                    value: "Move to Space",
+                    comment: isMultiple
+                        ? "Tab multi-selection context menu - Submenu to move selected tabs and bookmarks to another Space"
+                        : "Bookmark context menu - Submenu to move this bookmark or folder to another Space"
+                ),
+                spaces: moveTargets,
+                guids: guids,
+                action: #selector(moveToSpaceMenuItem(_:))
+            )
+        }
+        if !cloneTargets.isEmpty {
+            appendSpaceSubmenu(
+                to: menu,
+                title: NSLocalizedString(
+                    isMultiple
+                        ? "common.tabMultiSelectionContextMenu.cloneToSpaceSubmenu"
+                        : "sidebar.bookmarkContextMenu.cloneToSpaceSubmenu",
+                    value: "Clone to Space",
+                    comment: isMultiple
+                        ? "Tab multi-selection context menu - Submenu to clone selected tabs and bookmarks to another Space"
+                        : "Bookmark context menu - Submenu to clone this bookmark or folder to another Space"
+                ),
+                spaces: cloneTargets,
+                guids: guids,
+                action: #selector(cloneToSpaceMenuItem(_:))
+            )
+        }
+    }
+
+    private func appendSpaceSubmenu(
+        to menu: NSMenu,
+        title: String,
+        spaces: [SpaceModel],
+        guids: [String],
+        action: Selector
+    ) {
+        let parent = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         let submenu = NSMenu()
-        for space in targets {
+        for space in spaces {
             let item = actionItem(
                 title: space.name,
-                action: #selector(moveToSpaceMenuItem(_:)),
-                context: MoveActionContext(guids: guids, targetSpaceId: space.spaceId)
+                action: action,
+                context: SpaceTransferActionContext(guids: guids, targetSpaceId: space.spaceId)
             )
             item.image = SpaceIconView.menuImage(for: space.iconName)
             submenu.addItem(item)
@@ -601,26 +747,100 @@ final class BookmarkManagerViewController: NSViewController {
         menu.addItem(parent)
     }
 
-    private func appendDeleteItem(to menu: NSMenu, guids: [String], addsSeparator: Bool) {
-        if addsSeparator, menu.items.last?.isSeparatorItem != true {
+    private func appendSeparatorIfNeeded(to menu: NSMenu) {
+        guard !menu.items.isEmpty, menu.items.last?.isSeparatorItem != true else { return }
+        menu.addItem(.separator())
+    }
+
+    private func appendDeleteItem(
+        to menu: NSMenu,
+        bookmarks: [Bookmark],
+        isMultiple: Bool
+    ) {
+        if isMultiple {
+            appendSeparatorIfNeeded(to: menu)
+        } else if menu.items.last?.submenu != nil {
             menu.addItem(.separator())
         }
-        menu.addItem(actionItem(
-            title: NSLocalizedString(
+        let title: String
+        if isMultiple {
+            title = multiSelectionDeleteTitle(bookmarks: bookmarks)
+        } else {
+            title = NSLocalizedString(
                 "sidebar.bookmarkContextMenu.deleteAction",
                 value: "Delete",
                 comment: "Delete bookmark menu item"
-            ),
+            )
+        }
+        let item = actionItem(
+            title: title,
             action: #selector(deleteMenuItem(_:)),
-            context: BookmarkActionContext(guids: guids)
-        ))
+            context: BookmarkActionContext(guids: bookmarks.map(\.guid))
+        )
+        if isMultiple {
+            item.keyEquivalent = "d"
+            item.keyEquivalentModifierMask = [.command]
+        }
+        menu.addItem(item)
     }
 
-    @objc private func openMenuItem(_ sender: NSMenuItem) {
+    private func multiSelectionDeleteTitle(bookmarks: [Bookmark]) -> String {
+        let folderCount = bookmarks.filter(\.isFolder).count
+        let bookmarkCount = bookmarks.count - folderCount
+        if folderCount > 0, bookmarkCount == 0 {
+            let format = folderCount == 1
+                ? NSLocalizedString(
+                    "common.tabMultiSelectionContextMenu.deleteSingleFolderAction",
+                    value: "Delete %d Folder",
+                    comment: "Tab multi-selection context menu - delete selected bookmark folder"
+                )
+                : NSLocalizedString(
+                    "common.tabMultiSelectionContextMenu.deleteMultipleFoldersAction",
+                    value: "Delete %d Folders",
+                    comment: "Tab multi-selection context menu - delete selected bookmark folders"
+                )
+            return String(format: format, folderCount)
+        }
+        if bookmarkCount > 0, folderCount == 0 {
+            let format = bookmarkCount == 1
+                ? NSLocalizedString(
+                    "common.tabMultiSelectionContextMenu.deleteSingleBookmarkAction",
+                    value: "Delete %d Bookmark",
+                    comment: "Tab multi-selection context menu - delete selected bookmark"
+                )
+                : NSLocalizedString(
+                    "common.tabMultiSelectionContextMenu.deleteMultipleBookmarksAction",
+                    value: "Delete %d Bookmarks",
+                    comment: "Tab multi-selection context menu - delete selected bookmarks"
+                )
+            return String(format: format, bookmarkCount)
+        }
+        let totalCount = folderCount + bookmarkCount
+        let format = totalCount == 1
+            ? NSLocalizedString(
+                "common.tabMultiSelectionContextMenu.deleteSingleItemAction",
+                value: "Delete %d Item",
+                comment: "Tab multi-selection context menu - delete selected bookmark item"
+            )
+            : NSLocalizedString(
+                "common.tabMultiSelectionContextMenu.deleteMultipleItemsAction",
+                value: "Delete %d Items",
+                comment: "Tab multi-selection context menu - delete selected bookmark items"
+            )
+        return String(format: format, totalCount)
+    }
+
+    @objc private func openInNewTabMenuItem(_ sender: NSMenuItem) {
         guard let context = sender.representedObject as? BookmarkActionContext,
               let bookmark = bookmarks(for: context.guids).first,
-              !bookmark.isFolder else { return }
-        browserState.openBookmark(bookmark)
+              !bookmark.isFolder,
+              let primaryURL = bookmark.url,
+              !primaryURL.isEmpty else { return }
+        if let secondaryURL = bookmark.secondaryUrl, !secondaryURL.isEmpty {
+            browserState.openTwoURLsAsSplit(primaryURL: primaryURL, secondaryURL: secondaryURL)
+        } else {
+            browserState.createTab(primaryURL)
+        }
     }
 
     @objc private func showInFolderMenuItem(_ sender: NSMenuItem) {
@@ -676,14 +896,38 @@ final class BookmarkManagerViewController: NSViewController {
         )
     }
 
+    @objc private func duplicateBookmarksMenuItem(_ sender: NSMenuItem) {
+        guard let context = sender.representedObject as? BookmarkActionContext else { return }
+        browserState.duplicateBookmarks(bookmarkGuids: context.guids)
+    }
+
+    @objc private func copyBookmarkLinksMenuItem(_ sender: NSMenuItem) {
+        guard let context = sender.representedObject as? BookmarkActionContext else { return }
+        browserState.copyBookmarkLinks(bookmarkGuids: context.guids)
+    }
+
+    @objc private func createGroupFromBookmarksMenuItem(_ sender: NSMenuItem) {
+        guard let context = sender.representedObject as? BookmarkActionContext else { return }
+        browserState.createGroupFromBookmarks(bookmarkGuids: context.guids)
+    }
+
+    @objc private func addBookmarksToGroupMenuItem(_ sender: NSMenuItem) {
+        guard let context = sender.representedObject as? GroupActionContext else { return }
+        browserState.addBookmarks(bookmarkGuids: context.guids, toGroup: context.groupToken)
+    }
+
+    @objc private func renameMenuItem(_ sender: NSMenuItem) {
+        guard let context = sender.representedObject as? BookmarkActionContext,
+              let bookmark = bookmarks(for: context.guids).first,
+              bookmark.secondaryUrl?.isEmpty != false else { return }
+        startEditing(guid: bookmark.guid, column: .website)
+    }
+
     @objc private func editMenuItem(_ sender: NSMenuItem) {
         guard let context = sender.representedObject as? BookmarkActionContext,
-              let bookmark = bookmarks(for: context.guids).first else { return }
-        if bookmark.secondaryUrl?.isEmpty == false {
-            presentSplitEditor(for: bookmark)
-        } else {
-            startEditing(guid: bookmark.guid, column: .website)
-        }
+              let bookmark = bookmarks(for: context.guids).first,
+              !bookmark.isFolder else { return }
+        presentBookmarkEditor(for: bookmark)
     }
 
     @objc private func newNestedFolderMenuItem(_ sender: NSMenuItem) {
@@ -694,8 +938,16 @@ final class BookmarkManagerViewController: NSViewController {
     }
 
     @objc private func moveToSpaceMenuItem(_ sender: NSMenuItem) {
-        guard let context = sender.representedObject as? MoveActionContext else { return }
+        guard let context = sender.representedObject as? SpaceTransferActionContext else { return }
         browserState.moveBookmarks(
+            bookmarkGuids: context.guids,
+            toSpaceId: context.targetSpaceId
+        )
+    }
+
+    @objc private func cloneToSpaceMenuItem(_ sender: NSMenuItem) {
+        guard let context = sender.representedObject as? SpaceTransferActionContext else { return }
+        browserState.cloneBookmarks(
             bookmarkGuids: context.guids,
             toSpaceId: context.targetSpaceId
         )
@@ -706,7 +958,7 @@ final class BookmarkManagerViewController: NSViewController {
         requestDelete(guids: context.guids)
     }
 
-    private func presentSplitEditor(for bookmark: Bookmark) {
+    private func presentBookmarkEditor(for bookmark: Bookmark) {
         let bookmarkGuid = bookmark.guid
         let originalParentGuid = bookmark.parent?.guid
         let originalSecondaryURL = bookmark.secondaryUrl
@@ -736,11 +988,16 @@ final class BookmarkManagerViewController: NSViewController {
             onValidate: { [weak self] result in
                 guard let self,
                       let primaryURL = result.url,
-                      let secondaryURL = result.secondaryUrl,
-                      self.browserState.localStore.normalizedURL(from: primaryURL) != nil,
-                      self.browserState.localStore.normalizedURL(from: secondaryURL) != nil else {
+                      self.browserState.localStore.normalizedURL(from: primaryURL) != nil else {
                     NSSound.beep()
                     return false
+                }
+                if originalSecondaryURL != nil {
+                    guard let secondaryURL = result.secondaryUrl,
+                          self.browserState.localStore.normalizedURL(from: secondaryURL) != nil else {
+                        NSSound.beep()
+                        return false
+                    }
                 }
                 return true
             }

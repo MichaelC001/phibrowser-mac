@@ -381,6 +381,8 @@ class Tab: WebContentRepresentable {
                 guard let self else { return }
                 if let localTitle = self.storedTitle, !localTitle.isEmpty {
                     self.title = localTitle
+                } else if BookmarkManagerRoute.matches(self.url) {
+                    self.title = BookmarkManagerRoute.tabTitle
                 } else if self.usesNativeNTP, Self.isUntitledNTPTitle(title, url: self.url) {
                     // A blank off-the-record chrome://newtab has no page
                     // title, so Chromium reports the raw URL — e.g. in an

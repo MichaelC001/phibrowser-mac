@@ -584,12 +584,14 @@ class BookmarkManager: ObservableObject {
 
     func addFolder(title: String,
                    to parent: Bookmark? = nil,
-                   guid: String? = nil) {
+                   guid: String? = nil,
+                   targetIndex: Int? = nil) {
         guard let profileId = browserState?.profileId else { return }
         let spaceId = browserState?.spaceId ?? LocalStore.defaultSpaceId
         browserState?.localStore.createDirectory(title: title,
                                                  profileId: profileId,
                                                  parentId: parent?.guid,
+                                                 index: targetIndex,
                                                  guid: guid,
                                                  spaceId: spaceId)
     }

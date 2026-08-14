@@ -1260,7 +1260,7 @@ final class PhiBrowserTests: XCTestCase {
     func testBookmarkMenuContentBuilderAddsBookmarkThisTabAndRecursiveBookmarks() {
         let previousOverrides = Shortcuts.overridedShortcuts
         defer { Shortcuts.overridedShortcuts = previousOverrides }
-        Shortcuts.overridedShortcuts.removeValue(forKey: .IDC_SHOW_BOOKMARK_MANAGER)
+        Shortcuts.overridedShortcuts[.IDC_SHOW_BOOKMARK_MANAGER] = .some(nil)
 
         let rootBookmark = Bookmark(title: "Phi", url: "https://phibrowser.com")
         let folder = Bookmark(folderTitle: "Favorites")
@@ -1298,7 +1298,7 @@ final class PhiBrowserTests: XCTestCase {
         XCTAssertTrue(menu.items.dropFirst(2).first?.isSeparatorItem == true)
         XCTAssertEqual(
             menu.items.dropFirst(3).first?.title,
-            NSLocalizedString("app.bookmarksMenu.openManager", value: "Bookmark Manager", comment: "Bookmarks menu - Menu item that opens the bookmark management page")
+            NSLocalizedString("app.bookmarksMenu.openManager", value: "Manage Bookmarks", comment: "Bookmarks menu - Menu item that opens the bookmark management page")
         )
         let managerItem = menu.items.dropFirst(3).first
         XCTAssertEqual(managerItem?.tag, CommandWrapper.IDC_SHOW_BOOKMARK_MANAGER.rawValue)

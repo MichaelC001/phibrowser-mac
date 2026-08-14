@@ -7483,7 +7483,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Bookmark Manager"
+            "value" : "Manage Bookmarks"
           }
         }
       }
@@ -7558,16 +7558,6 @@
       "extractionState" : "extracted_with_value",
       "localizations" : { "en" : { "stringUnit" : { "state" : "new", "value" : "Website" } } }
     },
-    "bookmarkManager.contextMenu.editAction" : {
-      "comment" : "Bookmark manager context menu - Edit a single bookmark or folder",
-      "extractionState" : "extracted_with_value",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "new", "value" : "Edit" } } }
-    },
-    "bookmarkManager.contextMenu.openAction" : {
-      "comment" : "Bookmark manager context menu - Open a bookmark",
-      "extractionState" : "extracted_with_value",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "new", "value" : "Open" } } }
-    },
     "bookmarkManager.contextMenu.showInFolderAction" : {
       "comment" : "Bookmark manager context menu - Reveal a bookmark search result in its containing folder",
       "extractionState" : "extracted_with_value",
@@ -7614,7 +7604,7 @@
       "localizations" : { "en" : { "stringUnit" : { "state" : "new", "value" : "1 item" } } }
     },
     "bookmarkManager.header.newFolderAction" : {
-      "comment" : "Bookmark manager - Button that creates a root bookmark folder",
+      "comment" : "Bookmark manager - Button that creates a folder at the root or inside the selected folder",
       "extractionState" : "extracted_with_value",
       "localizations" : { "en" : { "stringUnit" : { "state" : "new", "value" : "New Folder" } } }
     },
@@ -7625,6 +7615,11 @@
     },
     "bookmarkManager.header.title" : {
       "comment" : "Bookmark manager - Page title",
+      "extractionState" : "extracted_with_value",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "new", "value" : "Bookmarks" } } }
+    },
+    "bookmarkManager.tab.title" : {
+      "comment" : "Bookmark manager - Title shown for the native bookmark management tab",
       "extractionState" : "extracted_with_value",
       "localizations" : { "en" : { "stringUnit" : { "state" : "new", "value" : "Bookmarks" } } }
     },

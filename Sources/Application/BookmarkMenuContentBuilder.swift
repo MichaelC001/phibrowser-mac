@@ -74,7 +74,7 @@ struct BookmarkMenuContentBuilder {
         let bookmarkManagerItem = NSMenuItem(
             title: NSLocalizedString(
                 "app.bookmarksMenu.openManager",
-                value: "Bookmark Manager",
+                value: "Manage Bookmarks",
                 comment: "Bookmarks menu - Menu item that opens the bookmark management page"
             ),
             action: bookmarkManagerAction,
@@ -82,7 +82,6 @@ struct BookmarkMenuContentBuilder {
         )
         bookmarkManagerItem.keyEquivalentModifierMask = [.command, .option]
         bookmarkManagerItem.tag = CommandWrapper.IDC_SHOW_BOOKMARK_MANAGER.rawValue
-        Shortcuts.updateShortcut(for: bookmarkManagerItem)
         bookmarkManagerItem.target = target
         menu.addItem(bookmarkManagerItem)
 

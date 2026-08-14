@@ -520,6 +520,7 @@ extension AppController {
                 configureBookmarksMenuItem(menuItem)
             case .hideSystemItem:
                 menuItem.isHidden = true
+                clearKeyEquivalents(in: menuItem.submenu)
             case .ignore:
                 break
             }
@@ -746,6 +747,15 @@ extension AppController {
         menuItem.submenu = submenu
 
         rebuildBookmarksMenu(submenu)
+    }
+
+    private func clearKeyEquivalents(in menu: NSMenu?) {
+        guard let menu else { return }
+        for item in menu.items {
+            item.keyEquivalent = ""
+            item.keyEquivalentModifierMask = []
+            clearKeyEquivalents(in: item.submenu)
+        }
     }
 
     private func installBookmarksMenu(in mainMenu: NSMenu) {

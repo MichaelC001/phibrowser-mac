@@ -12,6 +12,12 @@ import Foundation
 /// `chrome://bookmarks` URL. Paths, queries, and fragments remain Chromium-owned
 /// navigation state inside the same internal page.
 enum BookmarkManagerRoute {
+    static let tabTitle = NSLocalizedString(
+        "bookmarkManager.tab.title",
+        value: "Bookmarks",
+        comment: "Bookmark manager - Title shown for the native bookmark management tab"
+    )
+
     static func matches(_ rawURLString: String?) -> Bool {
         guard let rawURLString = rawURLString?
             .trimmingCharacters(in: .whitespacesAndNewlines),
