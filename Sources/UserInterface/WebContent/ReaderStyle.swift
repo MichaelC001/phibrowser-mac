@@ -16,6 +16,30 @@ struct ReaderStyle: Equatable {
     var width: Width
     var theme: Theme
     var typeface: Typeface
+    var lineHeight: LineHeight
+    var letterSpacing: LetterSpacing
+    /// Whether illustrations are shown. Off is a reading preference rather
+    /// than a bandwidth one — the pixels are already fetched by the time the
+    /// reader could hide them — for the reader who wants prose and nothing
+    /// else. Inline SVG stays: a formula is not an illustration.
+    var showsImages: Bool
+    /// Whether links are tinted and underlined. Off leaves them as body text,
+    /// still clickable but no longer interrupting the line, which is what
+    /// makes a heavily cross-referenced page readable straight through.
+    var highlightsLinks: Bool
+
+    /// What a fresh install reads at, and what the reader's reset returns to.
+    /// The preference store falls back to these rather than restating them, so
+    /// there is one answer to what "default" means.
+    static let standard = ReaderStyle(
+        fontSize: ReaderDocumentBuilder.defaultFontSize,
+        width: .normal,
+        theme: .matchBrowser,
+        typeface: .serif,
+        lineHeight: .normal,
+        letterSpacing: .normal,
+        showsImages: true,
+        highlightsLinks: true)
 
     /// What the user last chose.
     @MainActor
@@ -23,7 +47,11 @@ struct ReaderStyle: Equatable {
         ReaderStyle(fontSize: PhiPreferences.Reader.fontSize,
                     width: PhiPreferences.Reader.width,
                     theme: PhiPreferences.Reader.theme,
-                    typeface: PhiPreferences.Reader.typeface)
+                    typeface: PhiPreferences.Reader.typeface,
+                    lineHeight: PhiPreferences.Reader.lineHeight,
+                    letterSpacing: PhiPreferences.Reader.letterSpacing,
+                    showsImages: PhiPreferences.Reader.showsImages,
+                    highlightsLinks: PhiPreferences.Reader.highlightsLinks)
     }
 
     /// Content column width.
@@ -51,8 +79,10 @@ struct ReaderStyle: Equatable {
     /// behaviour: the reader follows the app's light or dark appearance.
     /// The rest are fixed regardless of the browser, because a reading
     /// surface is the one place people want their own preference to stick.
+    ///
+    /// Ordered light to dark so the menu reads as a scale rather than a list.
     enum Theme: String, CaseIterable {
-        case matchBrowser, light, sepia, dark
+        case matchBrowser, light, sepia, yellow, blue, dark, dim, contrast
 
         /// The concrete palette this resolves to. `matchBrowser` is a
         /// preference, not a palette, so the document is always told a real
@@ -61,20 +91,13 @@ struct ReaderStyle: Equatable {
         func resolved(appearanceIsDark: Bool) -> Theme {
             self == .matchBrowser ? (appearanceIsDark ? .dark : .light) : self
         }
-
-        /// Whether this theme wants the dark palette. `matchBrowser` defers to
-        /// the caller, which is the only one that knows the app's appearance.
-        func isDark(appearanceIsDark: Bool) -> Bool {
-            switch self {
-            case .matchBrowser: return appearanceIsDark
-            case .light, .sepia: return false
-            case .dark: return true
-            }
-        }
     }
 
+    /// Body typeface. Headings and captions stay on the system sans face in
+    /// every case: the pairing is the reader's own design, and the choice here
+    /// is about the prose someone reads for minutes at a time.
     enum Typeface: String, CaseIterable {
-        case serif, sans
+        case serif, sans, book, rounded, mono
 
         var cssFontFamily: String {
             switch self {
@@ -82,6 +105,47 @@ struct ReaderStyle: Equatable {
                 return "Georgia, \"Times New Roman\", serif"
             case .sans:
                 return "-apple-system, BlinkMacSystemFont, \"Helvetica Neue\", sans-serif"
+            case .book:
+                // The face Apple's own reading apps set books in: an old-style
+                // text serif, lighter on the page than Georgia, which was cut
+                // for screens that no longer exist.
+                return "\"Iowan Old Style\", Palatino, \"Book Antiqua\", Georgia, serif"
+            case .rounded:
+                return "ui-rounded, \"SF Pro Rounded\", " +
+                    "\"Hiragino Maru Gothic ProN\", -apple-system, sans-serif"
+            case .mono:
+                return "ui-monospace, \"SF Mono\", SFMono-Regular, Menlo, monospace"
+            }
+        }
+    }
+
+    /// Space between lines. The default is the 1.65 the reader has always
+    /// used; the rest exist because line spacing is the single most effective
+    /// adjustment for someone who loses their place between lines.
+    enum LineHeight: String, CaseIterable {
+        case tight, normal, relaxed, loose
+
+        var cssLineHeight: String {
+            switch self {
+            case .tight: return "1.4"
+            case .normal: return "1.65"
+            case .relaxed: return "1.9"
+            case .loose: return "2.15"
+            }
+        }
+    }
+
+    /// Space between characters. Widened tracking separates letters that
+    /// crowd each other, which is the other half of the same accessibility
+    /// need line height answers.
+    enum LetterSpacing: String, CaseIterable {
+        case normal, wide, wider
+
+        var cssLetterSpacing: String {
+            switch self {
+            case .normal: return "normal"
+            case .wide: return "0.02em"
+            case .wider: return "0.06em"
             }
         }
     }

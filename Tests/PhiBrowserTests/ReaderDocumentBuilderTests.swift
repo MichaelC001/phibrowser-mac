@@ -31,17 +31,23 @@ final class ReaderDocumentBuilderTests: XCTestCase {
     }
 
     private func document(_ article: ReaderArticle,
-                          style: ReaderStyle = ReaderStyle(fontSize: 19, width: .normal,
-                                                           theme: .light, typeface: .serif),
+                          style: ReaderStyle? = nil,
                           appearanceIsDark: Bool = false) -> String {
-        ReaderDocumentBuilder.makeDocument(article: article, style: style,
+        ReaderDocumentBuilder.makeDocument(article: article,
+                                           style: style ?? self.style(),
                                            appearanceIsDark: appearanceIsDark)
     }
 
     private func style(width: ReaderStyle.Width = .normal,
                        theme: ReaderStyle.Theme = .light,
-                       typeface: ReaderStyle.Typeface = .serif) -> ReaderStyle {
-        ReaderStyle(fontSize: 19, width: width, theme: theme, typeface: typeface)
+                       typeface: ReaderStyle.Typeface = .serif,
+                       lineHeight: ReaderStyle.LineHeight = .normal,
+                       letterSpacing: ReaderStyle.LetterSpacing = .normal,
+                       showsImages: Bool = true,
+                       highlightsLinks: Bool = true) -> ReaderStyle {
+        ReaderStyle(fontSize: 19, width: width, theme: theme, typeface: typeface,
+                    lineHeight: lineHeight, letterSpacing: letterSpacing,
+                    showsImages: showsImages, highlightsLinks: highlightsLinks)
     }
 
     // MARK: - Controls
@@ -126,6 +132,16 @@ final class ReaderDocumentBuilderTests: XCTestCase {
             XCTAssertTrue(doc.contains("html[data-theme=\"\(theme.rawValue)\"]"),
                           "no palette for theme \(theme.rawValue)")
         }
+        for lineHeight in ReaderStyle.LineHeight.allCases {
+            XCTAssertTrue(doc.contains("html[data-line-height=\"\(lineHeight.rawValue)\"]"),
+                          "no rule for line height \(lineHeight.rawValue)")
+        }
+        for letterSpacing in ReaderStyle.LetterSpacing.allCases {
+            XCTAssertTrue(doc.contains("html[data-letter-spacing=\"\(letterSpacing.rawValue)\"]"),
+                          "no rule for letter spacing \(letterSpacing.rawValue)")
+        }
+        XCTAssertTrue(doc.contains("html[data-images=\"off\"]"), "images cannot be hidden")
+        XCTAssertTrue(doc.contains("html[data-links=\"off\"]"), "links cannot be un-highlighted")
         XCTAssertTrue(doc.contains("max-width: 32em"))
         // Full width means no column cap at all, not a very large one.
         XCTAssertTrue(doc.contains("max-width: none"))
@@ -134,10 +150,26 @@ final class ReaderDocumentBuilderTests: XCTestCase {
 
     func testTheRootAttributesSelectTheChosenVariant() {
         let doc = document(article(html: "<p>x</p>", codeBlocks: []),
-                           style: style(width: .full, theme: .sepia, typeface: .sans))
+                           style: style(width: .full, theme: .sepia, typeface: .sans,
+                                        lineHeight: .loose, letterSpacing: .wider,
+                                        showsImages: false, highlightsLinks: false))
         XCTAssertTrue(doc.contains("data-width=\"full\""))
         XCTAssertTrue(doc.contains("data-theme=\"sepia\""))
         XCTAssertTrue(doc.contains("data-typeface=\"sans\""))
+        XCTAssertTrue(doc.contains("data-line-height=\"loose\""))
+        XCTAssertTrue(doc.contains("data-letter-spacing=\"wider\""))
+        XCTAssertTrue(doc.contains("data-images=\"off\""))
+        XCTAssertTrue(doc.contains("data-links=\"off\""))
+    }
+
+    func testTheCopyControlKeepsItsOwnLookWhenLinksAreNotHighlighted() {
+        // The control is an anchor because the surface has no scripting, but
+        // it is not part of the article: turning link highlighting off must
+        // not take the button's own colour with it.
+        let doc = document(article(html: "<p>x</p>", codeBlocks: []),
+                           style: style(highlightsLinks: false))
+        XCTAssertTrue(doc.contains("html[data-links=\"off\"] a:not(.phi-copy)"),
+                      "the copy control is not excluded from the plain-link rule")
     }
 
     func testMatchBrowserIsResolvedBeforeItReachesTheDocument() {
@@ -162,12 +194,27 @@ final class ReaderDocumentBuilderTests: XCTestCase {
     func testTheUpdateScriptSetsTheSameAttributesTheDocumentUses() {
         // The script and the markup have to agree, or a change would select a
         // variant the stylesheet has no rule for.
-        let script = ReaderDocumentBuilder.styleUpdateScript(
-            style(width: .wide, theme: .matchBrowser, typeface: .sans),
-            appearanceIsDark: true)
+        let chosen = style(width: .wide, theme: .matchBrowser, typeface: .sans,
+                           lineHeight: .relaxed, letterSpacing: .wide,
+                           showsImages: false, highlightsLinks: false)
+        let script = ReaderDocumentBuilder.styleUpdateScript(chosen, appearanceIsDark: true)
         XCTAssertTrue(script.contains("'data-theme','dark'"))
         XCTAssertTrue(script.contains("'data-width','wide'"))
         XCTAssertTrue(script.contains("'data-typeface','sans'"))
+        XCTAssertTrue(script.contains("'data-line-height','relaxed'"))
+        XCTAssertTrue(script.contains("'data-letter-spacing','wide'"))
+        XCTAssertTrue(script.contains("'data-images','off'"))
+        XCTAssertTrue(script.contains("'data-links','off'"))
+
+        // Both sides are rendered from one list, and this is what says so: an
+        // axis the document sets and the script does not would leave a live
+        // restyle silently one setting behind.
+        let markup = ReaderDocumentBuilder.styleAttributes(chosen, appearanceIsDark: true)
+        for attribute in ["data-theme", "data-width", "data-typeface", "data-line-height",
+                          "data-letter-spacing", "data-images", "data-links"] {
+            XCTAssertTrue(markup.contains("\(attribute)=\""), "\(attribute) missing from markup")
+            XCTAssertTrue(script.contains("'\(attribute)'"), "\(attribute) missing from script")
+        }
     }
 
     // MARK: - Text size

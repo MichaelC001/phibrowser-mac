@@ -455,23 +455,67 @@ extension PhiPreferences {
         private static let widthKey = "PhiReaderWidth"
         private static let themeKey = "PhiReaderTheme"
         private static let typefaceKey = "PhiReaderTypeface"
+        private static let lineHeightKey = "PhiReaderLineHeight"
+        private static let letterSpacingKey = "PhiReaderLetterSpacing"
+        private static let showsImagesKey = "PhiReaderShowsImages"
+        private static let highlightsLinksKey = "PhiReaderHighlightsLinks"
 
         /// Content column width. Set from inside Reader View, like the size.
         static var width: ReaderStyle.Width {
-            get { read(Self.widthKey) ?? .normal }
+            get { read(Self.widthKey) ?? ReaderStyle.standard.width }
             set { UserDefaults.standard.set(newValue.rawValue, forKey: Self.widthKey) }
         }
 
         /// Reading background. Defaults to following the browser's appearance,
         /// which is what the reader did before there was a choice.
         static var theme: ReaderStyle.Theme {
-            get { read(Self.themeKey) ?? .matchBrowser }
+            get { read(Self.themeKey) ?? ReaderStyle.standard.theme }
             set { UserDefaults.standard.set(newValue.rawValue, forKey: Self.themeKey) }
         }
 
         static var typeface: ReaderStyle.Typeface {
-            get { read(Self.typefaceKey) ?? .serif }
+            get { read(Self.typefaceKey) ?? ReaderStyle.standard.typeface }
             set { UserDefaults.standard.set(newValue.rawValue, forKey: Self.typefaceKey) }
+        }
+
+        static var lineHeight: ReaderStyle.LineHeight {
+            get { read(Self.lineHeightKey) ?? ReaderStyle.standard.lineHeight }
+            set { UserDefaults.standard.set(newValue.rawValue, forKey: Self.lineHeightKey) }
+        }
+
+        static var letterSpacing: ReaderStyle.LetterSpacing {
+            get { read(Self.letterSpacingKey) ?? ReaderStyle.standard.letterSpacing }
+            set { UserDefaults.standard.set(newValue.rawValue, forKey: Self.letterSpacingKey) }
+        }
+
+        /// Read through `object(forKey:)` rather than `bool(forKey:)`: both
+        /// default to false when nothing is stored, and these two default to
+        /// on, so an untouched install must be told apart from a deliberate
+        /// off rather than silently read as one.
+        static var showsImages: Bool {
+            get { readFlag(Self.showsImagesKey) ?? ReaderStyle.standard.showsImages }
+            set { UserDefaults.standard.set(newValue, forKey: Self.showsImagesKey) }
+        }
+
+        static var highlightsLinks: Bool {
+            get { readFlag(Self.highlightsLinksKey) ?? ReaderStyle.standard.highlightsLinks }
+            set { UserDefaults.standard.set(newValue, forKey: Self.highlightsLinksKey) }
+        }
+
+        /// Writes every axis at once.
+        ///
+        /// The reader changes one at a time, but a reset changes all of them,
+        /// and one entry point is what stops a new axis being added to the
+        /// style and then quietly not surviving a relaunch.
+        static func persist(_ style: ReaderStyle) {
+            fontSize = style.fontSize
+            width = style.width
+            theme = style.theme
+            typeface = style.typeface
+            lineHeight = style.lineHeight
+            letterSpacing = style.letterSpacing
+            showsImages = style.showsImages
+            highlightsLinks = style.highlightsLinks
         }
 
         /// A stored value that no longer names a case — an older or newer
@@ -480,6 +524,10 @@ extension PhiPreferences {
         where T.RawValue == String {
             guard let raw = UserDefaults.standard.string(forKey: key) else { return nil }
             return T(rawValue: raw)
+        }
+
+        private static func readFlag(_ key: String) -> Bool? {
+            UserDefaults.standard.object(forKey: key) as? Bool
         }
     }
 

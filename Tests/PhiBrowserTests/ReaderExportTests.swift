@@ -113,7 +113,9 @@ final class ReaderExportTests: XCTestCase {
         let data = await ReaderExportService.makeArticleDocument(
             article: article,
             style: ReaderStyle(fontSize: 18, width: .normal,
-                               theme: .light, typeface: .serif),
+                               theme: .light, typeface: .serif,
+                               lineHeight: .normal, letterSpacing: .normal,
+                               showsImages: true, highlightsLinks: true),
             appearanceIsDark: false,
             inlineImages: false)
         let document = String(decoding: data, as: UTF8.self)

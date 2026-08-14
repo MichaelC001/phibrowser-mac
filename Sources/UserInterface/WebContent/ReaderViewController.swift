@@ -100,7 +100,7 @@ final class ReaderViewController: NSViewController {
         label: NSLocalizedString(
             "browser.readerView.style",
             value: "Reading Style",
-            comment: "Reader View - Tooltip for the control that changes width, background and typeface"),
+            comment: "Reader View - Tooltip for the control that opens the reading appearance settings"),
         action: #selector(showStyleMenu))
 
     private lazy var exportButton = makeControl(
@@ -273,7 +273,7 @@ final class ReaderViewController: NSViewController {
                           ReaderDocumentBuilder.maxFontSize)
         guard clamped != style.fontSize else { return }
         style.fontSize = clamped
-        PhiPreferences.Reader.fontSize = clamped
+        PhiPreferences.Reader.persist(style)
         // Deliberately not a re-render: the document does not change, only
         // its scale, so the reader keeps its place on the page.
         applyTextZoom()
@@ -286,56 +286,97 @@ final class ReaderViewController: NSViewController {
 
     // MARK: - Style
 
-    /// Width, background and typeface, in one menu.
+    /// Every reading setting the surface offers, in one menu.
     ///
-    /// These rebuild the document, unlike text size, which scales it. The
-    /// stylesheet is generated in Swift and the surface has no scripting, so
-    /// there is nothing in the page to restyle in place — but these are
-    /// settle-once choices rather than something stepped while reading, so the
-    /// rebuild is not the interruption it would be for size.
+    /// Grouped into submenus rather than listed flat: the axes are independent
+    /// and there are now seven of them, so a flat menu would be forty items
+    /// deep and would hide the one being adjusted behind the pointer. None of
+    /// them rebuilds the document — each is an attribute the stylesheet
+    /// already has rules for — so a choice can be made mid-article without
+    /// losing the line being read.
     @objc private func showStyleMenu() {
         let menu = NSMenu()
-        menu.addItem(sectionHeader(NSLocalizedString(
-            "browser.readerView.styleWidth", value: "Width",
-            comment: "Reader View - Style menu section for the content column width")))
-        for width in ReaderStyle.Width.allCases {
-            menu.addItem(styleItem(title: Self.widthTitle(width),
-                                   selected: style.width == width,
-                                   action: #selector(selectWidth(_:)),
-                                   value: width.rawValue))
-        }
+        // Reset says whether there is anything to reset, and AppKit's
+        // automatic validation would overwrite that the moment the menu opened.
+        menu.autoenablesItems = false
+        menu.addItem(styleSubmenu(
+            title: NSLocalizedString(
+                "browser.readerView.styleTheme", value: "Background",
+                comment: "Reader View - Style menu section for the reading background"),
+            cases: ReaderStyle.Theme.allCases, selected: style.theme,
+            action: #selector(selectTheme(_:)), titleFor: Self.themeTitle))
+        menu.addItem(styleSubmenu(
+            title: NSLocalizedString(
+                "browser.readerView.styleTypeface", value: "Typeface",
+                comment: "Reader View - Style menu section for the article typeface"),
+            cases: ReaderStyle.Typeface.allCases, selected: style.typeface,
+            action: #selector(selectTypeface(_:)), titleFor: Self.typefaceTitle))
+        menu.addItem(styleSubmenu(
+            title: NSLocalizedString(
+                "browser.readerView.styleWidth", value: "Width",
+                comment: "Reader View - Style menu section for the content column width"),
+            cases: ReaderStyle.Width.allCases, selected: style.width,
+            action: #selector(selectWidth(_:)), titleFor: Self.widthTitle))
+        menu.addItem(styleSubmenu(
+            title: NSLocalizedString(
+                "browser.readerView.styleLineHeight", value: "Line Height",
+                comment: "Reader View - Style menu section for the space between lines of text"),
+            cases: ReaderStyle.LineHeight.allCases, selected: style.lineHeight,
+            action: #selector(selectLineHeight(_:)), titleFor: Self.lineHeightTitle))
+        menu.addItem(styleSubmenu(
+            title: NSLocalizedString(
+                "browser.readerView.styleLetterSpacing", value: "Letter Spacing",
+                comment: "Reader View - Style menu section for the space between characters"),
+            cases: ReaderStyle.LetterSpacing.allCases, selected: style.letterSpacing,
+            action: #selector(selectLetterSpacing(_:)), titleFor: Self.letterSpacingTitle))
 
         menu.addItem(.separator())
-        menu.addItem(sectionHeader(NSLocalizedString(
-            "browser.readerView.styleTheme", value: "Background",
-            comment: "Reader View - Style menu section for the reading background")))
-        for theme in ReaderStyle.Theme.allCases {
-            menu.addItem(styleItem(title: Self.themeTitle(theme),
-                                   selected: style.theme == theme,
-                                   action: #selector(selectTheme(_:)),
-                                   value: theme.rawValue))
-        }
+        menu.addItem(toggleItem(
+            title: NSLocalizedString(
+                "browser.readerView.showImages", value: "Show Images",
+                comment: "Reader View - Switch that shows or hides the article's illustrations"),
+            isOn: style.showsImages, action: #selector(toggleImages)))
+        menu.addItem(toggleItem(
+            title: NSLocalizedString(
+                "browser.readerView.highlightLinks", value: "Highlight Links",
+                comment: "Reader View - Switch that tints and underlines links, or leaves them looking like body text"),
+            isOn: style.highlightsLinks, action: #selector(toggleLinkHighlighting)))
 
         menu.addItem(.separator())
-        menu.addItem(sectionHeader(NSLocalizedString(
-            "browser.readerView.styleTypeface", value: "Typeface",
-            comment: "Reader View - Style menu section for the article typeface")))
-        for typeface in ReaderStyle.Typeface.allCases {
-            menu.addItem(styleItem(title: Self.typefaceTitle(typeface),
-                                   selected: style.typeface == typeface,
-                                   action: #selector(selectTypeface(_:)),
-                                   value: typeface.rawValue))
-        }
+        let reset = NSMenuItem(
+            title: NSLocalizedString(
+                "browser.readerView.resetStyle", value: "Reset to Defaults",
+                comment: "Reader View - Menu item that returns every reading setting to its original value"),
+            action: #selector(resetStyle), keyEquivalent: "")
+        reset.target = self
+        reset.isEnabled = style != .standard
+        menu.addItem(reset)
 
         menu.popUp(positioning: nil,
                    at: NSPoint(x: 0, y: styleButton.bounds.height + 4),
                    in: styleButton)
     }
 
-    private func sectionHeader(_ title: String) -> NSMenuItem {
-        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
-        item.isEnabled = false
-        return item
+    /// One group of mutually exclusive choices. Generic over the option type
+    /// because the five groups differ only in which enum they list and which
+    /// action they send; written out per group, the checkmark bookkeeping was
+    /// the same eight lines five times.
+    private func styleSubmenu<Option>(title: String,
+                                      cases: [Option],
+                                      selected: Option,
+                                      action: Selector,
+                                      titleFor: (Option) -> String) -> NSMenuItem
+    where Option: RawRepresentable & Equatable, Option.RawValue == String {
+        let parent = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        let submenu = NSMenu(title: title)
+        for option in cases {
+            submenu.addItem(styleItem(title: titleFor(option),
+                                      selected: option == selected,
+                                      action: action,
+                                      value: option.rawValue))
+        }
+        parent.submenu = submenu
+        return parent
     }
 
     /// The chosen value rides on `representedObject` so one action serves
@@ -349,29 +390,72 @@ final class ReaderViewController: NSViewController {
         return item
     }
 
+    private func toggleItem(title: String, isOn: Bool, action: Selector) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+        item.target = self
+        item.state = isOn ? .on : .off
+        return item
+    }
+
+    /// The one path every style change takes: mutate, remember, restyle the
+    /// document that is already on screen. Persisting the whole style rather
+    /// than the one field that changed means a new axis cannot be wired to a
+    /// menu and then forgotten in the preference store.
+    private func apply(_ change: (inout ReaderStyle) -> Void) {
+        var updated = style
+        change(&updated)
+        guard updated != style else { return }
+        style = updated
+        PhiPreferences.Reader.persist(updated)
+        applyStyleInPlace()
+    }
+
     @objc private func selectWidth(_ sender: NSMenuItem) {
         guard let raw = sender.representedObject as? String,
-              let width = ReaderStyle.Width(rawValue: raw), width != style.width else { return }
-        style.width = width
-        PhiPreferences.Reader.width = width
-        applyStyleInPlace()
+              let width = ReaderStyle.Width(rawValue: raw) else { return }
+        apply { $0.width = width }
     }
 
     @objc private func selectTheme(_ sender: NSMenuItem) {
         guard let raw = sender.representedObject as? String,
-              let theme = ReaderStyle.Theme(rawValue: raw), theme != style.theme else { return }
-        style.theme = theme
-        PhiPreferences.Reader.theme = theme
-        applyStyleInPlace()
+              let theme = ReaderStyle.Theme(rawValue: raw) else { return }
+        apply { $0.theme = theme }
     }
 
     @objc private func selectTypeface(_ sender: NSMenuItem) {
         guard let raw = sender.representedObject as? String,
-              let typeface = ReaderStyle.Typeface(rawValue: raw),
-              typeface != style.typeface else { return }
-        style.typeface = typeface
-        PhiPreferences.Reader.typeface = typeface
-        applyStyleInPlace()
+              let typeface = ReaderStyle.Typeface(rawValue: raw) else { return }
+        apply { $0.typeface = typeface }
+    }
+
+    @objc private func selectLineHeight(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let lineHeight = ReaderStyle.LineHeight(rawValue: raw) else { return }
+        apply { $0.lineHeight = lineHeight }
+    }
+
+    @objc private func selectLetterSpacing(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let letterSpacing = ReaderStyle.LetterSpacing(rawValue: raw) else { return }
+        apply { $0.letterSpacing = letterSpacing }
+    }
+
+    @objc private func toggleImages() {
+        apply { $0.showsImages.toggle() }
+    }
+
+    @objc private func toggleLinkHighlighting() {
+        apply { $0.highlightsLinks.toggle() }
+    }
+
+    /// Text size is the one setting that is a zoom rather than an attribute,
+    /// so a reset has to put both back.
+    @objc private func resetStyle() {
+        let sizeChanged = style.fontSize != ReaderStyle.standard.fontSize
+        apply { $0 = .standard }
+        guard sizeChanged else { return }
+        applyTextZoom()
+        updateControlAvailability()
     }
 
     // MARK: - Export
@@ -475,9 +559,21 @@ final class ReaderViewController: NSViewController {
         case .sepia:
             return NSLocalizedString("browser.readerView.themeSepia", value: "Sepia",
                 comment: "Reader View - Background option, warm off-white paper")
+        case .yellow:
+            return NSLocalizedString("browser.readerView.themeYellow", value: "Yellow",
+                comment: "Reader View - Background option, dark text on a pale yellow page")
+        case .blue:
+            return NSLocalizedString("browser.readerView.themeBlue", value: "Blue",
+                comment: "Reader View - Background option, dark text on a pale blue page")
         case .dark:
             return NSLocalizedString("browser.readerView.themeDark", value: "Dark",
                 comment: "Reader View - Background option, always dark")
+        case .dim:
+            return NSLocalizedString("browser.readerView.themeDim", value: "Dim",
+                comment: "Reader View - Background option, a dark page with softer contrast than Dark")
+        case .contrast:
+            return NSLocalizedString("browser.readerView.themeContrast", value: "High Contrast",
+                comment: "Reader View - Background option, pure white text on pure black for low vision")
         }
     }
 
@@ -489,6 +585,46 @@ final class ReaderViewController: NSViewController {
         case .sans:
             return NSLocalizedString("browser.readerView.typefaceSans", value: "Sans Serif",
                 comment: "Reader View - Typeface option, a sans-serif face for body text")
+        case .book:
+            return NSLocalizedString("browser.readerView.typefaceBook", value: "Book",
+                comment: "Reader View - Typeface option, the old-style serif used for printed books")
+        case .rounded:
+            return NSLocalizedString("browser.readerView.typefaceRounded", value: "Rounded",
+                comment: "Reader View - Typeface option, a sans-serif face with rounded letterforms")
+        case .mono:
+            return NSLocalizedString("browser.readerView.typefaceMono", value: "Monospace",
+                comment: "Reader View - Typeface option, a fixed-width face where every character is the same width")
+        }
+    }
+
+    private static func lineHeightTitle(_ lineHeight: ReaderStyle.LineHeight) -> String {
+        switch lineHeight {
+        case .tight:
+            return NSLocalizedString("browser.readerView.lineHeightTight", value: "Tight",
+                comment: "Reader View - Line spacing option, lines closer together than the default")
+        case .normal:
+            return NSLocalizedString("browser.readerView.lineHeightNormal", value: "Normal",
+                comment: "Reader View - Line spacing option, the default spacing between lines")
+        case .relaxed:
+            return NSLocalizedString("browser.readerView.lineHeightRelaxed", value: "Relaxed",
+                comment: "Reader View - Line spacing option, lines further apart than the default")
+        case .loose:
+            return NSLocalizedString("browser.readerView.lineHeightLoose", value: "Loose",
+                comment: "Reader View - Line spacing option, the widest spacing between lines")
+        }
+    }
+
+    private static func letterSpacingTitle(_ spacing: ReaderStyle.LetterSpacing) -> String {
+        switch spacing {
+        case .normal:
+            return NSLocalizedString("browser.readerView.letterSpacingNormal", value: "Normal",
+                comment: "Reader View - Character spacing option, the typeface's own spacing")
+        case .wide:
+            return NSLocalizedString("browser.readerView.letterSpacingWide", value: "Wide",
+                comment: "Reader View - Character spacing option, characters set further apart")
+        case .wider:
+            return NSLocalizedString("browser.readerView.letterSpacingWider", value: "Wider",
+                comment: "Reader View - Character spacing option, the widest spacing between characters")
         }
     }
 

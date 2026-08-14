@@ -70,11 +70,27 @@ enum ReaderDocumentBuilder {
     /// attribute rather than a new document. Values come from closed enums,
     /// never from the page, so writing them into markup and into a script is
     /// safe by construction.
+    ///
+    /// The document's opening tag and the in-place restyle script both render
+    /// from this one list. They were written out separately and had to be held
+    /// in agreement by hand, which with two axes was a nuisance and with seven
+    /// would be a bug: an axis missing from the script silently does nothing
+    /// until the article is next rebuilt.
+    private static func rootAttributes(_ style: ReaderStyle,
+                                       appearanceIsDark: Bool) -> [(String, String)] {
+        [("data-theme", style.theme.resolved(appearanceIsDark: appearanceIsDark).rawValue),
+         ("data-width", style.width.rawValue),
+         ("data-typeface", style.typeface.rawValue),
+         ("data-line-height", style.lineHeight.rawValue),
+         ("data-letter-spacing", style.letterSpacing.rawValue),
+         ("data-images", style.showsImages ? "on" : "off"),
+         ("data-links", style.highlightsLinks ? "on" : "off")]
+    }
+
     static func styleAttributes(_ style: ReaderStyle, appearanceIsDark: Bool) -> String {
-        let theme = style.theme.resolved(appearanceIsDark: appearanceIsDark)
-        return " data-theme=\"\(theme.rawValue)\""
-            + " data-width=\"\(style.width.rawValue)\""
-            + " data-typeface=\"\(style.typeface.rawValue)\""
+        rootAttributes(style, appearanceIsDark: appearanceIsDark)
+            .map { " \($0.0)=\"\($0.1)\"" }
+            .joined()
     }
 
     /// The script the host runs to restyle a loaded document in place.
@@ -84,13 +100,10 @@ enum ReaderDocumentBuilder {
     /// attribute write on a live document rather than a reload, and the
     /// reader keeps its place in the article.
     static func styleUpdateScript(_ style: ReaderStyle, appearanceIsDark: Bool) -> String {
-        let theme = style.theme.resolved(appearanceIsDark: appearanceIsDark)
-        return """
-        (function(){var e=document.documentElement;\
-        e.setAttribute('data-theme','\(theme.rawValue)');\
-        e.setAttribute('data-width','\(style.width.rawValue)');\
-        e.setAttribute('data-typeface','\(style.typeface.rawValue)');})()
-        """
+        let writes = rootAttributes(style, appearanceIsDark: appearanceIsDark)
+            .map { "e.setAttribute('\($0.0)','\($0.1)');" }
+            .joined()
+        return "(function(){var e=document.documentElement;\(writes)})()"
     }
 
     /// The scheme the copy links use. `ReaderViewController` cancels these
@@ -164,12 +177,42 @@ enum ReaderDocumentBuilder {
         static let sepia = Palette(background: 0xF6EFE1, text: 0x3B3226,
                                    muted: 0x7A6E5C, rule: 0xE0D5BF,
                                    accent: 0x9A5B12, surface: 0xEFE6D3, isDark: false)
+        /// Tinted papers. Neither is a decoration: a coloured ground is the
+        /// standard accommodation for visual stress, and which colour helps is
+        /// personal enough that offering one would be offering none.
+        static let yellow = Palette(background: 0xFBF3C9, text: 0x2A2405,
+                                    muted: 0x6B6231, rule: 0xE6D98F,
+                                    accent: 0x8A4B00, surface: 0xF4E9A9, isDark: false)
+        static let blue = Palette(background: 0xE8F0FA, text: 0x172533,
+                                  muted: 0x566577, rule: 0xC6D9EF,
+                                  accent: 0x0A4FA0, surface: 0xDBE8F7, isDark: false)
+        /// Dark without the contrast. `dark` puts near-white on near-black,
+        /// which at night is its own kind of glare; this softens both ends and
+        /// is the one to reach for in an unlit room.
+        /// The muted grey is lighter than the softened body text would
+        /// suggest: it carries bylines and captions, and softening those to
+        /// match dropped them to 4.1:1, under the contrast floor. Low
+        /// contrast is the point of this theme; unreadable is not.
+        static let dim = Palette(background: 0x26262A, text: 0xB9B9BE,
+                                 muted: 0x909097, rule: 0x3A3A3F,
+                                 accent: 0x8FB6E8, surface: 0x2E2E33, isDark: true)
+        /// The opposite end: pure black and pure white, with links in amber
+        /// rather than blue because blue on black is the first pair to go for
+        /// low vision. Deliberately outside the palette the rest of the
+        /// browser uses — an accommodation is not a theme.
+        static let contrast = Palette(background: 0x000000, text: 0xFFFFFF,
+                                      muted: 0xC8C8C8, rule: 0x8A8A8A,
+                                      accent: 0xFFD400, surface: 0x111111, isDark: true)
 
         static func forTheme(_ theme: ReaderStyle.Theme,
                              appearanceIsDark: Bool) -> Palette {
             switch theme {
             case .sepia: return sepia
+            case .yellow: return yellow
+            case .blue: return blue
             case .light: return light
+            case .dim: return dim
+            case .contrast: return contrast
             case .dark: return dark
             case .matchBrowser: return appearanceIsDark ? dark : light
             }
@@ -210,6 +253,20 @@ enum ReaderDocumentBuilder {
         }.joined(separator: "\n")
     }
 
+    private static func lineHeightBlocks() -> String {
+        ReaderStyle.LineHeight.allCases.map { lineHeight in
+            "html[data-line-height=\"\(lineHeight.rawValue)\"] body "
+                + "{ line-height: \(lineHeight.cssLineHeight); }"
+        }.joined(separator: "\n")
+    }
+
+    private static func letterSpacingBlocks() -> String {
+        ReaderStyle.LetterSpacing.allCases.map { letterSpacing in
+            "html[data-letter-spacing=\"\(letterSpacing.rawValue)\"] body "
+                + "{ letter-spacing: \(letterSpacing.cssLetterSpacing); }"
+        }.joined(separator: "\n")
+    }
+
     private static func css(_ value: Int) -> String {
         String(format: "#%06x", value)
     }
@@ -229,6 +286,23 @@ enum ReaderDocumentBuilder {
         \(themeBlocks())
         \(widthBlocks())
         \(typefaceBlocks())
+        \(lineHeightBlocks())
+        \(letterSpacingBlocks())
+        /* Prose only. An illustration is hidden with its caption, because a
+           caption describing something that is not there reads as a fault
+           rather than a choice, but inline SVG stays: a page that sets its
+           equations as SVG — which every MathJax page does — would otherwise
+           lose its argument along with its pictures. */
+        html[data-images="off"] img,
+        html[data-images="off"] picture,
+        html[data-images="off"] video,
+        html[data-images="off"] figure { display: none; }
+        /* Still links, just no longer shouting. The copy control is an anchor
+           too and is not part of the article, so it keeps its own styling. */
+        html[data-links="off"] a:not(.phi-copy) {
+          color: inherit;
+          text-decoration: none;
+        }
         * { box-sizing: border-box; }
         html, body {
           margin: 0;
@@ -238,7 +312,6 @@ enum ReaderDocumentBuilder {
         }
         body {
           font-size: \(fontSize)px;
-          line-height: 1.65;
           -webkit-font-smoothing: antialiased;
         }
         .phi-reader {
@@ -306,6 +379,9 @@ enum ReaderDocumentBuilder {
         }
         pre, code, kbd, samp {
           font-family: "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+          /* Tracking is a prose setting. Widening a monospace face breaks the
+             column alignment that is the whole reason code is set in one. */
+          letter-spacing: normal;
         }
         code {
           font-size: 0.85em;

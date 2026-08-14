@@ -17934,7 +17934,7 @@
       }
     },
     "browser.readerView.style" : {
-      "comment" : "Reader View - Tooltip for the control that changes width, background and typeface",
+      "comment" : "Reader View - Tooltip for the control that opens the reading appearance settings",
       "extractionState" : "extracted_with_value",
       "localizations" : {
         "en" : {
@@ -18109,6 +18109,234 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "Reader View is unavailable on this page"
+          }
+        }
+      }
+    },
+    "browser.readerView.highlightLinks" : {
+      "comment" : "Reader View - Switch that tints and underlines links, or leaves them looking like body text",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Highlight Links"
+          }
+        }
+      }
+    },
+    "browser.readerView.letterSpacingNormal" : {
+      "comment" : "Reader View - Character spacing option, the typeface's own spacing",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Normal"
+          }
+        }
+      }
+    },
+    "browser.readerView.letterSpacingWide" : {
+      "comment" : "Reader View - Character spacing option, characters set further apart",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Wide"
+          }
+        }
+      }
+    },
+    "browser.readerView.letterSpacingWider" : {
+      "comment" : "Reader View - Character spacing option, the widest spacing between characters",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Wider"
+          }
+        }
+      }
+    },
+    "browser.readerView.lineHeightLoose" : {
+      "comment" : "Reader View - Line spacing option, the widest spacing between lines",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Loose"
+          }
+        }
+      }
+    },
+    "browser.readerView.lineHeightNormal" : {
+      "comment" : "Reader View - Line spacing option, the default spacing between lines",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Normal"
+          }
+        }
+      }
+    },
+    "browser.readerView.lineHeightRelaxed" : {
+      "comment" : "Reader View - Line spacing option, lines further apart than the default",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Relaxed"
+          }
+        }
+      }
+    },
+    "browser.readerView.lineHeightTight" : {
+      "comment" : "Reader View - Line spacing option, lines closer together than the default",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Tight"
+          }
+        }
+      }
+    },
+    "browser.readerView.resetStyle" : {
+      "comment" : "Reader View - Menu item that returns every reading setting to its original value",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Reset to Defaults"
+          }
+        }
+      }
+    },
+    "browser.readerView.showImages" : {
+      "comment" : "Reader View - Switch that shows or hides the article's illustrations",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Show Images"
+          }
+        }
+      }
+    },
+    "browser.readerView.styleLetterSpacing" : {
+      "comment" : "Reader View - Style menu section for the space between characters",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Letter Spacing"
+          }
+        }
+      }
+    },
+    "browser.readerView.styleLineHeight" : {
+      "comment" : "Reader View - Style menu section for the space between lines of text",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Line Height"
+          }
+        }
+      }
+    },
+    "browser.readerView.themeBlue" : {
+      "comment" : "Reader View - Background option, dark text on a pale blue page",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Blue"
+          }
+        }
+      }
+    },
+    "browser.readerView.themeContrast" : {
+      "comment" : "Reader View - Background option, pure white text on pure black for low vision",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "High Contrast"
+          }
+        }
+      }
+    },
+    "browser.readerView.themeDim" : {
+      "comment" : "Reader View - Background option, a dark page with softer contrast than Dark",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Dim"
+          }
+        }
+      }
+    },
+    "browser.readerView.themeYellow" : {
+      "comment" : "Reader View - Background option, dark text on a pale yellow page",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Yellow"
+          }
+        }
+      }
+    },
+    "browser.readerView.typefaceBook" : {
+      "comment" : "Reader View - Typeface option, the old-style serif used for printed books",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Book"
+          }
+        }
+      }
+    },
+    "browser.readerView.typefaceMono" : {
+      "comment" : "Reader View - Typeface option, a fixed-width face where every character is the same width",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Monospace"
+          }
+        }
+      }
+    },
+    "browser.readerView.typefaceRounded" : {
+      "comment" : "Reader View - Typeface option, a sans-serif face with rounded letterforms",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Rounded"
           }
         }
       }
