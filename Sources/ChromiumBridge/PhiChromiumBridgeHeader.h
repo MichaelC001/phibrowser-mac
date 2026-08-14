@@ -381,6 +381,12 @@ typedef NS_ENUM(NSInteger, PhiGhostMaterializeOutcome) {
                                            url:(NSString *)url
                                       windowId:(int64_t)windowId;
 
+/// Right-click "Open in Reading Mode" — Chromium asks Mac to show Reader View
+/// for the tab identified by `tabId`. Reader View is the Mac client's: it
+/// extracts the article and swaps a native surface over the tab's content, so
+/// Chromium can only name the tab and hand the request across.
+- (void)openReaderViewForTabId:(int64_t)tabId windowId:(int64_t)windowId;
+
 @optional
 // Per-window extension action badge state (text/colors/visibility/enabled).
 // Keys: windowId, extensionId, tabId, badgeText, backgroundColor, textColor,

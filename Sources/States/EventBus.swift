@@ -49,6 +49,10 @@ struct TabEvent: WindowEvent {
         /// Chromium produced the first non-empty paint for the tab.
         case tabReadyToDisplay(_ tabId: Int)
 
+        /// Right-click "Open in Reading Mode" on the page. A request rather
+        /// than a state change, so nothing buffers or replays it.
+        case openReaderView(tabId: Int)
+
         /// Content-fullscreen entered/exited on a tab (HTML5 requestFullscreen).
         case tabContentFullscreenChanged(tabId: Int, isFullscreen: Bool)
     }
@@ -230,6 +234,8 @@ class EventBus {
             state.handleTabReadyToDisplay(tabId: tabId)
         case .tabContentFullscreenChanged(let tabId, let isFullscreen):
             state.handleTabContentFullscreen(tabId: tabId, isFullscreen: isFullscreen)
+        case .openReaderView(let tabId):
+            state.handleOpenReaderView(tabId: tabId)
         }
     }
 

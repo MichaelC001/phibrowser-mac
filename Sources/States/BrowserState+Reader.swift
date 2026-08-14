@@ -61,6 +61,23 @@ extension BrowserState {
 
 extension BrowserState {
 
+    /// Right-click "Open in Reading Mode" from the web content's own context
+    /// menu, routed through the bridge because that menu is Chromium's.
+    ///
+    /// Enters rather than toggles: the item is only reachable by right-clicking
+    /// the live page, which is what is on screen when the reader is closed, so
+    /// a toggle here could only ever mean "open". Saying so keeps that true if
+    /// the command ever gains a second entry point.
+    @MainActor
+    func handleOpenReaderView(tabId: Int) {
+        guard let tab = tabs.first(where: { $0.guid == tabId }) else {
+            AppLogDebug("[Reader] context menu named an unknown tab: \(tabId)")
+            return
+        }
+        guard !tab.isReaderViewActive else { return }
+        Task { await enterReaderView(for: tab) }
+    }
+
     /// Toggles Reader View for a tab. Entering extracts first, so a page that
     /// yields no article never leaves the tab in a half-entered state.
     @MainActor

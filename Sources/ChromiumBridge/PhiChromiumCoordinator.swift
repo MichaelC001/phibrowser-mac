@@ -1518,6 +1518,14 @@ extension PhiChromiumCoordinator {
             action: .removed(splitId: splitId)))
     }
 
+    func openReaderView(forTabId tabId: Int64, windowId: Int64) {
+        AppLogDebug("[Reader] context menu asked for Reader View: " +
+                    "tab=\(tabId) window=\(windowId)")
+        EventBus.shared.send(TabEvent(
+            browserId: windowId.intValue,
+            action: .openReaderView(tabId: tabId.intValue)))
+    }
+
     func openLinkAsSplitPartner(withPartnerTabId partnerTabId: Int64,
                                 url: String,
                                 windowId: Int64) {
