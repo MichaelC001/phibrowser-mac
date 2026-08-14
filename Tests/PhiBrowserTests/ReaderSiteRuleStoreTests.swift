@@ -274,6 +274,60 @@ final class ReaderSiteRuleStoreTests: XCTestCase {
             "https://docs.google.com/presentation/d/1nW3yS/edit"))
     }
 
+    // MARK: - Cache integrity
+
+    /// Stages a cache directory holding the given files and returns a store
+    /// reading from it.
+    @MainActor
+    private func store(manifest: String?, table: String?) throws -> ReaderSiteRuleStore {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory,
+                                                withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
+        if let manifest {
+            try Data(manifest.utf8)
+                .write(to: directory.appendingPathComponent("manifest.json"))
+        }
+        if let table {
+            try Data(table.utf8)
+                .write(to: directory.appendingPathComponent("rules.json"))
+        }
+        return ReaderSiteRuleStore(directory: directory)
+    }
+
+    private let cachedManifest = """
+    {
+      "formatVersion": 1,
+      "rules": { "path": "v1/rules.json", "sha256": "cafe", "bytes": 2, "count": 0 }
+    }
+    """
+
+    @MainActor
+    func testTrustsTheDigestWhenTheCachedPairLoads() throws {
+        let store = try store(manifest: cachedManifest,
+                              table: #"{"formatVersion":1,"rules":[]}"#)
+        XCTAssertEqual(store.persistedDigest(), "cafe")
+    }
+
+    @MainActor
+    func testForgetsTheDigestWhenTheCachedTableIsCorrupt() throws {
+        // The manifest alone must not vouch for a table that never loaded.
+        // The store is serving the bundled baseline here, and honouring the
+        // digest would short-circuit every refresh, pinning it to the
+        // baseline until the published digest happens to move.
+        let store = try store(manifest: cachedManifest, table: "not json")
+        XCTAssertNil(store.persistedDigest())
+    }
+
+    @MainActor
+    func testForgetsTheDigestWhenTheCachedTableIsMissing() throws {
+        // Same trap through a different door: a digest recorded without the
+        // table beside it would skip a download the store still needs.
+        let store = try store(manifest: cachedManifest, table: nil)
+        XCTAssertNil(store.persistedDigest())
+    }
+
     // MARK: - Payload URL safety
 
     func testResolvesTheManifestPayloadPathAgainstTheSiteRoot() throws {

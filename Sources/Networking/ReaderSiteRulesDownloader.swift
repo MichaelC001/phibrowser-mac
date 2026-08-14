@@ -70,8 +70,10 @@ struct ReaderSiteRulesDownloader {
     static let manifestURL = URL(
         string: "https://phibrowser.github.io/phi-reader-rules/v1/manifest.json")!
 
-    /// Well over the corpus's plausible size, and small enough that a
-    /// misbehaving host cannot make the browser download something large.
+    /// Well over the corpus's plausible size. The body is buffered before
+    /// the check, so this rejects an oversized payload rather than bounding
+    /// the transfer — defence in depth against a host we control, not a
+    /// primary protection.
     private static let maximumPayloadBytes = 4 * 1024 * 1024
 
     private let session: URLSession

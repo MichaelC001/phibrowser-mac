@@ -130,21 +130,47 @@ final class ReaderSiteRuleStore {
     /// request whether or not anything moved.
     private static let refreshInterval: TimeInterval = 6 * 60 * 60
 
+    /// How soon to try again after a failed check. A launch that races the
+    /// network coming up would otherwise pin a fresh rule out for the full
+    /// interval, even though `refreshIfStale` fires on every reader entry.
+    private static let failureRetryInterval: TimeInterval = 15 * 60
+
     private let downloader: ReaderSiteRulesDownloader
     private let fileManager: FileManager
+    private let directory: URL
+    private let tableURL: URL
+    private let manifestURL: URL
     private var table: ReaderSiteRuleTable
     private var lastCheck: Date?
+    private var lastCheckFailed = false
+    /// Whether the pair on disk describes the table being served. The digest
+    /// short-circuit in `refresh()` is only sound when it does: a cached
+    /// table that fails to load leaves the bundled baseline serving behind a
+    /// manifest that still matches the published digest, which would
+    /// otherwise pin the store to the baseline until the digest happens to
+    /// move. False from init when the persisted table did not load; true
+    /// again once a refresh has decoded a fresh one.
+    private var tableMatchesDisk: Bool
     /// Coalesces the launch refresh with the one a reader entry can kick off.
     private var inFlight: Task<Void, Never>?
 
     init(downloader: ReaderSiteRulesDownloader = ReaderSiteRulesDownloader(),
-         fileManager: FileManager = .default) {
+         fileManager: FileManager = .default,
+         directory: URL = ReaderSiteRuleStore.defaultDirectory) {
         self.downloader = downloader
         self.fileManager = fileManager
-        self.table = Self.loadPersisted()
+        self.directory = directory
+        let tableURL = directory.appendingPathComponent("rules.json")
+        let manifestURL = directory.appendingPathComponent("manifest.json")
+        self.tableURL = tableURL
+        self.manifestURL = manifestURL
+        let persisted = Self.loadPersisted(from: tableURL)
+        self.table = persisted
             ?? Self.loadBundled()
             ?? .empty
-        self.lastCheck = Self.persistedCheckDate(fileManager: fileManager)
+        self.tableMatchesDisk = persisted != nil
+        self.lastCheck = Self.persistedCheckDate(at: manifestURL,
+                                                 fileManager: fileManager)
     }
 
     var ruleCount: Int { table.rules.count }
@@ -163,9 +189,12 @@ final class ReaderSiteRuleStore {
 
     /// Checks for a newer table if the last check has aged out. Safe to call
     /// from anywhere and as often as convenient; concurrent calls share one
-    /// request and a failure is not retried until the interval elapses again.
+    /// request, and a failure is retried on the shorter interval rather than
+    /// waiting out the full one.
     func refreshIfStale() {
-        if let lastCheck, Date().timeIntervalSince(lastCheck) < Self.refreshInterval {
+        let interval = lastCheckFailed ? Self.failureRetryInterval
+                                       : Self.refreshInterval
+        if let lastCheck, Date().timeIntervalSince(lastCheck) < interval {
             return
         }
         guard inFlight == nil else { return }
@@ -183,6 +212,7 @@ final class ReaderSiteRuleStore {
             // has not moved ends the check here. This is the common case.
             if let current = persistedDigest(), current == manifest.rules.sha256 {
                 lastCheck = Date()
+                lastCheckFailed = false
                 persistCheckDate()
                 AppLogDebug("[Reader] site rules unchanged at " +
                             "\(manifest.rules.sha256.prefix(12))")
@@ -198,7 +228,12 @@ final class ReaderSiteRuleStore {
             // Whole-table replacement, never a merge. A rule that was deleted
             // upstream because it broke has to actually disappear here.
             table = decoded
+            // True even if the persist below fails: the stale manifest left
+            // behind then disagrees with the published digest, so the next
+            // check downloads again and retries the write.
+            tableMatchesDisk = true
             lastCheck = Date()
+            lastCheckFailed = false
             persist(table: data, manifest: manifest)
             AppLogDebug("[Reader] site rules updated to " +
                         "\(manifest.rules.sha256.prefix(12)), \(decoded.rules.count) rule(s)")
@@ -207,27 +242,22 @@ final class ReaderSiteRuleStore {
             // fully functional without any rules at all, so this is never
             // worth surfacing.
             lastCheck = Date()
+            lastCheckFailed = true
             AppLogDebug("[Reader] site rules refresh failed: \(error)")
         }
     }
 
     // MARK: - Persistence
 
-    private static var directory: URL {
+    /// Where the store keeps its verified table. An init parameter overrides
+    /// it so tests can stage cache states in a temporary directory.
+    nonisolated static var defaultDirectory: URL {
         URL(fileURLWithPath: FileSystemUtils.applicationSupportDirctory())
             .appendingPathComponent("ReaderSiteRules", isDirectory: true)
     }
 
-    private static var tableURL: URL {
-        directory.appendingPathComponent("rules.json")
-    }
-
-    private static var manifestURL: URL {
-        directory.appendingPathComponent("manifest.json")
-    }
-
-    private static func loadPersisted() -> ReaderSiteRuleTable? {
-        guard let data = try? Data(contentsOf: tableURL),
+    private static func loadPersisted(from url: URL) -> ReaderSiteRuleTable? {
+        guard let data = try? Data(contentsOf: url),
               let decoded = try? JSONDecoder().decode(ReaderSiteRuleTable.self, from: data),
               decoded.formatVersion == ReaderSiteRulesDownloader.formatVersion else {
             return nil
@@ -236,44 +266,55 @@ final class ReaderSiteRuleStore {
     }
 
     private static func loadBundled() -> ReaderSiteRuleTable? {
+        // The same format guard as the persisted path. The baseline ships
+        // with the binary, so a mismatch is a build error — but enforcing it
+        // in one loader and not the other invites drift when the format bumps.
         guard let url = Bundle.main.url(forResource: "ReaderSiteRules",
                                         withExtension: "json"),
               let data = try? Data(contentsOf: url),
-              let decoded = try? JSONDecoder().decode(ReaderSiteRuleTable.self, from: data) else {
+              let decoded = try? JSONDecoder().decode(ReaderSiteRuleTable.self, from: data),
+              decoded.formatVersion == ReaderSiteRulesDownloader.formatVersion else {
             return nil
         }
         return decoded
     }
 
-    private static func persistedCheckDate(fileManager: FileManager) -> Date? {
-        (try? fileManager.attributesOfItem(atPath: manifestURL.path))?[.modificationDate]
+    private static func persistedCheckDate(at url: URL,
+                                           fileManager: FileManager) -> Date? {
+        (try? fileManager.attributesOfItem(atPath: url.path))?[.modificationDate]
             as? Date
     }
 
-    private func persistedDigest() -> String? {
-        guard let data = try? Data(contentsOf: Self.manifestURL),
+    /// The digest the on-disk pair vouches for, or nil when it vouches for
+    /// nothing. Internal rather than private so tests can pin the staleness
+    /// decision without reaching the network; nothing else should read it.
+    func persistedDigest() -> String? {
+        // A manifest can only vouch for the table written beside it. When
+        // that table failed to load, the store is serving the bundled
+        // baseline, and honouring the digest would keep it there.
+        guard tableMatchesDisk else { return nil }
+        guard let data = try? Data(contentsOf: manifestURL),
               let manifest = try? JSONDecoder().decode(ReaderSiteRulesManifest.self,
                                                        from: data) else {
             return nil
         }
         // A digest recorded without the table beside it would skip a download
         // the store still needs.
-        guard fileManager.fileExists(atPath: Self.tableURL.path) else {
+        guard fileManager.fileExists(atPath: tableURL.path) else {
             return nil
         }
         return manifest.rules.sha256
     }
 
     private func persist(table data: Data, manifest: ReaderSiteRulesManifest) {
-        let directory = Self.directory
         do {
             try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
             // Table first: a manifest on disk is the claim that the matching
             // table is there too, so writing it first would make an
             // interrupted update look complete.
-            try data.write(to: Self.tableURL, options: .atomic)
+            try data.write(to: tableURL, options: .atomic)
             let manifestData = try JSONEncoder().encode(manifest)
-            try manifestData.write(to: Self.manifestURL, options: .atomic)
+            try manifestData.write(to: manifestURL, options: .atomic)
         } catch {
             AppLogError("[Reader] failed to persist site rules: \(error)")
         }
@@ -282,8 +323,8 @@ final class ReaderSiteRuleStore {
     /// Records that a check happened even though nothing changed, so a stable
     /// corpus is not re-checked on every reader entry.
     private func persistCheckDate() {
-        let url = Self.manifestURL
-        guard fileManager.fileExists(atPath: url.path) else { return }
-        try? fileManager.setAttributes([.modificationDate: Date()], ofItemAtPath: url.path)
+        guard fileManager.fileExists(atPath: manifestURL.path) else { return }
+        try? fileManager.setAttributes([.modificationDate: Date()],
+                                       ofItemAtPath: manifestURL.path)
     }
 }
