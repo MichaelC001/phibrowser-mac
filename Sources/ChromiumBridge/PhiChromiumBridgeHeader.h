@@ -544,6 +544,34 @@ typedef NS_ENUM(NSInteger, PhiGhostMaterializeOutcome) {
 /// @param windowId The window's session id.
 - (void)windowDidExitPlaceholderMode:(int64_t)windowId;
 
+// ==========================================================================
+// Extension side panel (Chromium → Mac notification)
+// ==========================================================================
+
+/// The extension side panel shown in `windowId` changed. Fires when a panel
+/// opens, when the shown content is replaced (another extension's panel, or
+/// the global/contextual entry recomputation after a tab switch), and when
+/// the panel closes. One panel per window; it survives tab switches, so the
+/// adopted NSView must NOT participate in per-tab view churn.
+///
+/// Non-nil `info` + `wrapper` = open / content change. Mac must adopt
+/// wrapper.nativeView as the window's extension side panel view, replacing
+/// any previously adopted panel view.
+///
+/// Nil `info` + nil `wrapper` = closed. Mac must SYNCHRONOUSLY detach the
+/// previously adopted panel NSView before returning: Chromium destroys the
+/// panel's view (and with it that NSView) right after this call returns.
+///
+/// `info` keys: extensionId (NSString), displayName (NSString), iconPNG
+/// (NSData, PNG bytes; absent when no icon is available).
+///
+/// The panel WebContents stays owned by Chromium's extension view host —
+/// never call `close` on `wrapper`. Request closure through
+/// `closeExtensionSidePanel:` instead.
+- (void)extensionSidePanelChanged:(int64_t)windowId
+                             info:(NSDictionary<NSString *, id> * _Nullable)info
+                        panelView:(id<WebContentWrapper> _Nullable)wrapper;
+
 /// The current Phi account's display info, shown on the chrome://settings
 /// account row. Same nickname/email source as the Mac client's account
 /// settings page. Keys: nickname (NSString), email (NSString), avatarPNG
@@ -1012,6 +1040,13 @@ typedef NS_ENUM(NSInteger, PhiGhostMaterializeOutcome) {
 - (void)pinExtensionWithId:(NSString *)extensionId windowId:(int64_t)windowId;
 - (void)unpinExtensionWithId:(NSString *)extensionId windowId:(int64_t)windowId;
 - (void)movePinnedExtensionWithId:(NSString *)extensionId toIndex:(int)newIndex windowId:(int64_t)windowId;
+
+/// Close the extension side panel showing in `windowId` (the Mac client's
+/// close entry point, e.g. the panel header's close button). Routes to the
+/// window's SidePanelUI::Close, so the extension observes the same event
+/// sequence as an icon toggle-close. No-op when the window is gone or no
+/// panel is showing.
+- (void)closeExtensionSidePanel:(int64_t)windowId;
 
 /// Enable all three Phi built-in extensions.
 /// Mac must update its own state before calling this so that

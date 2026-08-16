@@ -1299,6 +1299,53 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
     }
 
     // =========================================================================
+    // Extension side panel (Chromium → Mac)
+    //
+    // Mirrors the Chromium-side contract in PhiChromiumBridgeHeader.h:
+    // non-nil info+wrapper = adopt the panel NSView (open / content change),
+    // nil = closed. The close leg shares placeholder mode's synchronous
+    // detach contract, hence MainActor.assumeIsolated rather than an async
+    // hop — Chromium destroys the outgoing panel view right after this
+    // bridge callback returns.
+    // =========================================================================
+
+    func extensionSidePanelChanged(_ windowId: Int64,
+                                   info: [String: Any]?,
+                                   panelView wrapper: (any WebContentWrapper)?) {
+        guard let windowController = MainBrowserWindowControllersManager.shared
+                .getAllWindows()
+                .first(where: { $0.windowId == Int(windowId) }) else {
+            // Normal during window teardown: Chromium pushes the close from
+            // the browser's pre-destruction sweep after the Mac side already
+            // dropped the window controller.
+            AppLogInfo("[ExtSidePanel] [Coordinator] no controller for windowId=\(windowId) (info=\(info == nil ? "nil" : "set"))")
+            return
+        }
+
+        let panelState: BrowserState.ExtensionSidePanelState?
+        if let info, let wrapper {
+            guard let nsWrapper = wrapper as? (WebContentWrapper & NSObject) else {
+                AppLogWarn("[ExtSidePanel] [Coordinator] wrapper cast failed windowId=\(windowId)")
+                return
+            }
+            panelState = BrowserState.ExtensionSidePanelState(
+                extensionId: info["extensionId"] as? String ?? "",
+                displayName: info["displayName"] as? String ?? "",
+                iconPNG: info["iconPNG"] as? Data,
+                wrapper: nsWrapper
+            )
+        } else {
+            panelState = nil
+        }
+
+        // Synchronous (NOT Task { @MainActor in ... }) so the outgoing NSView
+        // is out of the hierarchy before returning to Chromium.
+        MainActor.assumeIsolated {
+            windowController.browserState.updateExtensionSidePanel(panelState)
+        }
+    }
+
+    // =========================================================================
     // Tab groups (Chromium → Mac)
     //
     // Forwards all 5 bridge callbacks through EventBus, matching the

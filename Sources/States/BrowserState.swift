@@ -56,6 +56,19 @@ class BrowserState {
         let splitActions: [SplitEvent.SplitAction]
     }
 
+    /// The extension side panel Chromium is showing in this window. One
+    /// panel per window; it survives tab switches and does not participate
+    /// in per-tab view churn. The wrapper's WebContents (and NSView) stay
+    /// owned by Chromium's extension view host — never call `close` on the
+    /// wrapper; `wrapper.nativeView` is invalid once the panel state goes
+    /// nil (Chromium destroys the view right after pushing the close).
+    struct ExtensionSidePanelState {
+        let extensionId: String
+        let displayName: String
+        let iconPNG: Data?
+        let wrapper: WebContentWrapper & NSObject
+    }
+
     /// Fires synchronously at the end of a restored-window snapshot
     /// transaction, right after its single `normalTabs` publish. Subscribed
     /// WITHOUT `receive(on:)` (mirrors the synchronous `$isInPlaceholderMode`
@@ -284,6 +297,13 @@ class BrowserState {
     /// Chromium — wrapper.nativeView is invalid after exitPlaceholderMode
     /// returns.
     private(set) var placeholderWrapper: (WebContentWrapper & NSObject)? = nil
+
+    /// The extension side panel currently shown in this window, nil when
+    /// closed. Driven by PhiChromiumCoordinator.extensionSidePanelChanged;
+    /// the container view controller mounts/unmounts the panel NSView from a
+    /// SYNCHRONOUS subscription (no async hop — see the close contract on
+    /// `ExtensionSidePanelState`).
+    @Published private(set) var extensionSidePanel: ExtensionSidePanelState? = nil
 
     @Published var isDraggingTab = false
 
@@ -1135,6 +1155,45 @@ class BrowserState {
         if placeholderWrapper != nil {
             AppLogWarn("🦖 [BrowserState] deinit reached with placeholderWrapper still set — teardown paths skipped windowId=\(windowId)")
         }
+    }
+
+    // =========================================================================
+    // Extension side panel (window-level right slot)
+    //
+    // Driven by PhiChromiumCoordinator.extensionSidePanelChanged, which
+    // relays PhiSidePanelUI's bridge pushes. Same synchronous-detach contract
+    // as placeholder mode: on a close (nil) or a content replacement,
+    // Chromium may destroy the outgoing panel view right after the bridge
+    // call returns, so the outgoing NSView must leave the AppKit hierarchy
+    // before this method returns.
+    // =========================================================================
+
+    @MainActor
+    func updateExtensionSidePanel(_ newPanel: ExtensionSidePanelState?) {
+        let previous = extensionSidePanel
+        if let previousWrapper = previous?.wrapper,
+           previousWrapper !== newPanel?.wrapper {
+            previousWrapper.nativeView?.removeFromSuperview()
+        }
+        extensionSidePanel = newPanel
+        if newPanel != nil, previous == nil {
+            AppLogInfo("[ExtSidePanel] [BrowserState] panel opened windowId=\(windowId)")
+        } else if newPanel == nil, previous != nil {
+            AppLogInfo("[ExtSidePanel] [BrowserState] panel closed windowId=\(windowId)")
+        }
+    }
+
+    /// Asks Chromium to close the extension side panel of this window (the
+    /// Mac-side close entry point; the panel header's close button lands
+    /// here). Routes through SidePanelUI::Close so the extension observes
+    /// the same event sequence as an icon toggle-close. The panel state
+    /// flips when Chromium pushes the close back, not here.
+    @MainActor
+    func requestExtensionSidePanelClose() {
+        guard let bridge = ChromiumLauncher.sharedInstance().bridge,
+              bridge.responds(to: #selector(PhiChromiumBridgeProtocol.closeExtensionSidePanel(_:)))
+        else { return }
+        bridge.closeExtensionSidePanel(Int64(windowId))
     }
 
     func toggleFullScreenMode(_ fullScreen: Bool) {
