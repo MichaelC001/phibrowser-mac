@@ -7,6 +7,63 @@ import AppKit
 import Foundation
 import Kingfisher
 import PostHog
+
+enum PostHogIdentityResetPolicy {
+    static func shouldReset(distinctId: String, anonymousId: String) -> Bool {
+        distinctId != anonymousId
+    }
+
+    static func shouldResetBeforeIdentifying(
+        currentDistinctId: String,
+        anonymousId: String,
+        nextDistinctId: String
+    ) -> Bool {
+        shouldReset(distinctId: currentDistinctId, anonymousId: anonymousId)
+            && currentDistinctId != nextDistinctId
+    }
+
+    static func shouldSyncAfterMetricsReportingChange(
+        enabled: Bool,
+        isAuthenticated: Bool
+    ) -> Bool {
+        enabled && isAuthenticated
+    }
+
+    static func shouldStartWithAnonymousPostHogIdentity(
+        isGuest: Bool,
+        isMetricsReportingEnabled: Bool
+    ) -> Bool {
+        isGuest || !isMetricsReportingEnabled
+    }
+
+    static func shouldReconcileAnonymousLaunchIdentity(
+        isGuest: Bool,
+        isMetricsReportingEnabled: Bool,
+        distinctId: String,
+        anonymousId: String
+    ) -> Bool {
+        shouldStartWithAnonymousPostHogIdentity(
+            isGuest: isGuest,
+            isMetricsReportingEnabled: isMetricsReportingEnabled
+        ) && shouldReset(distinctId: distinctId, anonymousId: anonymousId)
+    }
+
+    static func shouldDiscardAnonymousLaunchLifecycleEvent(
+        eventName: String,
+        isGuest: Bool,
+        isMetricsReportingEnabled: Bool,
+        distinctId: String,
+        anonymousId: String
+    ) -> Bool {
+        shouldStartWithAnonymousPostHogIdentity(
+            isGuest: isGuest,
+            isMetricsReportingEnabled: isMetricsReportingEnabled
+        )
+            && ["Application Installed", "Application Updated"].contains(eventName)
+            && shouldReset(distinctId: distinctId, anonymousId: anonymousId)
+    }
+}
+
 class Account {
     let userID: String
     let userInfo: User?
@@ -133,19 +190,95 @@ class AccountController {
     private func syncTelemetryIdentity(for account: Account?) {
         #if !PHI_OSS_BUILD
         SentryService.configureUser(account)
+        syncPostHogIdentity(for: account)
+        #endif
+    }
 
+    private func syncPostHogIdentity(for account: Account?) {
+        #if !PHI_OSS_BUILD
         guard let bridge = ChromiumLauncher.sharedInstance().bridge,
               bridge.isMetricsReportingEnabled(),
               let sub = account?.userInfo?.sub else {
-            PostHogSDK.shared.reset()
+            resetPostHogIdentityIfNeeded()
             return
         }
 
         let properties = bridge.getMetricsClientId().map {
             ["chromium_metrics_client_id": $0] as [String: Any]
         }
+        resetPostHogIdentityBeforeIdentifyingIfNeeded(sub)
         PostHogSDK.shared.identify(sub, userProperties: properties)
         #endif
+    }
+
+    /// Handles an effective Chromium metrics-consent transition. The setting
+    /// event must remain anonymous, so clear any old authenticated PostHog
+    /// identity before capturing it and only identify again after an opt-in.
+    func metricsReportingEnabledChanged(_ enabled: Bool) {
+        #if !PHI_OSS_BUILD
+        let shouldIdentify = PostHogIdentityResetPolicy.shouldSyncAfterMetricsReportingChange(
+            enabled: enabled,
+            isAuthenticated: ApplicationState.shared.isAuthenticated
+        )
+        SentryService.configureUser(shouldIdentify ? account : nil)
+        resetPostHogIdentityIfNeeded()
+        PostHogSDK.shared.capture("metrics_reporting_changed", properties: [
+            "enabled": enabled,
+        ])
+        guard shouldIdentify else {
+            return
+        }
+        syncPostHogIdentity(for: account)
+        #endif
+    }
+
+    /// Clears a residual authenticated identity before Phi captures its launch
+    /// snapshot and later events from a Guest or metrics-disabled session. A
+    /// normal anonymous session already has matching distinct and anonymous
+    /// IDs, so it remains stable across relaunches.
+    func reconcilePostHogIdentityForAnonymousLaunchIfNeeded(
+        isMetricsReportingEnabled: Bool
+    ) {
+        #if !PHI_OSS_BUILD
+        let distinctId = PostHogSDK.shared.getDistinctId()
+        let anonymousId = PostHogSDK.shared.getAnonymousId()
+        guard PostHogIdentityResetPolicy.shouldReconcileAnonymousLaunchIdentity(
+            isGuest: ApplicationState.shared.isGuest,
+            isMetricsReportingEnabled: isMetricsReportingEnabled,
+            distinctId: distinctId,
+            anonymousId: anonymousId
+        ) else {
+            return
+        }
+        PostHogSDK.shared.reset()
+        #endif
+    }
+
+    private func resetPostHogIdentityIfNeeded() {
+        let distinctId = PostHogSDK.shared.getDistinctId()
+        let anonymousId = PostHogSDK.shared.getAnonymousId()
+        guard PostHogIdentityResetPolicy.shouldReset(
+            distinctId: distinctId,
+            anonymousId: anonymousId
+        ) else {
+            return
+        }
+        PostHogSDK.shared.reset()
+    }
+
+    private func resetPostHogIdentityBeforeIdentifyingIfNeeded(
+        _ nextDistinctId: String
+    ) {
+        let currentDistinctId = PostHogSDK.shared.getDistinctId()
+        let anonymousId = PostHogSDK.shared.getAnonymousId()
+        guard PostHogIdentityResetPolicy.shouldResetBeforeIdentifying(
+            currentDistinctId: currentDistinctId,
+            anonymousId: anonymousId,
+            nextDistinctId: nextDistinctId
+        ) else {
+            return
+        }
+        PostHogSDK.shared.reset()
     }
 
     /// Best-effort refresh of the existing per-account profile cache. The

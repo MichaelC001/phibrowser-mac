@@ -486,6 +486,7 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
         SentinelTelemetryConsentPublisher.shared.metricsReportingEnabledChanged(
             enabled
         )
+        AccountController.shared.metricsReportingEnabledChanged(enabled)
     }
 
     func getAuth0AccessTokenSyncly() -> String {

@@ -211,12 +211,23 @@ import PostHog
         // missing the app runs without analytics.
         if let token = PostHogEnv.projectToken.value,
            let host = PostHogEnv.host.value {
+            let isMetricsReportingEnabled = chromiumBridge?.isMetricsReportingEnabled() ?? false
             let postHogConfig = PostHogConfig(apiKey: token, host: host)
             postHogConfig.captureApplicationLifecycleEvents = true
+            postHogConfig.reuseAnonymousId = false
             #if DEBUG
             postHogConfig.debug = true
             #endif
             postHogConfig.setBeforeSend { event in
+                if PostHogIdentityResetPolicy.shouldDiscardAnonymousLaunchLifecycleEvent(
+                    eventName: event.event,
+                    isGuest: ApplicationState.shared.isGuest,
+                    isMetricsReportingEnabled: isMetricsReportingEnabled,
+                    distinctId: event.distinctId,
+                    anonymousId: PostHogSDK.shared.getAnonymousId()
+                ) {
+                    return nil
+                }
                 guard event.event == "Application Opened" else { return event }
                 event.properties["layout_mode"] = PhiPreferences.GeneralSettings.loadLayoutMode().rawValue
                 event.properties["ai_enabled"] = PhiPreferences.AISettings.phiAIEnabled.loadValue()
@@ -224,6 +235,9 @@ import PostHog
                 return event
             }
             PostHogSDK.shared.setup(postHogConfig)
+            AccountController.shared.reconcilePostHogIdentityForAnonymousLaunchIfNeeded(
+                isMetricsReportingEnabled: isMetricsReportingEnabled
+            )
             captureUserDefaultsSnapshot()
         } else {
             AppLogInfo("PostHog: project token or host not set in PostHogConfig.generated.swift; skipping init")

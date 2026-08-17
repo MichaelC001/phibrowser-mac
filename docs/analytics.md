@@ -1,6 +1,6 @@
 # Analytics
 
-Last updated: 2026-08-11
+Last updated: 2026-08-17
 
 Phi Browser emits product analytics to both [Countly](https://phi-browser-eaade70cfd902.flex.countly.com) (legacy) and [PostHog](https://us.posthog.com/project/385742) (current). Both pipelines run side-by-side; PostHog is the forward-looking source of truth.
 
@@ -67,8 +67,22 @@ notification payload.
 | --- | --- | --- |
 | Active account changed | `identify(auth0.sub, userProperties)` | `AccountController/Account.swift` |
 | Logout | `capture("user_logged_out")` then `reset()` | `Onboarding/AuthManager.swift` |
+| Effective metrics reporting change | Capture anonymous `metrics_reporting_changed`, then identify only after opt-in | `ChromiumBridge/PhiChromiumCoordinator.swift` |
 
 Distinct ID == Auth0 `sub`. When Chromium metrics reporting is enabled, identify also sets `chromium_metrics_client_id` to Chromium's UMA client ID. A temporarily unavailable client ID does not prevent identification.
+
+Phi explicitly sets `reuseAnonymousId` to `false`. An anonymous identity is
+stable across app launches until `reset()` ends that anonymous phase. A
+successful `identify()` sends `$anon_distinct_id`, associating events from the
+current anonymous phase with the account being identified. After a reset,
+events cannot be associated with the account that was active before the reset,
+but can be associated with the next account that completes `identify()`.
+
+If a Guest or metrics-disabled launch finds a residual authenticated identity
+from an earlier version or abnormal shutdown, Phi drops the synchronous
+`Application Installed` or `Application Updated` event that PostHog emits
+during setup, then resets before capturing the launch snapshot and later
+anonymous events.
 
 ## Super properties
 
@@ -96,6 +110,7 @@ are out of scope.
 | `user_logged_in` | Auth0 login completed | `Onboarding/Login/LoginViewController.swift` |
 | `login_retried` | User tapped "Go back and try again" after failed/timed-out login | `Onboarding/Login/LoginViewController.swift` |
 | `user_logged_out` | User logged out; identity reset follows | `Onboarding/AuthManager.swift` |
+| `metrics_reporting_changed` | Chromium reports an effective metrics and crash-reporting consent transition. The event contains only `enabled` and is captured under the current anonymous identity. A later metrics-enabled authenticated activation may associate that anonymous phase with the account. Initial-state synchronization does not emit it. | `ChromiumBridge/PhiChromiumCoordinator.swift` |
 | `guest_mode_entered` | User successfully crossed the local credential boundary and entered Guest Mode | `Onboarding/LoginController.swift` |
 | `guest_mode_exited` | Guest account migration and authenticated account publication completed; `trigger` is `account_setting` or `ai_setting` | `Onboarding/LoginController.swift` |
 | `oobe_step_viewed` | OOBE presents a semantic step; includes stable `step`, one-based `step_index`, and `is_guest` | `Onboarding/OOBEAnalyticsSession.swift` |
