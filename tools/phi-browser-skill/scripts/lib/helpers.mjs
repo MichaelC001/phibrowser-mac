@@ -227,7 +227,7 @@ export function contextKind() {
 /**
  * The context this round is bound to, or null before any bind. Self-describing:
  *   { kind: 'agent',  taskId, spaceId, windowId, ownership, persistent }
- *   { kind: 'shadow', taskId, windowId }
+ *   { kind: 'shadow', taskId, windowId, incognito }
  *   { kind: 'user',   spaceId, name, windowId }
  * enterContext() returns the same shape (plus per-kind extras). Query it to
  * branch on where you are without reaching into module state.
@@ -235,7 +235,8 @@ export function contextKind() {
 export function currentContext() {
   if (state.task?.shadow) {
     return { kind: 'shadow', taskId: state.task.taskId,
-             windowId: state.task.windowId }
+             windowId: state.task.windowId,
+             incognito: !!state.task.incognito }
   }
   if (state.task) {
     return { kind: 'agent', taskId: state.task.taskId, spaceId: state.task.spaceId,
@@ -320,10 +321,12 @@ export async function listProfiles() {
  *       omit it for the ephemeral default. Full lifecycle (ownership/handoff,
  *       keep-alive, complete()). See references/lifecycle.md.
  *
- *   enterContext({ kind: 'shadow', name, profile? })
+ *   enterContext({ kind: 'shadow', name, profile?, incognito? })
  *     — an INVISIBLE background window: no pip, no transcript, no handoff,
  *       nobody watching. Only when the user explicitly asks for background
  *       work; anything that might need a human belongs in an agent Space.
+ *       `incognito: true` browses in a fresh off-the-record session (no
+ *       cookies or logins from the profile) that dies with the window.
  *       See references/lifecycle.md ▸ "Shadow windows".
  *
  *   enterContext({ kind: 'user', space, profile?, create?, activate? })
@@ -344,7 +347,8 @@ export async function enterContext(spec = {}) {
       { profile: spec.profile ?? '', persistent: spec.persistent ?? false })
   }
   if (spec.kind === 'shadow') {
-    return enterShadowContext(spec.name, { profile: spec.profile ?? '' })
+    return enterShadowContext(spec.name,
+      { profile: spec.profile ?? '', incognito: spec.incognito ?? false })
   }
   if (spec.kind === 'user') {
     return enterUserContext(spec.space,
@@ -517,18 +521,37 @@ async function enterAgentContext(name, { profile = '', persistent = false } = {}
  * Developer ▸ "Allow agents to operate your Spaces"; with it off every call
  * fails `user_space_operations_disabled` and the answer is an agent Space,
  * not a workaround.
+ *
+ * `incognito: true` puts the window in a unique off-the-record profile
+ * derived from `profile` (which still names the PARENT profile — extensions
+ * and settings come from it, cookies and logins do NOT): a fresh empty
+ * session per window, isolated from the user's own incognito windows and
+ * from other shadow tasks, destroyed when the window closes. A taskId's
+ * incognito-ness is fixed at creation — re-binding with the other value
+ * fails `shadow_incognito_mismatch`.
  */
-async function enterShadowContext(name, { profile = '' } = {}) {
+async function enterShadowContext(name, { profile = '', incognito = false } = {}) {
   if (!name || typeof name !== 'string') {
     throw new Error("enterContext({kind:'shadow'}): `name` is required")
   }
-  const { windowId } = await phiSend('agentSpace.shadow.create', {
-    taskId: name, profileId: profile,
+  const created = await phiSend('agentSpace.shadow.create', {
+    taskId: name, profileId: profile, incognito: !!incognito,
   })
+  const { windowId } = created
+  // An app build that predates incognito shadow windows ignores the flag and
+  // opens a REGULAR shadow window on the profile. Its reply carries no
+  // `incognito` echo — refuse rather than silently browse outside incognito.
+  if (incognito && created.incognito !== true) {
+    await phiSend('agentSpace.shadow.close', { taskId: name }).catch(() => {})
+    throw new Error(
+      "enterContext({kind:'shadow', incognito:true}): this Phi build does not " +
+      'support incognito shadow windows — update Phi Browser, or drop `incognito`.')
+  }
   // Rides state.task (see contextKind): a shadow context IS a task — same
   // taskId, keep-alive and complete() — with `shadow` marking the one
   // difference, that its window has no presence surfaces.
-  state.task = { taskId: name, windowId, shadow: true, ownership: 'agent' }
+  state.task = { taskId: name, windowId, shadow: true, ownership: 'agent',
+                 incognito: !!incognito }
   state.userSpace = null
   state.ownerCheckedAt = Date.now()
   state.sessionId = null
@@ -556,14 +579,14 @@ async function enterShadowContext(name, { profile = '' } = {}) {
   const last = readLastTargetId(name)
   const tab = tabs.find((t) => t.targetId === last) ?? tabs[0]
   await attachTab(tab.targetId)
-  return { kind: 'shadow', taskId: name, windowId,
+  return { kind: 'shadow', taskId: name, windowId, incognito: !!incognito,
            tabs: tabs.map((t) => ({ ...t, current: t.targetId === state.targetId })) }
 }
 
 /** The shadow windows this driver has open, as
- *  [{taskId, windowId, profileId, createdAt}]. Scoped to this agent — another
- *  agent's background work is not listed. Use it to find and clean up windows
- *  an earlier round abandoned. */
+ *  [{taskId, windowId, profileId, incognito, createdAt}]. Scoped to this
+ *  agent — another agent's background work is not listed. Use it to find and
+ *  clean up windows an earlier round abandoned. */
 export async function listShadowWindows() {
   const { shadows } = await phiSend('agentSpace.shadow.list', {})
   return shadows || []

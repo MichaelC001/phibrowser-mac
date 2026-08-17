@@ -70,7 +70,9 @@ app-level surface that needs no binding:
   browser window on a real profile that the user CANNOT SEE — off-screen at
   alpha 0, no pip, no transcript, no handoff, nobody watching. Page
   automation is identical; what's gone is every way to involve the user. Only
-  when they explicitly ask for background work. See
+  when they explicitly ask for background work. `{ incognito: true }` browses
+  in a fresh off-the-record session instead — no cookies or logins from the
+  profile, state destroyed with the window. See
   `references/lifecycle.md` ▸ "Shadow windows".
 - **User Space** — `enterContext({ kind: 'user', space })`: the user's REAL,
   visible window. No ownership guard, keep-alive, or `complete()`. Reach for
@@ -96,9 +98,10 @@ human step turns up mid-run, stop, close the window, and say what's needed.
 
 Core surface — full semantics in this file:
 
-- Context: `enterContext({kind, name?/space?, profile?, persistent?, create?,
-  activate?})` (the one entry — agent returns the Space's `tabs` and
-  `pendingUserMessages`, shadow returns `tabs`, user returns `tabs`/`created`),
+- Context: `enterContext({kind, name?/space?, profile?, persistent?,
+  incognito?, create?, activate?})` (the one entry — agent returns the
+  Space's `tabs` and `pendingUserMessages`, shadow returns `tabs`, user
+  returns `tabs`/`created`; `incognito` is shadow-only),
   `listShadowWindows()`, `closeShadowWindow(name)`, `currentContext()`,
   `contextKind()`, `listAgentSpaces()`, `listProfiles()`,
   `spaceStatus({shots})` (one-call digest of the current agent Space),

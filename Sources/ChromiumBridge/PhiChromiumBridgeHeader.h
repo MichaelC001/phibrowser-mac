@@ -22,6 +22,13 @@ NS_ASSUME_NONNULL_BEGIN
 // is ignored on creation and reported as the synthetic wire id
 // "PhiIncognitoSpace" (the OTR's real basename is its parent's, which would
 // collide with regular Spaces).
+// ChromiumBrowserTypeShadowIncognito means a shadow browser (is_shadow, see
+// ChromiumBrowserTypeShadow) on a unique off-the-record profile derived from
+// the requested profile — one fresh session per window, isolated from both
+// the incognito primary OTR and the Incognito Space, destroyed when the
+// window closes. Chromium reports such windows as ChromiumBrowserTypeShadow
+// (is_shadow takes precedence in type resolution); this value exists as a
+// creation request, not a reported type.
 typedef NS_ENUM(NSUInteger, ChromiumBrowserType) {
     ChromiumBrowserTypeNormal = 0,
     ChromiumBrowserTypePopup,
@@ -32,7 +39,8 @@ typedef NS_ENUM(NSUInteger, ChromiumBrowserType) {
     ChromiumBrowserTypeDevTools,
     ChromiumBrowserTypeShadow,
     ChromiumBrowserTypeIncognitoSpace,  // TYPE_NORMAL + Incognito Space OTR profile
-    ChromiumBrowserTypeAgentSpace
+    ChromiumBrowserTypeAgentSpace,
+    ChromiumBrowserTypeShadowIncognito  // is_shadow + unique per-window OTR profile
 };
 
 typedef NS_ENUM(NSUInteger, BrowserType) {

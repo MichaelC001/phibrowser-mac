@@ -97,6 +97,22 @@ Other differences worth knowing:
   `user_space_operations_disabled` — the answer is an agent Space, not a
   workaround. Per-profile agent permissions apply as usual
   (`profile_not_agent_allowed`).
+- **Incognito.** `enterContext({kind: 'shadow', name, incognito: true})`
+  opens the window in a unique off-the-record session instead of the profile
+  itself: no cookies, logins, or storage come in from the profile, nothing
+  browsed there persists, and the session is destroyed when the window
+  closes. Each incognito shadow window gets its OWN fresh session — isolated
+  from the user's Cmd+Shift+N incognito windows, from the Incognito Space,
+  and from other shadow tasks. `profile` still names the PARENT profile
+  (extensions and settings come from it; per-profile agent permission
+  applies), so `credentialStatus`/`fillCredential` vault access works but the
+  page starts logged OUT of everything. Use it for clean-state checks —
+  "how does this page look logged out", price comparisons without
+  personalization, testing a signup flow. A taskId's incognito-ness is fixed
+  at creation: re-binding the same name with the other value fails
+  `shadow_incognito_mismatch` (pick a new name instead). On an app build
+  that predates the feature, `enterContext` throws rather than silently
+  browsing in the regular profile — update Phi Browser.
 - **Always `complete()`.** It closes the window. Leaving it to the keep-alive
   sweep strands an invisible window burning a renderer the user cannot find
   or close. Same ~120s-while-driving / ~30-min-between-rounds clock as an

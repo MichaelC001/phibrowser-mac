@@ -41,23 +41,30 @@ extension AgentSpaceRouter {
             }
             let requestedProfile =
                 (obj["profileId"] as? String) ?? (obj["profileName"] as? String) ?? ""
-            let reply: @MainActor (Int?) -> Void = { windowId in
+            // The `incognito` echo in the success reply is deliberate: a driver
+            // that requested incognito against an app build that predates it
+            // sees the field missing and can refuse to proceed, instead of
+            // silently browsing in the regular profile.
+            let incognito = (obj["incognito"] as? Bool) ?? false
+            let reply: @MainActor (Int?, String?) -> Void = { windowId, error in
                 guard let windowId else {
                     ExtensionMessaging.shared.sendResponse(
-                        failure("create_failed"), requestId: requestId)
+                        failure(error ?? "create_failed"), requestId: requestId)
                     return
                 }
                 ExtensionMessaging.shared.sendResponse(
-                    encode(["ok": true, "windowId": windowId]), requestId: requestId)
+                    encode(["ok": true, "windowId": windowId, "incognito": incognito]),
+                    requestId: requestId)
             }
             let proceed: @MainActor (String) -> Void = { profileId in
                 AgentSpaceManager.shared.createShadowWindow(
                     taskId: taskId,
                     profileId: profileId,
+                    incognito: incognito,
                     origin: taskOrigin,
                     driverPrincipalId: context.driverPrincipalId,
-                    completion: { windowId in
-                        MainActor.assumeIsolated { reply(windowId) }
+                    completion: { windowId, error in
+                        MainActor.assumeIsolated { reply(windowId, error) }
                     })
             }
 
@@ -100,6 +107,7 @@ extension AgentSpaceRouter {
                 ["taskId": $0.taskId,
                  "windowId": $0.windowId,
                  "profileId": $0.profileId,
+                 "incognito": $0.incognito,
                  "createdAt": Int($0.createdAt.timeIntervalSince1970 * 1000)]
             }
             return encode(["ok": true, "shadows": rows])

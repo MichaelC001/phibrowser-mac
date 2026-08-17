@@ -23,6 +23,11 @@ struct ShadowWindow {
     /// reports over CDP, so a driver can match its targets to this window.
     let windowId: Int
     let profileId: String
+    /// True when the window browses in a unique off-the-record profile derived
+    /// from `profileId` (fresh session, destroyed with the window) instead of
+    /// the profile itself. Fixed at creation: a taskId cannot flip between
+    /// incognito and regular across re-binds.
+    let incognito: Bool
     let origin: AgentTaskOrigin
     let driverPrincipalId: String?
     let createdAt: Date
@@ -48,18 +53,21 @@ extension AgentSpaceManager {
     /// shared with `createAgentSpace` — a profile the user blocked for agent
     /// Spaces is blocked for shadow windows too, and more so.
     ///
-    /// `completion` receives the window id, or nil when the window could not be
-    /// created (profile unknown or failed to load, Chromium refused).
+    /// `completion` receives the window id, or nil and a wire error reason
+    /// when the window could not be created (profile unknown or failed to
+    /// load, Chromium refused, incognito-ness conflicts with an existing
+    /// window of the same taskId).
     func createShadowWindow(
         taskId: String,
         profileId: String,
+        incognito: Bool,
         origin: AgentTaskOrigin,
         driverPrincipalId: String?,
-        completion: @escaping (_ windowId: Int?) -> Void
+        completion: @escaping (_ windowId: Int?, _ error: String?) -> Void
     ) {
         if origin == .cdp, driverPrincipalId?.isEmpty != false {
             AppLogWarn("[ShadowWindow] createShadowWindow: CDP task has no driver principal")
-            completion(nil)
+            completion(nil, "create_failed")
             return
         }
         if let existing = shadowWindowsByTaskId[taskId] {
@@ -70,7 +78,7 @@ extension AgentSpaceManager {
                 callerPrincipalId: driverPrincipalId
             ) else {
                 AppLogWarn("[ShadowWindow] createShadowWindow: taskId \(taskId) belongs to another driver")
-                completion(nil)
+                completion(nil, "create_failed")
                 return
             }
             // windowId 0 is the in-flight placeholder below: a spawn for this
@@ -79,22 +87,29 @@ extension AgentSpaceManager {
             // nothing would ever close.
             guard existing.windowId != 0 else {
                 AppLogWarn("[ShadowWindow] createShadowWindow: \(taskId) spawn already in flight")
-                completion(nil)
+                completion(nil, "create_failed")
+                return
+            }
+            // Re-binding must not silently change what the driver believes it
+            // is browsing in: a taskId's incognito-ness is fixed at creation.
+            guard existing.incognito == incognito else {
+                AppLogWarn("[ShadowWindow] createShadowWindow: \(taskId) exists with incognito=\(existing.incognito), refusing incognito=\(incognito) re-bind")
+                completion(nil, "shadow_incognito_mismatch")
                 return
             }
             touchShadowKeepAlive(taskId: taskId)
-            completion(existing.windowId)
+            completion(existing.windowId, nil)
             return
         }
         // A taskId is one agent job. Letting the same id name both a Space and
         // a shadow window would make every task-scoped route ambiguous.
         guard task(forTaskId: taskId) == nil else {
             AppLogWarn("[ShadowWindow] createShadowWindow: taskId \(taskId) is already an agent Space")
-            completion(nil)
+            completion(nil, "create_failed")
             return
         }
         guard let bridge = ChromiumLauncher.sharedInstance().bridge else {
-            completion(nil)
+            completion(nil, "create_failed")
             return
         }
         // Claim the taskId before the async profile load, the way
@@ -105,6 +120,7 @@ extension AgentSpaceManager {
             taskId: taskId,
             windowId: 0,
             profileId: profileId,
+            incognito: incognito,
             origin: origin,
             driverPrincipalId: driverPrincipalId,
             createdAt: Date(),
@@ -114,22 +130,24 @@ extension AgentSpaceManager {
         )
         ensureKeepAliveSweep()
         // Chromium resolves the profile strictly (no last-used fallback), so it
-        // must be in memory before the window is created.
+        // must be in memory before the window is created. For an incognito
+        // window this loads the PARENT profile — Chromium derives the unique
+        // OTR from it at create time.
         bridge.ensureProfileLoaded(profileId) { [weak self] success in
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
-                    guard let self else { completion(nil); return }
+                    guard let self else { completion(nil, "create_failed"); return }
                     guard success,
                           let bridge = ChromiumLauncher.sharedInstance().bridge else {
                         AppLogWarn("[ShadowWindow] ensureProfileLoaded failed for \(profileId)")
                         self.shadowWindowsByTaskId.removeValue(forKey: taskId)
-                        completion(nil)
+                        completion(nil, "create_failed")
                         return
                     }
                     self.spawnShadowWindow(
-                        taskId: taskId, profileId: profileId, origin: origin,
-                        driverPrincipalId: driverPrincipalId, bridge: bridge,
-                        completion: completion)
+                        taskId: taskId, profileId: profileId, incognito: incognito,
+                        origin: origin, driverPrincipalId: driverPrincipalId,
+                        bridge: bridge, completion: completion)
                 }
             }
         }
@@ -138,22 +156,24 @@ extension AgentSpaceManager {
     private func spawnShadowWindow(
         taskId: String,
         profileId: String,
+        incognito: Bool,
         origin: AgentTaskOrigin,
         driverPrincipalId: String?,
         bridge: PhiChromiumBridgeProtocol,
-        completion: @escaping (_ windowId: Int?) -> Void
+        completion: @escaping (_ windowId: Int?, _ error: String?) -> Void
     ) {
         // `hidden: true` skips Chromium's post-create Show(). Shadow windows
         // are hidden by the bridge anyway (alpha 0, off-screen), but the
         // parameter also keeps this spawn out of the slot-reveal path, which
         // is the half that assumes a Space.
-        guard let dict = bridge.createBrowser(withWindowType: .shadow,
+        let windowType: ChromiumBrowserType = incognito ? .shadowIncognito : .shadow
+        guard let dict = bridge.createBrowser(withWindowType: windowType,
                                               profileId: profileId,
                                               hidden: true),
               let windowIdNumber = dict["windowId"] as? NSNumber else {
-            AppLogWarn("[ShadowWindow] createBrowserWithWindowType(.shadow) returned no window")
+            AppLogWarn("[ShadowWindow] createBrowserWithWindowType(\(incognito ? ".shadowIncognito" : ".shadow")) returned no window")
             shadowWindowsByTaskId.removeValue(forKey: taskId)
-            completion(nil)
+            completion(nil, "create_failed")
             return
         }
         let windowId = windowIdNumber.intValue
@@ -162,6 +182,7 @@ extension AgentSpaceManager {
             taskId: taskId,
             windowId: windowId,
             profileId: profileId,
+            incognito: incognito,
             origin: origin,
             driverPrincipalId: driverPrincipalId,
             createdAt: Date(),
@@ -176,11 +197,12 @@ extension AgentSpaceManager {
                             windowId: Int64(windowId),
                             customGuid: nil,
                             focusAfterCreate: false)
-        AppLogInfo("[ShadowWindow] opened \(taskId) — windowId=\(windowId), profile=\(profileId)")
+        AppLogInfo("[ShadowWindow] opened \(taskId) — windowId=\(windowId), profile=\(profileId), incognito=\(incognito)")
         PostHogSDK.shared.capture("agent_shadow_window_opened", properties: [
             "origin": origin == .cdp ? "cdp" : "phi_agent",
+            "incognito": incognito,
         ])
-        completion(windowId)
+        completion(windowId, nil)
     }
 
     /// Opens a tab in the task's shadow window. Never focuses: focusing an
