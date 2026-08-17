@@ -502,44 +502,6 @@ extension PhiPreferences {
             set { UserDefaults.standard.set(newValue, forKey: Self.highlightsLinksKey) }
         }
 
-        private static let speechSpeedKey = "PhiReaderSpeechSpeed"
-        private static let speechVoicesKey = "PhiReaderSpeechVoices"
-
-        /// Reading-aloud speed, as a multiple of the system's normal pace.
-        /// Not part of `ReaderStyle`: it changes how the article sounds, not
-        /// how it looks, and it survives the style reset for that reason.
-        static var speechSpeed: Double {
-            get {
-                let stored = UserDefaults.standard.double(forKey: Self.speechSpeedKey)
-                return stored > 0 ? stored : 1
-            }
-            set { UserDefaults.standard.set(newValue, forKey: Self.speechSpeedKey) }
-        }
-
-        /// The voice chosen for a language, by BCP-47 tag; absent means the
-        /// best one the system has. Stored per language rather than as one
-        /// choice, because an article that changes language needs a voice for
-        /// each and a single setting would silence the other half.
-        static func speechVoiceIdentifier(forLanguage language: String) -> String? {
-            storedSpeechVoices()[language]
-        }
-
-        static func setSpeechVoiceIdentifier(_ identifier: String?,
-                                             forLanguage language: String) {
-            var voices = storedSpeechVoices()
-            voices[language] = identifier
-            guard !voices.isEmpty else {
-                UserDefaults.standard.removeObject(forKey: Self.speechVoicesKey)
-                return
-            }
-            UserDefaults.standard.set(voices, forKey: Self.speechVoicesKey)
-        }
-
-        private static func storedSpeechVoices() -> [String: String] {
-            UserDefaults.standard.dictionary(forKey: Self.speechVoicesKey)
-                as? [String: String] ?? [:]
-        }
-
         /// Writes every axis at once.
         ///
         /// The reader changes one at a time, but a reset changes all of them,

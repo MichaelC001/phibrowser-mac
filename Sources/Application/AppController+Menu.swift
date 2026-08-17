@@ -2239,7 +2239,7 @@ extension AppController {
                     MainBrowserWindowControllersManager.shared
                         .activeWindowController?.browserState.focusingTab
                 }
-                menuItem.state = (tab?.isReaderViewActive ?? false) ? .on : .off
+                menuItem.state = (tab?.extensionReaderActive ?? false) ? .on : .off
                 // Nothing to distill on the native NTP: it has no WebContents,
                 // so there is no page to run extraction against.
                 guard let tab, !tab.isShowingNativeNTP else { return false }

@@ -3,34 +3,33 @@
 // Use of this source code is governed by an Apache license that can be
 // found in the LICENSE file.
 
-import AppKit
+import Foundation
 
-/// Assembles the reader document served to the reader web view.
+/// Assembles a standalone reader document from an extracted article.
 ///
-/// The document is static: the reader web view runs with scripting disabled,
-/// so appearance changes re-render here rather than mutating the page.
+/// The interactive reading surface lives in the Phi Reader extension; this
+/// builder remains for the article documents the app itself produces — the
+/// agent API's `readerDocument` and file exports — which is why the output
+/// is static markup with no scripts or controls.
+///
+/// The style model (font-size grid, palettes, axes) is mirrored by the
+/// extension's `src/reader/style.ts`; keep the two in agreement so a
+/// preference means the same thing on both surfaces.
 enum ReaderDocumentBuilder {
 
-    /// Body text size in points. Bounds match what stays readable at the
-    /// fixed content column width.
+    /// Body text size in points. The floor is where the column stops being
+    /// readable; the ceiling is roughly double the default, which is a low-
+    /// vision size rather than a taste size — past it the em-based column
+    /// degenerates to a few words per line. Both bounds sit on the step grid
+    /// from the default so every press moves a full step.
     static let minFontSize = 15
-    static let maxFontSize = 26
+    static let maxFontSize = 39
     static let fontSizeStep = 2
     static let defaultFontSize = 19
 
-    /// Maps a chosen body size onto a page zoom against the size the live
-    /// document is built at. The reader scales rather than re-renders, so a
-    /// size step keeps the reader's place in the article.
-    static func textZoom(forFontSize fontSize: Int) -> CGFloat {
-        CGFloat(fontSize) / CGFloat(defaultFontSize)
-    }
-
-    /// `includeCopyControls` is false for an exported file: the controls are
-    /// links the app intercepts, so outside it they are dead.
     static func makeDocument(article: ReaderArticle,
                              style: ReaderStyle,
-                             appearanceIsDark: Bool,
-                             includeCopyControls: Bool = true) -> String {
+                             appearanceIsDark: Bool) -> String {
         let lang = article.lang.map { " lang=\"\(escape($0))\"" } ?? ""
 
         var header = "<h1 class=\"phi-title\">\(escape(article.title))</h1>"
@@ -57,25 +56,17 @@ enum ReaderDocumentBuilder {
         <body>
         <main class="phi-reader">
         <header>\(header)</header>
-        <article>\(includeCopyControls
-                    ? withCopyControls(article.contentHTML, count: article.codeBlocks.count)
-                    : article.contentHTML)</article>
+        <article>\(article.contentHTML)</article>
         </main>
         </body>
         </html>
         """
     }
 
-    /// Every style choice rides on the root element, so a change is one
-    /// attribute rather than a new document. Values come from closed enums,
-    /// never from the page, so writing them into markup and into a script is
-    /// safe by construction.
-    ///
-    /// The document's opening tag and the in-place restyle script both render
-    /// from this one list. They were written out separately and had to be held
-    /// in agreement by hand, which with two axes was a nuisance and with seven
-    /// would be a bug: an axis missing from the script silently does nothing
-    /// until the article is next rebuilt.
+    /// Every style choice rides on the root element as a data attribute; the
+    /// stylesheet carries every variant and the attributes pick one. Values
+    /// come from closed enums, never from the page, so writing them into
+    /// markup is safe by construction.
     private static func rootAttributes(_ style: ReaderStyle,
                                        appearanceIsDark: Bool) -> [(String, String)] {
         [("data-theme", style.theme.resolved(appearanceIsDark: appearanceIsDark).rawValue),
@@ -91,124 +82,6 @@ enum ReaderDocumentBuilder {
         rootAttributes(style, appearanceIsDark: appearanceIsDark)
             .map { " \($0.0)=\"\($0.1)\"" }
             .joined()
-    }
-
-    /// The script the host runs to restyle a loaded document in place.
-    ///
-    /// The reader keeps content scripting off, which blocks the page's own
-    /// scripts but not the host's own evaluation — so a style change is an
-    /// attribute write on a live document rather than a reload, and the
-    /// reader keeps its place in the article.
-    static func styleUpdateScript(_ style: ReaderStyle, appearanceIsDark: Bool) -> String {
-        let writes = rootAttributes(style, appearanceIsDark: appearanceIsDark)
-            .map { "e.setAttribute('\($0.0)','\($0.1)');" }
-            .joined()
-        return "(function(){var e=document.documentElement;\(writes)})()"
-    }
-
-    // MARK: - Reading aloud
-
-    /// Every element that is a unit of speech. A block holding another one is
-    /// a container, not a passage — reading both would say its text twice.
-    private static let passageSelector =
-        "h1,h2,h3,h4,h5,h6,p,li,blockquote,pre,figcaption,dt,dd,td,th"
-
-    /// Numbers the article's readable blocks and hands back their text, in
-    /// reading order.
-    ///
-    /// Read out of the rendered document rather than out of the article's
-    /// markup because only the document knows what is on screen: a block
-    /// hidden by the images switch has no `offsetParent`, and what is spoken
-    /// should be what is shown.
-    static let speechPassagesScript = """
-    (function(){
-      var SELECTOR = '\(passageSelector)';
-      var nodes = document.querySelectorAll(SELECTOR);
-      var texts = [];
-      for (var i = 0; i < nodes.length; i++) {
-        var node = nodes[i];
-        node.removeAttribute('data-phi-say');
-        if (node.querySelector(SELECTOR)) { continue; }
-        if (!node.offsetParent) { continue; }
-        var text = (node.innerText || '').replace(/\\s+/g, ' ').trim();
-        if (!text) { continue; }
-        node.setAttribute('data-phi-say', String(texts.length));
-        texts.push(text);
-      }
-      return texts;
-    })()
-    """
-
-    /// Marks the block being spoken and brings it into view.
-    ///
-    /// Scrolled only when it has left the window: a reader who has scrolled
-    /// ahead to look at something is not asking to be dragged back every
-    /// paragraph.
-    static func speechHighlightScript(index: Int) -> String {
-        """
-        (function(){
-          var previous = document.querySelector('.phi-speaking');
-          if (previous) { previous.classList.remove('phi-speaking'); }
-          var node = document.querySelector('[data-phi-say="\(index)"]');
-          if (!node) { return; }
-          node.classList.add('phi-speaking');
-          var box = node.getBoundingClientRect();
-          if (box.top < 0 || box.bottom > window.innerHeight) {
-            node.scrollIntoView({block: 'center', behavior: 'smooth'});
-          }
-        })()
-        """
-    }
-
-    static let speechClearHighlightScript = """
-    (function(){var n=document.querySelector('.phi-speaking');\
-    if(n){n.classList.remove('phi-speaking');}})()
-    """
-
-    /// The scheme the copy links use. `ReaderViewController` cancels these
-    /// navigations and copies natively.
-    static let copyScheme = "phi-reader"
-
-    static func copyIndex(from url: URL) -> Int? {
-        guard url.scheme == copyScheme, url.host == "copy" else { return nil }
-        return Int(url.lastPathComponent)
-    }
-
-    /// Attaches a copy control to each code block.
-    ///
-    /// The control is a link, not a button, because the reader web view runs
-    /// with JavaScript disabled — deliberately, since it renders markup
-    /// extracted from an untrusted page. A scripted button would mean turning
-    /// that off for every article to add one affordance. A link costs nothing:
-    /// the view controller cancels the navigation and copies from the article
-    /// model, so the copied text is the code the extractor read from the real
-    /// DOM rather than anything reconstructed from this markup.
-    private static func withCopyControls(_ html: String, count: Int) -> String {
-        guard count > 0 else { return html }
-        let label = NSLocalizedString(
-            "browser.readerView.copyCode",
-            value: "Copy",
-            comment: "Reader View - Button on a code block that copies it to the clipboard")
-
-        var result = html
-        for index in 0..<count {
-            // The extractor wraps each block in a div carrying this marker, so
-            // the only thing to do here is put the control just inside that
-            // wrapper. Found by the attribute and then by the end of its tag,
-            // rather than by matching the whole opening tag, because attribute
-            // order is whatever the DOM serialiser produced.
-            guard let marker = result.range(of: "data-phi-code=\"\(index)\""),
-                  let tagEnd = result.range(of: ">", range: marker.upperBound..<result.endIndex)
-            else { continue }
-
-            // First inside the wrapper, so keyboard focus reaches it before
-            // tabbing through a long sample; the stylesheet lifts it into the
-            // block's top-right corner.
-            let control = "<a class=\"phi-copy\" href=\"\(copyScheme)://copy/\(index)\">"
-                + "\(escape(label))</a>"
-            result.insert(contentsOf: control, at: tagEnd.upperBound)
-        }
-        return result
     }
 
     // MARK: - Appearance
@@ -330,13 +203,6 @@ enum ReaderDocumentBuilder {
         String(format: "#%06x", value)
     }
 
-    /// The reader document's page background, for the host view to match so
-    /// the gap before first paint does not flash.
-    static func backgroundColor(theme: ReaderStyle.Theme,
-                                appearanceIsDark: Bool) -> NSColor {
-        NSColor(hex: Palette.forTheme(theme, appearanceIsDark: appearanceIsDark).background)
-    }
-
     /// Every palette and variant is in the document; the root attributes
     /// pick one. That is what makes a style change an attribute write rather
     /// than a rebuild.
@@ -356,9 +222,8 @@ enum ReaderDocumentBuilder {
         html[data-images="off"] picture,
         html[data-images="off"] video,
         html[data-images="off"] figure { display: none; }
-        /* Still links, just no longer shouting. The copy control is an anchor
-           too and is not part of the article, so it keeps its own styling. */
-        html[data-links="off"] a:not(.phi-copy) {
+        /* Still links, just no longer shouting. */
+        html[data-links="off"] a {
           color: inherit;
           text-decoration: none;
         }
@@ -457,52 +322,6 @@ enum ReaderDocumentBuilder {
           line-height: 1.5;
         }
         pre code { background: none; padding: 0; font-size: 1em; }
-        /* The wrapper encloses the block and is the positioning context for
-           the control, which is taken out of flow so it overlays the block's
-           top-right corner instead of displacing the code. No padding or
-           border here, so the block's own top margin still collapses through
-           and the wrapper's top edge is the block's top edge. */
-        .phi-code {
-          position: relative;
-        }
-        .phi-copy {
-          position: absolute;
-          top: 0.5em;
-          right: 0.5em;
-          z-index: 1;
-          display: inline-block;
-          padding: 0.15em 0.6em;
-          border: 1px solid var(--phi-rule);
-          border-radius: 5px;
-          background: var(--phi-bg);
-          color: var(--phi-muted);
-          font-family: -apple-system, BlinkMacSystemFont, sans-serif;
-          font-size: 0.72rem;
-          line-height: 1.6;
-          text-decoration: none;
-          opacity: 0;
-          transition: opacity 120ms ease-out;
-        }
-        /* Revealed on hover, and always present for keyboard focus, so the
-           control never hides from someone who cannot hover. */
-        .phi-code:hover .phi-copy, .phi-copy:focus { opacity: 1; }
-        .phi-copy:active { color: var(--phi-text); }
-        @media (hover: none) { .phi-copy { opacity: 1; } }
-        /* The block being read aloud.
-           A tinted ground rather than a border or an inserted marker: it has
-           to read against seven palettes, and it must not move the text —
-           someone following along cannot afford a reflow at every paragraph.
-           The shadow spreads the same tint past the box's edges, which is
-           what padding would do at exactly that cost. `color-mix` keeps the
-           tint tied to each theme's own accent; the flat declaration before
-           it is what an engine without `color-mix` is left with. */
-        .phi-speaking {
-          background: var(--phi-surface);
-          background: color-mix(in srgb, var(--phi-accent) 15%, transparent);
-          box-shadow: 0 0 0 5px var(--phi-surface);
-          box-shadow: 0 0 0 5px color-mix(in srgb, var(--phi-accent) 15%, transparent);
-          border-radius: 3px;
-        }
         ul, ol { margin: 0 0 1.1em; padding-left: 1.4em; }
         li { margin-bottom: 0.4em; }
         hr { border: 0; border-top: 1px solid var(--phi-rule); margin: 2.2em 0; }

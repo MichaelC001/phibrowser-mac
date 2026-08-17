@@ -17801,114 +17801,6 @@
         }
       }
     },
-    "browser.readerView.export" : {
-      "comment" : "Reader View - Tooltip for the control that saves the article to a file",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Save Article"
-          }
-        }
-      }
-    },
-    "browser.readerView.exportArticle" : {
-      "comment" : "Reader View - Menu item that saves the distilled article as a single HTML file",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Save Article as HTML…"
-          }
-        }
-      }
-    },
-    "browser.readerView.exportOriginal" : {
-      "comment" : "Reader View - Menu item that saves the page the article came from as a single archive file",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Save Original Page…"
-          }
-        }
-      }
-    },
-    "browser.readerView.exportWaiting" : {
-      "comment" : "Reader View - Toast shown when saving has to wait for the rest of the content to be captured",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Finishing the page before saving…"
-          }
-        }
-      }
-    },
-    "browser.readerView.close" : {
-      "comment" : "Reader View - Tooltip for the control that returns to the original page",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Close Reader View"
-          }
-        }
-      }
-    },
-    "browser.readerView.decreaseTextSize" : {
-      "comment" : "Reader View - Tooltip for the control that makes article text smaller",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Decrease Text Size"
-          }
-        }
-      }
-    },
-    "browser.readerView.increaseTextSize" : {
-      "comment" : "Reader View - Tooltip for the control that makes article text larger",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Increase Text Size"
-          }
-        }
-      }
-    },
-    "browser.readerView.codeCopied" : {
-      "comment" : "Reader View - Toast shown after a code block is copied to the clipboard",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Code copied"
-          }
-        }
-      }
-    },
-    "browser.readerView.copyCode" : {
-      "comment" : "Reader View - Button on a code block that copies it to the clipboard",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Copy"
-          }
-        }
-      }
-    },
     "browser.readerView.noArticleFound" : {
       "comment" : "Reader View - Toast shown when the page has no article content to display",
       "extractionState" : "extracted_with_value",
@@ -17917,186 +17809,6 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "No article found on this page"
-          }
-        }
-      }
-    },
-    "browser.readerView.untitledArticle" : {
-      "comment" : "Reader View - Fallback file name when an article has no title",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Article"
-          }
-        }
-      }
-    },
-    "browser.readerView.style" : {
-      "comment" : "Reader View - Tooltip for the control that opens the reading appearance settings",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Reading Style"
-          }
-        }
-      }
-    },
-    "browser.readerView.styleTheme" : {
-      "comment" : "Reader View - Style menu section for the reading background",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Background"
-          }
-        }
-      }
-    },
-    "browser.readerView.styleTypeface" : {
-      "comment" : "Reader View - Style menu section for the article typeface",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Typeface"
-          }
-        }
-      }
-    },
-    "browser.readerView.styleWidth" : {
-      "comment" : "Reader View - Style menu section for the content column width",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Width"
-          }
-        }
-      }
-    },
-    "browser.readerView.themeDark" : {
-      "comment" : "Reader View - Background option, always dark",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Dark"
-          }
-        }
-      }
-    },
-    "browser.readerView.themeLight" : {
-      "comment" : "Reader View - Background option, always light",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Light"
-          }
-        }
-      }
-    },
-    "browser.readerView.themeMatch" : {
-      "comment" : "Reader View - Background option that follows the browser's light or dark appearance",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Match Browser"
-          }
-        }
-      }
-    },
-    "browser.readerView.themeSepia" : {
-      "comment" : "Reader View - Background option, warm off-white paper",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Sepia"
-          }
-        }
-      }
-    },
-    "browser.readerView.typefaceSans" : {
-      "comment" : "Reader View - Typeface option, a sans-serif face for body text",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Sans Serif"
-          }
-        }
-      }
-    },
-    "browser.readerView.typefaceSerif" : {
-      "comment" : "Reader View - Typeface option, a serif face for body text",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Serif"
-          }
-        }
-      }
-    },
-    "browser.readerView.widthFull" : {
-      "comment" : "Reader View - Content width option, the article fills the window",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Full Width"
-          }
-        }
-      }
-    },
-    "browser.readerView.widthNarrow" : {
-      "comment" : "Reader View - Content width option, a column narrower than the default",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Narrow"
-          }
-        }
-      }
-    },
-    "browser.readerView.widthNormal" : {
-      "comment" : "Reader View - Content width option, the default reading column",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Normal"
-          }
-        }
-      }
-    },
-    "browser.readerView.widthWide" : {
-      "comment" : "Reader View - Content width option, a column wider than the default",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Wide"
           }
         }
       }
@@ -18113,362 +17825,14 @@
         }
       }
     },
-    "browser.readerView.nextPassage" : {
-      "comment" : "Reader View - Tooltip for the control that skips reading ahead one paragraph",
+    "browser.readerView.untitledArticle" : {
+      "comment" : "Reader View - Fallback file name when an article has no title",
       "extractionState" : "extracted_with_value",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Next Paragraph"
-          }
-        }
-      }
-    },
-    "browser.readerView.pauseReading" : {
-      "comment" : "Reader View - Tooltip for the control that pauses reading the article out loud",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Pause Reading"
-          }
-        }
-      }
-    },
-    "browser.readerView.previousPassage" : {
-      "comment" : "Reader View - Tooltip for the control that jumps reading back one paragraph",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Previous Paragraph"
-          }
-        }
-      }
-    },
-    "browser.readerView.readAloud" : {
-      "comment" : "Reader View - Tooltip for the control that reads the article out loud",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Read Aloud"
-          }
-        }
-      }
-    },
-    "browser.readerView.speechOptions" : {
-      "comment" : "Reader View - Tooltip for the control that changes the reading speed and voice",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Speech Options"
-          }
-        }
-      }
-    },
-    "browser.readerView.speechSpeed" : {
-      "comment" : "Reader View - Speech menu section for how fast the article is read",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Speed"
-          }
-        }
-      }
-    },
-    "browser.readerView.speechSpeedValue" : {
-      "comment" : "Reader View - A reading speed, where %@ is the multiple of normal speed such as 1 or 1.5",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "%@×"
-          }
-        }
-      }
-    },
-    "browser.readerView.speechUnavailable" : {
-      "comment" : "Reader View - Toast shown when the article cannot be read aloud because macOS has no voice for its language",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "No voice is installed for this article's language"
-          }
-        }
-      }
-    },
-    "browser.readerView.speechVoice" : {
-      "comment" : "Reader View - Speech menu section for which voice reads the article",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Voice"
-          }
-        }
-      }
-    },
-    "browser.readerView.speechVoiceAutomatic" : {
-      "comment" : "Reader View - Voice option that lets the system pick the voice for a language",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Automatic"
-          }
-        }
-      }
-    },
-    "browser.readerView.stopReading" : {
-      "comment" : "Reader View - Menu item that stops reading the article out loud",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Stop Reading"
-          }
-        }
-      }
-    },
-    "browser.readerView.highlightLinks" : {
-      "comment" : "Reader View - Switch that tints and underlines links, or leaves them looking like body text",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Highlight Links"
-          }
-        }
-      }
-    },
-    "browser.readerView.letterSpacingNormal" : {
-      "comment" : "Reader View - Character spacing option, the typeface's own spacing",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Normal"
-          }
-        }
-      }
-    },
-    "browser.readerView.letterSpacingWide" : {
-      "comment" : "Reader View - Character spacing option, characters set further apart",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Wide"
-          }
-        }
-      }
-    },
-    "browser.readerView.letterSpacingWider" : {
-      "comment" : "Reader View - Character spacing option, the widest spacing between characters",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Wider"
-          }
-        }
-      }
-    },
-    "browser.readerView.lineHeightLoose" : {
-      "comment" : "Reader View - Line spacing option, the widest spacing between lines",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Loose"
-          }
-        }
-      }
-    },
-    "browser.readerView.lineHeightNormal" : {
-      "comment" : "Reader View - Line spacing option, the default spacing between lines",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Normal"
-          }
-        }
-      }
-    },
-    "browser.readerView.lineHeightRelaxed" : {
-      "comment" : "Reader View - Line spacing option, lines further apart than the default",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Relaxed"
-          }
-        }
-      }
-    },
-    "browser.readerView.lineHeightTight" : {
-      "comment" : "Reader View - Line spacing option, lines closer together than the default",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Tight"
-          }
-        }
-      }
-    },
-    "browser.readerView.resetStyle" : {
-      "comment" : "Reader View - Menu item that returns every reading setting to its original value",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Reset to Defaults"
-          }
-        }
-      }
-    },
-    "browser.readerView.showImages" : {
-      "comment" : "Reader View - Switch that shows or hides the article's illustrations",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Show Images"
-          }
-        }
-      }
-    },
-    "browser.readerView.styleLetterSpacing" : {
-      "comment" : "Reader View - Style menu section for the space between characters",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Letter Spacing"
-          }
-        }
-      }
-    },
-    "browser.readerView.styleLineHeight" : {
-      "comment" : "Reader View - Style menu section for the space between lines of text",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Line Height"
-          }
-        }
-      }
-    },
-    "browser.readerView.themeBlue" : {
-      "comment" : "Reader View - Background option, dark text on a pale blue page",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Blue"
-          }
-        }
-      }
-    },
-    "browser.readerView.themeContrast" : {
-      "comment" : "Reader View - Background option, pure white text on pure black for low vision",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "High Contrast"
-          }
-        }
-      }
-    },
-    "browser.readerView.themeDim" : {
-      "comment" : "Reader View - Background option, a dark page with softer contrast than Dark",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Dim"
-          }
-        }
-      }
-    },
-    "browser.readerView.themeYellow" : {
-      "comment" : "Reader View - Background option, dark text on a pale yellow page",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Yellow"
-          }
-        }
-      }
-    },
-    "browser.readerView.typefaceBook" : {
-      "comment" : "Reader View - Typeface option, the old-style serif used for printed books",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Book"
-          }
-        }
-      }
-    },
-    "browser.readerView.typefaceMono" : {
-      "comment" : "Reader View - Typeface option, a fixed-width face where every character is the same width",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Monospace"
-          }
-        }
-      }
-    },
-    "browser.readerView.typefaceRounded" : {
-      "comment" : "Reader View - Typeface option, a sans-serif face with rounded letterforms",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Rounded"
+            "value" : "Article"
           }
         }
       }
@@ -24309,22 +23673,28 @@
       "comment" : "Icon picker - Tab for choosing an emoji; translate using the locale's standard term for emoji",
       "extractionState" : "extracted_with_value",
       "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Emoji"
+          }
+        },
         "en" : {
           "stringUnit" : {
             "state" : "new",
             "value" : "Emoji"
           }
         },
-        "zh-Hans" : {
+        "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "表情符号"
+            "value" : "Emoji"
           }
         },
-        "zh-Hant" : {
+        "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "表情符號"
+            "value" : "Émoji"
           }
         },
         "ja" : {
@@ -24339,28 +23709,22 @@
             "value" : "이모지"
           }
         },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Émoji"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Emoji"
-          }
-        },
         "nl" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Emoji"
           }
         },
-        "es" : {
+        "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Emoji"
+            "value" : "表情符号"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "表情符號"
           }
         }
       }
@@ -24429,22 +23793,28 @@
       "comment" : "Icon picker - Tab for choosing a Phi icon; translate using the locale's standard term for an icon",
       "extractionState" : "extracted_with_value",
       "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Symbol"
+          }
+        },
         "en" : {
           "stringUnit" : {
             "state" : "new",
             "value" : "Icon"
           }
         },
-        "zh-Hans" : {
+        "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "图标"
+            "value" : "Icono"
           }
         },
-        "zh-Hant" : {
+        "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "圖像"
+            "value" : "Icône"
           }
         },
         "ja" : {
@@ -24459,28 +23829,22 @@
             "value" : "아이콘"
           }
         },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Icône"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Symbol"
-          }
-        },
         "nl" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Symbool"
           }
         },
-        "es" : {
+        "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Icono"
+            "value" : "图标"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "圖像"
           }
         }
       }

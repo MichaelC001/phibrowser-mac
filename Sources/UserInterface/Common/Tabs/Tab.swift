@@ -101,33 +101,43 @@ class Tab: WebContentRepresentable {
     /// (the tab's `webContentView` is intentionally NOT niled on crash).
     @Published var crashState: CrashPageData?
 
-    /// Reader View state. In-memory and per tab: the reader is a presentation
-    /// mode over the live page, not a navigation, so nothing here is
-    /// persisted and no `TabDataModel` schema change is involved.
-    ///
-    /// `readerArticle` is the extracted content currently on screen; it is
-    /// cleared alongside the flag so leaving the reader drops the copy.
-    @Published var isReaderViewActive: Bool = false
-    /// True while extraction is in flight. Guards against a second request
-    /// from a double-click or a repeated shortcut.
-    @Published var isReaderViewLoading: Bool = false
-    @Published var readerArticle: ReaderArticle?
-    /// True while a second extraction runs behind the article on screen.
-    ///
-    /// The content host reads this: that pass walks the page to trip its
-    /// lazy-loader, which only works while the page is still rendering, so the
-    /// live content view stays mounted underneath the reader until it clears.
-    @Published var isReaderSettling: Bool = false
     /// Whether the address bar should draw its reader button for this tab.
     ///
-    /// Re-judged when a load finishes, when the URL moves without one (an
-    /// SPA navigation), and when Chromium's native distillability verdict
-    /// turns positive — see `refreshReaderOfferability` and the
-    /// `isDistillable` sink in `setupObservers`. Deliberately only the
-    /// button reads this: the View menu, the shortcut, and the page context
-    /// menu offer the reader regardless, so a page this misjudges still
-    /// opens through any of them.
+    /// Two positive signals feed it — Chromium's distillability verdict
+    /// (`isDistillable` sink in `setupObservers`) and the Reader extension's
+    /// in-page probe push (`noteExtensionReaderOfferable`); a navigation
+    /// re-judge (`refreshReaderOfferability`) is what turns it off again.
+    /// Deliberately only the button reads this: the View menu, the shortcut,
+    /// and the page context menu offer the reader regardless, so a page this
+    /// misjudges still opens through any of them.
     @Published private(set) var isReaderOfferable: Bool = false
+
+    /// Whether the Phi Reader extension's surface is showing in this tab.
+    ///
+    /// The extension reports it over the bridge (`reader.state`) when its
+    /// reader page mounts in the tab or the tab navigates away from it, and
+    /// `BrowserState.toggleReaderView` reads it to decide between
+    /// `reader.open` and `reader.close`.
+    @Published var extensionReaderActive: Bool = false
+
+    /// The URL the reader extension's probe last judged offerable. Held so
+    /// `refreshReaderOfferability` cannot rescind the grant while the tab is
+    /// still on that document: the refresh races the extension's push (a
+    /// slow page drops `isLoading` after the probe has already reported),
+    /// and without this a page the probe accepted but Chromium's model
+    /// declined — a link-digest article, say — went dark again.
+    private var extensionOfferedURLString: String?
+
+    /// Marks the tab offerable on the reader extension's probe verdict.
+    ///
+    /// Positive-only, mirroring the native distillability sink: the
+    /// extension's YES lights the button, and its NO is "no verdict", never a
+    /// rescission — the native signals keep their own say.
+    func noteExtensionReaderOfferable(forURLString urlString: String?) {
+        extensionOfferedURLString = urlString
+        guard !isReaderOfferable else { return }
+        isReaderOfferable = true
+    }
 
     /// Use native NTP rendering when the tab URL is an NTP URL.
     /// Only ever set for off-the-record tabs (see
@@ -215,7 +225,6 @@ class Tab: WebContentRepresentable {
     /// on every wrapper swap; this pipeline watches the tab's own published
     /// state and must outlive the wrapper bindings.
     private var readerOfferabilityTrigger: AnyCancellable?
-    private var readerOfferabilityProbe: Task<Void, Never>?
     
     init(guid: Int = UUID().hashValue,
          url: String?,
@@ -255,23 +264,18 @@ class Tab: WebContentRepresentable {
         }
     }
 
-    /// Asks the extraction service whether the button is worth drawing, and
-    /// retries once for a page that mounts its article after `load` — an SPA
-    /// still hydrating — without polling beyond that.
-    private func refreshReaderOfferability(retrying: Bool = false) {
-        readerOfferabilityProbe?.cancel()
-        readerOfferabilityProbe = Task { @MainActor [weak self] in
-            guard let self else { return }
-            let offered = await ReaderExtractionService.shared
-                .isReaderWorthOffering(for: self)
-            guard !Task.isCancelled else { return }
-            self.isReaderOfferable = offered
-            if !offered && !retrying {
-                try? await Task.sleep(nanoseconds: 2_500_000_000)
-                guard !Task.isCancelled else { return }
-                self.refreshReaderOfferability(retrying: true)
-            }
-        }
+    /// Re-judges the button from the signals in hand: the URL gate and
+    /// Chromium's distillability verdict. The heavier judgement — Phi's
+    /// readerable probe and the site rules — lives in the Reader extension,
+    /// which pushes its positive verdicts over the bridge
+    /// (`noteExtensionReaderOfferable`); this reset is what turns the button
+    /// off again when the tab navigates somewhere unreadable.
+    private func refreshReaderOfferability() {
+        isReaderOfferable =
+            ReaderExtractionService.canOfferReader(forURLString: url)
+            && (webContentWrapper?.isDistillable == true
+                || (extensionOfferedURLString != nil
+                    && extensionOfferedURLString == url))
     }
     
     private func setupObservers<Wrapper: WebContentWrapper & NSObject>(for wrapper: Wrapper?) {
@@ -313,13 +317,11 @@ class Tab: WebContentRepresentable {
             .store(in: &cancellables)
 
         // Chromium's native distillability verdict (see `isDistillable` in
-        // the bridge header). A rising edge re-judges the button:
-        // `isReaderWorthOffering` answers from the flag without opening a
-        // CDP probe. The verdict lands after parse and again after load, so
-        // it can arrive well after `isLoading` fell — a hydrating SPA —
-        // which is exactly the case the one-shot retry in
-        // `refreshReaderOfferability` gives up on. NO never rescinds: it
-        // means "no native verdict", and the probe's judgement stands.
+        // the bridge header). A rising edge re-judges the button; the
+        // verdict lands after parse and again after load, so it can arrive
+        // well after `isLoading` fell — a hydrating SPA. NO never rescinds:
+        // it means "no native verdict", and the Reader extension's own
+        // probe push stands.
         wrapper.publisher(for: \.isDistillable)
             .removeDuplicates()
             .filter { $0 }
@@ -398,7 +400,6 @@ class Tab: WebContentRepresentable {
                 let previousURLString = self.url
                 self.url = urlString
                 self.clearFaviconDataIfPageURLChanged(from: previousURLString, to: urlString)
-                self.exitReaderViewIfPageURLChanged(from: previousURLString, to: urlString)
             }
             .store(in: &cancellables)
 
@@ -478,32 +479,6 @@ class Tab: WebContentRepresentable {
             "tabId=\(guid) oldURL=\(oldURLString) newURL=\(newURLString) " +
             "oldLiveBytes=\(oldLiveBytes) oldCachedBytes=\(oldCachedBytes)"
         )
-    }
-
-    /// Leaves Reader View when the tab navigates away from the page the
-    /// article was extracted from. Reader View renders a snapshot taken at
-    /// activation time, so keeping it up over a different page would show
-    /// content that no longer matches the tab's URL.
-    ///
-    /// In-page fragment changes are not navigations away, so compare the URL
-    /// with the fragment dropped.
-    private func exitReaderViewIfPageURLChanged(from oldURLString: String?,
-                                                to newURLString: String?) {
-        guard isReaderViewActive else { return }
-        guard Self.urlIgnoringFragment(oldURLString)
-                != Self.urlIgnoringFragment(newURLString) else {
-            return
-        }
-        isReaderViewActive = false
-        readerArticle = nil
-        isReaderSettling = false
-    }
-
-    private static func urlIgnoringFragment(_ urlString: String?) -> String? {
-        guard let urlString = normalizedNonEmptyURLString(urlString) else { return nil }
-        guard var components = URLComponents(string: urlString) else { return urlString }
-        components.fragment = nil
-        return components.string ?? urlString
     }
 
     private static func normalizedNonEmptyURLString(_ urlString: String?) -> String? {

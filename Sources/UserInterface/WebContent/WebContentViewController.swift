@@ -119,7 +119,6 @@ class WebContentViewController: NSViewController {
         case nativeNtp
         case webContent
         case groupOverview(token: String)
-        case reader
     }
     private var contentMode: ContentMode? {
         didSet {
@@ -190,7 +189,6 @@ class WebContentViewController: NSViewController {
     private var splitViewLeadingConstraint: Constraint?
     private var nativeNtpController: NewTabViewController?
     private var groupOverviewController: GroupOverviewViewController?
-    private var readerController: ReaderViewController?
     /// Native renderer crash page, rebuilt per crash (it renders a fixed
     /// `CrashPageData` snapshot). Non-split only; split panes host their own
     /// crash view via `SplitPaneHostView` (Task 11).
@@ -1153,39 +1151,6 @@ class WebContentViewController: NSViewController {
                 self?.updateContentForTab(tab)
             }
             .store(in: &contentObserverCancellables)
-        // Entering or leaving Reader View swaps the content host between the
-        // reader surface and the live page.
-        tab.$isReaderViewActive
-            .removeDuplicates()
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self, weak tab] _ in
-                self?.updateContentForTab(tab)
-            }
-            .store(in: &contentObserverCancellables)
-        // A long document arrives in two passes: the first pages open the
-        // reader, the rest replaces them once captured. Re-present in place
-        // rather than remounting, so only the document changes.
-        tab.$readerArticle
-            .removeDuplicates()
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self, weak tab] article in
-                guard let self, let tab, tab.isReaderViewActive,
-                      let article else { return }
-                self.readerController?.present(article: article)
-            }
-            .store(in: &contentObserverCancellables)
-        // The live page is kept mounted under the reader while the second
-        // extraction pass walks it, and unmounted the moment that finishes.
-        tab.$isReaderSettling
-            .removeDuplicates()
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self, weak tab] settling in
-                guard let self, let tab, !settling, tab.isReaderViewActive else {
-                    return
-                }
-                self.dropContentBeneathReaderIfSettled(tab)
-            }
-            .store(in: &contentObserverCancellables)
     }
 
     private func bindProgressObservers(for tab: Tab) {
@@ -1277,26 +1242,16 @@ class WebContentViewController: NSViewController {
         // never runs the per-pane overlay — so cover the whole pane with the
         // crash page here. When not crashed, tear down any crash view first.
         if tab.crashState != nil, !canMountSplitHost(for: tab) {
-            // A dead renderer outranks the reader: the crash page has to be
-            // visible for the tab to be honest about its state. The reader
-            // flag survives, so recovering the renderer re-runs this path and
-            // brings the article back.
-            teardownReaderView()
             showCrashedPage(for: tab)
         } else {
             teardownCrashedPage()
-            if tab.isReaderViewActive {
-                showReaderView(for: tab)
-            } else {
-                teardownReaderView()
-                if shouldShowNativeNtp(for: tab) {
-                    showNativeNtp(for: tab)
-                } else if let webView = tab.webContentView {
-                    showWebContent(webView, tabId: tab.guid)
-                    #if DEBUG
-                    browserState?.triggerAutoReaderIfRequested(for: tab)
-                    #endif
-                }
+            if shouldShowNativeNtp(for: tab) {
+                showNativeNtp(for: tab)
+            } else if let webView = tab.webContentView {
+                showWebContent(webView, tabId: tab.guid)
+                #if DEBUG
+                browserState?.triggerAutoReaderIfRequested(for: tab)
+                #endif
             }
         }
     }
@@ -1494,9 +1449,6 @@ class WebContentViewController: NSViewController {
             teardownAllSplitCrashViews()
         }
         // Check if content view is already the primary view in hostView.
-        // Reachable with `contentMode` still `.reader`: leaving Reader View
-        // while the settling pass is running finds the live page already
-        // mounted, because it was deliberately left there.
         if hostView.subviews.contains(contentView),
            contentView.superview === hostView {
             contentMode = .webContent
@@ -1960,163 +1912,6 @@ class WebContentViewController: NSViewController {
         }
         groupOverviewController = controller
         contentMode = .groupOverview(token: token)
-    }
-
-    /// Mounts Reader View over the tab's content.
-    ///
-    /// The tab's WebContents is left alone — never navigated, never closed —
-    /// so leaving the reader restores the live page with its scroll position
-    /// and history intact.
-    private func showReaderView(for tab: Tab) {
-        guard let article = tab.readerArticle else { return }
-
-        let controller = ensureReaderController()
-        if controller.parent == nil {
-            addChild(controller)
-        }
-        controller.present(article: article)
-
-        // Split-aware, for the same reason showNativeNtp is: mounting
-        // full-bleed while this tab is a split pane would wipe the split host
-        // out of hostView and collapse the split to this pane alone.
-        if let group = activeSplitForCurrentTab() {
-            guard view.window != nil else {
-                contentMode = .reader
-                return
-            }
-            controller.view.snp.removeConstraints()
-            installSplitContent(group: group,
-                                ownTabId: tab.guid,
-                                ownNativeView: controller.view)
-            contentMode = .reader
-            return
-        }
-
-        if controller.view.superview !== hostView {
-            currentSplitHost = nil
-            hostView.addSubview(controller.view)
-            controller.view.snp.remakeConstraints { make in
-                make.edges.equalToSuperview()
-            }
-        }
-        dropContentBeneathReaderIfSettled(tab)
-
-        contentMode = .reader
-    }
-
-    /// Unmounts whatever was under the reader, once nothing needs it rendering.
-    ///
-    /// The reader is opaque and full-bleed, so the live page is not visible
-    /// either way — but unmounting it is what makes Chromium stop rendering it,
-    /// and the second extraction pass needs it rendering: that pass walks the
-    /// page to trip its lazy-loader, and a hidden page never fires an
-    /// IntersectionObserver. So the page is left mounted for the seconds that
-    /// takes, and dropped as soon as `isReaderSettling` clears.
-    private func dropContentBeneathReaderIfSettled(_ tab: Tab) {
-        guard let reader = readerController, reader.view.superview === hostView,
-              !tab.isReaderSettling else {
-            return
-        }
-        for subview in hostView.subviews where subview !== reader.view {
-            subview.removeFromSuperview()
-        }
-    }
-
-    /// Says why the save panel has not appeared yet. Only called when the
-    /// export actually had to wait, so a normal export stays silent.
-    private func announceExportWait() {
-        guard let browserState else { return }
-        OverlayToastCenter.shared.show(
-            title: NSLocalizedString(
-                "browser.readerView.exportWaiting",
-                value: "Finishing the page before saving…",
-                comment: "Reader View - Toast shown when saving has to wait for the rest of the content to be captured"),
-            in: browserState)
-    }
-
-    private func ensureReaderController() -> ReaderViewController {
-        if let readerController {
-            return readerController
-        }
-        let controller = ReaderViewController()
-        controller.onDismiss = { [weak self] in
-            guard let self, let tab = self.associatedTab else { return }
-            self.browserState?.exitReaderView(for: tab)
-        }
-        controller.awaitFinalArticle = { [weak self] in
-            guard let self, let tab = self.associatedTab,
-                  let browserState = self.browserState else { return nil }
-            if !browserState.isReaderContentFinal(for: tab) {
-                self.announceExportWait()
-            }
-            await browserState.awaitReaderContentFinal(for: tab)
-            return tab.readerArticle
-        }
-        controller.onExportOriginalPage = { [weak self] in
-            guard let self, let tab = self.associatedTab,
-                  let reader = self.readerController else { return }
-            let title = tab.readerArticle?.title ?? tab.title
-            Task { @MainActor in
-                do {
-                    // The walk behind the reader is what loads a lazy page's
-                    // images, and the snapshot only embeds what the page has
-                    // actually fetched. Pagination is irrelevant here: this is
-                    // the live page, not the extracted article.
-                    if let browserState = self.browserState {
-                        if !browserState.isReaderContentFinal(
-                            for: tab, includingPagination: false) {
-                            self.announceExportWait()
-                        }
-                        await browserState.awaitReaderContentFinal(
-                            for: tab, includingPagination: false)
-                    }
-                    let data = try await ReaderExportService.captureOriginalPage(tab: tab)
-                    reader.save(data,
-                                suggestedName: ReaderExportService.suggestedFileName(
-                                    title: title, extension: "mhtml"),
-                                contentType: ReaderExportService.mhtmlType)
-                } catch {
-                    AppLogError("[Reader] original page export failed: \(error)")
-                }
-            }
-        }
-        controller.onDidCopyCode = { [weak self] in
-            guard let self, let browserState = self.browserState else { return }
-            OverlayToastCenter.shared.show(
-                title: NSLocalizedString(
-                    "browser.readerView.codeCopied",
-                    value: "Code copied",
-                    comment: "Reader View - Toast shown after a code block is copied to the clipboard"),
-                in: browserState)
-        }
-        controller.onSpeechUnavailable = { [weak self] in
-            guard let self, let browserState = self.browserState else { return }
-            OverlayToastCenter.shared.show(
-                title: NSLocalizedString(
-                    "browser.readerView.speechUnavailable",
-                    value: "No voice is installed for this article's language",
-                    comment: "Reader View - Toast shown when the article cannot be read aloud because macOS has no voice for its language"),
-                in: browserState)
-        }
-        controller.onNavigate = { [weak self] url in
-            guard let self, let tab = self.associatedTab else { return }
-            // Leave the reader first so the tab is showing live content by the
-            // time the navigation commits.
-            self.browserState?.exitReaderView(for: tab)
-            tab.webContentWrapper?.navigate(toURL: url.absoluteString)
-        }
-        readerController = controller
-        return controller
-    }
-
-    private func teardownReaderView() {
-        guard let controller = readerController else { return }
-        // Before the view goes, so the voice stops with the surface that
-        // started it rather than reading on over the live page.
-        controller.stopSpeaking()
-        controller.view.removeFromSuperview()
-        controller.removeFromParent()
-        readerController = nil
     }
 
     private func hideGroupOverviewIfNeeded() {

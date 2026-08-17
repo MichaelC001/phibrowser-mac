@@ -64,7 +64,9 @@ final class WebContentAddressBarViewModel: ObservableObject {
             .assign(to: \.isReaderApplicable, on: self)
             .store(in: &cancellables)
 
-        tab.$isReaderViewActive
+        // "In the reader" is the Phi Reader extension's page being shown in
+        // the tab; the extension reports it over the bridge.
+        tab.$extensionReaderActive
             .removeDuplicates()
             .receive(on: DispatchQueue.main)
             .assign(to: \.isReaderViewActive, on: self)

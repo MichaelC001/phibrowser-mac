@@ -10,10 +10,10 @@ import Foundation
 ///
 /// The semantics come from the C++ `phi::PhiURLRouter` in
 /// `chrome/browser/phinomenon/phi_url_router.{h,cc}` and are pinned by
-/// `URLRouterTests`. Two callers rely on them: `URLRouter`, which resolves a
-/// URL to a Space, and `ReaderSiteRuleStore`, which resolves a URL to a Reader
-/// View extraction rule. They exist here rather than in either caller so the
-/// two cannot drift from each other or from the C++ side.
+/// `URLRouterTests`. `URLRouter` relies on them to resolve a URL to a Space;
+/// the Reader extension's rule matcher (`src/background/rules.ts` in
+/// phi-ai/ai-extension/reader) is a TS port of the same ranking. They exist
+/// here rather than in the caller so Swift cannot drift from the C++ side.
 enum URLPatternMatcher {
 
     /// The lowercased host and percent-encoded path a pattern is matched

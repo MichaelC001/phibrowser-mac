@@ -47,13 +47,13 @@ extension AgentSpaceRouter {
             do {
                 let tab = try Self.readerTab(taskId: taskId, targetId: targetId)
                 let service = ReaderExtractionService.shared
-                var article = try await service.extract(from: tab)
+                var (article, ruleHost) = try await service.extractWithRule(from: tab)
                 if complete, !article.isComplete {
                     article = try await service
                         .extractCompleteAccessibilityArticle(tab: tab)
                 }
                 response = Self.readerResponse(article,
-                                               tab: tab,
+                                               ruleHost: ruleHost,
                                                includeHTML: includeHTML)
             } catch {
                 response = Self.readerFailure(error)
@@ -163,7 +163,7 @@ extension AgentSpaceRouter {
 
     @MainActor
     private static func readerResponse(_ article: ReaderArticle,
-                                       tab: Tab,
+                                       ruleHost: String?,
                                        includeHTML: Bool) -> String {
         var payload: [String: Any] = [
             "ok": true,
@@ -185,8 +185,9 @@ extension AgentSpaceRouter {
         payload["lang"] = article.lang
         payload["pageCount"] = article.pageCount
         // Which rule, if any, applied — the single most useful thing to see
-        // when working out why a site extracted the way it did.
-        payload["rule"] = ReaderSiteRuleStore.shared.rule(forURLString: tab.url)?.host
+        // when working out why a site extracted the way it did. Reported by
+        // the extension, which owns the rule corpus.
+        payload["rule"] = ruleHost
         if includeHTML {
             payload["contentHTML"] = article.contentHTML
         }
@@ -213,8 +214,6 @@ extension AgentSpaceRouter {
             reason = "no_target"
         case ReaderExtractionError.transportUnavailable:
             reason = "transport_unavailable"
-        case ReaderExtractionError.scriptUnavailable:
-            reason = "script_unavailable"
         case ReaderExtractionError.failed(let detail):
             reason = detail
         default:

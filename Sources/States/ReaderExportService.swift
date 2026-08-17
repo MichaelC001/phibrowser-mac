@@ -72,8 +72,7 @@ enum ReaderExportService {
         let document = ReaderDocumentBuilder.makeDocument(
             article: article,
             style: style,
-            appearanceIsDark: appearanceIsDark,
-            includeCopyControls: false)
+            appearanceIsDark: appearanceIsDark)
         guard inlineImages else { return Data(document.utf8) }
         let inlined = await ReaderImageInliner().inlineImages(in: document)
         return Data(inlined.utf8)
