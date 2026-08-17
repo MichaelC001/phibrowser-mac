@@ -4747,6 +4747,60 @@ function inputPointChanged(a, b) {
 }
 
 /**
+ * Converges the pointer on a possibly-moving element before a press: measure,
+ * glide, and commit only once a mutation-free probe agrees with the resting
+ * pointer. A streaming page (a feed filling in, late media) can shift a
+ * target several times while the pointer travels — a single re-measure would
+ * abort on exactly the pages the re-measure exists for — so this chases the
+ * target for up to ~3s of instability before giving up. Raw-coordinate specs
+ * settle on the first pass (locateRect returns them verbatim). Returns the
+ * settled CSS point, its widget projection, and the element's size.
+ */
+async function settlePointerOnTarget(client, sid, target, start, s, label) {
+  let x = start.x
+  let y = start.y
+  let ix = Math.round(x * s), iy = Math.round(y * s)
+  const deadline = Date.now() + 3000
+  let lastMovedAt = 0
+  for (;;) {
+    const fresh = await locateRect(target, { retryMs: 1000 })
+    if (inputPointChanged(fresh, { x, y })) {
+      lastMovedAt = Date.now()
+      x = fresh.x; y = fresh.y
+      ix = Math.round(x * s); iy = Math.round(y * s)
+      await movePointer(client, sid, ix, iy)
+      if (Date.now() < deadline) continue
+    }
+    // A target that WAS in motion earns a short quiet period before the
+    // commit: pressing right after a shift races the page's next one (a
+    // streaming list reflows on a timer), and a human tracking a moving
+    // control waits for it to hold still too.
+    if (lastMovedAt && Date.now() - lastMovedAt < 300) {
+      if (Date.now() >= deadline) {
+        throw new Error(label + ': ' + describeTarget(target))
+      }
+      await wait(0.12)
+      continue
+    }
+    const pointer = pointerMemory()
+    if (!pointer || pointer.x !== ix || pointer.y !== iy) {
+      await movePointer(client, sid, ix, iy)
+    }
+    const final = await locateRect(target, { retryMs: 400, gateRefresh: false })
+    if (!inputPointChanged(final, { x, y })) {
+      return { x, y, ix, iy, w: final.w, h: final.h }
+    }
+    lastMovedAt = Date.now()
+    if (Date.now() >= deadline) {
+      throw new Error(label + ': ' + describeTarget(target))
+    }
+    x = final.x; y = final.y
+    ix = Math.round(x * s); iy = Math.round(y * s)
+    await movePointer(client, sid, ix, iy)
+  }
+}
+
+/**
  * Clicks a target. Two call forms:
  *   click(x, y[, {button, clickCount}])   — raw viewport coordinates
  *   click(target[, {button, clickCount}]) — a selector/@ref/loc/xpath (resolved
@@ -4780,29 +4834,17 @@ export async function click(target, arg2, arg3) {
   await movePointer(client, sid, ix, iy)
   await ensurePageOperable({ force: true, intent: 'pointer' })
   // The page can shift under the glide pause (a streaming list, late media,
-  // or a just-mounted consent layer). Re-run the whole page gate, then require
-  // the element to remain the topmost hit-test result. Never click the stale
-  // coordinate if it vanished or became covered while the pointer travelled.
+  // or a just-mounted consent layer). Re-run the whole page gate, then
+  // converge on the target — chasing it through further shifts — and require
+  // it to remain the topmost hit-test result at the resting pointer. The
+  // commit probe keeps a short mutation-free retry window: the glide itself
+  // can hover-open a flyout over the target in passing, and such layers
+  // close on a grace timer after the pointer leaves them. Never click a
+  // stale coordinate if the element vanished or stayed in motion.
   if (elementTarget) {
-    const fresh = await locateRect(target, { retryMs: 1000 })
-    if (inputPointChanged(fresh, { x, y })) {
-      x = fresh.x; y = fresh.y
-      ix = Math.round(x * s); iy = Math.round(y * s)
-      await movePointer(client, sid, ix, iy)
-    }
-    const pointer = pointerMemory()
-    if (!pointer || pointer.x !== ix || pointer.y !== iy) {
-      await movePointer(client, sid, ix, iy)
-    }
-    // Mutation-free commit probe with a short retry window: the glide itself
-    // can hover-open a flyout/tooltip over the target in passing, and such
-    // layers close on a grace timer after the pointer leaves them — a
-    // zero-retry probe would race that timer and abort a click a human (and
-    // the pre-trajectory code) completes.
-    const final = await locateRect(target, { retryMs: 400, gateRefresh: false })
-    if (inputPointChanged(final, { x, y })) {
-      throw new Error('target moved while preparing the click: ' + describeTarget(target))
-    }
+    const settled = await settlePointerOnTarget(client, sid, target, { x, y }, s,
+      'target moved while preparing the click')
+    x = settled.x; y = settled.y; ix = settled.ix; iy = settled.iy
   } else {
     // The gate may have moved to and accepted a late consent control. Return
     // to the requested raw coordinate before pressing.
@@ -4836,20 +4878,15 @@ export async function hover(target, maybeY) {
   await movePointer(client, sid, ix, iy)
   await ensurePageOperable({ force: true, intent: 'pointer' })
   if (typeof target !== 'number') {
-    const fresh = await locateRect(target, { retryMs: 1000 })
-    x = fresh.x; y = fresh.y
-    ix = Math.round(x * s); iy = Math.round(y * s)
-  }
-  const pointer = pointerMemory()
-  if (!pointer || pointer.x !== ix || pointer.y !== iy) {
-    await movePointer(client, sid, ix, iy)
-  }
-  if (typeof target !== 'number') {
-    // Same short mutation-free retry as click's commit probe: an en-route
-    // hover side effect may still be closing when the pointer parks.
-    const final = await locateRect(target, { retryMs: 400, gateRefresh: false })
-    if (inputPointChanged(final, { x, y })) {
-      throw new Error('target moved while preparing the hover: ' + describeTarget(target))
+    // Same convergence as click's pre-press settle: chase a moving target,
+    // commit from a mutation-free probe at the resting pointer.
+    const settled = await settlePointerOnTarget(client, sid, target, { x, y }, s,
+      'target moved while preparing the hover')
+    x = settled.x; y = settled.y
+  } else {
+    const pointer = pointerMemory()
+    if (!pointer || pointer.x !== ix || pointer.y !== iy) {
+      await movePointer(client, sid, ix, iy)
     }
   }
   return { x, y }
@@ -4887,18 +4924,13 @@ export async function drag(from, to, { button = 'left' } = {}) {
     }
     throw err
   }
-  const sx = Math.round(src.x * s), sy = Math.round(src.y * s)
+  let sx = Math.round(src.x * s), sy = Math.round(src.y * s)
   const sid = requireSession()
   await movePointer(client, sid, sx, sy)
   await ensurePageOperable({ force: true, intent: 'pointer' })
-  const pointer = pointerMemory()
-  if (!pointer || pointer.x !== sx || pointer.y !== sy) {
-    await movePointer(client, sid, sx, sy)
-  }
-  const srcFinal = await locateRect(from, { retryMs: 400, gateRefresh: false, scroll: false })
-  if (inputPointChanged(srcFinal, src)) {
-    throw new Error('drag: source moved while preparing the drag: ' + describeTarget(from))
-  }
+  const settled = await settlePointerOnTarget(client, sid, from,
+    { x: src.x, y: src.y }, s, 'drag: source moved while preparing the drag')
+  sx = settled.ix; sy = settled.iy
   const held = button === 'right' ? 2 : button === 'middle' ? 4 : 1
   await client.send('Input.dispatchMouseEvent', {
     type: 'mousePressed', x: sx, y: sy, button, clickCount: 1, pointerType: 'mouse',
@@ -5068,23 +5100,15 @@ async function fillTargetValue(spec, target, str, { instant = false, label = 'fi
 
     // This applies to instant/native-setter fills too: they must not mutate a
     // field hidden behind a layer merely because page JS can still reach it.
+    // Same convergence as click's pre-press settle: chase a moving field,
+    // commit from a mutation-free probe at the resting pointer.
     await ensurePageOperable({ force: true })
-    const fresh = await locateRect(target, { retryMs: 1000 })
-    if (inputPointChanged(fresh, rect)) {
-      rect = fresh
-      pulse = { x: Math.round(rect.x * s), y: Math.round(rect.y * s),
-                w: Math.round(rect.w * s), h: Math.round(rect.h * s) }
-      await movePointer(client, sid, pulse.x, pulse.y)
-    }
-    const pointer = pointerMemory()
-    if (!pointer || pointer.x !== pulse.x || pointer.y !== pulse.y) {
-      await movePointer(client, sid, pulse.x, pulse.y)
-    }
-    // Mutation-free commit probe with a short retry: see click()'s.
-    const final = await locateRect(target, { retryMs: 400, gateRefresh: false })
-    if (inputPointChanged(final, rect)) {
-      throw new Error(label + ': target moved while preparing input')
-    }
+    const settled = await settlePointerOnTarget(client, sid, target,
+      { x: rect.x, y: rect.y }, s, label + ': target moved while preparing input')
+    rect = { x: settled.x, y: settled.y,
+             w: settled.w ?? rect.w, h: settled.h ?? rect.h }
+    pulse = { x: settled.ix, y: settled.iy,
+              w: Math.round((rect.w || 0) * s), h: Math.round((rect.h || 0) * s) }
   }
 
   if (!hiddenTarget && !instant && prep.typeable && rect.w > 0 && rect.h > 0) {
