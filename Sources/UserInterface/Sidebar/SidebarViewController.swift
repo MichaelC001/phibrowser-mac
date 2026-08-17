@@ -1158,9 +1158,18 @@ class SidebarViewController: NSViewController {
         // reusing the sidebar root's visual-effect recipe; the form hosting
         // view above is transparent so this shows through. User theme changes
         // preview through the same window-scoped context.
+        //
+        // Must blend within the window, not behind it: behind-window material
+        // is composited by WindowServer and leaves this region transparent in
+        // the window's own backing store, and screen captures (ScreenCaptureKit
+        // ignores window alpha) resolve it against the concealed sibling Space
+        // window stacked behind — the background Space showed through the form
+        // in recordings. Within-window frosts the sidebar content this sheet
+        // covers and renders entirely in-process, so captures match the screen.
         let backdrop = ColoredVisualEffectView()
         backdrop.themedBackgroundColor = .windowOverlayBackground
         backdrop.material = .fullScreenUI
+        backdrop.blendingMode = .withinWindow
         backdrop.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(backdrop)
         backdrop.snp.makeConstraints { make in
