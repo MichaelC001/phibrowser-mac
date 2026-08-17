@@ -84,8 +84,13 @@ enum ReaderExtensionBridge {
         guard let payload: StatePayload = decode(context.payload) else { return }
         MainActor.assumeIsolated {
             guard let (tab, state) = findTab(payload.tabId) else { return }
+            let wasActive = tab.extensionReaderActive
             tab.extensionReaderActive = payload.active
+            if payload.active, !wasActive {
+                ReaderViewAnalytics.surfaceMounted(tabId: payload.tabId)
+            }
             guard !payload.active, let error = payload.error else { return }
+            ReaderViewAnalytics.openRefused(tabId: payload.tabId, reason: error)
             let title: String
             switch error {
             case "no_article_detected", "below_coverage_floor":

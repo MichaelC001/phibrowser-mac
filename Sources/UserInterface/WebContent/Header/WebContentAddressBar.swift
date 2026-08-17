@@ -374,7 +374,7 @@ struct WebContentAddressBarView: View {
                 action: {
                     anchorView?.window?.customTooltipController.dismissAll()
                     guard let tab = currentTab else { return }
-                    browserState?.toggleReaderView(for: tab)
+                    browserState?.toggleReaderView(for: tab, from: .addressBar)
                 }
             )
             .customTooltip {

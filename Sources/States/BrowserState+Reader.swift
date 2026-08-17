@@ -52,7 +52,7 @@ extension BrowserState {
             // Let the page finish its own load before asking for the reader.
             try? await Task.sleep(nanoseconds: 5_000_000_000)
             guard let self, let tab else { return }
-            self.toggleReaderView(for: tab)
+            self.toggleReaderView(for: tab, from: .automation)
         }
     }
 }
@@ -79,6 +79,7 @@ extension BrowserState {
             return
         }
         guard !tab.extensionReaderActive else { return }
+        ReaderViewAnalytics.noteOpenRequested(for: tab, from: .contextMenu)
         ReaderExtensionBridge.open(tab)
     }
 
@@ -88,10 +89,12 @@ extension BrowserState {
     /// half-entered state because nothing here changes until the extension's
     /// surface actually mounts.
     @MainActor
-    func toggleReaderView(for tab: Tab) {
+    func toggleReaderView(for tab: Tab,
+                          from entryPoint: ReaderViewAnalytics.EntryPoint) {
         if tab.extensionReaderActive {
             ReaderExtensionBridge.close(tab)
         } else {
+            ReaderViewAnalytics.noteOpenRequested(for: tab, from: entryPoint)
             ReaderExtensionBridge.open(tab)
         }
     }

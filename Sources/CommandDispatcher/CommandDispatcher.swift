@@ -201,7 +201,7 @@ struct CommandDispatcher {
             guard let tab = state.focusingTab, !tab.isShowingNativeNTP else {
                 return false
             }
-            state.toggleReaderView(for: tab)
+            state.toggleReaderView(for: tab, from: .shortcut)
             return true
         case let c where c.spaceSelectionIndex != nil:
             guard let index = c.spaceSelectionIndex else { return false }

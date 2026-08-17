@@ -901,7 +901,7 @@ extension AppController {
               let tab = state.focusingTab else {
             return
         }
-        state.toggleReaderView(for: tab)
+        state.toggleReaderView(for: tab, from: .viewMenu)
     }
 
     @MainActor

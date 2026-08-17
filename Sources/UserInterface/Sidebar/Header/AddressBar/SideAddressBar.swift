@@ -411,7 +411,7 @@ class SideAddressBar: NSView {
     private func toggleReaderView() {
         guard let tab = currentTab,
               let browserState = unsafeBrowserState else { return }
-        browserState.toggleReaderView(for: tab)
+        browserState.toggleReaderView(for: tab, from: .addressBar)
     }
 
     private func updateReaderButtonVisibility() {
