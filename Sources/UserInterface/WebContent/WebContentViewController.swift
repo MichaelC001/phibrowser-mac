@@ -2737,6 +2737,21 @@ class WebContentViewController: NSViewController {
         })
     }
 
+    /// Pause / resume this page's content frame sync around the extension
+    /// side panel slide animation (driven by the container), mirroring the
+    /// AI Chat transition above: pause so the WebContents isn't relaid out
+    /// on every animation frame, then resume with one force-sync at the
+    /// settled size. Resume leaves a docked DevTools session alone —
+    /// DevTools owns the flag while attached.
+    func setContentFrameSyncPausedForPanelTransition(_ paused: Bool) {
+        if paused {
+            hostView.isFrameSyncPaused = true
+        } else if associatedTab?.devToolsAttached != true {
+            hostView.isFrameSyncPaused = false
+            hostView.forceSyncAllSubviewFrames()
+        }
+    }
+
     private func clampAIChatWidth(_ width: CGFloat) -> CGFloat {
         guard let aiChatSplitViewItem else { return width }
         return min(max(width, aiChatSplitViewItem.minimumThickness), aiChatSplitViewItem.maximumThickness)

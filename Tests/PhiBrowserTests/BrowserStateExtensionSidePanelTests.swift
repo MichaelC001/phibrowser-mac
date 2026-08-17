@@ -3,12 +3,15 @@
 // Use of this source code is governed by an Apache license that can be
 // found in the LICENSE file.
 
+import Combine
 import XCTest
 @testable import Phi
 
 /// State-layer coverage for the extension side panel slot: open/close
 /// bookkeeping, the synchronous outgoing-view detach contract, the
 /// AI Chat ↔ panel mutex (both directions), and the slot width clamping.
+/// Container-layer layout coverage lives in
+/// `ExtensionSidePanelContainerLayoutTests` below.
 @MainActor
 final class BrowserStateExtensionSidePanelTests: XCTestCase {
 
@@ -102,6 +105,36 @@ final class BrowserStateExtensionSidePanelTests: XCTestCase {
 
         state.updateExtensionSidePanel(nil)
 
+        XCTAssertNil(nativeView.superview)
+    }
+
+    func testClosePublishesBeforeDetachingOutgoingView() throws {
+        let state = try makeBrowserState()
+        let superview = NSView()
+        let nativeView = NSView()
+        superview.addSubview(nativeView)
+        let wrapper = ExtensionSidePanelTestWebContentWrapper()
+        wrapper.nativeView = nativeView
+        state.updateExtensionSidePanel(makePanel(wrapper: wrapper))
+
+        // The container's synchronous sink snapshots the closing panel for
+        // its slide-out animation, so the close publish must arrive while
+        // the outgoing NSView is still in the hierarchy. The backstop
+        // detach after the publish keeps the synchronous-detach contract
+        // when no sink detaches the view itself.
+        var attachedAtClosePublish: Bool?
+        let cancellable = state.$extensionSidePanel
+            .dropFirst()  // subscription replay of the open panel
+            .sink { panel in
+                if panel == nil {
+                    attachedAtClosePublish = nativeView.superview != nil
+                }
+            }
+        defer { cancellable.cancel() }
+
+        state.updateExtensionSidePanel(nil)
+
+        XCTAssertEqual(attachedAtClosePublish, true)
         XCTAssertNil(nativeView.superview)
     }
 
@@ -215,6 +248,100 @@ final class BrowserStateExtensionSidePanelTests: XCTestCase {
 
         panel.setPreferredWidth(12000)
         XCTAssertEqual(panel.preferredWidth, ExtensionSidePanelView.maxWidth)
+    }
+}
+
+/// Container-layer coverage for the extension side panel slot: the 4pt
+/// page-to-panel gap, the attach/detach end states (slide animations
+/// disabled so layout settles synchronously), and the per-window width
+/// memory across a close/reopen.
+@MainActor
+final class ExtensionSidePanelContainerLayoutTests: XCTestCase {
+
+    private var tempDirectories: [URL] = []
+
+    override func setUpWithError() throws {
+        WebContentContainerViewController.panelSlideAnimationsDisabledForTesting = true
+    }
+
+    override func tearDownWithError() throws {
+        WebContentContainerViewController.panelSlideAnimationsDisabledForTesting = false
+        let fileManager = FileManager.default
+        for directory in tempDirectories {
+            try? fileManager.removeItem(at: directory)
+        }
+        tempDirectories.removeAll()
+    }
+
+    private func makeContainer() throws -> WebContentContainerViewController {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        tempDirectories.append(directory)
+        let store = LocalStore(account: Account(userID: UUID().uuidString),
+                               storeDirectoryURL: directory)
+        let state = BrowserState(windowId: 8, localStore: store, profileId: "Default")
+        let container = WebContentContainerViewController(state: state)
+        container.view.frame = NSRect(x: 0, y: 0, width: 1200, height: 800)
+        return container
+    }
+
+    private func makePanel(wrapper: ExtensionSidePanelTestWebContentWrapper)
+        -> BrowserState.ExtensionSidePanelState {
+        BrowserState.ExtensionSidePanelState(extensionId: "test-extension",
+                                             displayName: "Test Extension",
+                                             iconPNG: nil,
+                                             wrapper: wrapper)
+    }
+
+    func testAttachSettlesWithFourPointPageGap() throws {
+        let container = try makeContainer()
+        let nativeView = NSView()
+        let wrapper = ExtensionSidePanelTestWebContentWrapper()
+        wrapper.nativeView = nativeView
+
+        container.attachExtensionSidePanel(makePanel(wrapper: wrapper))
+        container.view.layoutSubtreeIfNeeded()
+
+        let panelView = try XCTUnwrap(container.extensionSidePanelViewForTesting)
+        XCTAssertTrue(nativeView.superview === panelView.contentHostView)
+        // Panel pinned edgesSpacing (8pt) off the window edge at its
+        // seeded preferred width.
+        XCTAssertEqual(panelView.frame.maxX, 1200 - 8, accuracy: 0.5)
+        XCTAssertEqual(panelView.frame.width, 360, accuracy: 0.5)
+        // The content container overlaps 4pt under the panel; the page
+        // card's own 8pt margin inside it nets the AI-Chat-matching 4pt
+        // page-to-panel gap.
+        XCTAssertEqual(container.splitTabDropContainer.frame.maxX,
+                       panelView.frame.minX + 4, accuracy: 0.5)
+    }
+
+    func testDetachRestoresFullWidthAndRemembersDraggedWidth() throws {
+        let container = try makeContainer()
+        let firstNative = NSView()
+        let firstWrapper = ExtensionSidePanelTestWebContentWrapper()
+        firstWrapper.nativeView = firstNative
+        container.attachExtensionSidePanel(makePanel(wrapper: firstWrapper))
+        container.view.layoutSubtreeIfNeeded()
+        let firstPanel = try XCTUnwrap(container.extensionSidePanelViewForTesting)
+        firstPanel.setPreferredWidth(500)
+
+        container.detachExtensionSidePanel()
+        container.view.layoutSubtreeIfNeeded()
+
+        XCTAssertNil(container.extensionSidePanelViewForTesting)
+        XCTAssertNil(firstPanel.superview)
+        XCTAssertEqual(container.splitTabDropContainer.frame.maxX, 1200, accuracy: 0.5)
+
+        let secondNative = NSView()
+        let secondWrapper = ExtensionSidePanelTestWebContentWrapper()
+        secondWrapper.nativeView = secondNative
+        container.attachExtensionSidePanel(makePanel(wrapper: secondWrapper))
+        container.view.layoutSubtreeIfNeeded()
+
+        let secondPanel = try XCTUnwrap(container.extensionSidePanelViewForTesting)
+        XCTAssertEqual(secondPanel.preferredWidth, 500)
+        XCTAssertEqual(secondPanel.frame.width, 500, accuracy: 0.5)
     }
 }
 

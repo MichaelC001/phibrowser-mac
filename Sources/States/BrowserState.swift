@@ -1180,11 +1180,23 @@ class BrowserState {
     @MainActor
     func updateExtensionSidePanel(_ newPanel: ExtensionSidePanelState?) {
         let previous = extensionSidePanel
-        if let previousWrapper = previous?.wrapper,
-           previousWrapper !== newPanel?.wrapper {
-            previousWrapper.nativeView?.removeFromSuperview()
+        let outgoingWrapper = previous?.wrapper !== newPanel?.wrapper
+            ? previous?.wrapper : nil
+        if let outgoingWrapper, newPanel != nil {
+            // Content replacement: detach the outgoing view before the
+            // publish so the container's attach never sees two panel views
+            // stacked in the slot.
+            outgoingWrapper.nativeView?.removeFromSuperview()
         }
         extensionSidePanel = newPanel
+        if let outgoingWrapper, newPanel == nil {
+            // Close: published first so the container's synchronous sink
+            // can snapshot the still-attached view for its slide-out
+            // animation and detach it itself. This backstop keeps the
+            // synchronous-detach contract (Chromium may destroy the NSView
+            // right after this method returns) when no sink is installed.
+            outgoingWrapper.nativeView?.removeFromSuperview()
+        }
         if newPanel != nil, previous == nil {
             // Mutex with the AI Chat panel (CONTEXT.md: the two never show
             // at the same time): a panel open collapses AI Chat on every
