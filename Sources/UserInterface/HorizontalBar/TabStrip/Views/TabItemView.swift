@@ -688,7 +688,7 @@ final class TabItemView: NSView {
                 anchorView: self,
                 target: .tab(tab),
                 browserState: browserState,
-                placement: .below
+                placement: .belowAttached
             )
         } else {
             tabPreviewRegistration.invalidate()

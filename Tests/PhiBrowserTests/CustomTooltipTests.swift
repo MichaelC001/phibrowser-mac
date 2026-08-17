@@ -220,6 +220,7 @@ final class CustomTooltipTests: XCTestCase {
         private(set) var dismissCount = 0
         private(set) var lastThemeProvider: ThemeStateProvider?
         private(set) var lastPlacement: CustomTooltipPlacement?
+        private(set) var lastAnchorScreenRect: CGRect?
         private(set) var frameAnimationDurations: [TimeInterval] = []
 
         var surfaceIdentifiers: (panel: ObjectIdentifier, hostingView: ObjectIdentifier)? {
@@ -238,6 +239,7 @@ final class CustomTooltipTests: XCTestCase {
             presentCount += 1
             lastThemeProvider = themeProvider
             lastPlacement = placement
+            lastAnchorScreenRect = anchorScreenRect
             frameAnimationDurations.append(frameAnimationDuration)
         }
 
@@ -299,6 +301,45 @@ final class CustomTooltipTests: XCTestCase {
         controller.dismissAll()
     }
 
+    func testReusedPanelAdaptsToContentHeight() throws {
+        let fixture = makeWindow()
+        let controller = CustomTooltipController(
+            window: fixture.window,
+            mouseLocation: { fixture.mouseLocation },
+            isEligibleForPresentation: { _ in true }
+        )
+        let configuration = CustomTooltipConfiguration(
+            showDelay: 0,
+            displayDuration: nil,
+            handoffGroup: .tabPreview
+        )
+
+        controller.pointerEntered(
+            ownerID: UUID(),
+            anchorView: fixture.host,
+            content: AnyView(Color.clear.frame(width: 280, height: 240)),
+            configuration: configuration
+        )
+        let panel = try XCTUnwrap(
+            fixture.window.childWindows?.compactMap { $0 as? NSPanel }.first
+        )
+        let surface = try XCTUnwrap(controller.surfaceIdentifiers)
+        let tallHeight = panel.frame.height
+
+        controller.pointerEntered(
+            ownerID: UUID(),
+            anchorView: fixture.host,
+            content: AnyView(Color.clear.frame(width: 280, height: 60)),
+            configuration: configuration
+        )
+
+        XCTAssertEqual(controller.surfaceIdentifiers?.panel, surface.panel)
+        XCTAssertEqual(controller.surfaceIdentifiers?.hostingView, surface.hostingView)
+        XCTAssertLessThan(panel.frame.height, tallHeight)
+        XCTAssertEqual(panel.frame.height, 60, accuracy: 1)
+        controller.dismissAll()
+    }
+
     func testInitialHoverUsesConfiguredDelay() {
         let fixture = makeWindow()
         let scheduler = ManualScheduler()
@@ -326,6 +367,32 @@ final class CustomTooltipTests: XCTestCase {
         XCTAssertTrue(presenter.isVisible)
         XCTAssertEqual(controller.activeOwnerID, ownerID)
         XCTAssertEqual(presenter.presentCount, 1)
+    }
+
+    func testGeometryRectCanDifferFromHoverHostBounds() {
+        let fixture = makeWindow()
+        let scheduler = ManualScheduler()
+        let presenter = RecordingPresenter()
+        let controller = makeController(
+            fixture: fixture,
+            scheduler: scheduler,
+            presenter: presenter
+        )
+        let geometryBounds = CGRect(x: 90, y: 4, width: 20, height: 24)
+        let expectedRect = fixture.window.convertToScreen(
+            fixture.host.convert(geometryBounds, to: nil)
+        )
+
+        controller.pointerEntered(
+            ownerID: UUID(),
+            anchorView: fixture.host,
+            content: AnyView(Text("Inset geometry")),
+            configuration: CustomTooltipConfiguration(showDelay: 0, displayDuration: nil),
+            anchorRectProvider: { _ in geometryBounds }
+        )
+
+        XCTAssertTrue(presenter.isVisible)
+        XCTAssertEqual(presenter.lastAnchorScreenRect, expectedRect)
     }
 
     func testPointerExitCancelsPendingPresentation() {
@@ -852,6 +919,34 @@ final class CustomTooltipTests: XCTestCase {
 
         XCTAssertEqual(origin.x, 150)
         XCTAssertEqual(origin.y, 46)
+    }
+
+    func testAttachedRightPlacementAlignsLeftAndTopEdges() {
+        let contentSize = CGSize(width: 280, height: 220)
+        let anchorRect = CGRect(x: 100, y: 400, width: 200, height: 40)
+        let origin = CustomTooltipGeometry.origin(
+            contentSize: contentSize,
+            anchorScreenRect: anchorRect,
+            visibleFrame: CGRect(x: 0, y: 0, width: 1_000, height: 1_000),
+            placement: .rightTopAttached
+        )
+
+        XCTAssertEqual(origin.x, anchorRect.maxX)
+        XCTAssertEqual(origin.y + contentSize.height, anchorRect.maxY)
+    }
+
+    func testAttachedBelowPlacementAlignsCentersAndEdges() {
+        let contentSize = CGSize(width: 280, height: 220)
+        let anchorRect = CGRect(x: 300, y: 400, width: 120, height: 40)
+        let origin = CustomTooltipGeometry.origin(
+            contentSize: contentSize,
+            anchorScreenRect: anchorRect,
+            visibleFrame: CGRect(x: 0, y: 0, width: 1_000, height: 1_000),
+            placement: .belowAttached
+        )
+
+        XCTAssertEqual(origin.x + contentSize.width / 2, anchorRect.midX)
+        XCTAssertEqual(origin.y + contentSize.height, anchorRect.minY)
     }
 
     func testStaleExitCannotDismissNewOwner() {

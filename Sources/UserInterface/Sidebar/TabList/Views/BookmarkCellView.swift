@@ -307,7 +307,13 @@ class BookmarkCellView: SidebarCellView, TabPreviewInteractionCancelling {
                 anchorView: self,
                 target: .bookmark(bookmark),
                 browserState: state,
-                placement: .right
+                placement: .rightTopAttached,
+                anchorRectProvider: { view in
+                    view.bounds.insetBy(
+                        dx: WebContentConstant.edgesSpacing,
+                        dy: 2
+                    )
+                }
             )
         } else {
             tabPreviewRegistration.invalidate()

@@ -409,7 +409,20 @@ class SidebarTabCellView: SidebarCellView, TabPreviewInteractionCancelling {
                 anchorView: self,
                 target: .tab(tab),
                 browserState: state,
-                placement: .right
+                placement: .rightTopAttached,
+                anchorRectProvider: { [weak tab] view in
+                    let bounds = view.bounds
+                    let leadingInset = WebContentConstant.edgesSpacing
+                    let trailingInset = tab?.groupToken == nil
+                        ? WebContentConstant.edgesSpacing
+                        : 2
+                    return CGRect(
+                        x: bounds.minX + leadingInset,
+                        y: bounds.minY + 2,
+                        width: max(0, bounds.width - leadingInset - trailingInset),
+                        height: max(0, bounds.height - 4)
+                    )
+                }
             )
         } else {
             tabPreviewRegistration.invalidate()

@@ -4,6 +4,7 @@
 // found in the LICENSE file.
 
 import AppKit
+import class SwiftUI.NSHostingView
 import XCTest
 @testable import Phi
 
@@ -35,22 +36,31 @@ final class TabPreviewTests: XCTestCase {
         XCTAssertEqual(content.id, .tab("10"))
         XCTAssertEqual(content.title, "Background")
         XCTAssertEqual(content.url, "https://background.example")
+        XCTAssertNotNil(content.image)
+        XCTAssertEqual(content.imageSource, .thumbnail(tabID: 10))
         XCTAssertEqual(requestedIDs, [10])
     }
 
-    func testFocusedTabIsIneligible() throws {
+    func testFocusedTabUsesTextOnlyContentWithoutThumbnailRequest() throws {
         let state = try makeBrowserState()
         let tab = makeTab(guid: 10, title: "Foreground", url: "https://foreground.example")
         state.tabs = [tab]
         state.normalTabs = [tab]
         state.focusingTab = tab
-        let resolver = TabPreviewContentResolver { _ in
-            XCTFail("Focused tabs must not request thumbnails.")
+        var requestedIDs: [Int64] = []
+        let resolver = TabPreviewContentResolver { tabID in
+            requestedIDs.append(tabID)
             return nil
         }
 
-        XCTAssertFalse(resolver.isEligible(.tab(tab), in: state))
-        XCTAssertNil(resolver.resolve(.tab(tab), in: state))
+        let content = try XCTUnwrap(resolver.resolve(.tab(tab), in: state))
+
+        XCTAssertTrue(resolver.isEligible(.tab(tab), in: state))
+        XCTAssertEqual(content.title, "Foreground")
+        XCTAssertEqual(content.url, "https://foreground.example")
+        XCTAssertNil(content.image)
+        XCTAssertEqual(content.imageSource, .foreground(tabID: 10))
+        XCTAssertTrue(requestedIDs.isEmpty)
     }
 
     func testDetachedNormalTabIsIneligible() throws {
@@ -93,7 +103,7 @@ final class TabPreviewTests: XCTestCase {
         XCTAssertFalse(resolver.isEligible(.tab(second), in: state))
     }
 
-    func testClosedPinnedTabUsesPlaceholderWithoutInvalidThumbnailRequest() throws {
+    func testClosedPinnedTabUsesTextOnlyContentWithoutThumbnailRequest() throws {
         let state = try makeBrowserState()
         let pinned = makeTab(
             guid: -1,
@@ -114,6 +124,8 @@ final class TabPreviewTests: XCTestCase {
 
         XCTAssertEqual(content.id, .tab("pinned-1"))
         XCTAssertEqual(content.title, "Pinned")
+        XCTAssertNil(content.image)
+        XCTAssertEqual(content.imageSource, .unavailable(tabID: nil))
         XCTAssertTrue(requestedIDs.isEmpty)
     }
 
@@ -144,6 +156,7 @@ final class TabPreviewTests: XCTestCase {
 
         XCTAssertEqual(content.title, "Current title")
         XCTAssertEqual(content.url, "https://current.example")
+        XCTAssertNotNil(content.image)
         XCTAssertEqual(requestedIDs, [22])
     }
 
@@ -174,10 +187,9 @@ final class TabPreviewTests: XCTestCase {
 
         XCTAssertEqual(content.title, "Saved title")
         XCTAssertEqual(content.url, "https://saved.example")
+        XCTAssertNil(content.image)
+        XCTAssertEqual(content.imageSource, .unavailable(tabID: nil))
         XCTAssertTrue(requestedIDs.isEmpty)
-        guard case .placeholder = content.imageSource else {
-            return XCTFail("A stale pinned binding must use the persisted placeholder.")
-        }
     }
 
     func testPinnedImageCacheChangesAcrossOpenCloseAndRebind() throws {
@@ -198,9 +210,8 @@ final class TabPreviewTests: XCTestCase {
         }
 
         let closed = try XCTUnwrap(resolver.resolve(.tab(record), in: state))
-        guard case .placeholder = closed.imageSource else {
-            return XCTFail("A closed pin must start with a placeholder.")
-        }
+        XCTAssertNil(closed.image)
+        XCTAssertEqual(closed.imageSource, .unavailable(tabID: nil))
 
         let firstLive = makeTab(
             guid: 22,
@@ -232,9 +243,8 @@ final class TabPreviewTests: XCTestCase {
         let closedAgain = try XCTUnwrap(
             resolver.resolve(.tab(record), in: state, reusing: rebound)
         )
-        guard case .placeholder = closedAgain.imageSource else {
-            return XCTFail("Closing a live pin must replace its thumbnail.")
-        }
+        XCTAssertNil(closedAgain.image)
+        XCTAssertEqual(closedAgain.imageSource, .unavailable(tabID: nil))
         XCTAssertEqual(requestedIDs, [22, 23])
     }
 
@@ -262,7 +272,7 @@ final class TabPreviewTests: XCTestCase {
         XCTAssertFalse(resolver.isEligible(.tab(right), in: state))
     }
 
-    func testOpenedBookmarkUsesLiveTabAndClosedBookmarkUsesPlaceholder() throws {
+    func testOpenedBookmarkUsesLiveSnapshotAndClosedBookmarkUsesTextOnlyContent() throws {
         let state = try makeBrowserState()
         let live = makeTab(
             guid: 42,
@@ -294,8 +304,11 @@ final class TabPreviewTests: XCTestCase {
 
         XCTAssertEqual(openContent.title, "Current page")
         XCTAssertEqual(openContent.url, "https://current.example")
+        XCTAssertNotNil(openContent.image)
         XCTAssertEqual(closedContent.title, "Closed bookmark")
         XCTAssertEqual(closedContent.url, "https://closed.example")
+        XCTAssertNil(closedContent.image)
+        XCTAssertEqual(closedContent.imageSource, .unavailable(tabID: nil))
         XCTAssertEqual(requestedIDs, [42])
     }
 
@@ -342,9 +355,8 @@ final class TabPreviewTests: XCTestCase {
         }
 
         let closed = try XCTUnwrap(resolver.resolve(.bookmark(bookmark), in: state))
-        guard case .placeholder = closed.imageSource else {
-            return XCTFail("A closed bookmark must start with a placeholder.")
-        }
+        XCTAssertNil(closed.image)
+        XCTAssertEqual(closed.imageSource, .unavailable(tabID: nil))
 
         let live = makeTab(
             guid: 42,
@@ -366,9 +378,8 @@ final class TabPreviewTests: XCTestCase {
         let closedAgain = try XCTUnwrap(
             resolver.resolve(.bookmark(bookmark), in: state, reusing: opened)
         )
-        guard case .placeholder = closedAgain.imageSource else {
-            return XCTFail("Closing a bookmark must replace its thumbnail.")
-        }
+        XCTAssertNil(closedAgain.image)
+        XCTAssertEqual(closedAgain.imageSource, .unavailable(tabID: nil))
         XCTAssertEqual(requestedIDs, [42])
     }
 
@@ -395,7 +406,7 @@ final class TabPreviewTests: XCTestCase {
         XCTAssertEqual(requestedIDs, [10])
     }
 
-    func testPlaceholderMetadataRefreshRegeneratesWithoutRetryingThumbnail() throws {
+    func testUnavailableSnapshotRefreshesMetadataWithoutRetryingThumbnail() throws {
         let state = try makeBrowserState()
         let tab = makeTab(guid: 10, title: "First title", url: "https://first.example")
         state.tabs = [tab]
@@ -411,14 +422,70 @@ final class TabPreviewTests: XCTestCase {
             resolver.resolve(.tab(tab), in: state, reusing: first)
         )
 
-        guard case .livePlaceholder(_, let identity) = updated.imageSource else {
-            return XCTFail("An invalid thumbnail must fall back to a live placeholder.")
-        }
-        XCTAssertEqual(identity.title, "Updated title")
+        XCTAssertEqual(updated.title, "Updated title")
+        XCTAssertNil(updated.image)
+        XCTAssertEqual(updated.imageSource, .unavailable(tabID: 10))
         XCTAssertEqual(requestedIDs, [10])
     }
 
-    func testFolderActiveAndSplitBookmarksAreIneligible() throws {
+    func testForegroundTransitionDropsThumbnailAndInactiveTransitionReloadsIt() throws {
+        let state = try makeBrowserState()
+        let tab = makeTab(guid: 10, title: "Page", url: "https://example.com")
+        state.tabs = [tab]
+        var requestedIDs: [Int64] = []
+        let resolver = TabPreviewContentResolver { tabID in
+            requestedIDs.append(tabID)
+            return self.makeImageData()
+        }
+
+        let inactive = try XCTUnwrap(resolver.resolve(.tab(tab), in: state))
+        state.focusingTab = tab
+        let foreground = try XCTUnwrap(
+            resolver.resolve(.tab(tab), in: state, reusing: inactive)
+        )
+        state.focusingTab = nil
+        let inactiveAgain = try XCTUnwrap(
+            resolver.resolve(.tab(tab), in: state, reusing: foreground)
+        )
+
+        XCTAssertNotNil(inactive.image)
+        XCTAssertNil(foreground.image)
+        XCTAssertEqual(foreground.imageSource, .foreground(tabID: 10))
+        XCTAssertNotNil(inactiveAgain.image)
+        XCTAssertEqual(inactiveAgain.imageSource, .thumbnail(tabID: 10))
+        XCTAssertEqual(requestedIDs, [10, 10])
+    }
+
+    func testPreviewLayoutUsesTwoTitleLinesAndCollapsesWithoutSnapshot() {
+        let shortTextSize = previewSize(
+            title: "Short title",
+            image: nil,
+            imageSource: .unavailable(tabID: nil)
+        )
+        let twoLineSize = previewSize(
+            title: String(repeating: "Long page title ", count: 8),
+            image: nil,
+            imageSource: .unavailable(tabID: nil)
+        )
+        let overflowSize = previewSize(
+            title: String(repeating: "Long page title ", count: 24),
+            image: nil,
+            imageSource: .unavailable(tabID: nil)
+        )
+        let snapshotSize = previewSize(
+            title: "Short title",
+            image: NSImage(data: makeImageData()),
+            imageSource: .thumbnail(tabID: 10)
+        )
+
+        XCTAssertGreaterThan(twoLineSize.height, shortTextSize.height)
+        XCTAssertEqual(overflowSize.height, twoLineSize.height, accuracy: 1)
+        XCTAssertGreaterThan(snapshotSize.height, shortTextSize.height + 170)
+        XCTAssertEqual(shortTextSize.width, 280, accuracy: 1)
+        XCTAssertEqual(snapshotSize.width, 280, accuracy: 1)
+    }
+
+    func testActiveBookmarkUsesTextOnlyContentWhileFolderAndSplitBookmarksAreIneligible() throws {
         let state = try makeBrowserState()
         let folder = Bookmark(guid: "folder", title: "Folder", isFolder: true)
         let active = Bookmark(guid: "active", title: "Active", url: "https://active.example")
@@ -431,10 +498,20 @@ final class TabPreviewTests: XCTestCase {
         )
         let bound = Bookmark(guid: "bound", title: "Bound", url: "https://bound.example")
         state.splitBookmarkBindings[bound.guid] = "split-id"
-        let resolver = TabPreviewContentResolver { _ in nil }
+        var requestedIDs: [Int64] = []
+        let resolver = TabPreviewContentResolver { tabID in
+            requestedIDs.append(tabID)
+            return nil
+        }
 
         XCTAssertFalse(resolver.isEligible(.bookmark(folder), in: state))
-        XCTAssertFalse(resolver.isEligible(.bookmark(active), in: state))
+        let activeContent = try XCTUnwrap(resolver.resolve(.bookmark(active), in: state))
+        XCTAssertTrue(resolver.isEligible(.bookmark(active), in: state))
+        XCTAssertEqual(activeContent.title, "Active")
+        XCTAssertEqual(activeContent.url, "https://active.example")
+        XCTAssertNil(activeContent.image)
+        XCTAssertEqual(activeContent.imageSource, .foreground(tabID: nil))
+        XCTAssertTrue(requestedIDs.isEmpty)
         XCTAssertFalse(resolver.isEligible(.bookmark(split), in: state))
         XCTAssertFalse(resolver.isEligible(.bookmark(bound), in: state))
     }
@@ -449,6 +526,26 @@ final class TabPreviewTests: XCTestCase {
             storeDirectoryURL: directory
         )
         return BrowserState(windowId: 7, localStore: store, profileId: "Default")
+    }
+
+    private func previewSize(
+        title: String,
+        image: NSImage?,
+        imageSource: TabPreviewImageSource
+    ) -> CGSize {
+        let viewModel = TabPreviewViewModel()
+        viewModel.update(
+            TabPreviewContent(
+                id: .tab("layout"),
+                title: title,
+                url: "https://example.com/a/long/path",
+                image: image,
+                imageSource: imageSource
+            )
+        )
+        let hostingView = NSHostingView(rootView: TabPreviewView(viewModel: viewModel))
+        hostingView.layoutSubtreeIfNeeded()
+        return hostingView.fittingSize
     }
 
     private func makeTab(

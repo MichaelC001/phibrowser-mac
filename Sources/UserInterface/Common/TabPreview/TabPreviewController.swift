@@ -34,21 +34,14 @@ struct TabPreviewContent {
     let id: TabPreviewTargetID
     let title: String
     let url: String
-    let image: NSImage
+    let image: NSImage?
     let imageSource: TabPreviewImageSource
 }
 
 enum TabPreviewImageSource: Equatable {
-    struct PlaceholderIdentity: Equatable {
-        let targetID: TabPreviewTargetID
-        let title: String
-        let url: String
-        let faviconData: Data?
-    }
-
     case thumbnail(tabID: Int64)
-    case livePlaceholder(tabID: Int64, identity: PlaceholderIdentity)
-    case placeholder(PlaceholderIdentity)
+    case foreground(tabID: Int64?)
+    case unavailable(tabID: Int64?)
 }
 
 @MainActor
@@ -73,15 +66,9 @@ struct TabPreviewContentResolver {
         reusing cachedContent: TabPreviewContent? = nil
     ) -> TabPreviewContent? {
         guard let resolved = resolvedTarget(for: target, in: browserState) else { return nil }
-        let placeholderIdentity = TabPreviewImageSource.PlaceholderIdentity(
-            targetID: resolved.id,
-            title: resolved.title,
-            url: resolved.url,
-            faviconData: resolved.faviconData
-        )
         let resolvedImage = image(
             liveTab: resolved.liveTab,
-            placeholderIdentity: placeholderIdentity,
+            isForeground: resolved.isForeground,
             cachedContent: cachedContent
         )
         return TabPreviewContent(
@@ -107,7 +94,7 @@ struct TabPreviewContentResolver {
         let liveTab: Tab?
         let title: String
         let url: String
-        let faviconData: Data?
+        let isForeground: Bool
     }
 
     private func resolvedTarget(
@@ -133,7 +120,6 @@ struct TabPreviewContentResolver {
             }
         }
         guard !hasSplitMembership(tab: tab, liveTab: liveTab, in: browserState) else { return nil }
-        guard !isForeground(tab: tab, liveTab: liveTab, in: browserState) else { return nil }
 
         let displayTab = liveTab ?? tab
         let url = displayTab.url ?? displayTab.pinnedUrl ?? tab.url ?? tab.pinnedUrl ?? ""
@@ -143,10 +129,7 @@ struct TabPreviewContentResolver {
             liveTab: liveTab,
             title: title,
             url: url,
-            faviconData: displayTab.liveFaviconData
-                ?? displayTab.cachedFaviconData
-                ?? tab.liveFaviconData
-                ?? tab.cachedFaviconData
+            isForeground: isForeground(tab: tab, liveTab: liveTab, in: browserState)
         )
     }
 
@@ -166,11 +149,6 @@ struct TabPreviewContentResolver {
            hasSplitMembership(tab: liveTab, liveTab: liveTab, in: browserState) {
             return nil
         }
-        guard !bookmark.isActive,
-              !isForeground(tab: liveTab, persistentID: bookmark.guid, in: browserState) else {
-            return nil
-        }
-
         let url = liveTab?.url ?? bookmark.url ?? ""
         let liveTitle = liveTab?.title ?? ""
         let title = liveTitle.isEmpty ? bookmark.title : liveTitle
@@ -179,10 +157,8 @@ struct TabPreviewContentResolver {
             liveTab: liveTab,
             title: title,
             url: url,
-            faviconData: liveTab?.liveFaviconData
-                ?? liveTab?.cachedFaviconData
-                ?? bookmark.liveFaviconData
-                ?? bookmark.cachedFaviconData
+            isForeground: bookmark.isActive
+                || isForeground(tab: liveTab, persistentID: bookmark.guid, in: browserState)
         )
     }
 
@@ -270,18 +246,16 @@ struct TabPreviewContentResolver {
 
     private func image(
         liveTab: Tab?,
-        placeholderIdentity: TabPreviewImageSource.PlaceholderIdentity,
+        isForeground: Bool,
         cachedContent: TabPreviewContent?
-    ) -> (image: NSImage, source: TabPreviewImageSource) {
+    ) -> (image: NSImage?, source: TabPreviewImageSource) {
+        if isForeground {
+            let tabID = liveTab.flatMap { $0.guid >= 0 ? Int64($0.guid) : nil }
+            return (nil, .foreground(tabID: tabID))
+        }
+
         guard let liveTab, liveTab.guid >= 0 else {
-            let source = TabPreviewImageSource.placeholder(placeholderIdentity)
-            if cachedContent?.imageSource == source, let cachedContent {
-                return (cachedContent.image, source)
-            }
-            return (
-                placeholderImage(identity: placeholderIdentity),
-                source
-            )
+            return (nil, .unavailable(tabID: nil))
         }
 
         let tabID = Int64(liveTab.guid)
@@ -290,49 +264,15 @@ struct TabPreviewContentResolver {
             return (cachedContent.image, thumbnailSource)
         }
 
-        if let cachedContent,
-           case .livePlaceholder(let cachedTabID, _) = cachedContent.imageSource,
-           cachedTabID == tabID {
-            let source = TabPreviewImageSource.livePlaceholder(
-                tabID: tabID,
-                identity: placeholderIdentity
-            )
-            if cachedContent.imageSource == source {
-                return (cachedContent.image, source)
-            }
-            return (placeholderImage(identity: placeholderIdentity), source)
+        let unavailableSource = TabPreviewImageSource.unavailable(tabID: tabID)
+        if cachedContent?.imageSource == unavailableSource {
+            return (nil, unavailableSource)
         }
 
         if let thumbnail = thumbnailImage(for: liveTab) {
             return (thumbnail, thumbnailSource)
         }
-        let source = TabPreviewImageSource.livePlaceholder(
-            tabID: tabID,
-            identity: placeholderIdentity
-        )
-        return (placeholderImage(identity: placeholderIdentity), source)
-    }
-
-    private func placeholderImage(
-        identity: TabPreviewImageSource.PlaceholderIdentity
-    ) -> NSImage {
-        placeholderImage(
-            faviconData: identity.faviconData,
-            title: identity.title,
-            url: identity.url
-        )
-    }
-
-    private func placeholderImage(faviconData: Data?, title: String, url: String) -> NSImage {
-        let favicon = faviconData.flatMap(NSImage.init(data:))
-            ?? NSImage(systemSymbolName: "globe", accessibilityDescription: nil)
-            ?? NSImage()
-        let displayTitle = title.isEmpty ? url : title
-        return TabDraggingSession.makeTabPlaceholderSnapshot(
-            favicon: favicon,
-            title: displayTitle,
-            needBorder: false
-        )
+        return (nil, unavailableSource)
     }
 }
 
@@ -345,29 +285,32 @@ final class TabPreviewViewModel: ObservableObject {
     }
 }
 
-private struct TabPreviewView: View {
+struct TabPreviewView: View {
     @ObservedObject var viewModel: TabPreviewViewModel
 
     private enum Metrics {
         static let width: CGFloat = 280
         static let imageHeight: CGFloat = width * 10 / 16
-        static let cornerRadius: CGFloat = 12
+        static let cornerRadius: CGFloat = 14
     }
 
     var body: some View {
         if let content = viewModel.content {
             VStack(spacing: 0) {
-                Image(nsImage: content.image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .frame(width: Metrics.width, height: Metrics.imageHeight)
-                    .clipped()
+                if let image = content.image {
+                    Image(nsImage: image)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: Metrics.width, height: Metrics.imageHeight)
+                        .clipped()
+                }
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text(content.title)
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(.primary)
-                        .lineLimit(1)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
 
                     Text(content.url)
                         .font(.system(size: 12))
@@ -380,12 +323,8 @@ private struct TabPreviewView: View {
                 .padding(.vertical, 10)
             }
             .frame(width: Metrics.width)
-            .background(.regularMaterial)
+            .themedBackground(.windowBackground)
             .clipShape(RoundedRectangle(cornerRadius: Metrics.cornerRadius, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: Metrics.cornerRadius, style: .continuous)
-                    .strokeBorder(.primary.opacity(0.12))
-            }
             .fixedSize()
         }
     }
@@ -415,6 +354,7 @@ final class TabPreviewController {
     func pointerEntered(
         ownerID: UUID,
         anchorView: NSView,
+        anchorRectProvider: CustomTooltipAnchorRectProvider?,
         target: TabPreviewTarget,
         browserState: BrowserState,
         placement: CustomTooltipPlacement
@@ -430,6 +370,7 @@ final class TabPreviewController {
             anchorView: anchorView,
             content: previewView,
             configuration: configuration(placement: placement),
+            anchorRectProvider: anchorRectProvider,
             prepareForPresentation: preparation(
                 anchorView: anchorView,
                 target: target,
@@ -442,6 +383,7 @@ final class TabPreviewController {
     func update(
         ownerID: UUID,
         anchorView: NSView,
+        anchorRectProvider: CustomTooltipAnchorRectProvider?,
         target: TabPreviewTarget,
         browserState: BrowserState,
         placement: CustomTooltipPlacement
@@ -460,6 +402,7 @@ final class TabPreviewController {
                 anchorView: anchorView,
                 content: previewView,
                 configuration: configuration(placement: placement),
+                anchorRectProvider: anchorRectProvider,
                 prepareForPresentation: preparation(
                     anchorView: anchorView,
                     target: target,
@@ -473,6 +416,7 @@ final class TabPreviewController {
                 anchorView: anchorView,
                 content: previewView,
                 configuration: configuration(placement: placement),
+                anchorRectProvider: anchorRectProvider,
                 prepareForPresentation: preparation(
                     anchorView: anchorView,
                     target: target,
@@ -537,6 +481,7 @@ final class TabPreviewRegistration {
     private weak var anchorView: NSView?
     private weak var browserState: BrowserState?
     private weak var activeController: TabPreviewController?
+    private var anchorRectProvider: CustomTooltipAnchorRectProvider?
     private var target: TabPreviewTarget?
     private var targetID: TabPreviewTargetID?
     private var placement: CustomTooltipPlacement = .below
@@ -552,7 +497,8 @@ final class TabPreviewRegistration {
         anchorView: NSView,
         target: TabPreviewTarget,
         browserState: BrowserState,
-        placement: CustomTooltipPlacement
+        placement: CustomTooltipPlacement,
+        anchorRectProvider: CustomTooltipAnchorRectProvider? = nil
     ) {
         let nextTargetID = target.logicalID
         let sameTarget = targetID == nextTargetID
@@ -563,6 +509,7 @@ final class TabPreviewRegistration {
             dismissImmediately()
         }
         self.anchorView = anchorView
+        self.anchorRectProvider = anchorRectProvider
         self.target = target
         targetID = nextTargetID
         self.browserState = browserState
@@ -619,6 +566,7 @@ final class TabPreviewRegistration {
         liveTabCancellables.removeAll()
         hoverStateCancellables.removeAll()
         anchorView = nil
+        anchorRectProvider = nil
         browserState = nil
         target = nil
         targetID = nil
@@ -642,6 +590,7 @@ final class TabPreviewRegistration {
         controller.pointerEntered(
             ownerID: ownerID,
             anchorView: anchorView,
+            anchorRectProvider: anchorRectProvider,
             target: target,
             browserState: browserState,
             placement: placement
@@ -664,6 +613,7 @@ final class TabPreviewRegistration {
         controller.update(
             ownerID: ownerID,
             anchorView: anchorView,
+            anchorRectProvider: anchorRectProvider,
             target: target,
             browserState: browserState,
             placement: placement

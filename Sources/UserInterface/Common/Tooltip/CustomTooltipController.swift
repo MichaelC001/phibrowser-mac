@@ -11,6 +11,8 @@ import SwiftUI
 enum CustomTooltipPlacement: Equatable {
     case below
     case right
+    case belowAttached
+    case rightTopAttached
 }
 
 enum CustomTooltipHandoffGroup: Equatable {
@@ -40,6 +42,16 @@ struct CustomTooltipGeometry {
                 x: anchorScreenRect.maxX + anchorGap,
                 y: anchorScreenRect.midY - contentSize.height / 2
             )
+        case .belowAttached:
+            preferredOrigin = CGPoint(
+                x: anchorScreenRect.midX - contentSize.width / 2,
+                y: anchorScreenRect.minY - contentSize.height
+            )
+        case .rightTopAttached:
+            preferredOrigin = CGPoint(
+                x: anchorScreenRect.maxX,
+                y: anchorScreenRect.maxY - contentSize.height
+            )
         }
 
         guard let visibleFrame else { return preferredOrigin }
@@ -54,6 +66,18 @@ struct CustomTooltipGeometry {
             }
         case .right:
             let leftX = anchorScreenRect.minX - anchorGap - contentSize.width
+            if origin.x + contentSize.width > visibleFrame.maxX - screenMargin,
+               leftX >= visibleFrame.minX + screenMargin {
+                origin.x = leftX
+            }
+        case .belowAttached:
+            let aboveY = anchorScreenRect.maxY
+            if origin.y < visibleFrame.minY + screenMargin,
+               aboveY + contentSize.height <= visibleFrame.maxY - screenMargin {
+                origin.y = aboveY
+            }
+        case .rightTopAttached:
+            let leftX = anchorScreenRect.minX - contentSize.width
             if origin.x + contentSize.width > visibleFrame.maxX - screenMargin,
                leftX >= visibleFrame.minX + screenMargin {
                 origin.x = leftX
@@ -168,6 +192,7 @@ protocol CustomTooltipPresenting: AnyObject {
 }
 
 typealias CustomTooltipPresentationPreparation = @MainActor () -> Bool
+typealias CustomTooltipAnchorRectProvider = @MainActor (NSView) -> CGRect
 
 @MainActor
 private struct CustomTooltipThemedContent: View {
@@ -240,7 +265,6 @@ private final class CustomTooltipPanelPresenter: CustomTooltipPresenting {
         )
 
         let targetFrame = CGRect(origin: origin, size: size)
-        hostingView.frame = CGRect(origin: .zero, size: size)
         if isVisible,
            panel.isVisible,
            frameAnimationDuration > 0,
@@ -292,6 +316,7 @@ private final class CustomTooltipPanelPresenter: CustomTooltipPresenting {
         panel.collectionBehavior = [.fullScreenAuxiliary, .transient, .ignoresCycle]
 
         let hostingView = NSHostingView(rootView: AnyView(EmptyView()))
+        hostingView.autoresizingMask = [.width, .height]
         panel.contentView = hostingView
 
         self.panel = panel
@@ -324,6 +349,7 @@ private final class CustomTooltipRequest {
     weak var anchorView: NSView?
     var content: AnyView
     var configuration: CustomTooltipConfiguration
+    var anchorRectProvider: CustomTooltipAnchorRectProvider?
     var prepareForPresentation: CustomTooltipPresentationPreparation?
 
     init(
@@ -331,12 +357,14 @@ private final class CustomTooltipRequest {
         anchorView: NSView,
         content: AnyView,
         configuration: CustomTooltipConfiguration,
+        anchorRectProvider: CustomTooltipAnchorRectProvider?,
         prepareForPresentation: CustomTooltipPresentationPreparation?
     ) {
         self.ownerID = ownerID
         self.anchorView = anchorView
         self.content = content
         self.configuration = configuration
+        self.anchorRectProvider = anchorRectProvider
         self.prepareForPresentation = prepareForPresentation
     }
 }
@@ -415,6 +443,7 @@ final class CustomTooltipController {
         anchorView: NSView,
         content: AnyView,
         configuration: CustomTooltipConfiguration,
+        anchorRectProvider: CustomTooltipAnchorRectProvider? = nil,
         prepareForPresentation: CustomTooltipPresentationPreparation? = nil
     ) {
         let request = CustomTooltipRequest(
@@ -422,6 +451,7 @@ final class CustomTooltipController {
             anchorView: anchorView,
             content: content,
             configuration: configuration,
+            anchorRectProvider: anchorRectProvider,
             prepareForPresentation: prepareForPresentation
         )
 
@@ -452,6 +482,7 @@ final class CustomTooltipController {
         anchorView: NSView,
         content: AnyView,
         configuration: CustomTooltipConfiguration,
+        anchorRectProvider: CustomTooltipAnchorRectProvider? = nil,
         prepareForPresentation: CustomTooltipPresentationPreparation? = nil
     ) {
         if let pendingRequest, pendingRequest.ownerID == ownerID {
@@ -459,6 +490,7 @@ final class CustomTooltipController {
             pendingRequest.anchorView = anchorView
             pendingRequest.content = content
             pendingRequest.configuration = configuration
+            pendingRequest.anchorRectProvider = anchorRectProvider
             pendingRequest.prepareForPresentation = prepareForPresentation
             if previousShowDelay != configuration.normalizedShowDelay {
                 schedulePendingPresentation(pendingRequest)
@@ -471,6 +503,7 @@ final class CustomTooltipController {
         activeRequest.anchorView = anchorView
         activeRequest.content = content
         activeRequest.configuration = configuration
+        activeRequest.anchorRectProvider = anchorRectProvider
         activeRequest.prepareForPresentation = prepareForPresentation
         refreshVisibleRequest(activeRequest)
         if self.activeRequest === activeRequest,
@@ -606,9 +639,15 @@ final class CustomTooltipController {
 
         let visibleBounds = anchorView.bounds.intersection(anchorView.visibleRect)
         guard !visibleBounds.isEmpty else { return nil }
-        let rectInWindow = anchorView.convert(visibleBounds, to: nil)
-        let anchorScreenRect = window.convertToScreen(rectInWindow)
-        guard anchorScreenRect.contains(mouseLocation()) else { return nil }
+        let hoverRectInWindow = anchorView.convert(visibleBounds, to: nil)
+        let hoverScreenRect = window.convertToScreen(hoverRectInWindow)
+        guard hoverScreenRect.contains(mouseLocation()) else { return nil }
+
+        let anchorBounds = (request.anchorRectProvider?(anchorView) ?? anchorView.bounds)
+            .intersection(visibleBounds)
+        guard !anchorBounds.isEmpty else { return nil }
+        let anchorRectInWindow = anchorView.convert(anchorBounds, to: nil)
+        let anchorScreenRect = window.convertToScreen(anchorRectInWindow)
 
         let screen = NSScreen.screens.first { $0.frame.contains(
             CGPoint(x: anchorScreenRect.midX, y: anchorScreenRect.midY)

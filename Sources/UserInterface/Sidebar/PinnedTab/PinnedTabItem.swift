@@ -124,7 +124,7 @@ class PinnedTabItem: NSCollectionViewItem, NSMenuDelegate {
                 anchorView: view,
                 target: .tab(tab),
                 browserState: browserState,
-                placement: .right
+                placement: .belowAttached
             )
         } else {
             tabPreviewRegistration.invalidate()
