@@ -92,6 +92,7 @@ class BookmarkCellView: SidebarCellView, TabPreviewInteractionCancelling {
     private let secondaryTabViewModel = TabViewModel()
     private let hoverRegionView = SidebarTabHoverRegionView()
     private let tabPreviewRegistration = TabPreviewRegistration()
+    private let splitTabPreviewRegistration = SplitTabPreviewRegistration()
     // Keep the rename field in AppKit instead of the SwiftUI subtree.
     // Hover-driven SwiftUI updates were rebuilding the representable path and
     // tearing down the field editor mid-rename. SwiftUI makes this much more
@@ -103,6 +104,7 @@ class BookmarkCellView: SidebarCellView, TabPreviewInteractionCancelling {
     private weak var configuredBookmark: Bookmark?
     private weak var configuredPrimaryTab: Tab?
     private weak var configuredSecondaryTab: Tab?
+    private var usesSplitTabPreview = false
     private var isEditingActive = false
 
     weak var browserState: BrowserState?
@@ -132,12 +134,15 @@ class BookmarkCellView: SidebarCellView, TabPreviewInteractionCancelling {
         editField.isHidden = true
         primaryTabViewModel.prepareForReuse()
         secondaryTabViewModel.prepareForReuse()
+        usesSplitTabPreview = false
         tabPreviewRegistration.invalidate()
+        splitTabPreviewRegistration.invalidate()
         resetState()
     }
 
     func cancelTabPreviewForInteraction() {
         tabPreviewRegistration.cancelForInteraction()
+        splitTabPreviewRegistration.cancelForInteraction()
     }
 
     private func setupViews() {
@@ -167,12 +172,21 @@ class BookmarkCellView: SidebarCellView, TabPreviewInteractionCancelling {
         updateEditFieldLayout()
 
         tabPreviewRegistration.onEligibilityChanged = { [weak self] isEligible in
+            guard self?.usesSplitTabPreview == false else { return }
+            self?.viewState.showsTabPreview = isEligible
+        }
+        splitTabPreviewRegistration.onEligibilityChanged = { [weak self] isEligible in
+            guard self?.usesSplitTabPreview == true else { return }
             self?.viewState.showsTabPreview = isEligible
         }
 
         hoverRegionView.onHoverChanged = { [weak self] isHovered in
             self?.viewState.isHovered = isHovered
-            self?.tabPreviewRegistration.setHovering(isHovered)
+            if self?.usesSplitTabPreview == true {
+                self?.splitTabPreviewRegistration.setHovering(isHovered)
+            } else {
+                self?.tabPreviewRegistration.setHovering(isHovered)
+            }
         }
         addSubview(hoverRegionView)
         hoverRegionView.snp.makeConstraints { make in
@@ -302,22 +316,7 @@ class BookmarkCellView: SidebarCellView, TabPreviewInteractionCancelling {
         editField.stringValue = bookmark.title
         updateEditFieldLayout()
 
-        if let state = resolvedBrowserState {
-            tabPreviewRegistration.configure(
-                anchorView: self,
-                target: .bookmark(bookmark),
-                browserState: state,
-                placement: .rightTopAttached,
-                anchorRectProvider: { view in
-                    view.bounds.insetBy(
-                        dx: WebContentConstant.edgesSpacing,
-                        dy: 2
-                    )
-                }
-            )
-        } else {
-            tabPreviewRegistration.invalidate()
-        }
+        configurePreview(for: bookmark, browserState: resolvedBrowserState)
 
         refreshLiveTabs(for: bookmark)
         applyTitleAndSplitState(bookmark: bookmark,
@@ -339,6 +338,7 @@ class BookmarkCellView: SidebarCellView, TabPreviewInteractionCancelling {
                                              primaryTitle: primaryTitle,
                                              secondaryUrl: secondaryUrl,
                                              secondaryTitle: secondaryTitle)
+                self.configurePreview(for: bookmark, browserState: self.resolvedBrowserState)
             }
             .store(in: &cancellables)
 
@@ -348,6 +348,7 @@ class BookmarkCellView: SidebarCellView, TabPreviewInteractionCancelling {
             .sink { [weak self, weak bookmark] url in
                 guard let self, let bookmark else { return }
                 self.updatePrimaryFavicon(bookmark: bookmark, pageUrl: url)
+                self.configurePreview(for: bookmark, browserState: self.resolvedBrowserState)
             }
             .store(in: &cancellables)
 
@@ -427,6 +428,40 @@ class BookmarkCellView: SidebarCellView, TabPreviewInteractionCancelling {
             return provider.underlyingBookmark
         }
         return nil
+    }
+
+    private func configurePreview(for bookmark: Bookmark, browserState: BrowserState?) {
+        guard let browserState else {
+            usesSplitTabPreview = false
+            tabPreviewRegistration.invalidate()
+            splitTabPreviewRegistration.invalidate()
+            return
+        }
+
+        let anchorRectProvider: CustomTooltipAnchorRectProvider = { view in
+            view.bounds.insetBy(dx: WebContentConstant.edgesSpacing, dy: 2)
+        }
+        if let target = SplitTabPreviewTarget.make(representing: bookmark) {
+            usesSplitTabPreview = true
+            tabPreviewRegistration.invalidate()
+            splitTabPreviewRegistration.configure(
+                anchorView: self,
+                target: target,
+                browserState: browserState,
+                placement: .rightTopAttached,
+                anchorRectProvider: anchorRectProvider
+            )
+        } else {
+            usesSplitTabPreview = false
+            splitTabPreviewRegistration.invalidate()
+            tabPreviewRegistration.configure(
+                anchorView: self,
+                target: .bookmark(bookmark),
+                browserState: browserState,
+                placement: .rightTopAttached,
+                anchorRectProvider: anchorRectProvider
+            )
+        }
     }
 
     private var resolvedBrowserState: BrowserState? {
@@ -592,7 +627,7 @@ class BookmarkCellView: SidebarCellView, TabPreviewInteractionCancelling {
 
     private func closeButtonTapped() {
         guard let bookmark = configuredBookmark ?? resolvedBookmark else { return }
-        tabPreviewRegistration.cancelForInteraction()
+        cancelTabPreviewForInteraction()
         resolvedBrowserState?.closeBookmark(bookmark)
     }
 

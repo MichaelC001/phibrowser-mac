@@ -219,12 +219,6 @@
 		8E0B00022FC0000000000001 /* BrowserState+GroupOverview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E0B00042FC0000000000001 /* BrowserState+GroupOverview.swift */; };
 		8E0B00052FC0000000000001 /* GroupOverviewViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E0B00072FC0000000000001 /* GroupOverviewViewController.swift */; };
 		8E0B00062FC0000000000001 /* GroupOverviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E0B00082FC0000000000001 /* GroupOverviewView.swift */; };
-		B06B4D010000000000000001 /* BookmarkManagementScope.swift in Sources */ = {isa = PBXBuildFile; fileRef = B06B4D110000000000000001 /* BookmarkManagementScope.swift */; };
-		B06B4D020000000000000002 /* BookmarkManagerProjection.swift in Sources */ = {isa = PBXBuildFile; fileRef = B06B4D120000000000000002 /* BookmarkManagerProjection.swift */; };
-		B06B4D030000000000000003 /* BookmarkManagerDropResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = B06B4D130000000000000003 /* BookmarkManagerDropResolver.swift */; };
-		B06B4D040000000000000004 /* BookmarkManagerCellView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B06B4D140000000000000004 /* BookmarkManagerCellView.swift */; };
-		B06B4D050000000000000005 /* BookmarkManagerViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B06B4D150000000000000005 /* BookmarkManagerViewController.swift */; };
-		B06B4D060000000000000006 /* BookmarkManagerRoute.swift in Sources */ = {isa = PBXBuildFile; fileRef = B06B4D160000000000000006 /* BookmarkManagerRoute.swift */; };
 		8E21BB6A2FC5503D00378ABE /* PlaceholderShellViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E21BB692FC5503D00378ABE /* PlaceholderShellViewController.swift */; };
 		8E2A91272FB18051003E1F05 /* TabGroupDragContext.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E2A91252FB18051003E1F05 /* TabGroupDragContext.swift */; };
 		8E2A91282FB18051003E1F05 /* TabGroupDragController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E2A91262FB18051003E1F05 /* TabGroupDragController.swift */; };
@@ -328,6 +322,12 @@
 		B02586F82E42FD97001B08FC /* PhiApplication.m in Sources */ = {isa = PBXBuildFile; fileRef = B02586F32E42FD97001B08FC /* PhiApplication.m */; };
 		B025870E2E430305001B08FC /* MainSplitViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B025870D2E430305001B08FC /* MainSplitViewController.swift */; };
 		B02587122E43038B001B08FC /* Tab.swift in Sources */ = {isa = PBXBuildFile; fileRef = B02587112E43038B001B08FC /* Tab.swift */; };
+		B06B4D010000000000000001 /* BookmarkManagementScope.swift in Sources */ = {isa = PBXBuildFile; fileRef = B06B4D110000000000000001 /* BookmarkManagementScope.swift */; };
+		B06B4D020000000000000002 /* BookmarkManagerProjection.swift in Sources */ = {isa = PBXBuildFile; fileRef = B06B4D120000000000000002 /* BookmarkManagerProjection.swift */; };
+		B06B4D030000000000000003 /* BookmarkManagerDropResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = B06B4D130000000000000003 /* BookmarkManagerDropResolver.swift */; };
+		B06B4D040000000000000004 /* BookmarkManagerCellView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B06B4D140000000000000004 /* BookmarkManagerCellView.swift */; };
+		B06B4D050000000000000005 /* BookmarkManagerViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B06B4D150000000000000005 /* BookmarkManagerViewController.swift */; };
+		B06B4D060000000000000006 /* BookmarkManagerRoute.swift in Sources */ = {isa = PBXBuildFile; fileRef = B06B4D160000000000000006 /* BookmarkManagerRoute.swift */; };
 		B0C4694E2E3B10E2007F0C7A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B0C4694D2E3B10E2007F0C7A /* Assets.xcassets */; };
 		B0F370B92E430CA5000B51F9 /* WebContentViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0F370B82E430CA5000B51F9 /* WebContentViewController.swift */; };
 		B0F370C92E43242F000B51F9 /* PhiSplitView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0F370C82E43242F000B51F9 /* PhiSplitView.swift */; };
@@ -353,6 +353,7 @@
 		C70000000000000000000012 /* CustomTooltip+Hosting.swift in Sources */ = {isa = PBXBuildFile; fileRef = C70000000000000000000002 /* CustomTooltip+Hosting.swift */; };
 		C70000000000000000000013 /* CommandShortcutTooltipContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = C70000000000000000000003 /* CommandShortcutTooltipContent.swift */; };
 		C80000000000000000000011 /* TabPreviewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C80000000000000000000001 /* TabPreviewController.swift */; };
+		C80000000000000000000012 /* SplitTabPreviewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C80000000000000000000002 /* SplitTabPreviewController.swift */; };
 		CC24EF062E89223500CE9DD7 /* LoginController.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC24EF052E89223500CE9DD7 /* LoginController.swift */; };
 		CC24EF082E89251D00CE9DD7 /* AuthManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC24EF072E89251D00CE9DD7 /* AuthManager.swift */; };
 		CC2708982E7959DF00B65AB8 /* PinnedTabLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC2708972E7959DF00B65AB8 /* PinnedTabLayout.swift */; };
@@ -854,12 +855,6 @@
 		8E0B00042FC0000000000001 /* BrowserState+GroupOverview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "BrowserState+GroupOverview.swift"; sourceTree = "<group>"; };
 		8E0B00072FC0000000000001 /* GroupOverviewViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupOverviewViewController.swift; sourceTree = "<group>"; };
 		8E0B00082FC0000000000001 /* GroupOverviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupOverviewView.swift; sourceTree = "<group>"; };
-		B06B4D110000000000000001 /* BookmarkManagementScope.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookmarkManagementScope.swift; sourceTree = "<group>"; };
-		B06B4D120000000000000002 /* BookmarkManagerProjection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookmarkManagerProjection.swift; sourceTree = "<group>"; };
-		B06B4D130000000000000003 /* BookmarkManagerDropResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookmarkManagerDropResolver.swift; sourceTree = "<group>"; };
-		B06B4D140000000000000004 /* BookmarkManagerCellView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookmarkManagerCellView.swift; sourceTree = "<group>"; };
-		B06B4D150000000000000005 /* BookmarkManagerViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookmarkManagerViewController.swift; sourceTree = "<group>"; };
-		B06B4D160000000000000006 /* BookmarkManagerRoute.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookmarkManagerRoute.swift; sourceTree = "<group>"; };
 		8E21BB692FC5503D00378ABE /* PlaceholderShellViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaceholderShellViewController.swift; sourceTree = "<group>"; };
 		8E2A91252FB18051003E1F05 /* TabGroupDragContext.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabGroupDragContext.swift; sourceTree = "<group>"; };
 		8E2A91262FB18051003E1F05 /* TabGroupDragController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabGroupDragController.swift; sourceTree = "<group>"; };
@@ -965,6 +960,12 @@
 		B025870D2E430305001B08FC /* MainSplitViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainSplitViewController.swift; sourceTree = "<group>"; };
 		B02587112E43038B001B08FC /* Tab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tab.swift; sourceTree = "<group>"; };
 		B02BEB632E3B2F5A00E5859A /* Package.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = Package.swift; path = PackageCollection/Package.swift; sourceTree = "<group>"; };
+		B06B4D110000000000000001 /* BookmarkManagementScope.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookmarkManagementScope.swift; sourceTree = "<group>"; };
+		B06B4D120000000000000002 /* BookmarkManagerProjection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookmarkManagerProjection.swift; sourceTree = "<group>"; };
+		B06B4D130000000000000003 /* BookmarkManagerDropResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookmarkManagerDropResolver.swift; sourceTree = "<group>"; };
+		B06B4D140000000000000004 /* BookmarkManagerCellView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookmarkManagerCellView.swift; sourceTree = "<group>"; };
+		B06B4D150000000000000005 /* BookmarkManagerViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookmarkManagerViewController.swift; sourceTree = "<group>"; };
+		B06B4D160000000000000006 /* BookmarkManagerRoute.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookmarkManagerRoute.swift; sourceTree = "<group>"; };
 		B0C469482E3B10E1007F0C7A /* Phi.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Phi.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B0C4694D2E3B10E2007F0C7A /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		B0C469522E3B10E2007F0C7A /* PhiBrowser.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = PhiBrowser.entitlements; sourceTree = "<group>"; };
@@ -994,6 +995,7 @@
 		C70000000000000000000002 /* CustomTooltip+Hosting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "CustomTooltip+Hosting.swift"; sourceTree = "<group>"; };
 		C70000000000000000000003 /* CommandShortcutTooltipContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandShortcutTooltipContent.swift; sourceTree = "<group>"; };
 		C80000000000000000000001 /* TabPreviewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabPreviewController.swift; sourceTree = "<group>"; };
+		C80000000000000000000002 /* SplitTabPreviewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SplitTabPreviewController.swift; sourceTree = "<group>"; };
 		CC24EF052E89223500CE9DD7 /* LoginController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginController.swift; sourceTree = "<group>"; };
 		CC24EF072E89251D00CE9DD7 /* AuthManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthManager.swift; sourceTree = "<group>"; };
 		CC2708972E7959DF00B65AB8 /* PinnedTabLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PinnedTabLayout.swift; sourceTree = "<group>"; };
@@ -1681,19 +1683,6 @@
 			path = GroupOverview;
 			sourceTree = "<group>";
 		};
-		B06B4D210000000000000001 /* BookmarkManager */ = {
-			isa = PBXGroup;
-			children = (
-				B06B4D110000000000000001 /* BookmarkManagementScope.swift */,
-				B06B4D120000000000000002 /* BookmarkManagerProjection.swift */,
-				B06B4D130000000000000003 /* BookmarkManagerDropResolver.swift */,
-				B06B4D140000000000000004 /* BookmarkManagerCellView.swift */,
-				B06B4D150000000000000005 /* BookmarkManagerViewController.swift */,
-				B06B4D160000000000000006 /* BookmarkManagerRoute.swift */,
-			);
-			path = BookmarkManager;
-			sourceTree = "<group>";
-		};
 		8E6145812F753114001919BA /* LayoutSelection */ = {
 			isa = PBXGroup;
 			children = (
@@ -1920,6 +1909,19 @@
 			path = Frameworks;
 			sourceTree = "<group>";
 		};
+		B06B4D210000000000000001 /* BookmarkManager */ = {
+			isa = PBXGroup;
+			children = (
+				B06B4D110000000000000001 /* BookmarkManagementScope.swift */,
+				B06B4D120000000000000002 /* BookmarkManagerProjection.swift */,
+				B06B4D130000000000000003 /* BookmarkManagerDropResolver.swift */,
+				B06B4D140000000000000004 /* BookmarkManagerCellView.swift */,
+				B06B4D150000000000000005 /* BookmarkManagerViewController.swift */,
+				B06B4D160000000000000006 /* BookmarkManagerRoute.swift */,
+			);
+			path = BookmarkManager;
+			sourceTree = "<group>";
+		};
 		B0C4693F2E3B10E1007F0C7A = {
 			isa = PBXGroup;
 			children = (
@@ -2087,6 +2089,7 @@
 			isa = PBXGroup;
 			children = (
 				C80000000000000000000001 /* TabPreviewController.swift */,
+				C80000000000000000000002 /* SplitTabPreviewController.swift */,
 			);
 			path = TabPreview;
 			sourceTree = "<group>";
@@ -2863,6 +2866,7 @@
 				C70000000000000000000012 /* CustomTooltip+Hosting.swift in Sources */,
 				C70000000000000000000013 /* CommandShortcutTooltipContent.swift in Sources */,
 				C80000000000000000000011 /* TabPreviewController.swift in Sources */,
+				C80000000000000000000012 /* SplitTabPreviewController.swift in Sources */,
 				CCEF2D222E584F1700FDDEB2 /* URLProcessor.swift in Sources */,
 				A81113410000000000000004 /* FirstTimeActionTracker.swift in Sources */,
 				4D454D4F5259000000000001 /* MemoryUsageModels.swift in Sources */,

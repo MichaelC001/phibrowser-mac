@@ -337,17 +337,22 @@ final class TabPreviewController {
     private static let handoffFrameAnimationDuration: TimeInterval = 0.18
 
     private weak var window: NSWindow?
+    /// Shared window-scoped presentation surface. Split previews submit their
+    /// own view through the same controller without sharing preview state.
+    let presentationController: CustomTooltipController
     private let resolver: TabPreviewContentResolver
     private let viewModel = TabPreviewViewModel()
     private lazy var previewView = AnyView(TabPreviewView(viewModel: viewModel))
 
     init(window: NSWindow) {
         self.window = window
+        presentationController = window.customTooltipController
         resolver = TabPreviewContentResolver()
     }
 
     init(window: NSWindow, resolver: TabPreviewContentResolver) {
         self.window = window
+        presentationController = window.customTooltipController
         self.resolver = resolver
     }
 
@@ -362,10 +367,10 @@ final class TabPreviewController {
         guard let window,
               anchorView.window === window,
               resolver.isEligible(target, in: browserState) else {
-            window?.customTooltipController.dismiss(ownerID: ownerID)
+            presentationController.dismiss(ownerID: ownerID)
             return
         }
-        window.customTooltipController.pointerEntered(
+        presentationController.pointerEntered(
             ownerID: ownerID,
             anchorView: anchorView,
             content: previewView,
@@ -394,7 +399,7 @@ final class TabPreviewController {
             dismiss(ownerID: ownerID)
             return
         }
-        let tooltipController = window.customTooltipController
+        let tooltipController = presentationController
         let isActiveOwner = tooltipController.activeOwnerID == ownerID
         if isActiveOwner || tooltipController.pendingOwnerID == ownerID {
             tooltipController.update(
@@ -428,11 +433,11 @@ final class TabPreviewController {
     }
 
     func pointerExited(ownerID: UUID) {
-        window?.customTooltipController.pointerExited(ownerID: ownerID)
+        presentationController.pointerExited(ownerID: ownerID)
     }
 
     func dismiss(ownerID: UUID) {
-        window?.customTooltipController.dismiss(ownerID: ownerID)
+        presentationController.dismiss(ownerID: ownerID)
     }
 
     private func configuration(placement: CustomTooltipPlacement) -> CustomTooltipConfiguration {

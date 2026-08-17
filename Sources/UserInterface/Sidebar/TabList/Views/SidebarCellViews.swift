@@ -441,7 +441,7 @@ class SidebarTabCellView: SidebarCellView, TabPreviewInteractionCancelling {
 /// half shows its favicon, title, and an x close button that appears on
 /// cell hover. The pane whose tab is focused gets a solid white pill,
 /// the other half stays at the cell-level hover tint.
-class SidebarSplitPairCellView: SidebarCellView {
+class SidebarSplitPairCellView: SidebarCellView, TabPreviewInteractionCancelling {
     private static let closeButtonSize: CGFloat = 24
     private static let titleTrailingSpacing: CGFloat = 5
     /// The left pane is already inset 2 points from the row background, so
@@ -478,6 +478,8 @@ class SidebarSplitPairCellView: SidebarCellView {
     private weak var configuredLeftTab: Tab?
     private weak var configuredRightTab: Tab?
     private var configuredSplitId: String?
+    private let splitTabPreviewRegistration = SplitTabPreviewRegistration()
+    private var showsSplitTabPreview = false
     /// Owning window's BrowserState. Lets the cell re-resolve which pane
     /// is "left" after Chromium reorders the strip (e.g. via the
     /// "Reverse Panes" context-menu action or a drag) — the
@@ -523,6 +525,7 @@ class SidebarSplitPairCellView: SidebarCellView {
         configuredLeftTab = nil
         configuredRightTab = nil
         configuredSplitId = nil
+        splitTabPreviewRegistration.invalidate()
         outerBackground.isSelected = false
         isCellHovered = false
         setCloseButtonSpaceReserved(false)
@@ -545,6 +548,10 @@ class SidebarSplitPairCellView: SidebarCellView {
         outerBackground.responseToClickAction = false
         outerBackground.layer?.cornerRadius = 8
         outerBackground.layer?.cornerCurve = .continuous
+        splitTabPreviewRegistration.onEligibilityChanged = { [weak self] isEligible in
+            self?.showsSplitTabPreview = isEligible
+            self?.updatePaneToolTips()
+        }
         addSubview(outerBackground)
         _ = outerBackground.phi.subscribe { [weak self] _, _ in
             self?.updateSelected()
@@ -648,6 +655,7 @@ class SidebarSplitPairCellView: SidebarCellView {
 
     private func handlePaneClick(isLeft: Bool) {
         guard let tab = (isLeft ? configuredLeftTab : configuredRightTab) else { return }
+        cancelTabPreviewForInteraction()
         let modifierFlags = NSApp.currentEvent?.modifierFlags ?? []
         if let leftTab = configuredLeftTab,
            let rightTab = configuredRightTab {
@@ -761,7 +769,10 @@ class SidebarSplitPairCellView: SidebarCellView {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        guard window != nil else { return }
+        guard window != nil else {
+            splitTabPreviewRegistration.invalidate()
+            return
+        }
         themeObserver.rebind(to: themeStateProvider)
     }
 
@@ -779,17 +790,21 @@ class SidebarSplitPairCellView: SidebarCellView {
 
     override func mouseEntered(with event: NSEvent) {
         isCellHovered = true
+        splitTabPreviewRegistration.setHovering(true)
     }
 
     override func mouseExited(with event: NSEvent) {
         isCellHovered = false
+        splitTabPreviewRegistration.setHovering(false)
     }
 
     private func leftCloseTapped() {
+        cancelTabPreviewForInteraction()
         configuredLeftTab?.close()
     }
 
     private func rightCloseTapped() {
+        cancelTabPreviewForInteraction()
         configuredRightTab?.close()
     }
 
@@ -834,6 +849,27 @@ class SidebarSplitPairCellView: SidebarCellView {
         configuredLeftTab = pair.leftTab
         configuredRightTab = pair.rightTab
         configuredSplitId = pair.groupId
+
+        let state = browserState ?? pair.browserState
+        if let state,
+           let target = SplitTabPreviewTarget.make(representing: pair.leftTab, in: state) {
+            splitTabPreviewRegistration.configure(
+                anchorView: self,
+                target: target,
+                browserState: state,
+                placement: .rightTopAttached,
+                anchorRectProvider: { view in
+                    CGRect(
+                        x: view.bounds.minX + WebContentConstant.edgesSpacing,
+                        y: view.bounds.minY + 2,
+                        width: max(0, view.bounds.width - WebContentConstant.edgesSpacing * 2),
+                        height: max(0, view.bounds.height - 4)
+                    )
+                }
+            )
+        } else {
+            splitTabPreviewRegistration.invalidate()
+        }
 
         refreshFavicon(into: leftIconView, for: pair.leftTab, handle: &leftFaviconHandle)
         refreshFavicon(into: rightIconView, for: pair.rightTab, handle: &rightFaviconHandle)
@@ -960,7 +996,16 @@ class SidebarSplitPairCellView: SidebarCellView {
     private func updatePaneTitle(isLeft: Bool, title: String) {
         let label = isLeft ? leftTitleLabel : rightTitleLabel
         label.stringValue = title
-        label.toolTip = title
+        label.toolTip = showsSplitTabPreview ? nil : title
+    }
+
+    private func updatePaneToolTips() {
+        leftTitleLabel.toolTip = showsSplitTabPreview ? nil : configuredLeftTab?.title
+        rightTitleLabel.toolTip = showsSplitTabPreview ? nil : configuredRightTab?.title
+    }
+
+    func cancelTabPreviewForInteraction() {
+        splitTabPreviewRegistration.cancelForInteraction()
     }
 
     private func refreshFaviconForTab(_ tab: Tab) {

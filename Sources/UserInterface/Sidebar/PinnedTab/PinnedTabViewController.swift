@@ -89,6 +89,7 @@ class PinnedTabViewController: NSViewController {
                 splitItem.configure(
                     leftTab: group.leftTab,
                     rightTab: group.rightTab,
+                    browserState: browserState,
                     themeProvider: browserState?.themeContext ?? ThemeManager.shared
                 )
                 splitItem.itemClicked = { [weak self] tab in
