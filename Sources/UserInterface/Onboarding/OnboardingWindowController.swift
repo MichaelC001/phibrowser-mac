@@ -184,6 +184,7 @@ class OnboardingWindowController: NSWindowController {
     }
 
     func completeGuestOOBE() {
+        PhiPreferences.GeneralSettings.saveLayoutMode(.comfortable)
         analyticsSession.finish(isGuest: true, stepsCompleted: 2)
     }
 
