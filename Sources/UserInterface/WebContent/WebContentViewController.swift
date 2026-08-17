@@ -1460,6 +1460,7 @@ class WebContentViewController: NSViewController {
 
     private func hideBookmarkManagerIfNeeded() {
         guard let controller = bookmarkManagerController else { return }
+        controller.finishAnalyticsSession()
         controller.view.removeFromSuperview()
         controller.removeFromParent()
         bookmarkManagerController = nil

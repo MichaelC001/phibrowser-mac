@@ -140,6 +140,8 @@ are out of scope.
 | `scripting_command_invoked` | An allowlisted AppleScript command other than version checking returns; includes command, outcome, success, and bounded client attribution | `Application/Apple Scripts/PhiScriptCommands.swift` |
 | `language_changed` | Phi's General settings picker changes from one stored language preference to another; includes only `from` and `to` | `Preferences/General/GeneralSettingView.swift` |
 | `feature_entry_tapped` | A visible Chat, Memory, Download, or Organize Tabs entry accepts a tap; `button` is `chat`, `memory`, `download`, or `organize_tabs`, and `surface` is `sidebar` or `web_content_header` | `Sidebar/SidebarViewController.swift`, `Sidebar/TabList/Views/SidebarCellViews.swift`, `WebContent/FloatingSidebar/FloatingSidebarViewController.swift`, `WebContent/Header/WebContentHeader.swift`, `HorizontalBar/TabStrip/TabStripRightButtons.swift` |
+| `bookmark_manager_opened` | A native Bookmark Manager page session starts | `WebContent/BookmarkManager/BookmarkManagerViewController.swift` |
+| `bookmark_manager_edited` | A Bookmark Manager page session ends after the user performed at least one edit; the event carries no bookmark or edit details | `WebContent/BookmarkManager/BookmarkManagerViewController.swift` |
 | `user_defaults_snapshot` | Launch-time snapshot of new-tab behavior, layout mode, active process language (`app_language`), appearance, default browser, proactive suggestions, and automatic current-tab context | `Application/AppControlle+LaunchInfo.swift` |
 
 Import analytics never include source paths, browser profile names, Arc Space

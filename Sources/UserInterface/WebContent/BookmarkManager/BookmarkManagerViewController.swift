@@ -5,6 +5,40 @@
 
 import Cocoa
 import Combine
+import PostHog
+
+final class BookmarkManagerAnalyticsSession {
+    typealias Capture = (_ event: String, _ properties: [String: Any]) -> Void
+
+    private let capture: Capture
+    private var didEdit = false
+    private var hasStarted = false
+    private var hasFinished = false
+
+    init(capture: @escaping Capture = { event, properties in
+        PostHogSDK.shared.capture(event, properties: properties)
+    }) {
+        self.capture = capture
+    }
+
+    func start() {
+        guard !hasStarted, !hasFinished else { return }
+        hasStarted = true
+        capture("bookmark_manager_opened", [:])
+    }
+
+    func markEdited() {
+        guard hasStarted, !hasFinished else { return }
+        didEdit = true
+    }
+
+    func finish() {
+        guard hasStarted, !hasFinished else { return }
+        hasFinished = true
+        guard didEdit else { return }
+        capture("bookmark_manager_edited", [:])
+    }
+}
 
 private final class BookmarkManagerOutlineView: DiffableOutlineView {
     var contextMenuProvider: (() -> NSMenu?)?
@@ -87,12 +121,16 @@ final class BookmarkManagerViewController: NSViewController {
     private var pendingEditGuid: String?
     private var didConfigureInitialColumnWidths = false
     private var cancellables = Set<AnyCancellable>()
+    private let analyticsSession = BookmarkManagerAnalyticsSession()
 
     private let outlineView = BookmarkManagerOutlineView()
     private let scrollView = NSScrollView()
     private let searchField = NSSearchField()
     private let newFolderButton = NSButton()
     private let emptyLabel = NSTextField(labelWithString: "")
+    private let spaceIndicatorView = NSStackView()
+    private let spaceIndicatorImageView = NSImageView()
+    private let spaceIndicatorLabel = NSTextField(labelWithString: "")
 
     init(browserState: BrowserState) {
         self.browserState = browserState
@@ -114,8 +152,13 @@ final class BookmarkManagerViewController: NSViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        analyticsSession.start()
         bindModel()
         rebuildProjection(animated: false)
+    }
+
+    deinit {
+        analyticsSession.finish()
     }
 
     override func viewDidLayout() {
@@ -127,6 +170,10 @@ final class BookmarkManagerViewController: NSViewController {
         view.window?.makeFirstResponder(outlineView)
     }
 
+    func finishAnalyticsSession() {
+        analyticsSession.finish()
+    }
+
     private func buildLayout() {
         let titleLabel = NSTextField(labelWithString: NSLocalizedString(
             "bookmarkManager.header.title",
@@ -134,7 +181,34 @@ final class BookmarkManagerViewController: NSViewController {
             comment: "Bookmark manager - Page title"
         ))
         titleLabel.font = .systemFont(ofSize: 28, weight: .bold)
+        titleLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        spaceIndicatorImageView.imageScaling = .scaleProportionallyDown
+        spaceIndicatorImageView.contentTintColor = .secondaryLabelColor
+        spaceIndicatorImageView.setAccessibilityElement(false)
+        spaceIndicatorImageView.translatesAutoresizingMaskIntoConstraints = false
+
+        spaceIndicatorLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        spaceIndicatorLabel.textColor = .secondaryLabelColor
+        spaceIndicatorLabel.lineBreakMode = .byTruncatingTail
+        spaceIndicatorLabel.maximumNumberOfLines = 1
+        spaceIndicatorLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        spaceIndicatorView.orientation = .horizontal
+        spaceIndicatorView.alignment = .centerY
+        spaceIndicatorView.spacing = 5
+        spaceIndicatorView.addArrangedSubview(spaceIndicatorImageView)
+        spaceIndicatorView.addArrangedSubview(spaceIndicatorLabel)
+        spaceIndicatorView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        spaceIndicatorView.translatesAutoresizingMaskIntoConstraints = false
+        spaceIndicatorView.isHidden = true
+
+        let headerLeadingStack = NSStackView(views: [titleLabel, spaceIndicatorView])
+        headerLeadingStack.orientation = .horizontal
+        headerLeadingStack.alignment = .bottom
+        headerLeadingStack.spacing = 12
+        headerLeadingStack.translatesAutoresizingMaskIntoConstraints = false
 
         newFolderButton.title = NSLocalizedString(
             "bookmarkManager.header.newFolderAction",
@@ -170,15 +244,20 @@ final class BookmarkManagerViewController: NSViewController {
         emptyLabel.alignment = .center
         emptyLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        view.addSubview(titleLabel)
+        view.addSubview(headerLeadingStack)
         view.addSubview(newFolderButton)
         view.addSubview(searchField)
         view.addSubview(scrollView)
         view.addSubview(emptyLabel)
 
         NSLayoutConstraint.activate([
-            titleLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 24),
-            titleLabel.topAnchor.constraint(equalTo: view.topAnchor, constant: 24),
+            headerLeadingStack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 24),
+            headerLeadingStack.topAnchor.constraint(equalTo: view.topAnchor, constant: 24),
+            headerLeadingStack.trailingAnchor.constraint(lessThanOrEqualTo: newFolderButton.leadingAnchor, constant: -16),
+            spaceIndicatorImageView.widthAnchor.constraint(equalToConstant: 16),
+            spaceIndicatorImageView.heightAnchor.constraint(equalToConstant: 16),
+            spaceIndicatorLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 160),
+            spaceIndicatorLabel.firstBaselineAnchor.constraint(equalTo: titleLabel.firstBaselineAnchor, constant: -2),
             newFolderButton.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
             newFolderButton.trailingAnchor.constraint(equalTo: searchField.leadingAnchor, constant: -12),
             searchField.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -24),
@@ -186,13 +265,15 @@ final class BookmarkManagerViewController: NSViewController {
             searchField.widthAnchor.constraint(equalToConstant: 224),
             scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            scrollView.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 24),
+            scrollView.topAnchor.constraint(equalTo: headerLeadingStack.bottomAnchor, constant: 24),
             scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             emptyLabel.centerXAnchor.constraint(equalTo: scrollView.centerXAnchor),
             emptyLabel.centerYAnchor.constraint(equalTo: scrollView.centerYAnchor),
             emptyLabel.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 24),
             emptyLabel.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -24),
         ])
+
+        updateSpaceIndicator(spaces: SpaceManager.shared.spaces)
     }
 
     private func configureOutlineView() {
@@ -268,6 +349,13 @@ final class BookmarkManagerViewController: NSViewController {
     }
 
     private func bindModel() {
+        SpaceManager.shared.$spaces
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] spaces in
+                self?.updateSpaceIndicator(spaces: spaces)
+            }
+            .store(in: &cancellables)
+
         manager.$rootFolder
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
@@ -278,7 +366,9 @@ final class BookmarkManagerViewController: NSViewController {
         browserState.themeContext.themeAppearancePublisher
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _, _ in
-                self?.searchField.needsDisplay = true
+                guard let self else { return }
+                self.searchField.needsDisplay = true
+                self.updateSpaceIndicator(spaces: SpaceManager.shared.spaces)
             }
             .store(in: &cancellables)
 
@@ -291,6 +381,21 @@ final class BookmarkManagerViewController: NSViewController {
                 self.startEditing(guid: bookmark.guid, column: .website)
             }
             .store(in: &cancellables)
+    }
+
+    private func updateSpaceIndicator(spaces: [SpaceModel]) {
+        let userSpaceCount = spaces.lazy.filter {
+            !SpaceManager.isIncognitoSpaceId($0.spaceId) && !$0.isAgentSpace
+        }.count
+        guard userSpaceCount > 1,
+              let currentSpace = spaces.first(where: { $0.spaceId == scope.spaceId }) else {
+            spaceIndicatorView.isHidden = true
+            return
+        }
+
+        spaceIndicatorImageView.image = SpaceIconView.menuImage(for: currentSpace.iconName)
+        spaceIndicatorLabel.stringValue = currentSpace.name
+        spaceIndicatorView.isHidden = false
     }
 
     private func rebuildProjection(animated: Bool, completion: (() -> Void)? = nil) {
@@ -453,6 +558,7 @@ final class BookmarkManagerViewController: NSViewController {
             guid: guid,
             targetIndex: targetIndex
         )
+        analyticsSession.markEdited()
     }
 
     @objc private func outlineDoubleClicked(_ sender: NSOutlineView) {
@@ -908,12 +1014,16 @@ final class BookmarkManagerViewController: NSViewController {
 
     @objc private func createGroupFromBookmarksMenuItem(_ sender: NSMenuItem) {
         guard let context = sender.representedObject as? BookmarkActionContext else { return }
-        browserState.createGroupFromBookmarks(bookmarkGuids: context.guids)
+        if browserState.createGroupFromBookmarks(bookmarkGuids: context.guids) {
+            analyticsSession.markEdited()
+        }
     }
 
     @objc private func addBookmarksToGroupMenuItem(_ sender: NSMenuItem) {
         guard let context = sender.representedObject as? GroupActionContext else { return }
-        browserState.addBookmarks(bookmarkGuids: context.guids, toGroup: context.groupToken)
+        if browserState.addBookmarks(bookmarkGuids: context.guids, toGroup: context.groupToken) {
+            analyticsSession.markEdited()
+        }
     }
 
     @objc private func renameMenuItem(_ sender: NSMenuItem) {
@@ -939,18 +1049,22 @@ final class BookmarkManagerViewController: NSViewController {
 
     @objc private func moveToSpaceMenuItem(_ sender: NSMenuItem) {
         guard let context = sender.representedObject as? SpaceTransferActionContext else { return }
-        browserState.moveBookmarks(
+        if browserState.moveBookmarks(
             bookmarkGuids: context.guids,
             toSpaceId: context.targetSpaceId
-        )
+        ) {
+            analyticsSession.markEdited()
+        }
     }
 
     @objc private func cloneToSpaceMenuItem(_ sender: NSMenuItem) {
         guard let context = sender.representedObject as? SpaceTransferActionContext else { return }
-        browserState.cloneBookmarks(
+        if browserState.cloneBookmarks(
             bookmarkGuids: context.guids,
             toSpaceId: context.targetSpaceId
-        )
+        ) {
+            analyticsSession.markEdited()
+        }
     }
 
     @objc private func deleteMenuItem(_ sender: NSMenuItem) {
@@ -960,8 +1074,11 @@ final class BookmarkManagerViewController: NSViewController {
 
     private func presentBookmarkEditor(for bookmark: Bookmark) {
         let bookmarkGuid = bookmark.guid
+        let originalTitle = bookmark.title
+        let originalURL = bookmark.url
         let originalParentGuid = bookmark.parent?.guid
         let originalSecondaryURL = bookmark.secondaryUrl
+        let originalSecondaryTitle = bookmark.secondaryTitle
         EditPinnedTabPresenter.presentModal(
             mode: .bookmark,
             title: bookmark.title,
@@ -983,6 +1100,7 @@ final class BookmarkManagerViewController: NSViewController {
                     guid: guid,
                     spaceId: self.scope.spaceId
                 )
+                self.analyticsSession.markEdited()
                 return guid
             },
             onValidate: { [weak self] result in
@@ -1016,14 +1134,23 @@ final class BookmarkManagerViewController: NSViewController {
                 secondaryUrl: secondaryURLUpdate,
                 secondaryTitle: secondaryTitleUpdate
             )
+            let didUpdateFields = result.title != originalTitle
+                || result.url != originalURL
+                || (originalSecondaryURL != nil && result.secondaryUrl != originalSecondaryURL)
+                || (originalSecondaryURL != nil && result.secondaryTitle != originalSecondaryTitle)
+            if didUpdateFields {
+                self.analyticsSession.markEdited()
+            }
             guard result.parentFolderGuid != originalParentGuid else { return }
             if let targetGuid = result.parentFolderGuid {
                 if let target = self.manager.bookmark(withGuid: targetGuid) {
-                    self.browserState.moveSelectedBookmarks(
+                    if self.browserState.moveSelectedBookmarks(
                         bookmarkGuids: [bookmarkGuid],
                         to: target,
                         index: Int.max
-                    )
+                    ) {
+                        self.analyticsSession.markEdited()
+                    }
                 } else {
                     self.browserState.localStore.moveBookmark(
                         bookmarkGuid,
@@ -1031,14 +1158,17 @@ final class BookmarkManagerViewController: NSViewController {
                         to: targetGuid,
                         newIndex: Int.max
                     )
+                    self.analyticsSession.markEdited()
                 }
                 return
             }
-            self.browserState.moveSelectedBookmarks(
+            if self.browserState.moveSelectedBookmarks(
                 bookmarkGuids: [bookmarkGuid],
                 to: nil,
                 index: Int.max
-            )
+            ) {
+                self.analyticsSession.markEdited()
+            }
         }
     }
 
@@ -1048,6 +1178,7 @@ final class BookmarkManagerViewController: NSViewController {
         let requiresConfirmation = roots.count > 1 || roots.contains(where: \.isFolder)
         guard requiresConfirmation else {
             roots.forEach(manager.removeBookmark)
+            analyticsSession.markEdited()
             return
         }
 
@@ -1076,9 +1207,14 @@ final class BookmarkManagerViewController: NSViewController {
 
         let commit = { [weak self] in
             guard let self else { return }
+            var didDelete = false
             for root in roots {
                 guard let current = self.manager.bookmark(withGuid: root.guid) else { continue }
                 self.manager.removeBookmark(current)
+                didDelete = true
+            }
+            if didDelete {
+                self.analyticsSession.markEdited()
             }
         }
         if let window = view.window {
@@ -1129,6 +1265,9 @@ final class BookmarkManagerViewController: NSViewController {
 
 extension BookmarkManagerViewController: NSSearchFieldDelegate {
     func controlTextDidChange(_ notification: Notification) {
+        if !searchField.stringValue.isEmpty {
+            analyticsSession.markEdited()
+        }
         rebuildProjection(animated: false)
     }
 }
@@ -1203,11 +1342,15 @@ extension BookmarkManagerViewController: NSOutlineViewDataSource {
         let targetFolder = plan.destinationParentGuid.flatMap {
             manager.bookmark(withGuid: $0)
         }
-        return browserState.moveSelectedBookmarks(
+        let didMove = browserState.moveSelectedBookmarks(
             bookmarkGuids: plan.orderedBookmarkGuids,
             to: targetFolder,
             index: plan.destinationIndex
         )
+        if didMove {
+            analyticsSession.markEdited()
+        }
+        return didMove
     }
 
     func outlineView(
@@ -1245,7 +1388,10 @@ extension BookmarkManagerViewController: NSOutlineViewDelegate {
                 column: .website,
                 onCommit: { [weak self] title in
                     guard let self else { return false }
-                    self.manager.updateBookmark(guid: bookmark.guid, title: title)
+                    if title != bookmark.title {
+                        self.manager.updateBookmark(guid: bookmark.guid, title: title)
+                        self.analyticsSession.markEdited()
+                    }
                     return true
                 }
             )
@@ -1261,7 +1407,10 @@ extension BookmarkManagerViewController: NSOutlineViewDelegate {
                               self.browserState.localStore.normalizedURL(from: url) != nil else {
                             return false
                         }
-                        self.manager.updateBookmark(guid: bookmark.guid, url: url)
+                        if url != bookmark.url {
+                            self.manager.updateBookmark(guid: bookmark.guid, url: url)
+                            self.analyticsSession.markEdited()
+                        }
                         return true
                     }
             )

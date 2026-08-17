@@ -665,3 +665,43 @@ final class BookmarkManagerScopeTests: XCTestCase {
         return false
     }
 }
+
+@MainActor
+final class BookmarkManagerAnalyticsSessionTests: XCTestCase {
+    private struct Event {
+        let name: String
+        let properties: [String: Any]
+    }
+
+    func testSessionCapturesOpenedOnlyOnceAndSkipsUnusedExit() {
+        var events: [Event] = []
+        let session = BookmarkManagerAnalyticsSession { name, properties in
+            events.append(Event(name: name, properties: properties))
+        }
+
+        session.start()
+        session.start()
+        session.finish()
+
+        XCTAssertEqual(events.map(\.name), ["bookmark_manager_opened"])
+    }
+
+    func testSessionCapturesOneEditedEventWithoutEditDetails() {
+        var events: [Event] = []
+        let session = BookmarkManagerAnalyticsSession { name, properties in
+            events.append(Event(name: name, properties: properties))
+        }
+
+        session.start()
+        session.markEdited()
+        session.markEdited()
+        session.finish()
+        session.finish()
+
+        XCTAssertEqual(events.map(\.name), [
+            "bookmark_manager_opened",
+            "bookmark_manager_edited",
+        ])
+        XCTAssertTrue(events.last?.properties.isEmpty == true)
+    }
+}
