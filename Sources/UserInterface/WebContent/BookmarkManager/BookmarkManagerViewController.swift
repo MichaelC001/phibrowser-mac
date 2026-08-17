@@ -77,6 +77,17 @@ final class BookmarkManagerViewController: NSViewController {
         static let splitHeight: CGFloat = 58
     }
 
+    private enum Header {
+        static let compactLayoutWidth: CGFloat = 600
+        static let ultraCompactLayoutWidth: CGFloat = 300
+        static let horizontalInset: CGFloat = 24
+        static let topInset: CGFloat = 24
+        static let rowSpacing: CGFloat = 12
+        static let contentSpacing: CGFloat = 24
+        static let wideSearchWidth: CGFloat = 224
+        static let compactSearchMinimumWidth: CGFloat = 120
+    }
+
     private final class BookmarkActionContext: NSObject {
         let guids: [String]
 
@@ -125,12 +136,20 @@ final class BookmarkManagerViewController: NSViewController {
 
     private let outlineView = BookmarkManagerOutlineView()
     private let scrollView = NSScrollView()
+    private let titleLabel = NSTextField(labelWithString: "")
+    private let headerLeadingStack = NSStackView()
+    private let headerControlsStack = NSStackView()
     private let searchField = NSSearchField()
     private let newFolderButton = NSButton()
     private let emptyLabel = NSTextField(labelWithString: "")
     private let spaceIndicatorView = NSStackView()
     private let spaceIndicatorImageView = NSImageView()
     private let spaceIndicatorLabel = NSTextField(labelWithString: "")
+    private var wideHeaderConstraints: [NSLayoutConstraint] = []
+    private var compactHeaderConstraints: [NSLayoutConstraint] = []
+    private var usesCompactHeaderLayout: Bool?
+    private var usesUltraCompactHeaderLayout = false
+    private var newFolderButtonTitle = ""
 
     init(browserState: BrowserState) {
         self.browserState = browserState
@@ -161,6 +180,11 @@ final class BookmarkManagerViewController: NSViewController {
         analyticsSession.finish()
     }
 
+    override func viewWillLayout() {
+        updateHeaderLayoutIfNeeded()
+        super.viewWillLayout()
+    }
+
     override func viewDidLayout() {
         super.viewDidLayout()
         configureInitialColumnWidthsIfNeeded()
@@ -175,11 +199,11 @@ final class BookmarkManagerViewController: NSViewController {
     }
 
     private func buildLayout() {
-        let titleLabel = NSTextField(labelWithString: NSLocalizedString(
+        titleLabel.stringValue = NSLocalizedString(
             "bookmarkManager.header.title",
             value: "Bookmarks",
             comment: "Bookmark manager - Page title"
-        ))
+        )
         titleLabel.font = .systemFont(ofSize: 28, weight: .bold)
         titleLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -204,20 +228,24 @@ final class BookmarkManagerViewController: NSViewController {
         spaceIndicatorView.translatesAutoresizingMaskIntoConstraints = false
         spaceIndicatorView.isHidden = true
 
-        let headerLeadingStack = NSStackView(views: [titleLabel, spaceIndicatorView])
         headerLeadingStack.orientation = .horizontal
         headerLeadingStack.alignment = .bottom
         headerLeadingStack.spacing = 12
+        headerLeadingStack.addArrangedSubview(titleLabel)
+        headerLeadingStack.addArrangedSubview(spaceIndicatorView)
         headerLeadingStack.translatesAutoresizingMaskIntoConstraints = false
 
-        newFolderButton.title = NSLocalizedString(
+        newFolderButtonTitle = NSLocalizedString(
             "bookmarkManager.header.newFolderAction",
             value: "New Folder",
             comment: "Bookmark manager - Button that creates a folder at the root or inside the selected folder"
         )
+        newFolderButton.title = newFolderButtonTitle
         newFolderButton.bezelStyle = .rounded
         newFolderButton.target = self
         newFolderButton.action = #selector(createFolderFromHeader(_:))
+        newFolderButton.setContentHuggingPriority(.required, for: .horizontal)
+        newFolderButton.setContentCompressionResistancePriority(.required, for: .horizontal)
         newFolderButton.translatesAutoresizingMaskIntoConstraints = false
 
         searchField.backgroundColor = .clear
@@ -227,7 +255,17 @@ final class BookmarkManagerViewController: NSViewController {
             comment: "Bookmark manager - Search field placeholder"
         )
         searchField.delegate = self
+        searchField.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        searchField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         searchField.translatesAutoresizingMaskIntoConstraints = false
+
+        headerControlsStack.orientation = .horizontal
+        headerControlsStack.alignment = .centerY
+        headerControlsStack.distribution = .fill
+        headerControlsStack.spacing = Header.rowSpacing
+        headerControlsStack.addArrangedSubview(newFolderButton)
+        headerControlsStack.addArrangedSubview(searchField)
+        headerControlsStack.translatesAutoresizingMaskIntoConstraints = false
 
         configureOutlineView()
         scrollView.documentView = outlineView
@@ -245,35 +283,110 @@ final class BookmarkManagerViewController: NSViewController {
         emptyLabel.translatesAutoresizingMaskIntoConstraints = false
 
         view.addSubview(headerLeadingStack)
-        view.addSubview(newFolderButton)
-        view.addSubview(searchField)
+        view.addSubview(headerControlsStack)
         view.addSubview(scrollView)
         view.addSubview(emptyLabel)
 
         NSLayoutConstraint.activate([
-            headerLeadingStack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 24),
-            headerLeadingStack.topAnchor.constraint(equalTo: view.topAnchor, constant: 24),
-            headerLeadingStack.trailingAnchor.constraint(lessThanOrEqualTo: newFolderButton.leadingAnchor, constant: -16),
+            headerLeadingStack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: Header.horizontalInset),
+            headerLeadingStack.topAnchor.constraint(equalTo: view.topAnchor, constant: Header.topInset),
             spaceIndicatorImageView.widthAnchor.constraint(equalToConstant: 16),
             spaceIndicatorImageView.heightAnchor.constraint(equalToConstant: 16),
             spaceIndicatorLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 160),
             spaceIndicatorLabel.firstBaselineAnchor.constraint(equalTo: titleLabel.firstBaselineAnchor, constant: -2),
-            newFolderButton.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
-            newFolderButton.trailingAnchor.constraint(equalTo: searchField.leadingAnchor, constant: -12),
-            searchField.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -24),
-            searchField.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
-            searchField.widthAnchor.constraint(equalToConstant: 224),
             scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            scrollView.topAnchor.constraint(equalTo: headerLeadingStack.bottomAnchor, constant: 24),
             scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             emptyLabel.centerXAnchor.constraint(equalTo: scrollView.centerXAnchor),
             emptyLabel.centerYAnchor.constraint(equalTo: scrollView.centerYAnchor),
-            emptyLabel.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 24),
-            emptyLabel.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -24),
+            emptyLabel.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: Header.horizontalInset),
+            emptyLabel.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -Header.horizontalInset),
         ])
 
+        wideHeaderConstraints = [
+            headerLeadingStack.trailingAnchor.constraint(
+                lessThanOrEqualTo: headerControlsStack.leadingAnchor,
+                constant: -16
+            ),
+            headerControlsStack.trailingAnchor.constraint(
+                equalTo: view.trailingAnchor,
+                constant: -Header.horizontalInset
+            ),
+            headerControlsStack.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
+            searchField.widthAnchor.constraint(equalToConstant: Header.wideSearchWidth),
+            scrollView.topAnchor.constraint(
+                equalTo: headerLeadingStack.bottomAnchor,
+                constant: Header.contentSpacing
+            ),
+        ]
+        let compactSearchMinimumWidth = searchField.widthAnchor.constraint(
+            greaterThanOrEqualToConstant: Header.compactSearchMinimumWidth
+        )
+        compactSearchMinimumWidth.priority = .defaultHigh
+        compactHeaderConstraints = [
+            headerLeadingStack.trailingAnchor.constraint(
+                lessThanOrEqualTo: view.trailingAnchor,
+                constant: -Header.horizontalInset
+            ),
+            headerControlsStack.leadingAnchor.constraint(
+                equalTo: view.leadingAnchor,
+                constant: Header.horizontalInset
+            ),
+            headerControlsStack.trailingAnchor.constraint(
+                equalTo: view.trailingAnchor,
+                constant: -Header.horizontalInset
+            ),
+            headerControlsStack.topAnchor.constraint(
+                equalTo: headerLeadingStack.bottomAnchor,
+                constant: Header.rowSpacing
+            ),
+            compactSearchMinimumWidth,
+            scrollView.topAnchor.constraint(
+                equalTo: headerControlsStack.bottomAnchor,
+                constant: Header.contentSpacing
+            ),
+        ]
         updateSpaceIndicator(spaces: SpaceManager.shared.spaces)
+    }
+
+    private func updateHeaderLayoutIfNeeded() {
+        guard view.bounds.width > 0 else { return }
+        let shouldUseCompactLayout = view.bounds.width < Header.compactLayoutWidth
+        if shouldUseCompactLayout != usesCompactHeaderLayout {
+            if let usesCompactHeaderLayout {
+                NSLayoutConstraint.deactivate(
+                    usesCompactHeaderLayout ? compactHeaderConstraints : wideHeaderConstraints
+                )
+            }
+            NSLayoutConstraint.activate(
+                shouldUseCompactLayout ? compactHeaderConstraints : wideHeaderConstraints
+            )
+            usesCompactHeaderLayout = shouldUseCompactLayout
+        }
+
+        let shouldUseUltraCompactLayout = view.bounds.width < Header.ultraCompactLayoutWidth
+        guard shouldUseUltraCompactLayout != usesUltraCompactHeaderLayout else { return }
+        usesUltraCompactHeaderLayout = shouldUseUltraCompactLayout
+        titleLabel.setContentCompressionResistancePriority(
+            shouldUseUltraCompactLayout ? .defaultHigh : .required,
+            for: .horizontal
+        )
+        newFolderButton.setContentCompressionResistancePriority(
+            shouldUseUltraCompactLayout ? .defaultHigh : .required,
+            for: .horizontal
+        )
+        if shouldUseUltraCompactLayout {
+            newFolderButton.title = ""
+            newFolderButton.image = NSImage(
+                systemSymbolName: "folder.badge.plus",
+                accessibilityDescription: newFolderButtonTitle
+            )
+            newFolderButton.toolTip = newFolderButtonTitle
+        } else {
+            newFolderButton.title = newFolderButtonTitle
+            newFolderButton.image = nil
+            newFolderButton.toolTip = nil
+        }
     }
 
     private func configureOutlineView() {
@@ -369,16 +482,6 @@ final class BookmarkManagerViewController: NSViewController {
                 guard let self else { return }
                 self.searchField.needsDisplay = true
                 self.updateSpaceIndicator(spaces: SpaceManager.shared.spaces)
-            }
-            .store(in: &cancellables)
-
-        NotificationCenter.default.publisher(for: .bookmarkStartEditing)
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] notification in
-                guard let self,
-                      let bookmark = notification.object as? Bookmark,
-                      self.manager.bookmark(withGuid: bookmark.guid) != nil else { return }
-                self.startEditing(guid: bookmark.guid, column: .website)
             }
             .store(in: &cancellables)
     }
@@ -1265,9 +1368,6 @@ final class BookmarkManagerViewController: NSViewController {
 
 extension BookmarkManagerViewController: NSSearchFieldDelegate {
     func controlTextDidChange(_ notification: Notification) {
-        if !searchField.stringValue.isEmpty {
-            analyticsSession.markEdited()
-        }
         rebuildProjection(animated: false)
     }
 }
