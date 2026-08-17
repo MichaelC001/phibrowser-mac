@@ -1082,8 +1082,12 @@ class BrowserState {
 
     /// Records an explicit open source until the visible chat controller
     /// consumes it. State-driven openings use the default `.restore` source.
+    /// Every explicit AI Chat expand entry funnels through here before
+    /// flipping tab state, which makes it the choke point where an open
+    /// extension side panel gets closed (the panel ↔ chat mutex).
     func prepareAIChatSidebarOpen(trigger: AIChatSidebarOpenTrigger) {
         pendingAIChatSidebarOpenTrigger = trigger
+        closeExtensionSidePanelForAIChatExpandIfNeeded()
     }
 
     func consumeAIChatSidebarOpenTrigger() -> AIChatSidebarOpenTrigger {
@@ -1094,6 +1098,11 @@ class BrowserState {
     /// Sets the AI Chat collapsed state for a tab, mirroring it to the tab's
     /// split partner so both panes of a split share one expand/collapse state.
     func setAIChatCollapsed(for tab: Tab, collapsed: Bool) {
+        if !collapsed {
+            // Mirrored expands (split-item KVO, split sync) bypass
+            // prepareAIChatSidebarOpen; keep the panel ↔ chat mutex here too.
+            closeExtensionSidePanelForAIChatExpandIfNeeded()
+        }
         tab.toggleAIChat(collapsed)
         guard let group = splitGroup(forTabId: tab.guid),
               let partnerId = group.partnerTabId(of: tab.guid),
@@ -1177,6 +1186,16 @@ class BrowserState {
         }
         extensionSidePanel = newPanel
         if newPanel != nil, previous == nil {
+            // Mutex with the AI Chat panel (CONTEXT.md: the two never show
+            // at the same time): a panel open collapses AI Chat on every
+            // tab of this window, so later tab switches can't bring a chat
+            // back up beside the panel. Same sweep as `closeAllAIContent`,
+            // minus the content teardown. The reverse direction lives in
+            // `closeExtensionSidePanelForAIChatExpandIfNeeded`.
+            for tab in tabs where !tab.aiChatCollapsed {
+                tab.toggleAIChat(true)
+            }
+            aiChatCollapsed = true
             AppLogInfo("[ExtSidePanel] [BrowserState] panel opened windowId=\(windowId)")
         } else if newPanel == nil, previous != nil {
             AppLogInfo("[ExtSidePanel] [BrowserState] panel closed windowId=\(windowId)")
@@ -1194,6 +1213,29 @@ class BrowserState {
               bridge.responds(to: #selector(PhiChromiumBridgeProtocol.closeExtensionSidePanel(_:)))
         else { return }
         bridge.closeExtensionSidePanel(Int64(windowId))
+    }
+
+    /// Test seam for the AI Chat ↔ extension side panel mutex: unit tests
+    /// set this to observe the close request that normally goes to the
+    /// Chromium bridge (absent in the test process) and to simulate
+    /// Chromium's close push. nil in production.
+    var extensionSidePanelCloseRequestOverrideForTesting: (() -> Void)?
+
+    /// The other half of the panel ↔ AI Chat mutex: an AI Chat expand
+    /// request closes an open extension side panel first. With the
+    /// in-process bridge the close push lands back synchronously through
+    /// `updateExtensionSidePanel(nil)` before the expand proceeds, and the
+    /// extension observes its normal onClosed sequence. Called from every
+    /// expand entry (`prepareAIChatSidebarOpen` covers the explicit toggle
+    /// paths; `setAIChatCollapsed` covers state mirrors such as the split
+    /// item's divider-drag KVO).
+    private func closeExtensionSidePanelForAIChatExpandIfNeeded() {
+        guard extensionSidePanel != nil else { return }
+        if let requestClose = extensionSidePanelCloseRequestOverrideForTesting {
+            requestClose()
+            return
+        }
+        MainActor.assumeIsolated { requestExtensionSidePanelClose() }
     }
 
     func toggleFullScreenMode(_ fullScreen: Bool) {

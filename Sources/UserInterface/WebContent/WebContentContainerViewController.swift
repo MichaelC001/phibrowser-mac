@@ -251,17 +251,19 @@ class WebContentContainerViewController: NSViewController {
     private(set) var transcriptDockView: AgentTranscriptDockView?
     private var transcriptDockEdge: AgentTranscriptDockEdge?
 
-    /// Bare window-level host for the extension side panel NSView adopted
-    /// from Chromium: one per window, beside the per-tab content stack, so
-    /// the panel survives tab switches without joining per-tab view churn.
-    /// WebContentHostView strips AppKit's vibrancy compositingFilter from
-    /// the adopted Chromium view. No header / width memory yet — those come
-    /// with the panel chrome ticket.
-    private var extensionSidePanelHostView: WebContentHostView?
+    /// Window-level chrome for the extension side panel NSView adopted from
+    /// Chromium: one per window, beside the per-tab content stack, so the
+    /// panel survives tab switches without joining per-tab view churn.
+    /// Carries the header (extension icon, name, close button), the AI-Chat
+    /// -style card looks, and the drag-resizable width.
+    private var extensionSidePanelView: ExtensionSidePanelView?
 
-    /// Matches Chromium's default side panel content width; becomes
-    /// user-resizable with per-window memory in the panel chrome ticket.
-    private static let extensionSidePanelWidth: CGFloat = 360
+    /// Per-window width memory for the extension side panel, shared across
+    /// extensions (v1 semantics; mirrors `lastKnownSidebarWidth`'s role for
+    /// the left rail). Seeded with Chromium's default side panel content
+    /// width; captured from the slot on detach so a close/reopen restores
+    /// the last dragged width.
+    private var extensionSidePanelPreferredWidth: CGFloat = 360
     
     // MARK: - Initialization
     
@@ -458,8 +460,8 @@ class WebContentContainerViewController: NSViewController {
     /// another's constraint. Right-edge order: [content | extension side
     /// panel | right transcript dock].
     private func remakeContentLayout() {
-        let panelView = extensionSidePanelHostView?.superview === view
-            ? extensionSidePanelHostView : nil
+        let panelView = extensionSidePanelView?.superview === view
+            ? extensionSidePanelView : nil
         contentContainer.snp.remakeConstraints { make in
             if let bar = tabStripBarController?.view, bar.superview === view {
                 make.top.equalTo(bar.snp.bottom)
@@ -505,8 +507,10 @@ class WebContentContainerViewController: NSViewController {
             }
         }
         if let panelView {
+            // The panel's own width constraint lives on the panel view
+            // (plain NSLayoutConstraint, untouched by this snp remake) —
+            // same split as the transcript dock's thickness constraint.
             panelView.snp.remakeConstraints { make in
-                make.width.equalTo(Self.extensionSidePanelWidth)
                 make.top.equalTo(contentContainer.snp.top)
                 // The page area keeps an edgesSpacing margin inside
                 // contentContainer; give the panel the same breathing room
@@ -1244,18 +1248,24 @@ class WebContentContainerViewController: NSViewController {
             AppLogWarn("[ExtSidePanel] [Container] attach: wrapper has no nativeView")
             return
         }
-        let isFreshOpen = extensionSidePanelHostView == nil
-        let hostView: WebContentHostView
-        if let existing = extensionSidePanelHostView {
-            hostView = existing
+        let isFreshOpen = extensionSidePanelView == nil
+        let panelView: ExtensionSidePanelView
+        if let existing = extensionSidePanelView {
+            panelView = existing
         } else {
-            hostView = WebContentHostView()
-            hostView.wantsLayer = true
-            view.addSubview(hostView)
-            extensionSidePanelHostView = hostView
+            panelView = ExtensionSidePanelView(
+                initialWidth: extensionSidePanelPreferredWidth)
+            panelView.onCloseRequested = { [weak self] in
+                self?.browserState?.requestExtensionSidePanelClose()
+            }
+            view.addSubview(panelView)
+            extensionSidePanelView = panelView
             remakeContentLayout()
         }
+        panelView.updateHeader(displayName: panel.displayName,
+                               iconPNG: panel.iconPNG)
 
+        let hostView = panelView.contentHostView
         if nativeView.superview !== hostView {
             nativeView.removeFromSuperview()
             hostView.addSubview(nativeView)
@@ -1285,14 +1295,34 @@ class WebContentContainerViewController: NSViewController {
     /// push returns).
     @MainActor
     private func detachExtensionSidePanel() {
-        guard let hostView = extensionSidePanelHostView else { return }
-        for subview in hostView.subviews {
+        guard let panelView = extensionSidePanelView else { return }
+        extensionSidePanelPreferredWidth = panelView.preferredWidth
+        for subview in panelView.contentHostView.subviews {
             subview.removeFromSuperview()
         }
-        hostView.removeFromSuperview()
-        extensionSidePanelHostView = nil
+        panelView.removeFromSuperview()
+        extensionSidePanelView = nil
         remakeContentLayout()
         AppLogInfo("[ExtSidePanel] [Container] detached panel slot")
+
+        // Closing the panel usually leaves the window with no meaningful
+        // first responder: the panel content is already off the hierarchy
+        // (BrowserState detached it synchronously) and the header's close
+        // button died with the slot. Hand focus back to the page — the same
+        // destination Chrome picks after a side panel closes. Skip when
+        // something else (omnibox, sidebar) legitimately holds focus.
+        // Deferred one turn: this sink runs inside Chromium's synchronous
+        // bridge push, where focus work could re-enter Chromium; the hop
+        // also skips the restore naturally when the window is being torn
+        // down (view.window is gone by the time it fires).
+        DispatchQueue.main.async { [weak self] in
+            guard let self,
+                  self.extensionSidePanelView == nil,
+                  let window = self.view.window,
+                  window.firstResponder == nil || window.firstResponder === window
+            else { return }
+            self.currentWebContentController?.focusWebContent()
+        }
     }
 
     // MARK: - Close Snapshot Placeholder

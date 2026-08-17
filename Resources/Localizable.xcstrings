@@ -17653,6 +17653,18 @@
         }
       }
     },
+    "browser.extensionSidePanel.close" : {
+      "comment" : "Extension side panel - Tooltip and accessibility label for the header control that closes the panel",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Close Side Panel"
+          }
+        }
+      }
+    },
     "browser.headerMoreMenu.downloadsAction" : {
       "comment" : "Header more menu - Downloads action",
       "extractionState" : "extracted_with_value",

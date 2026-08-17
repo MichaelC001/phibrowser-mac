@@ -429,8 +429,9 @@ class WebContentViewController: NSViewController {
         }
     }
     
-    /// Focuses the active web content view.
-    private func focusWebContent() {
+    /// Focuses the active web content view. Internal so the container can
+    /// hand focus back to the page when the extension side panel closes.
+    func focusWebContent() {
         guard let tab = associatedTab else {
             AppLogDebug("🔍 [Focus] focusWebContent - no tab or webView")
             return
