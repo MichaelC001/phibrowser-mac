@@ -19,6 +19,8 @@ class PinnedTabItem: NSCollectionViewItem, NSMenuDelegate {
     private var faviconLoadHandle: ProfileScopedFaviconLoadHandle?
     private weak var themeProvider: ThemeStateProvider?
     private var themeSubscription: AnyObject?
+    private let tabPreviewRegistration = TabPreviewRegistration()
+    private var showsTabPreview = false
 
     var itemClicked: ((Tab?, NSEvent.ModifierFlags) -> Void)?
     var itemDoubleClicked: ((Tab?, NSEvent.ModifierFlags) -> Void)?
@@ -46,6 +48,7 @@ class PinnedTabItem: NSCollectionViewItem, NSMenuDelegate {
         faviconLoadHandle?.cancel()
         faviconLoadHandle = nil
         iconImageView.image = nil
+        tabPreviewRegistration.invalidate()
         tab = nil
     }
 
@@ -62,10 +65,19 @@ class PinnedTabItem: NSCollectionViewItem, NSMenuDelegate {
         backgroundView.selectedColor = .sidebarTabSelected
         backgroundView.enableClickAnimation = true
         backgroundView.clickActionWithModifierFlags = { [weak self] modifierFlags in
+            self?.tabPreviewRegistration.cancelForInteraction()
             self?.itemClicked?(self?.tab, modifierFlags)
         }
         backgroundView.doubleClickAction = { [weak self] event in
+            self?.tabPreviewRegistration.cancelForInteraction()
             self?.itemDoubleClicked?(self?.tab, event.modifierFlags)
+        }
+        backgroundView.hoverStateChanged = { [weak self] isHovered in
+            self?.tabPreviewRegistration.setHovering(isHovered)
+        }
+        tabPreviewRegistration.onEligibilityChanged = { [weak self] isEligible in
+            self?.showsTabPreview = isEligible
+            self?.updateToolTip()
         }
         
         // Favicon image view.
@@ -94,7 +106,11 @@ class PinnedTabItem: NSCollectionViewItem, NSMenuDelegate {
         view.menu = contextMenu
     }
 
-    func configure(with tab: Tab, themeProvider: ThemeStateProvider) {
+    func configure(
+        with tab: Tab,
+        browserState: BrowserState?,
+        themeProvider: ThemeStateProvider
+    ) {
         self.tab = tab
         self.themeProvider = themeProvider
         cancellables.removeAll()
@@ -103,7 +119,17 @@ class PinnedTabItem: NSCollectionViewItem, NSMenuDelegate {
         faviconLoadHandle = nil
 
         setupFavicon()
-        view.toolTip = "\(tab.title)\n\(tab.url ?? "")"
+        if let browserState {
+            tabPreviewRegistration.configure(
+                anchorView: view,
+                target: .tab(tab),
+                browserState: browserState,
+                placement: .right
+            )
+        } else {
+            tabPreviewRegistration.invalidate()
+        }
+        updateToolTip()
 
         // Expose to UI testing — the pinned grid is a collection view with no
         // stable query surface for the test reset to find and unpin items.
@@ -145,7 +171,7 @@ class PinnedTabItem: NSCollectionViewItem, NSMenuDelegate {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] title, url in
                 guard let self else { return }
-                self.view.toolTip = "\(title)\n\(url ?? "")"
+                self.updateToolTip()
             }
             .store(in: &cancellables)
 
@@ -217,6 +243,18 @@ class PinnedTabItem: NSCollectionViewItem, NSMenuDelegate {
         }
     }
 
+    private func updateToolTip() {
+        guard let tab, !showsTabPreview else {
+            view.toolTip = nil
+            return
+        }
+        view.toolTip = "\(tab.title)\n\(tab.url ?? "")"
+    }
+
+    func cancelTabPreviewForInteraction() {
+        tabPreviewRegistration.cancelForInteraction()
+    }
+
     private func setDefaultIcon() {
         if let defaultIcon = NSImage(systemSymbolName: "globe", accessibilityDescription: nil) {
             let config = NSImage.SymbolConfiguration(pointSize: 16, weight: .regular)
@@ -225,6 +263,7 @@ class PinnedTabItem: NSCollectionViewItem, NSMenuDelegate {
     }
     
     func menuNeedsUpdate(_ menu: NSMenu) {
+        tabPreviewRegistration.cancelForInteraction()
         tab?.makeContextMenu(on: menu)
     }
 }

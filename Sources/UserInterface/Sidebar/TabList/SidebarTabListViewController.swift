@@ -414,6 +414,7 @@ class SidebarTabListViewController: NSViewController {
         .receive(on: DispatchQueue.main)
         .sink { [weak self] _ in
             self?.updateFloatingNewTabVisibility()
+            self?.cancelVisibleTabPreviews()
         }
         .store(in: &cancellables)
 
@@ -424,6 +425,7 @@ class SidebarTabListViewController: NSViewController {
         .receive(on: DispatchQueue.main)
         .sink { [weak self] _ in
             self?.updateFloatingNewTabVisibility()
+            self?.cancelVisibleTabPreviews()
         }
         .store(in: &cancellables)
 
@@ -867,12 +869,34 @@ class SidebarTabListViewController: NSViewController {
     }
     
     // MARK: - Actions
+    private func cancelTabPreview(at row: Int, in outlineView: NSOutlineView) {
+        (outlineView.view(
+            atColumn: 0,
+            row: row,
+            makeIfNecessary: false
+        ) as? TabPreviewInteractionCancelling)?.cancelTabPreviewForInteraction()
+    }
+
+    private func cancelVisibleTabPreviews() {
+        let visibleRows = outlineView.rows(in: outlineView.visibleRect)
+        guard visibleRows.location != NSNotFound else { return }
+        for row in visibleRows.location..<NSMaxRange(visibleRows) {
+            (outlineView.view(
+                atColumn: 0,
+                row: row,
+                makeIfNecessary: false
+            ) as? TabGroupCellView)?.cancelVisibleTabPreviews()
+            cancelTabPreview(at: row, in: outlineView)
+        }
+    }
+
     @objc private func outlineViewClicked(_ sender: NSOutlineView) {
         let clickedRow = sender.clickedRow
         guard clickedRow != -1 else {
             handleSidebarBlankAreaClick()
             return
         }
+        cancelTabPreview(at: clickedRow, in: sender)
 
         let modifierFlags = (sender as? SideBarOutlineView)?.consumeMouseDownModifierFlags()
             ?? NSApp.currentEvent?.modifierFlags
@@ -2838,6 +2862,9 @@ extension SidebarTabListViewController: NSOutlineViewDataSource {
             "firstItem=\(Self.dragThresholdLogDescription(for: draggedItems.first)) " +
             "screen=\(screenPoint)"
         )
+        if let draggedItem = draggedItems.first {
+            cancelTabPreview(at: outlineView.row(forItem: draggedItem), in: outlineView)
+        }
         if let groupItem = draggedItems.first as? TabGroupSidebarItem {
             temporarilyCollapseGroupForDragIfNeeded(
                 groupItem: groupItem,
@@ -4681,6 +4708,18 @@ extension SidebarTabListViewController: NSMenuDelegate {
         guard menu === self.contextMenu else {
             return
         }
+        if let clickedRow = outlineView.rightClickedRow, clickedRow >= 0 {
+            if let groupCell = outlineView.view(
+                atColumn: 0,
+                row: clickedRow,
+                makeIfNecessary: false
+            ) as? TabGroupCellView {
+                groupCell.cancelVisibleTabPreviews()
+            }
+            cancelTabPreview(at: clickedRow, in: outlineView)
+        } else {
+            cancelVisibleTabPreviews()
+        }
         populateContextMenu(menu)
         // While the agent controls this Space the user may only watch — disable
         // every right-click action (whichever variant was populated above).
@@ -5206,6 +5245,7 @@ extension SidebarTabListViewController: SideBarOutlineViewDelegate {
         guard let item = outlineView.item(atRow: row) as? SidebarItem else {
             return
         }
+        cancelTabPreview(at: row, in: outlineView)
         if let tab = item as? Tab, modifierFlags.isPureOptionClick {
             let didPerformSplit = MainActor.assumeIsolated {
                 tab.performSplitAction(in: browserState)
@@ -5249,6 +5289,7 @@ extension SidebarTabListViewController: SideBarOutlineViewDelegate {
             )
             return
         }
+        rowView.cancelTabPreviewForInteraction()
         let multiDragIds = browserState.multiSelectionDragTabIds(startingFrom: tab)
         if browserState.multiSelection.isActive, multiDragIds == nil {
             browserState.clearMultiSelection()
@@ -5301,6 +5342,7 @@ extension SidebarTabListViewController: SideBarOutlineViewDelegate {
                      didMiddleClickRow row: Int,
                      at location: NSPoint) {
         guard row >= 0 else { return }
+        cancelTabPreview(at: row, in: outlineView)
         guard let item = outlineView.item(atRow: row) as? SidebarItem else { return }
         if let pair = item as? SplitPairSidebarItem {
             // Merged split row renders both panes side-by-side — route the

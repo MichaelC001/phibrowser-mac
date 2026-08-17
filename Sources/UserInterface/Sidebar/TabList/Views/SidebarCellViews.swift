@@ -266,11 +266,12 @@ private final class SidebarTabHoverDeadZoneView: NSView {
 }
 
 // MARK: - Tab Cell View (reused from existing)
-class SidebarTabCellView: SidebarCellView {
+class SidebarTabCellView: SidebarCellView, TabPreviewInteractionCancelling {
     private var hostingView: ThemedHostingView!
     private let hoverRegionView = SidebarTabHoverRegionView()
     private let hoverDeadZoneView = SidebarTabHoverDeadZoneView()
     private let viewModel = TabViewModel()
+    private let tabPreviewRegistration = TabPreviewRegistration()
     private weak var configuredTab: Tab?
     private var activeSuppressed = false
     weak var delegate: TabCellDelegate?
@@ -297,6 +298,7 @@ class SidebarTabCellView: SidebarCellView {
         viewModel.setActiveSuppressed(false, activeValue: false)
         viewModel.setHovered(false)
         viewModel.isPressed = false
+        tabPreviewRegistration.invalidate()
         configuredTab = nil
         activeSuppressed = false
     }
@@ -312,10 +314,18 @@ class SidebarTabCellView: SidebarCellView {
 
     func setHoverSuppressed(_ suppressed: Bool) {
         viewModel.setHoverSuppressed(suppressed)
+        if suppressed {
+            tabPreviewRegistration.setHovering(false)
+        }
     }
 
     func setHovered(_ hovered: Bool) {
         viewModel.setHovered(hovered)
+        tabPreviewRegistration.setHovering(hovered)
+    }
+
+    func cancelTabPreviewForInteraction() {
+        tabPreviewRegistration.cancelForInteraction()
     }
 
     func setActiveSuppressed(_ suppressed: Bool) {
@@ -332,8 +342,12 @@ class SidebarTabCellView: SidebarCellView {
             make.edges.equalToSuperview()
         }
 
+        tabPreviewRegistration.onEligibilityChanged = { [weak self] isEligible in
+            self?.viewModel.showsTabPreview = isEligible
+        }
+
         hoverRegionView.onHoverChanged = { [weak self] isHovered in
-            self?.viewModel.isHovered = isHovered
+            self?.setHovered(isHovered)
         }
         addSubview(hoverRegionView)
         hoverRegionView.snp.makeConstraints { make in
@@ -342,7 +356,7 @@ class SidebarTabCellView: SidebarCellView {
         }
 
         hoverDeadZoneView.onEntered = { [weak self] in
-            self?.viewModel.isHovered = false
+            self?.setHovered(false)
         }
         addSubview(hoverDeadZoneView)
         hoverDeadZoneView.snp.makeConstraints { make in
@@ -377,6 +391,7 @@ class SidebarTabCellView: SidebarCellView {
 
     private func closeButtonTapped() {
         guard let tab = item as? Tab else { return }
+        tabPreviewRegistration.cancelForInteraction()
         delegate?.tabCellDidRequestClose(tab)
     }
 
@@ -389,6 +404,16 @@ class SidebarTabCellView: SidebarCellView {
         let state = MainBrowserWindowControllersManager.shared
             .controller(for: tab.windowId)?.browserState
         viewModel.configure(with: tab, in: state)
+        if let state {
+            tabPreviewRegistration.configure(
+                anchorView: self,
+                target: .tab(tab),
+                browserState: state,
+                placement: .right
+            )
+        } else {
+            tabPreviewRegistration.invalidate()
+        }
         viewModel.setActiveSuppressed(activeSuppressed, activeValue: tab.isActive)
         viewModel.onToggleMute = { [weak tab] in
             guard let tab else { return }

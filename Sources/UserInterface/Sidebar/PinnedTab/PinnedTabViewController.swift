@@ -68,6 +68,7 @@ class PinnedTabViewController: NSViewController {
                 tabItem.view.isHidden = tab == placeholderTab || self.isDraggingPinnedTab(tab)
                 tabItem.configure(
                     with: tab,
+                    browserState: browserState,
                     themeProvider: browserState?.themeContext ?? ThemeManager.shared
                 )
                 tabItem.itemClicked = { [weak self] tab, modifierFlags in
@@ -1170,6 +1171,10 @@ extension PinnedTabViewController {
         isDragging = true
         placeholderTab = nil
         isExternalDrag = false
+        if let indexPath = indexPaths.first,
+           let item = collectionView.item(at: indexPath) as? PinnedTabItem {
+            item.cancelTabPreviewForInteraction()
+        }
 
         // A pinned-extension reorder never engages the tab dragging session
         // (drag-image switching, tear-off); its source cell keeps its grid

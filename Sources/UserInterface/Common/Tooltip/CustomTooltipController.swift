@@ -5,7 +5,70 @@
 
 import AppKit
 import Combine
+import QuartzCore
 import SwiftUI
+
+enum CustomTooltipPlacement: Equatable {
+    case below
+    case right
+}
+
+enum CustomTooltipHandoffGroup: Equatable {
+    case standard
+    case tabPreview
+}
+
+struct CustomTooltipGeometry {
+    static let anchorGap: CGFloat = 6
+    static let screenMargin: CGFloat = 4
+
+    static func origin(
+        contentSize: CGSize,
+        anchorScreenRect: CGRect,
+        visibleFrame: CGRect?,
+        placement: CustomTooltipPlacement
+    ) -> CGPoint {
+        let preferredOrigin: CGPoint
+        switch placement {
+        case .below:
+            preferredOrigin = CGPoint(
+                x: anchorScreenRect.midX - contentSize.width / 2,
+                y: anchorScreenRect.minY - anchorGap - contentSize.height
+            )
+        case .right:
+            preferredOrigin = CGPoint(
+                x: anchorScreenRect.maxX + anchorGap,
+                y: anchorScreenRect.midY - contentSize.height / 2
+            )
+        }
+
+        guard let visibleFrame else { return preferredOrigin }
+
+        var origin = preferredOrigin
+        switch placement {
+        case .below:
+            let aboveY = anchorScreenRect.maxY + anchorGap
+            if origin.y < visibleFrame.minY + screenMargin,
+               aboveY + contentSize.height <= visibleFrame.maxY - screenMargin {
+                origin.y = aboveY
+            }
+        case .right:
+            let leftX = anchorScreenRect.minX - anchorGap - contentSize.width
+            if origin.x + contentSize.width > visibleFrame.maxX - screenMargin,
+               leftX >= visibleFrame.minX + screenMargin {
+                origin.x = leftX
+            }
+        }
+
+        let minimumX = visibleFrame.minX + screenMargin
+        let minimumY = visibleFrame.minY + screenMargin
+        let maximumX = max(minimumX, visibleFrame.maxX - contentSize.width - screenMargin)
+        let maximumY = max(minimumY, visibleFrame.maxY - contentSize.height - screenMargin)
+        origin.x = min(max(origin.x, minimumX), maximumX)
+        origin.y = min(max(origin.y, minimumY), maximumY)
+        return origin
+    }
+}
 
 /// Timing shared by the AppKit and SwiftUI custom-tooltip APIs.
 ///
@@ -17,15 +80,30 @@ struct CustomTooltipConfiguration: Equatable {
 
     var showDelay: TimeInterval
     var displayDuration: TimeInterval?
+    var placement: CustomTooltipPlacement
+    var handoffDelay: TimeInterval
+    var handoffGroup: CustomTooltipHandoffGroup
+    var handoffFrameAnimationDuration: TimeInterval
 
     /// - Parameters:
     ///   - showDelay: Time the pointer must remain over a cold host before the
     ///     tooltip appears.
     ///   - displayDuration: Maximum visible time. Pass `nil` to keep the
     ///     tooltip visible until the pointer or window lifecycle dismisses it.
-    init(showDelay: TimeInterval = 0.3, displayDuration: TimeInterval? = 10) {
+    init(
+        showDelay: TimeInterval = 0.3,
+        displayDuration: TimeInterval? = 10,
+        placement: CustomTooltipPlacement = .below,
+        handoffDelay: TimeInterval = 0,
+        handoffGroup: CustomTooltipHandoffGroup = .standard,
+        handoffFrameAnimationDuration: TimeInterval = 0
+    ) {
         self.showDelay = showDelay
         self.displayDuration = displayDuration
+        self.placement = placement
+        self.handoffDelay = handoffDelay
+        self.handoffGroup = handoffGroup
+        self.handoffFrameAnimationDuration = handoffFrameAnimationDuration
     }
 
     fileprivate var normalizedShowDelay: TimeInterval {
@@ -34,6 +112,14 @@ struct CustomTooltipConfiguration: Equatable {
 
     fileprivate var normalizedDisplayDuration: TimeInterval? {
         displayDuration.map { max(0, $0) }
+    }
+
+    fileprivate var normalizedHandoffDelay: TimeInterval {
+        max(0, handoffDelay)
+    }
+
+    fileprivate var normalizedHandoffFrameAnimationDuration: TimeInterval {
+        max(0, handoffFrameAnimationDuration)
     }
 }
 
@@ -74,10 +160,14 @@ protocol CustomTooltipPresenting: AnyObject {
         content: AnyView,
         anchorScreenRect: CGRect,
         screen: NSScreen?,
-        themeProvider: ThemeStateProvider
+        themeProvider: ThemeStateProvider,
+        placement: CustomTooltipPlacement,
+        frameAnimationDuration: TimeInterval
     )
     func dismiss()
 }
+
+typealias CustomTooltipPresentationPreparation = @MainActor () -> Bool
 
 @MainActor
 private struct CustomTooltipThemedContent: View {
@@ -118,7 +208,9 @@ private final class CustomTooltipPanelPresenter: CustomTooltipPresenting {
         content: AnyView,
         anchorScreenRect: CGRect,
         screen: NSScreen?,
-        themeProvider: ThemeStateProvider
+        themeProvider: ThemeStateProvider,
+        placement: CustomTooltipPlacement,
+        frameAnimationDuration: TimeInterval
     ) {
         guard let sourceWindow else { return }
         let (panel, hostingView) = ensureSurface()
@@ -140,31 +232,28 @@ private final class CustomTooltipPanelPresenter: CustomTooltipPresenting {
             size.height = max(size.height, 1)
         }
 
-        let gap: CGFloat = 6
-        var origin = CGPoint(
-            x: anchorScreenRect.midX - size.width / 2,
-            y: anchorScreenRect.minY - gap - size.height
+        let origin = CustomTooltipGeometry.origin(
+            contentSize: size,
+            anchorScreenRect: anchorScreenRect,
+            visibleFrame: visibleFrame,
+            placement: placement
         )
 
-        if let visibleFrame {
-            origin.x = min(
-                max(origin.x, visibleFrame.minX + 4),
-                visibleFrame.maxX - size.width - 4
-            )
-
-            let aboveY = anchorScreenRect.maxY + gap
-            if origin.y < visibleFrame.minY + 4,
-               aboveY + size.height <= visibleFrame.maxY - 4 {
-                origin.y = aboveY
-            }
-            origin.y = min(
-                max(origin.y, visibleFrame.minY + 4),
-                visibleFrame.maxY - size.height - 4
-            )
-        }
-
+        let targetFrame = CGRect(origin: origin, size: size)
         hostingView.frame = CGRect(origin: .zero, size: size)
-        panel.setFrame(CGRect(origin: origin, size: size), display: true)
+        if isVisible,
+           panel.isVisible,
+           frameAnimationDuration > 0,
+           !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
+           panel.frame != targetFrame {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = frameAnimationDuration
+                context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                panel.animator().setFrame(targetFrame, display: true)
+            }
+        } else {
+            panel.setFrame(targetFrame, display: true)
+        }
         if panel.parent !== sourceWindow {
             panel.parent?.removeChildWindow(panel)
             sourceWindow.addChildWindow(panel, ordered: .above)
@@ -235,17 +324,20 @@ private final class CustomTooltipRequest {
     weak var anchorView: NSView?
     var content: AnyView
     var configuration: CustomTooltipConfiguration
+    var prepareForPresentation: CustomTooltipPresentationPreparation?
 
     init(
         ownerID: UUID,
         anchorView: NSView,
         content: AnyView,
-        configuration: CustomTooltipConfiguration
+        configuration: CustomTooltipConfiguration,
+        prepareForPresentation: CustomTooltipPresentationPreparation?
     ) {
         self.ownerID = ownerID
         self.anchorView = anchorView
         self.content = content
         self.configuration = configuration
+        self.prepareForPresentation = prepareForPresentation
     }
 }
 
@@ -275,8 +367,11 @@ final class CustomTooltipController {
     private var activeRequest: CustomTooltipRequest?
     private var pendingTask: AnyCancellable?
     private var durationTask: AnyCancellable?
+    private var handoffDismissTask: AnyCancellable?
+    private var handoffDismissOwnerID: UUID?
     private var pointerWatchdog: Timer?
     private var warmUntil: Date?
+    private var warmHandoffGroup: CustomTooltipHandoffGroup?
     private var lifecycleObservers: [NSObjectProtocol] = []
 
     var pendingOwnerID: UUID? { pendingRequest?.ownerID }
@@ -312,30 +407,43 @@ final class CustomTooltipController {
         pointerWatchdog?.invalidate()
         pendingTask?.cancel()
         durationTask?.cancel()
+        handoffDismissTask?.cancel()
     }
 
     func pointerEntered(
         ownerID: UUID,
         anchorView: NSView,
         content: AnyView,
-        configuration: CustomTooltipConfiguration
+        configuration: CustomTooltipConfiguration,
+        prepareForPresentation: CustomTooltipPresentationPreparation? = nil
     ) {
         let request = CustomTooltipRequest(
             ownerID: ownerID,
             anchorView: anchorView,
             content: content,
-            configuration: configuration
+            configuration: configuration,
+            prepareForPresentation: prepareForPresentation
         )
 
         pendingTask?.cancel()
         pendingTask = nil
         pendingRequest = nil
 
-        if activeRequest != nil || isWarm || configuration.normalizedShowDelay == 0 {
+        let hasActiveRequestInGroup = activeRequest?.configuration.handoffGroup
+            == configuration.handoffGroup
+        if activeRequest != nil, !hasActiveRequestInGroup {
+            hideActive(preserveWarmth: false)
+        }
+
+        if hasActiveRequestInGroup
+            || isWarm(for: configuration.handoffGroup)
+            || configuration.normalizedShowDelay == 0 {
             show(request)
             return
         }
 
+        warmUntil = nil
+        warmHandoffGroup = nil
         schedulePendingPresentation(request)
     }
 
@@ -343,13 +451,15 @@ final class CustomTooltipController {
         ownerID: UUID,
         anchorView: NSView,
         content: AnyView,
-        configuration: CustomTooltipConfiguration
+        configuration: CustomTooltipConfiguration,
+        prepareForPresentation: CustomTooltipPresentationPreparation? = nil
     ) {
         if let pendingRequest, pendingRequest.ownerID == ownerID {
             let previousShowDelay = pendingRequest.configuration.normalizedShowDelay
             pendingRequest.anchorView = anchorView
             pendingRequest.content = content
             pendingRequest.configuration = configuration
+            pendingRequest.prepareForPresentation = prepareForPresentation
             if previousShowDelay != configuration.normalizedShowDelay {
                 schedulePendingPresentation(pendingRequest)
             }
@@ -361,6 +471,7 @@ final class CustomTooltipController {
         activeRequest.anchorView = anchorView
         activeRequest.content = content
         activeRequest.configuration = configuration
+        activeRequest.prepareForPresentation = prepareForPresentation
         refreshVisibleRequest(activeRequest)
         if self.activeRequest === activeRequest,
            previousDisplayDuration != configuration.normalizedDisplayDuration {
@@ -376,19 +487,39 @@ final class CustomTooltipController {
         }
 
         guard activeRequest?.ownerID == ownerID else { return }
-        hideActive(preserveWarmth: true)
+        let delay = activeRequest?.configuration.normalizedHandoffDelay ?? 0
+        guard delay > 0 else {
+            hideActive(preserveWarmth: true)
+            return
+        }
+        scheduleHandoffDismissal(ownerID: ownerID, delay: delay)
+    }
+
+    func dismiss(ownerID: UUID) {
+        if pendingRequest?.ownerID == ownerID {
+            pendingTask?.cancel()
+            pendingTask = nil
+            pendingRequest = nil
+        }
+        if handoffDismissOwnerID == ownerID {
+            cancelHandoffDismissal()
+        }
+        guard activeRequest?.ownerID == ownerID else { return }
+        hideActive(preserveWarmth: false)
     }
 
     func dismissAll() {
         pendingTask?.cancel()
         pendingTask = nil
         pendingRequest = nil
+        cancelHandoffDismissal()
         hideActive(preserveWarmth: false)
     }
 
-    private var isWarm: Bool {
+    private func isWarm(for handoffGroup: CustomTooltipHandoffGroup) -> Bool {
         if activeRequest != nil { return true }
-        guard let warmUntil else { return false }
+        guard warmHandoffGroup == handoffGroup,
+              let warmUntil else { return false }
         return now() < warmUntil
     }
 
@@ -414,15 +545,26 @@ final class CustomTooltipController {
 
     private func show(_ request: CustomTooltipRequest) {
         guard let context = presentationContext(for: request) else { return }
+        guard request.prepareForPresentation?() != false else { return }
+        cancelHandoffDismissal()
+        let previousHandoffGroup = activeRequest?.configuration.handoffGroup
         let isNewOwner = activeRequest?.ownerID != request.ownerID
+        let shouldAnimateFrame = presenter.isVisible
+            && isNewOwner
+            && previousHandoffGroup == request.configuration.handoffGroup
         activeRequest = request
         warmUntil = nil
+        warmHandoffGroup = nil
 
         presenter.present(
             content: request.content,
             anchorScreenRect: context.anchorScreenRect,
             screen: context.screen,
-            themeProvider: context.themeProvider
+            themeProvider: context.themeProvider,
+            placement: request.configuration.placement,
+            frameAnimationDuration: shouldAnimateFrame
+                ? request.configuration.normalizedHandoffFrameAnimationDuration
+                : 0
         )
         startPointerWatchdog()
 
@@ -436,11 +578,18 @@ final class CustomTooltipController {
             hideActive(preserveWarmth: false)
             return
         }
+        guard request.prepareForPresentation?() != false else {
+            hideActive(preserveWarmth: false)
+            return
+        }
+        cancelHandoffDismissal()
         presenter.present(
             content: request.content,
             anchorScreenRect: context.anchorScreenRect,
             screen: context.screen,
-            themeProvider: context.themeProvider
+            themeProvider: context.themeProvider,
+            placement: request.configuration.placement,
+            frameAnimationDuration: 0
         )
     }
 
@@ -461,7 +610,10 @@ final class CustomTooltipController {
         let anchorScreenRect = window.convertToScreen(rectInWindow)
         guard anchorScreenRect.contains(mouseLocation()) else { return nil }
 
-        return (anchorScreenRect, window.screen, themeProvider(window))
+        let screen = NSScreen.screens.first { $0.frame.contains(
+            CGPoint(x: anchorScreenRect.midX, y: anchorScreenRect.midY)
+        ) } ?? window.screen
+        return (anchorScreenRect, screen, themeProvider(window))
     }
 
     private func startDisplayDurationTimer(for request: CustomTooltipRequest) {
@@ -477,7 +629,9 @@ final class CustomTooltipController {
     }
 
     private func hideActive(preserveWarmth: Bool) {
+        cancelHandoffDismissal()
         let wasVisible = activeRequest != nil || presenter.isVisible
+        let previousHandoffGroup = activeRequest?.configuration.handoffGroup
         activeRequest = nil
         durationTask?.cancel()
         durationTask = nil
@@ -486,9 +640,32 @@ final class CustomTooltipController {
 
         if preserveWarmth, wasVisible {
             warmUntil = now().addingTimeInterval(Self.warmGrace)
+            warmHandoffGroup = previousHandoffGroup
         } else {
             warmUntil = nil
+            warmHandoffGroup = nil
         }
+    }
+
+    private func scheduleHandoffDismissal(ownerID: UUID, delay: TimeInterval) {
+        guard handoffDismissOwnerID != ownerID else { return }
+        cancelHandoffDismissal()
+        handoffDismissOwnerID = ownerID
+        stopPointerWatchdog()
+        handoffDismissTask = scheduler(delay) { [weak self] in
+            guard let self,
+                  self.handoffDismissOwnerID == ownerID,
+                  self.activeRequest?.ownerID == ownerID else { return }
+            self.handoffDismissTask = nil
+            self.handoffDismissOwnerID = nil
+            self.hideActive(preserveWarmth: false)
+        }
+    }
+
+    private func cancelHandoffDismissal() {
+        handoffDismissTask?.cancel()
+        handoffDismissTask = nil
+        handoffDismissOwnerID = nil
     }
 
     private func startPointerWatchdog() {

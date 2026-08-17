@@ -27,9 +27,12 @@ final class TabItemView: NSView {
         case normal
     }
 
-    func resetHoverState() {
+    func resetHoverState(immediately: Bool = false) {
         if isHovered {
             isHovered = false
+        }
+        if immediately {
+            tabPreviewRegistration.cancelForInteraction()
         }
         viewModel.isPressed = false
     }
@@ -56,6 +59,8 @@ final class TabItemView: NSView {
 
     private var currentTabId: String?
     private weak var sourceTab: Tab?
+    private let tabPreviewRegistration = TabPreviewRegistration()
+    private var showsTabPreview = false
     private var cancellables = Set<AnyCancellable>()
     private var themeObservation: AnyObject?
     private var themeObserver = ThemeObserver.shared
@@ -91,6 +96,7 @@ final class TabItemView: NSView {
     private var isHovered = false {
         didSet {
             guard oldValue != isHovered else { return }
+            tabPreviewRegistration.setHovering(isHovered)
             onHoverChanged?(isHovered)
             updateAppearance()
             layoutContent()
@@ -233,6 +239,11 @@ final class TabItemView: NSView {
         layer?.masksToBounds = false
         backgroundLayer.sourceView = self
         layer?.insertSublayer(backgroundLayer, at: 0)
+        tabPreviewRegistration.onEligibilityChanged = { [weak self] isEligible in
+            self?.showsTabPreview = isEligible
+            self?.updateTitleHostingToolTips()
+            self?.layoutContent()
+        }
 
         addSubview(faviconHostingView)
         addSubview(secondaryFaviconHostingView)
@@ -248,7 +259,10 @@ final class TabItemView: NSView {
     
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        guard window != nil else { return }
+        guard window != nil else {
+            tabPreviewRegistration.invalidate()
+            return
+        }
         themeObserver.rebind(to: themeStateProvider)
     }
 
@@ -642,6 +656,7 @@ final class TabItemView: NSView {
     private func makeSecondaryCloseButtonRootView() -> AnyView {
         AnyView(
             UnifiedTabCloseButton { [weak self] in
+                self?.tabPreviewRegistration.cancelForInteraction()
                 self?.pinnedSplitPartner?.close()
             }
             .phiThemeObserver(themeObserver)
@@ -651,6 +666,7 @@ final class TabItemView: NSView {
     private func makeCloseButtonRootView() -> AnyView {
         AnyView(
             UnifiedTabCloseButton { [weak self] in
+                self?.tabPreviewRegistration.cancelForInteraction()
                 self?.sourceTab?.close()
             }
             .phiThemeObserver(themeObserver)
@@ -659,13 +675,24 @@ final class TabItemView: NSView {
 
     // MARK: - Configuration
 
-    func configure(with data: TabRenderData) {
+    func configure(with data: TabRenderData, browserState: BrowserState? = nil) {
         currentTabId = data.id
         isActive = data.isActive
         isMultiSelected = data.isMultiSelected
         isPinned = data.isPinned
         backgroundLayer.splitPairPosition = data.splitPairPosition
         backgroundLayer.isSplitGroupActive = data.isSplitGroupActive
+
+        if let tab = data.sourceTab, let browserState {
+            tabPreviewRegistration.configure(
+                anchorView: self,
+                target: .tab(tab),
+                browserState: browserState,
+                placement: .below
+            )
+        } else {
+            tabPreviewRegistration.invalidate()
+        }
 
         // Pinned-split first pane: bind the secondary view model so the right
         // favicon renders the partner. The configure() call subscribes to the
@@ -776,6 +803,12 @@ final class TabItemView: NSView {
     static let splitPairAccessibilityValue = "splitPair"
 
     private func updateTitleHostingToolTips() {
+        if showsTabPreview {
+            titleHostingView.toolTip = nil
+            secondaryTitleHostingView.toolTip = nil
+            toolTip = nil
+            return
+        }
         titleHostingView.toolTip = viewModel.displayTitle
         guard pinnedSplitPartner != nil else {
             toolTip = viewModel.displayTitle
@@ -800,7 +833,9 @@ final class TabItemView: NSView {
 
     private func updatePaneToolTips(mode: LayoutMode) {
         removePaneToolTips()
-        guard pinnedSplitPartner != nil, mode != .normal else { return }
+        guard !showsTabPreview,
+              pinnedSplitPartner != nil,
+              mode != .normal else { return }
         let leftHalf = CGRect(x: 0, y: 0, width: bounds.width / 2, height: bounds.height)
         let rightHalf = CGRect(x: leftHalf.maxX, y: 0,
                                width: bounds.width - leftHalf.width, height: bounds.height)
@@ -829,6 +864,7 @@ final class TabItemView: NSView {
             super.otherMouseDown(with: event)
             return
         }
+        tabPreviewRegistration.cancelForInteraction()
         // Pinned-merged split: one TabItemView hosts two panes side-by-side
         // (`sourceTab` left, `pinnedSplitPartner` right). Route to the half
         // the click landed in, matching the left-click split in `mouseUp`.
@@ -843,6 +879,7 @@ final class TabItemView: NSView {
     }
 
     override func menu(for event: NSEvent) -> NSMenu? {
+        tabPreviewRegistration.cancelForInteraction()
         let menu = NSMenu()
         if let tab = sourceTab,
            let state = MainBrowserWindowControllersManager.shared.getBrowserState(for: tab.windowId),
@@ -918,6 +955,8 @@ final class TabItemView: NSView {
                 return
             }
 
+            tabPreviewRegistration.cancelForInteraction()
+
             // Split-merged cells route the right-half click to the partner
             // pane's tab so each favicon acts as its own click target.
             if pinnedSplitPartner != nil, point.x > bounds.midX, onSecondarySelect != nil {
@@ -974,6 +1013,7 @@ final class TabItemView: NSView {
             if dx > 5 || dy > 5 {
                 isDraggingInternal = true
                 viewModel.isPressed = false
+                tabPreviewRegistration.cancelForInteraction()
                 onDragStart?(event)
             }
 

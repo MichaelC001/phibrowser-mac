@@ -352,6 +352,7 @@
 		C70000000000000000000011 /* CustomTooltipController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C70000000000000000000001 /* CustomTooltipController.swift */; };
 		C70000000000000000000012 /* CustomTooltip+Hosting.swift in Sources */ = {isa = PBXBuildFile; fileRef = C70000000000000000000002 /* CustomTooltip+Hosting.swift */; };
 		C70000000000000000000013 /* CommandShortcutTooltipContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = C70000000000000000000003 /* CommandShortcutTooltipContent.swift */; };
+		C80000000000000000000011 /* TabPreviewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C80000000000000000000001 /* TabPreviewController.swift */; };
 		CC24EF062E89223500CE9DD7 /* LoginController.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC24EF052E89223500CE9DD7 /* LoginController.swift */; };
 		CC24EF082E89251D00CE9DD7 /* AuthManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC24EF072E89251D00CE9DD7 /* AuthManager.swift */; };
 		CC2708982E7959DF00B65AB8 /* PinnedTabLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC2708972E7959DF00B65AB8 /* PinnedTabLayout.swift */; };
@@ -992,6 +993,7 @@
 		C70000000000000000000001 /* CustomTooltipController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CustomTooltipController.swift; sourceTree = "<group>"; };
 		C70000000000000000000002 /* CustomTooltip+Hosting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "CustomTooltip+Hosting.swift"; sourceTree = "<group>"; };
 		C70000000000000000000003 /* CommandShortcutTooltipContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandShortcutTooltipContent.swift; sourceTree = "<group>"; };
+		C80000000000000000000001 /* TabPreviewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabPreviewController.swift; sourceTree = "<group>"; };
 		CC24EF052E89223500CE9DD7 /* LoginController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginController.swift; sourceTree = "<group>"; };
 		CC24EF072E89251D00CE9DD7 /* AuthManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthManager.swift; sourceTree = "<group>"; };
 		CC2708972E7959DF00B65AB8 /* PinnedTabLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PinnedTabLayout.swift; sourceTree = "<group>"; };
@@ -2081,6 +2083,14 @@
 			path = Tooltip;
 			sourceTree = "<group>";
 		};
+		C80000000000000000000020 /* TabPreview */ = {
+			isa = PBXGroup;
+			children = (
+				C80000000000000000000001 /* TabPreviewController.swift */,
+			);
+			path = TabPreview;
+			sourceTree = "<group>";
+		};
 		CC24EEF32E8662AC00CE9DD7 /* Onboarding */ = {
 			isa = PBXGroup;
 			children = (
@@ -2379,6 +2389,7 @@
 				A71E00000000000000000005 /* AgentAccessApprovalAlert.swift */,
 				D12800000000000000000002 /* PhiSegmentedPicker.swift */,
 				C70000000000000000000020 /* Tooltip */,
+				C80000000000000000000020 /* TabPreview */,
 				CD1100050000000000000001 /* IconPicker */,
 				8EF36C022F4E9E7000FCC91E /* Tabs */,
 				374BCE982F7157FD0043C656 /* TabAreaContextMenuHelper.swift */,
@@ -2851,6 +2862,7 @@
 				C70000000000000000000011 /* CustomTooltipController.swift in Sources */,
 				C70000000000000000000012 /* CustomTooltip+Hosting.swift in Sources */,
 				C70000000000000000000013 /* CommandShortcutTooltipContent.swift in Sources */,
+				C80000000000000000000011 /* TabPreviewController.swift in Sources */,
 				CCEF2D222E584F1700FDDEB2 /* URLProcessor.swift in Sources */,
 				A81113410000000000000004 /* FirstTimeActionTracker.swift in Sources */,
 				4D454D4F5259000000000001 /* MemoryUsageModels.swift in Sources */,

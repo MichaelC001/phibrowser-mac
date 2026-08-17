@@ -1240,7 +1240,7 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
             currentScrollOffset = newOffset
             self.hoveredTabIndex = nil
             for view in normalTabViews.values {
-                view.resetHoverState()
+                view.resetHoverState(immediately: true)
             }
             performLayout(context: .none) // Avoid animations.
         } else {
@@ -1268,7 +1268,7 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
             currentScrollOffset = newOffset
             self.hoveredTabIndex = nil
             for view in normalTabViews.values {
-                view.resetHoverState()
+                view.resetHoverState(immediately: true)
             }
             NSAnimationContext.runAnimationGroup { ctx in
                 ctx.duration = 0.25
@@ -1989,7 +1989,7 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
                 pinnedSplitPartner: render.pinnedMergedPartner,
                 sourceTab: tab
             )
-            view.configure(with: renderData)
+            view.configure(with: renderData, browserState: browserState)
 
             let isDraggingSourceView = dragController.context.map {
                 tabId(for: $0.draggingTab) == id

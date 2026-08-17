@@ -42,6 +42,7 @@ private final class BookmarkCellViewState {
     var isEditing = false
     var isMultiSelected = false
     var isDropTargetHighlighted = false
+    var showsTabPreview = false
 }
 
 private final class VerticallyCenteredBookmarkTextFieldCell: NSTextFieldCell {
@@ -82,7 +83,7 @@ private final class VerticallyCenteredBookmarkTextFieldCell: NSTextFieldCell {
     }
 }
 
-class BookmarkCellView: SidebarCellView {
+class BookmarkCellView: SidebarCellView, TabPreviewInteractionCancelling {
     /// Identifier stamped on every sidebar bookmark row's content view.
     static let accessibilityIdentifier = "sidebarBookmark"
 
@@ -90,6 +91,7 @@ class BookmarkCellView: SidebarCellView {
     private let primaryTabViewModel = TabViewModel()
     private let secondaryTabViewModel = TabViewModel()
     private let hoverRegionView = SidebarTabHoverRegionView()
+    private let tabPreviewRegistration = TabPreviewRegistration()
     // Keep the rename field in AppKit instead of the SwiftUI subtree.
     // Hover-driven SwiftUI updates were rebuilding the representable path and
     // tearing down the field editor mid-rename. SwiftUI makes this much more
@@ -130,7 +132,12 @@ class BookmarkCellView: SidebarCellView {
         editField.isHidden = true
         primaryTabViewModel.prepareForReuse()
         secondaryTabViewModel.prepareForReuse()
+        tabPreviewRegistration.invalidate()
         resetState()
+    }
+
+    func cancelTabPreviewForInteraction() {
+        tabPreviewRegistration.cancelForInteraction()
     }
 
     private func setupViews() {
@@ -159,8 +166,13 @@ class BookmarkCellView: SidebarCellView {
         addSubview(editField)
         updateEditFieldLayout()
 
+        tabPreviewRegistration.onEligibilityChanged = { [weak self] isEligible in
+            self?.viewState.showsTabPreview = isEligible
+        }
+
         hoverRegionView.onHoverChanged = { [weak self] isHovered in
             self?.viewState.isHovered = isHovered
+            self?.tabPreviewRegistration.setHovering(isHovered)
         }
         addSubview(hoverRegionView)
         hoverRegionView.snp.makeConstraints { make in
@@ -210,6 +222,7 @@ class BookmarkCellView: SidebarCellView {
         viewState.isEditing = false
         viewState.isMultiSelected = false
         viewState.isDropTargetHighlighted = false
+        viewState.showsTabPreview = false
     }
 
     private func setupEditField() {
@@ -288,6 +301,17 @@ class BookmarkCellView: SidebarCellView {
         viewState.editText = bookmark.title
         editField.stringValue = bookmark.title
         updateEditFieldLayout()
+
+        if let state = resolvedBrowserState {
+            tabPreviewRegistration.configure(
+                anchorView: self,
+                target: .bookmark(bookmark),
+                browserState: state,
+                placement: .right
+            )
+        } else {
+            tabPreviewRegistration.invalidate()
+        }
 
         refreshLiveTabs(for: bookmark)
         applyTitleAndSplitState(bookmark: bookmark,
@@ -562,6 +586,7 @@ class BookmarkCellView: SidebarCellView {
 
     private func closeButtonTapped() {
         guard let bookmark = configuredBookmark ?? resolvedBookmark else { return }
+        tabPreviewRegistration.cancelForInteraction()
         resolvedBrowserState?.closeBookmark(bookmark)
     }
 
@@ -802,7 +827,7 @@ private struct SidebarBookmarkCellContentView: View {
                 UnifiedTabCloseButton(action: onClose)
             }
         }
-        .help(state.title)
+        .help(state.showsTabPreview ? "" : state.title)
         .padding(.leading, state.isFolder ? 4 : 6)
         .padding(.trailing, 8)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
