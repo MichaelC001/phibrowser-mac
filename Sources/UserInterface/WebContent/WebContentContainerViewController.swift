@@ -750,7 +750,15 @@ class WebContentContainerViewController: NSViewController {
         let h = cornerR * kappa
 
         let leftX = r.minX
-        let rightX = r.maxX
+        // With the extension side panel mounted the outline keeps its right
+        // edge at the window margin instead of following the shrunken page
+        // card: the top line runs above the panel header, and — critically —
+        // the active-tab notch guard below stays satisfiable for tabs whose
+        // chips sit over the panel region; against the narrow card edge they
+        // would fail the right-side bound and lose their outline entirely.
+        let rightX = extensionSidePanelView?.superview === view
+            ? max(r.maxX, view.bounds.maxX - WebContentConstant.edgesSpacing)
+            : r.maxX
         let topY = r.maxY
         let bottomY = r.minY
 
@@ -1344,6 +1352,7 @@ class WebContentContainerViewController: NSViewController {
         extensionSidePanelView = panelView
         guard !skipsPanelSlideAnimation else {
             remakeContentLayout()
+            settlePanelTransitionOuterBorder()
             return
         }
 
@@ -1367,8 +1376,13 @@ class WebContentContainerViewController: NSViewController {
             panelView.translatesAutoresizingMaskIntoConstraints = false
             remakeContentLayout()
             view.layoutSubtreeIfNeeded()
-        }, completionHandler: { [weak pausedController] in
+        }, completionHandler: { [weak self, weak pausedController] in
             pausedController?.setContentFrameSyncPausedForPanelTransition(false)
+            // Settle on completion only: during the slide the stale outline
+            // still traces the full-width card the panel is covering, while
+            // an immediate snap would draw the narrow outline across the
+            // not-yet-shrunk page.
+            self?.settlePanelTransitionOuterBorder()
         })
     }
 
@@ -1433,12 +1447,14 @@ class WebContentContainerViewController: NSViewController {
                 view.layoutSubtreeIfNeeded()
             }, completionHandler: { [weak self, weak pausedController] in
                 pausedController?.setContentFrameSyncPausedForPanelTransition(false)
+                self?.settlePanelTransitionOuterBorder()
                 guard let self, self.closingExtensionSidePanelView === panelView
                 else { return }
                 panelView.removeFromSuperview()
                 self.closingExtensionSidePanelView = nil
             })
         }
+        settlePanelTransitionOuterBorder()
         AppLogInfo("[ExtSidePanel] [Container] detached panel slot")
 
         // Closing the panel usually leaves the window with no meaningful
@@ -1459,6 +1475,20 @@ class WebContentContainerViewController: NSViewController {
             else { return }
             self.currentWebContentController?.focusWebContent()
         }
+    }
+
+    /// Re-derives the content outline once a panel transition's layout has
+    /// settled. The viewDidLayout recompute that fires inside the
+    /// transition's own layout pass reads `splitViewContainerFrame` before
+    /// the split-view subtree has re-laid out (top-down layout order), so
+    /// the outline is left at the pre-transition geometry — a stray border
+    /// line over the page after a close — and, with the container not laid
+    /// out again, nothing heals it until the next window resize. Same
+    /// stale-convert hazard `switchToWebContentController` documents before
+    /// its own explicit recompute.
+    private func settlePanelTransitionOuterBorder() {
+        view.layoutSubtreeIfNeeded()
+        updateContentOuterBorder()
     }
 
     // MARK: - Close Snapshot Placeholder
