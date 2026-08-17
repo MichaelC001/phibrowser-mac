@@ -66,7 +66,7 @@ for (const type of ['pointermove', 'mousemove', 'pointerdown', 'mousedown',
     at: performance.now(), target: event.target.id || event.target.tagName,
     key: event.key || null, data: event.data ?? null,
     inputType: event.inputType || null, meta: event.metaKey || false,
-    shift: event.shiftKey || false,
+    shift: event.shiftKey || false, buttons: event.buttons ?? null,
     dx: event.deltaX ?? null, dy: event.deltaY ?? null
   }), true)
 }
@@ -439,6 +439,27 @@ async function main() {
         formatted?.done === true && formatted?.verified === false
           && formatValue === 'ABC',
         JSON.stringify({ formatted, formatValue }))
+
+  // --- drag fidelity: press, held trusted motion, release -------------------
+  await H.js('scrollTo(0, 0); window.inputTrace = []')
+  await H.drag('#input-target', '#input-field')
+  const dragAudit = await H.js(`(() => {
+    const t = window.inputTrace
+    const down = t.filter((e) => e.type === 'mousedown')
+    const up = t.filter((e) => e.type === 'mouseup')
+    return {
+      downs: down.length, ups: up.length,
+      heldMoves: t.filter((e) => e.type === 'mousemove' && e.buttons === 1).length,
+      orderOk: down.length && up.length && down[0].at < up[0].at,
+      trusted: t.filter((e) => e.type.startsWith('mouse')).every((e) => e.trusted),
+      upTarget: up[0] && up[0].target
+    }
+  })()`)
+  check('drag presses, streams held trusted motion, and releases on the drop end',
+        dragAudit.downs === 1 && dragAudit.ups === 1 && dragAudit.heldMoves >= 6
+          && dragAudit.orderOk && dragAudit.trusted
+          && dragAudit.upTarget === 'input-field',
+        JSON.stringify(dragAudit))
 
   // --- scroll fidelity: a wheel gesture, not one large endpoint event -------
   await H.js('scrollTo(0, 0); window.inputTrace = []')

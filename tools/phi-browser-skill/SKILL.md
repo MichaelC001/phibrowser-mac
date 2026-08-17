@@ -127,7 +127,10 @@ Core surface — full semantics in this file:
   tool), `screenshot(path?)` (web viewport PNG — view it),
   `screenshotBrowser(path?)` (the WHOLE browser window — native chrome + web
   content), `pageInfo()` — see "Observing a page"
-- Input: `click(target | x, y)`, `hover(target | x, y)`, `fillInput(target,
+- Input: `click(target | x, y)`, `hover(target | x, y)`, `drag(from, to,
+  {button})` (press, a held-button humanized glide, release — sliders,
+  reorder lists, canvas gestures; both ends must share the viewport, and the
+  button always releases even on failure), `fillInput(target,
   text, {instant})` (clicks/focuses, types physical-key text through real key
   events and IME/emoji as composed graphemes, verifies by readback, then uses
   a deterministic-setter fallback — a field that reformats the value returns

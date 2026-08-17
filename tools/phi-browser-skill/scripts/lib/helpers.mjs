@@ -3683,19 +3683,23 @@ async function retryResolve(attempt, retryMs = RESOLVE_RETRY_MS) {
  *  human pointer actually has. Throws if missing or inoperable (after the
  *  short grace above; {retryMs: 0} probes exactly once). {gateRefresh: false}
  *  keeps the whole probe mutation-free — no consent re-gate, no pointer
- *  moves — for the commit checks right before a press. Element hits carry
- *  w/h; raw-coordinate targets return {x, y} alone. */
+ *  moves — for the commit checks right before a press. {scroll: false} skips
+ *  the scroll-into-view: required mid-drag, where scrolling the page under a
+ *  held button would be a gesture of its own. Element hits carry w/h;
+ *  raw-coordinate targets return {x, y} alone. */
 async function locateRect(target, { retryMs = RESOLVE_RETRY_MS,
-                                    gateRefresh = true } = {}) {
+                                    gateRefresh = true, scroll = true } = {}) {
   const spec = normalizeTarget(target)
   if (spec.coords) return { x: spec.coords.x, y: spec.coords.y }
   let sawInoperable = false
   let refreshedPageGate = false
-  const probe = () => callOnTarget(spec, `function (offX, offY) {
-      try { this.scrollIntoView({ block: 'center', inline: 'center' }) } catch (e) {}
+  const probe = () => callOnTarget(spec, `function (offX, offY, doScroll) {
+      if (doScroll) {
+        try { this.scrollIntoView({ block: 'center', inline: 'center' }) } catch (e) {}
+      }
       ${PAGE_OPERABLE_POINT_DECL}
       return __phiOperablePoint(this, offX, offY) || { operable: false }
-    }`, [spec.offX ?? null, spec.offY ?? null])
+    }`, [spec.offX ?? null, spec.offY ?? null, scroll !== false])
   const rect = await retryResolve(async () => {
     let hit = await probe()
     if (hit?.operable === false) {
@@ -4661,7 +4665,10 @@ async function pointerWidgetBounds(client, sid, minimum = { x: 0, y: 0 }) {
   }
 }
 
-async function movePointer(client, sid, x, y) {
+// `held` carries a pressed-buttons bitmask (1=left, 2=right, 4=middle) so
+// the same trajectory machinery drives drag motion: every sample then names
+// the held `button`, which is what makes Chromium synthesize a drag.
+async function movePointer(client, sid, x, y, { held = 0, button = 'left' } = {}) {
   const bounds = await pointerWidgetBounds(client, sid, { x, y })
   const clamp = (value, max) => Math.min(Math.max(0, Math.round(value)),
     Math.max(0, Math.round(max) - 1))
@@ -4688,6 +4695,7 @@ async function movePointer(client, sid, x, y) {
     }
     await client.send('Input.dispatchMouseEvent', {
       type: 'mouseMoved', x: point.x, y: point.y, pointerType: 'mouse',
+      ...(held ? { buttons: held, button } : {}),
     }, sid)
     state.pointer = { ...point, windowId: currentContext()?.windowId }
   }
@@ -4848,6 +4856,99 @@ export async function hover(target, maybeY) {
 }
 
 /**
+ * Drags with the button held: press at `from`, a paced held-button glide
+ * (the same trajectory machinery as click, streamed to the watcher), release
+ * at `to`. Both ends accept every click() target form, including [x, y]
+ * coordinates, and must be visible in the SAME viewport — a drag never
+ * scrolls the page under a held button; scroll() first so both ends are on
+ * screen. Pointer-driven drags (sliders, reorder lists, canvas gestures,
+ * text selection with button:'left') see the trusted press/move/release
+ * stream a physical drag produces. Pages that start a NATIVE HTML5 drag
+ * session (draggable=true) hand tracking to the OS, which synthetic moves
+ * cannot steer — use the raw cdp('Input.dispatchDragEvent') family there.
+ * The button is always released, even when the drag fails mid-flight, so a
+ * gesture can never stay stuck down.
+ */
+export async function drag(from, to, { button = 'left' } = {}) {
+  await guardAgentControl()
+  await ensurePageOperable({ intent: 'pointer' })
+  const client = await cdpClient()
+  logAction(`drag ${describeTarget(from)} to ${describeTarget(to)}`)
+  const s = inputScale()
+  const src = await locateRect(from)
+  let dest
+  try {
+    dest = await locateRect(to, { scroll: false })
+  } catch (err) {
+    if (/not human-operable/.test(String(err?.message || ''))) {
+      throw new Error('drag: both ends must be visible at once — scroll() until ' +
+                      describeTarget(from) + ' and ' + describeTarget(to) +
+                      ' share the viewport, then retry')
+    }
+    throw err
+  }
+  const sx = Math.round(src.x * s), sy = Math.round(src.y * s)
+  const sid = requireSession()
+  await movePointer(client, sid, sx, sy)
+  await ensurePageOperable({ force: true, intent: 'pointer' })
+  const pointer = pointerMemory()
+  if (!pointer || pointer.x !== sx || pointer.y !== sy) {
+    await movePointer(client, sid, sx, sy)
+  }
+  const srcFinal = await locateRect(from, { retryMs: 400, gateRefresh: false, scroll: false })
+  if (inputPointChanged(srcFinal, src)) {
+    throw new Error('drag: source moved while preparing the drag: ' + describeTarget(from))
+  }
+  const held = button === 'right' ? 2 : button === 'middle' ? 4 : 1
+  await client.send('Input.dispatchMouseEvent', {
+    type: 'mousePressed', x: sx, y: sy, button, clickCount: 1, pointerType: 'mouse',
+  }, sid)
+  try { mirrorEffect('click', { x: sx, y: sy }) } catch {}
+  let released = false
+  const releaseAt = (x, y) => {
+    released = true
+    return client.send('Input.dispatchMouseEvent', {
+      type: 'mouseReleased', x, y, button, clickCount: 1, pointerType: 'mouse',
+    }, sid)
+  }
+  try {
+    // A few sub-threshold pixels first: Chromium's drag controller (and most
+    // page libraries) latch the gesture only after the pointer leaves a small
+    // slop region around the press point.
+    const dx0 = Math.round(dest.x * s) - sx
+    const dy0 = Math.round(dest.y * s) - sy
+    const dist0 = Math.hypot(dx0, dy0)
+    if (dist0 >= 1) {
+      for (const step of [3, 7]) {
+        const at = { x: Math.round(sx + (dx0 / dist0) * step),
+                     y: Math.round(sy + (dy0 / dist0) * step) }
+        await client.send('Input.dispatchMouseEvent', {
+          type: 'mouseMoved', x: at.x, y: at.y, button, buttons: held,
+          pointerType: 'mouse',
+        }, sid)
+        state.pointer = { ...at, windowId: currentContext()?.windowId }
+        await new Promise(resolve => setTimeout(resolve, randomMs(15, 30)))
+      }
+    }
+    // The page may reflow once the drag latches (placeholders and drop zones
+    // appearing) — re-resolve the drop point mid-drag, scroll-free.
+    const fresh = await locateRect(to, { retryMs: 400, gateRefresh: false, scroll: false })
+    await movePointer(client, sid, Math.round(fresh.x * s), Math.round(fresh.y * s),
+                      { held, button })
+    // A human steadies the pointer over the drop point before letting go.
+    await new Promise(resolve => setTimeout(resolve, randomMs(70, 130)))
+    const p = pointerMemory() ?? { x: sx, y: sy }
+    await releaseAt(p.x, p.y)
+    return { from: { x: src.x, y: src.y }, to: { x: fresh.x, y: fresh.y } }
+  } finally {
+    if (!released) {
+      const p = pointerMemory() ?? { x: sx, y: sy }
+      await releaseAt(p.x, p.y).catch(() => {})
+    }
+  }
+}
+
+/**
  * Fills an input/textarea/select/contenteditable target. Text fields are
  * pointed to, clicked, selected, and typed at a watchable pace (physical-key
  * text through key events; IME/emoji through CDP's composition insertion),
@@ -4988,6 +5089,9 @@ async function fillTargetValue(spec, target, str, { instant = false, label = 'fi
 
   if (!hiddenTarget && !instant && prep.typeable && rect.w > 0 && rect.h > 0) {
     await dispatchClickAt(client, sid, pulse.x, pulse.y)
+    // A hand settles between the placement click and the first key; the pause
+    // also gives the page's focus handlers a beat before select-all runs.
+    await new Promise(resolve => setTimeout(resolve, randomMs(90, 170)))
     try { mirrorEffect('type', pulse) } catch {}
     const focus = await callOnTarget(spec, `function () {
       var el = this
@@ -5220,8 +5324,9 @@ export async function keyPhase(key, phase, { modifiers = 0 } = {}) {
 /**
  * One raw mouse phase in CSS-pixel viewport coordinates — `type` is 'move',
  * 'down', 'up', or 'wheel'. Applies the same zoom scaling and watcher
- * mirroring as click/scroll. Compose sequences (drag, held-button paths)
- * from these; click() remains the simple move+press+release.
+ * mirroring as click/scroll. drag() is the humanized two-point gesture;
+ * compose anything more exotic (multi-waypoint paths, held-button hovers)
+ * from these. click() remains the simple move+press+release.
  */
 export async function mouseEvent(type, { x = 0, y = 0, button = 'left',
                                          clickCount = 1, dx = 0, dy = 0,
