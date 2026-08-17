@@ -514,6 +514,13 @@ class WebContentViewController: NSViewController {
             }
             .store(in: &cancellables)
 
+        AgentSpaceManager.shared.cursorMoved
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] cursor in
+                self?.moveAgentSpaceCursor(cursor)
+            }
+            .store(in: &cancellables)
+
         // Observe AI Chat collapse state once the split item exists.
         setupAIChatObserver()
 
@@ -2712,10 +2719,20 @@ class WebContentViewController: NSViewController {
         }
         showAgentSpaceOverlay()
         var display = task
-        if let cursor = task.cursor {
+        // Live cursor state streams through `cursorMoved`; the side store
+        // seeds a mounter that (re)appears mid-glide.
+        if let cursor = AgentSpaceManager.shared.cursorBySpaceId[spaceId] {
             display.cursor = convertAgentCursorPoint(cursor)
         }
         agentSpaceOverlay.update(with: display)
+    }
+
+    /// Follows one streamed cursor sample — only the overlay's cursor layer
+    /// moves; the pill and the rest of the task display are untouched.
+    private func moveAgentSpaceCursor(_ cursor: AgentCursorUpdate) {
+        guard let spaceId = browserState?.spaceId, spaceId == cursor.spaceId,
+              agentSpaceOverlay.superview != nil else { return }
+        agentSpaceOverlay.moveCursor(to: convertAgentCursorPoint(cursor.point))
     }
 
     private func showAgentSpaceOverlay() {
@@ -2752,7 +2769,7 @@ class WebContentViewController: NSViewController {
         guard let spaceId = browserState?.spaceId, spaceId == effect.spaceId,
               agentSpaceOverlay.superview != nil else { return }
         guard let raw = effect.point
-                ?? AgentSpaceManager.shared.tasksBySpaceId[spaceId]?.cursor else { return }
+                ?? AgentSpaceManager.shared.cursorBySpaceId[spaceId] else { return }
         agentSpaceOverlay.playEffect(
             kind: effect.kind,
             at: convertAgentCursorPoint(raw),
