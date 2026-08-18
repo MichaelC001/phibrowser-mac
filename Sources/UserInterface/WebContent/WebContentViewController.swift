@@ -2827,6 +2827,54 @@ class WebContentViewController: NSViewController {
         }
     }
 
+    /// Detaches an expanded AI Chat from the split layout right before the
+    /// extension side panel slides in, returning a frame-driven snapshot
+    /// ghost (positioned in `coordView`'s space) for the container to
+    /// slide out alongside the panel's slide-in. nil when the chat is
+    /// collapsed or absent, or when the snapshot fails (the chat then
+    /// simply vanishes under the incoming panel).
+    ///
+    /// The panel ↔ chat mutex normally collapses the chat through the tab
+    /// observers, which apply NSSplitView's own divider animation a
+    /// runloop turn after the panel publish — too late for the slide-in's
+    /// layout target, and inside the narrowing container the chat card is
+    /// dragged left instead of exiting right. Collapsing the split item
+    /// here (state first, no divider animation) removes the chat from the
+    /// solution the slide-in animates to; the later model sweep and its
+    /// observers find the item already collapsed and no-op. The flip is
+    /// deliberately not laid out here: the caller's animation group
+    /// materializes it so the page pane's reflow rides the same implicit
+    /// animation as the panel.
+    func collapseAIChatForPanelTransition(ghostIn coordView: NSView) -> NSView? {
+        guard let aiChatSplitViewItem, !aiChatSplitViewItem.isCollapsed else {
+            return nil
+        }
+        let paneView = aiChatSplitViewItem.viewController.view
+        // Window-server capture (the chat hosts a WebView whose remote
+        // layer defeats local snapshot APIs), taken before the flip while
+        // the pane still shows its committed pixels.
+        let snapshot = WebContentSnapshotter.captureOnScreen(
+            paneView, resolution: .bestResolution)
+        let ghostFrame = paneView.convert(paneView.bounds, to: coordView)
+
+        isUpdatingAIChatState = true
+        aiChatSplitViewItem.isCollapsed = true
+        isUpdatingAIChatState = false
+        // The deferred tab observer skips its persist once it finds the
+        // item already collapsed; record the closed state here instead.
+        persistAIChatSidebarStateIfNeeded(for: associatedTab)
+
+        guard let snapshot else {
+            AppLogWarn("[ExtSidePanel] [Chat] snapshot failed — chat exits without a ghost")
+            return nil
+        }
+        let ghost = NSImageView()
+        ghost.imageScaling = .scaleAxesIndependently
+        ghost.image = snapshot
+        ghost.frame = ghostFrame
+        return ghost
+    }
+
     private func clampAIChatWidth(_ width: CGFloat) -> CGFloat {
         guard let aiChatSplitViewItem else { return width }
         return min(max(width, aiChatSplitViewItem.minimumThickness), aiChatSplitViewItem.maximumThickness)

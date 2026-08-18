@@ -272,6 +272,16 @@ class WebContentContainerViewController: NSViewController {
     /// slide-out drops the ghost immediately.
     private var closingExtensionSidePanelView: ExtensionSidePanelView?
 
+    /// Snapshot of an AI Chat closed by the panel-open mutex, sliding out
+    /// to the right edge while the panel slides in. The real chat leaves
+    /// the split layout before the container narrows — an NSSplitView
+    /// -animated collapse would stay inside the narrowing container and be
+    /// dragged left under the incoming panel instead of exiting right.
+    /// Single slot: dropped early by a panel detach (the chat may be
+    /// re-expanding right there) and whenever another controller takes
+    /// over the content area (see `dropClosingAIChatGhost`).
+    private var closingAIChatGhostView: NSView?
+
     /// Companion of the panel slot: fills the content frame's interior
     /// around the panel card with the same `contentOverlayBackground` that
     /// `splitViewContainer` paints behind the page and chat cards, so the
@@ -1106,6 +1116,12 @@ class WebContentContainerViewController: NSViewController {
 
         guard !alreadyShowingExactTab else { return }
 
+        // Any move to a different tab invalidates a flying chat ghost. The
+        // per-controller drop sites below miss the identifier-collision
+        // case above, where the SAME controller is rebound to a different
+        // Chromium tab and swaps its content without a controller switch.
+        dropClosingAIChatGhost()
+
         // Clear status URL when switching tabs
         state.targetURL = ""
 
@@ -1441,11 +1457,54 @@ class WebContentContainerViewController: NSViewController {
             return
         }
 
+        view.layoutSubtreeIfNeeded()
+        // An expanded AI Chat must leave the split layout before this
+        // group targets the narrowed container: the mutex sweep in
+        // `BrowserState.updateExtensionSidePanel` flips the tab model only
+        // after the panel publish, and its per-tab observer lands a turn
+        // later — so this turn's constraint solution would still contain
+        // the expanded chat and the animation would drag the chat card
+        // left. The chat detaches now (state first) and its snapshot ghost
+        // slides out to the right edge — the slide-out afterglow pattern
+        // of `detachExtensionSidePanel`, mirrored. The item flip stays
+        // un-laid-out until the panel group's layout pass so the page
+        // pane's reflow rides the same implicit animation.
+        let chatGhost = currentWebContentController?
+            .collapseAIChatForPanelTransition(ghostIn: view)
+        if let chatGhost {
+            dropClosingAIChatGhost()
+            closingAIChatGhostView = chatGhost
+            view.addSubview(chatGhost, positioned: .above, relativeTo: panelView)
+            AppLogInfo("[ExtSidePanel] [Container] chat ghost sliding out for panel open")
+            // The slide kicks off one turn later, NOT inside the panel
+            // group below: the ghost only enters the layer tree at this
+            // turn's commit, and a same-transaction frame change is
+            // coalesced into that first commit instead of animating — the
+            // ghost pops straight off-screen and the chat appears to
+            // vanish (observed on-device). One turn later it animates
+            // from its committed on-screen frame; the single-frame
+            // stagger against the panel group is the same offset the
+            // approved panel-close ↔ chat-expand transition has.
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.closingAIChatGhostView === chatGhost
+                else { return }
+                NSAnimationContext.runAnimationGroup({ context in
+                    context.allowsImplicitAnimation = true
+                    chatGhost.frame.origin.x =
+                        self.view.bounds.maxX + WebContentConstant.edgesSpacing
+                }, completionHandler: { [weak self] in
+                    guard let self,
+                          self.closingAIChatGhostView === chatGhost
+                    else { return }
+                    chatGhost.removeFromSuperview()
+                    self.closingAIChatGhostView = nil
+                })
+            }
+        }
         // Off-screen starting frame. y/height only approximate the settled
         // slot (they assume the default non-flipped geometry); any offset
         // is absorbed by the animation converging on the constraint
         // solution.
-        view.layoutSubtreeIfNeeded()
         let containerFrame = contentContainer.frame
         let panelInset = CGFloat(WebContentConstant.contentEdgeSpacing)
         panelView.translatesAutoresizingMaskIntoConstraints = true
@@ -1483,6 +1542,17 @@ class WebContentContainerViewController: NSViewController {
         })
     }
 
+    /// Drops a mid-flight AI Chat ghost. The snapshot belongs to the pane
+    /// it was captured from: once another controller takes over the
+    /// content area (tab switch, current-tab close, deferred first-paint
+    /// promotion) the afterglow would parade the previous tab's chat
+    /// pixels over the new content, so it goes down with its pane instead
+    /// of finishing the slide.
+    private func dropClosingAIChatGhost() {
+        closingAIChatGhostView?.removeFromSuperview()
+        closingAIChatGhostView = nil
+    }
+
     /// Remove the right slot, sliding the card out to the right edge while
     /// the page area grows back (AI Chat's collapse feel). The Chromium
     /// panel NSView still detaches SYNCHRONOUSLY inside this sink —
@@ -1501,6 +1571,11 @@ class WebContentContainerViewController: NSViewController {
     func detachExtensionSidePanel() {
         guard let panelView = extensionSidePanelView else { return }
         extensionSidePanelPreferredWidth = panelView.preferredWidth
+
+        // A chat ghost from the opening transition must not outlive the
+        // panel: when this close comes from the AI Chat mutex the real
+        // chat is about to re-expand exactly where the ghost still flies.
+        dropClosingAIChatGhost()
 
         // Window-server snapshot of the closing content (maskClosingTab's
         // capture path — local snapshot APIs return blank for the remote
@@ -1683,6 +1758,9 @@ class WebContentContainerViewController: NSViewController {
             // Outgoing focused VC no longer owns the split host — drop its
             // partner-crash subscription (its own observers won't re-run).
             current.cancelPartnerCrashSubscription()
+            // A chat ghost snapped from the outgoing pane must not slide
+            // over the incoming tab's content.
+            dropClosingAIChatGhost()
             AppLogDebug("[WebContent] Deferring cleanup of previous controller, waiting for Chromium confirmation")
         }
 
@@ -1856,6 +1934,8 @@ class WebContentContainerViewController: NSViewController {
             controller.removeFromParent()
             currentWebContentController = nil
             currentTabIdentifier = nil
+            // A chat ghost snapped from the removed pane dies with it.
+            dropClosingAIChatGhost()
             // Clear the unified outline so it doesn't linger over the now
             // detached content area until the next focus/layout pass.
             updateContentOuterBorder()
@@ -2002,6 +2082,9 @@ class WebContentContainerViewController: NSViewController {
         if let current = currentWebContentController, current !== pending.controller {
             pendingViewCleanup = (controller: current, view: current.view)
             current.cancelPartnerCrashSubscription()
+            // Same as switchToWebContentController: a chat ghost snapped
+            // from the outgoing pane must not slide over the promoted tab.
+            dropClosingAIChatGhost()
         }
 
         // Bring new view to front
