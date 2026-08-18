@@ -259,13 +259,24 @@ final class BrowserStateExtensionSidePanelTests: XCTestCase {
 final class ExtensionSidePanelContainerLayoutTests: XCTestCase {
 
     private var tempDirectories: [URL] = []
+    private var originalLayoutMode: String?
 
     override func setUpWithError() throws {
         WebContentContainerViewController.panelSlideAnimationsDisabledForTesting = true
+        originalLayoutMode = UserDefaults.standard.string(
+            forKey: PhiPreferences.GeneralSettings.layoutModeKey)
     }
 
     override func tearDownWithError() throws {
         WebContentContainerViewController.panelSlideAnimationsDisabledForTesting = false
+        if let originalLayoutMode {
+            UserDefaults.standard.set(originalLayoutMode,
+                                      forKey: PhiPreferences.GeneralSettings.layoutModeKey)
+        } else {
+            UserDefaults.standard.removeObject(
+                forKey: PhiPreferences.GeneralSettings.layoutModeKey)
+        }
+        originalLayoutMode = nil
         let fileManager = FileManager.default
         for directory in tempDirectories {
             try? fileManager.removeItem(at: directory)
@@ -294,29 +305,87 @@ final class ExtensionSidePanelContainerLayoutTests: XCTestCase {
                                              wrapper: wrapper)
     }
 
-    func testAttachSettlesWithFourPointPageGap() throws {
-        let container = try makeContainer()
-        let nativeView = NSView()
+    private func attachPanel(to container: WebContentContainerViewController,
+                             holding nativeView: NSView)
+        throws -> ExtensionSidePanelView {
         let wrapper = ExtensionSidePanelTestWebContentWrapper()
         wrapper.nativeView = nativeView
-
         container.attachExtensionSidePanel(makePanel(wrapper: wrapper))
         container.view.layoutSubtreeIfNeeded()
+        return try XCTUnwrap(container.extensionSidePanelViewForTesting)
+    }
 
-        let panelView = try XCTUnwrap(container.extensionSidePanelViewForTesting)
-        XCTAssertTrue(nativeView.superview === panelView.contentHostView)
-        // Panel pinned edgesSpacing (8pt) off the window edge at its
-        // seeded preferred width.
-        XCTAssertEqual(panelView.frame.maxX, 1200 - 8, accuracy: 0.5)
-        XCTAssertEqual(panelView.frame.width, 360, accuracy: 0.5)
-        // The content container overlaps 4pt under the panel; the page
-        // card's own 8pt margin inside it nets the AI-Chat-matching 4pt
-        // page-to-panel gap.
-        XCTAssertEqual(container.splitTabDropContainer.frame.maxX,
-                       panelView.frame.minX + 4, accuracy: 0.5)
+    /// The panel settles as a sub-card inside the content frame (AI Chat
+    /// parity): contentEdgeSpacing (4pt) below the frame's top line and
+    /// 4pt inside the shared 8pt window margins on the right and bottom,
+    /// in every layout mode.
+    private func assertPanelSettlesAsFrameSubCard(
+        mode: LayoutMode, file: StaticString = #filePath, line: UInt = #line
+    ) throws {
+        PhiPreferences.GeneralSettings.saveLayoutMode(mode)
+        let container = try makeContainer()
+        let nativeView = NSView()
+
+        let panelView = try attachPanel(to: container, holding: nativeView)
+
+        XCTAssertTrue(nativeView.superview === panelView.contentHostView,
+                      file: file, line: line)
+        XCTAssertEqual(panelView.frame.width, 360, accuracy: 0.5,
+                       file: file, line: line)
+        let containerFrame = container.splitTabDropContainer.frame
+        XCTAssertEqual(panelView.frame.maxY, containerFrame.maxY - 4,
+                       accuracy: 0.5, file: file, line: line)
+        XCTAssertEqual(panelView.frame.minY, containerFrame.minY + 12,
+                       accuracy: 0.5, file: file, line: line)
+        XCTAssertEqual(panelView.frame.maxX, 1200 - 12, accuracy: 0.5,
+                       file: file, line: line)
+        // splitViewContainer's right edge (8pt margin inside the content
+        // container) must land exactly on the panel's leading edge so its
+        // background paints the 4pt seam next to the inset page card.
+        XCTAssertEqual(containerFrame.maxX, panelView.frame.minX + 8,
+                       accuracy: 0.5, file: file, line: line)
+
+        // The frame-interior fill: same vertical extent as
+        // splitViewContainer, wrapping the panel card plus its 4pt margin,
+        // sitting ABOVE the content container (to cover its vibrancy
+        // strip) with only its outer (right) corners rounded.
+        let backdrop = try XCTUnwrap(
+            container.extensionSidePanelFrameBackdropForTesting,
+            file: file, line: line)
+        XCTAssertEqual(backdrop.frame.maxY, containerFrame.maxY,
+                       accuracy: 0.5, file: file, line: line)
+        XCTAssertEqual(backdrop.frame.minY, containerFrame.minY + 8,
+                       accuracy: 0.5, file: file, line: line)
+        XCTAssertEqual(backdrop.frame.maxX, 1200 - 8, accuracy: 0.5,
+                       file: file, line: line)
+        XCTAssertEqual(backdrop.frame.minX, panelView.frame.minX,
+                       accuracy: 0.5, file: file, line: line)
+        let subviews = container.view.subviews
+        let backdropIndex = try XCTUnwrap(subviews.firstIndex(of: backdrop),
+                                          file: file, line: line)
+        let containerIndex = try XCTUnwrap(
+            subviews.firstIndex(of: container.splitTabDropContainer),
+            file: file, line: line)
+        XCTAssertGreaterThan(backdropIndex, containerIndex, file: file, line: line)
+        XCTAssertEqual(backdrop.layer?.maskedCorners,
+                       [.layerMaxXMinYCorner, .layerMaxXMaxYCorner],
+                       file: file, line: line)
+    }
+
+    func testBalancedPanelSettlesAsFrameSubCard() throws {
+        try assertPanelSettlesAsFrameSubCard(mode: .balanced)
+    }
+
+    func testPerformancePanelSettlesAsFrameSubCard() throws {
+        try assertPanelSettlesAsFrameSubCard(mode: .performance)
+    }
+
+    func testComfortablePanelSettlesAsFrameSubCard() throws {
+        try assertPanelSettlesAsFrameSubCard(mode: .comfortable)
     }
 
     func testDetachRestoresFullWidthAndRemembersDraggedWidth() throws {
+        PhiPreferences.GeneralSettings.saveLayoutMode(.balanced)
         let container = try makeContainer()
         let firstNative = NSView()
         let firstWrapper = ExtensionSidePanelTestWebContentWrapper()
@@ -331,6 +400,7 @@ final class ExtensionSidePanelContainerLayoutTests: XCTestCase {
 
         XCTAssertNil(container.extensionSidePanelViewForTesting)
         XCTAssertNil(firstPanel.superview)
+        XCTAssertNil(container.extensionSidePanelFrameBackdropForTesting)
         XCTAssertEqual(container.splitTabDropContainer.frame.maxX, 1200, accuracy: 0.5)
 
         let secondNative = NSView()
@@ -342,6 +412,115 @@ final class ExtensionSidePanelContainerLayoutTests: XCTestCase {
         let secondPanel = try XCTUnwrap(container.extensionSidePanelViewForTesting)
         XCTAssertEqual(secondPanel.preferredWidth, 500)
         XCTAssertEqual(secondPanel.frame.width, 500, accuracy: 0.5)
+    }
+}
+
+/// Page-card separation on panel open: a docked panel insets the page card
+/// 4pt and gives it a border — the same treatment an expanded AI Chat
+/// applies — in every layout mode, and squares splitViewContainer's right
+/// corners (interior boundary with the panel's frame fill) for the panel's
+/// stay.
+@MainActor
+final class WebContentPanelSeparationStyleTests: XCTestCase {
+
+    private var tempDirectories: [URL] = []
+    private var originalLayoutMode: String?
+
+    private static let allRoundedCorners: CACornerMask =
+        [.layerMinXMinYCorner, .layerMinXMaxYCorner,
+         .layerMaxXMinYCorner, .layerMaxXMaxYCorner]
+
+    override func setUpWithError() throws {
+        originalLayoutMode = UserDefaults.standard.string(
+            forKey: PhiPreferences.GeneralSettings.layoutModeKey)
+    }
+
+    override func tearDownWithError() throws {
+        if let originalLayoutMode {
+            UserDefaults.standard.set(originalLayoutMode,
+                                      forKey: PhiPreferences.GeneralSettings.layoutModeKey)
+        } else {
+            UserDefaults.standard.removeObject(
+                forKey: PhiPreferences.GeneralSettings.layoutModeKey)
+        }
+        originalLayoutMode = nil
+        let fileManager = FileManager.default
+        for directory in tempDirectories {
+            try? fileManager.removeItem(at: directory)
+        }
+        tempDirectories.removeAll()
+    }
+
+    private func makeController() throws
+        -> (BrowserState, WebContentViewController) {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory,
+                                                withIntermediateDirectories: true)
+        tempDirectories.append(directory)
+        let store = LocalStore(account: Account(userID: UUID().uuidString),
+                               storeDirectoryURL: directory)
+        let state = BrowserState(windowId: 11, localStore: store, profileId: "Default")
+        let tab = Tab(guid: 600, url: "https://example.com/", isActive: true, index: 0)
+        state.tabs = [tab]
+        state.updateNormalTabs()
+        let controller = WebContentViewController(state: state, tab: tab)
+        controller.view.frame = NSRect(x: 0, y: 0, width: 1000, height: 700)
+        controller.viewWillAppear()  // installs the $extensionSidePanel sink
+        return (state, controller)
+    }
+
+    private func makePanel() -> BrowserState.ExtensionSidePanelState {
+        BrowserState.ExtensionSidePanelState(
+            extensionId: "test-extension",
+            displayName: "Test Extension",
+            iconPNG: nil,
+            wrapper: ExtensionSidePanelTestWebContentWrapper())
+    }
+
+    private func assertPanelSeparatesPageCard(
+        mode: LayoutMode, file: StaticString = #filePath, line: UInt = #line
+    ) throws {
+        PhiPreferences.GeneralSettings.saveLayoutMode(mode)
+        let (state, controller) = try makeController()
+        let pageCard = controller.leftContainerViewForTesting
+        let pageContainer = controller.closeSnapshotSourceView
+        XCTAssertEqual(pageCard.layer?.borderWidth, 0, file: file, line: line)
+
+        state.updateExtensionSidePanel(makePanel())
+        RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+        controller.view.layoutSubtreeIfNeeded()
+
+        XCTAssertEqual(pageCard.layer?.borderWidth, 1, file: file, line: line)
+        let wrapperBounds = try XCTUnwrap(pageCard.superview, file: file, line: line).bounds
+        XCTAssertEqual(pageCard.frame, wrapperBounds.insetBy(dx: 4, dy: 4),
+                       file: file, line: line)
+        XCTAssertEqual(pageContainer.layer?.maskedCorners,
+                       [.layerMinXMinYCorner, .layerMinXMaxYCorner],
+                       file: file, line: line)
+
+        state.updateExtensionSidePanel(nil)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+        controller.view.layoutSubtreeIfNeeded()
+
+        XCTAssertEqual(pageCard.layer?.borderWidth, 0, file: file, line: line)
+        XCTAssertEqual(pageCard.frame,
+                       try XCTUnwrap(pageCard.superview, file: file, line: line).bounds,
+                       file: file, line: line)
+        XCTAssertEqual(pageContainer.layer?.maskedCorners, Self.allRoundedCorners,
+                       file: file, line: line)
+    }
+
+    func testBalancedPanelOpenSeparatesPageCard() throws {
+        try assertPanelSeparatesPageCard(mode: .balanced)
+    }
+
+    func testComfortablePanelOpenSeparatesPageCard() throws {
+        try assertPanelSeparatesPageCard(mode: .comfortable)
+    }
+
+    func testPerformancePanelOpenSeparatesPageCard() throws {
+        try assertPanelSeparatesPageCard(mode: .performance)
     }
 }
 

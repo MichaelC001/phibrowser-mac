@@ -272,6 +272,18 @@ class WebContentContainerViewController: NSViewController {
     /// slide-out drops the ghost immediately.
     private var closingExtensionSidePanelView: ExtensionSidePanelView?
 
+    /// Companion of the panel slot: fills the content frame's interior
+    /// around the panel card with the same `contentOverlayBackground` that
+    /// `splitViewContainer` paints behind the page and chat cards, so the
+    /// panel reads as a sub-card inside one frame (AI Chat parity) instead
+    /// of floating on the window background. Sits just above
+    /// `contentContainer` in z (the container's vibrancy view overlaps 8pt
+    /// under the panel and would otherwise show through as a
+    /// focus-dependent notch); nil whenever the panel is detached. During
+    /// a slide-out it is frozen in place, demoted below the container so
+    /// the re-expanding page covers it, and removed with the ghost.
+    private var extensionSidePanelFrameBackdrop: NSView?
+
     /// Test seam: skips the panel slide animations so attach/detach settle
     /// synchronously and layout tests can assert the end state.
     static var panelSlideAnimationsDisabledForTesting = false
@@ -284,6 +296,9 @@ class WebContentContainerViewController: NSViewController {
 
     /// Test-only view of the mounted panel slot.
     var extensionSidePanelViewForTesting: ExtensionSidePanelView? { extensionSidePanelView }
+
+    /// Test-only view of the panel's frame-interior fill.
+    var extensionSidePanelFrameBackdropForTesting: NSView? { extensionSidePanelFrameBackdrop }
     
     // MARK: - Initialization
     
@@ -490,16 +505,17 @@ class WebContentContainerViewController: NSViewController {
             }
             make.leading.equalToSuperview()
             if let panelView {
-                // The page card keeps its edgesSpacing (8pt) trailing margin
-                // inside contentContainer, so butting the container against
-                // the panel reads as an 8pt page-to-panel gap while AI Chat's
-                // is 4pt (contentEdgeSpacing). Overlap the container 4pt
-                // under the panel to net the same 4pt gap without touching
-                // the per-tab margin; nothing draws in the overlapped strip
-                // (the page card stops 8pt before the container's edge).
+                // A docked panel separates the page card (4pt inset inside
+                // splitViewContainer, see updateLeftContainerStyle) exactly
+                // like an expanded AI Chat. Overlap the container a full
+                // edgesSpacing under the panel so splitViewContainer's
+                // right edge (8pt margin inside the container) lands
+                // exactly on the panel's leading edge: its background then
+                // paints the 4pt page-card ↔ panel-card seam, matching the
+                // chat card's seam fill. Nothing else draws in the
+                // overlapped strip.
                 make.trailing.equalTo(panelView.snp.leading)
-                    .offset(WebContentConstant.edgesSpacing
-                            - CGFloat(WebContentConstant.contentEdgeSpacing))
+                    .offset(WebContentConstant.edgesSpacing)
             }
             if let dock = transcriptDockView, let edge = transcriptDockEdge {
                 switch edge {
@@ -539,22 +555,78 @@ class WebContentContainerViewController: NSViewController {
             // The panel's own width constraint lives on the panel view
             // (plain NSLayoutConstraint, untouched by this snp remake) —
             // same split as the transcript dock's thickness constraint.
+            //
+            // The panel sits inside the content frame as a sub-card with
+            // the same contentEdgeSpacing breathing room the chat card
+            // keeps: 4pt below the frame's top line and 4pt off its right
+            // and bottom edges (the frame itself keeps the shared
+            // edgesSpacing window margins).
+            let panelInset = CGFloat(WebContentConstant.contentEdgeSpacing)
             panelView.snp.remakeConstraints { make in
-                make.top.equalTo(contentContainer.snp.top)
-                // The page area keeps an edgesSpacing margin inside
-                // contentContainer; give the panel the same breathing room
-                // against the window edges (and above a bottom dock).
+                make.top.equalTo(contentContainer.snp.top).offset(panelInset)
                 make.bottom.equalTo(contentContainer.snp.bottom)
-                    .offset(-WebContentConstant.edgesSpacing)
+                    .offset(-(WebContentConstant.edgesSpacing + panelInset))
                 if let dock = transcriptDockView, transcriptDockEdge == .right {
                     make.trailing.equalTo(dock.snp.leading)
                 } else {
                     make.trailing.equalToSuperview()
-                        .inset(WebContentConstant.edgesSpacing)
+                        .inset(WebContentConstant.edgesSpacing + panelInset)
                 }
+            }
+            let backdrop = ensureExtensionSidePanelFrameBackdrop()
+            // The fill must stay ABOVE contentContainer: the container
+            // (with the per-tab vibrancy view inside it) overlaps 8pt
+            // under the panel, and vibrancy material shifts with window
+            // activation while the plain fill colors don't — left
+            // underneath, that strip reads as a focus-dependent notch in
+            // the frame interior. A detach demotes the backdrop below the
+            // container again (see detachExtensionSidePanel); re-promote
+            // here when a reopen reclaims it.
+            if let idx = view.subviews.firstIndex(of: backdrop),
+               let containerIdx = view.subviews.firstIndex(of: contentContainer),
+               idx < containerIdx {
+                view.addSubview(backdrop, positioned: .above,
+                                relativeTo: contentContainer)
+            }
+            backdrop.translatesAutoresizingMaskIntoConstraints = false
+            backdrop.snp.remakeConstraints { make in
+                // Same vertical extent as splitViewContainer (top at the
+                // frame's top line, bottom at the shared 8pt window
+                // margin), extended right to wrap the panel card plus its
+                // 4pt margin. The leading edge meets the page container's
+                // right edge (same fill color) exactly at the panel's
+                // leading edge.
+                make.top.equalTo(contentContainer.snp.top)
+                make.bottom.equalTo(panelView.snp.bottom).offset(panelInset)
+                make.leading.equalTo(panelView.snp.leading)
+                make.trailing.equalTo(panelView.snp.trailing).offset(panelInset)
             }
         }
         view.needsLayout = true
+    }
+
+    /// Creates (or returns) the panel's frame-interior fill. Constraint
+    /// installation stays in `remakeContentLayout`;
+    /// `slideInExtensionSidePanel` pre-seeds it frame-driven so the fill
+    /// rides the same implicit animation as the panel instead of growing
+    /// in from a zero rect.
+    private func ensureExtensionSidePanelFrameBackdrop() -> NSView {
+        if let existing = extensionSidePanelFrameBackdrop { return existing }
+        let backdrop = NSView()
+        backdrop.wantsLayer = true
+        backdrop.layer?.cornerCurve = .continuous
+        backdrop.layer?.cornerRadius = LiquidGlassCompatible.webContentContainerCornerRadius
+        // Only the frame's outer (right) corners are rounded; the left edge
+        // is an interior boundary meeting the page container's fill, and a
+        // rounded corner there would carve a see-through notch showing the
+        // vibrancy material beneath. splitViewContainer squares its right
+        // corners for the same reason while the panel is open (see
+        // WebContentViewController.updateLeftContainerStyle).
+        backdrop.layer?.maskedCorners = [.layerMaxXMinYCorner, .layerMaxXMaxYCorner]
+        backdrop.phiLayer?.setBackgroundColor(ThemedColor.contentOverlayBackground)
+        view.addSubview(backdrop, positioned: .above, relativeTo: contentContainer)
+        extensionSidePanelFrameBackdrop = backdrop
+        return backdrop
     }
     
     // MARK: - Subscriptions Setup
@@ -730,8 +802,14 @@ class WebContentContainerViewController: NSViewController {
             return
         }
         let isComfortableLayout = PhiPreferences.GeneralSettings.loadLayoutMode().isTraditional
-        controller.setSplitViewContainerBorderVisible(!isComfortableLayout)
-        guard isComfortableLayout else {
+        let panelMounted = extensionSidePanelView?.superview === view
+        // The vertical layouts frame the content with splitViewContainer's
+        // own 1pt layer border — except while an extension side panel is
+        // docked: then this unified outline wraps [page card | panel card]
+        // as one frame (AI Chat parity), and svc's border would draw a
+        // second frame around the page alone.
+        controller.setSplitViewContainerBorderVisible(!isComfortableLayout && !panelMounted)
+        guard isComfortableLayout || panelMounted else {
             outerBorderLayer.path = nil
             clearGroupBoundaryLayers()
             return
@@ -752,11 +830,12 @@ class WebContentContainerViewController: NSViewController {
         let leftX = r.minX
         // With the extension side panel mounted the outline keeps its right
         // edge at the window margin instead of following the shrunken page
-        // card: the top line runs above the panel header, and — critically —
-        // the active-tab notch guard below stays satisfiable for tabs whose
-        // chips sit over the panel region; against the narrow card edge they
-        // would fail the right-side bound and lose their outline entirely.
-        let rightX = extensionSidePanelView?.superview === view
+        // card: the frame wraps the panel sub-card (which sits 4pt inside
+        // it), and — critically for comfortable — the active-tab notch
+        // guard below stays satisfiable for tabs whose chips sit over the
+        // panel region; against the narrow card edge they would fail the
+        // right-side bound and lose their outline entirely.
+        let rightX = panelMounted
             ? max(r.maxX, view.bounds.maxX - WebContentConstant.edgesSpacing)
             : r.maxX
         let topY = r.maxY
@@ -766,10 +845,16 @@ class WebContentContainerViewController: NSViewController {
         // browserState.focusingTab. During the deferred-first-paint switch
         // path, focusingTab updates before currentWebContentController is
         // promoted; using the visible tab keeps the outline attached to the
-        // tab whose page is actually onscreen.
+        // tab whose page is actually onscreen. The notch only exists in
+        // comfortable — the vertical layouts (reachable here with a panel
+        // mounted) have no horizontal chips, so their frame is the plain
+        // closed outline below.
         let overviewActive = browserState?.groupOverviewState != nil
-        let activeTabForBorder = overviewActive ? nil : controller.associatedTab
-        let activeFrame = tabStripBarController?.tabFrame(for: activeTabForBorder, in: view)
+        let activeTabForBorder =
+            (overviewActive || !isComfortableLayout) ? nil : controller.associatedTab
+        let activeFrame = isComfortableLayout
+            ? tabStripBarController?.tabFrame(for: activeTabForBorder, in: view)
+            : nil
 
         let path = CGMutablePath()
 
@@ -1362,12 +1447,24 @@ class WebContentContainerViewController: NSViewController {
         // solution.
         view.layoutSubtreeIfNeeded()
         let containerFrame = contentContainer.frame
+        let panelInset = CGFloat(WebContentConstant.contentEdgeSpacing)
         panelView.translatesAutoresizingMaskIntoConstraints = true
         panelView.frame = NSRect(
             x: view.bounds.maxX + WebContentConstant.edgesSpacing,
-            y: containerFrame.minY + WebContentConstant.edgesSpacing,
+            y: containerFrame.minY + WebContentConstant.edgesSpacing + panelInset,
             width: ExtensionSidePanelView.clampedWidth(extensionSidePanelPreferredWidth),
-            height: max(0, containerFrame.height - WebContentConstant.edgesSpacing))
+            height: max(0, containerFrame.height - WebContentConstant.edgesSpacing
+                        - panelInset * 2))
+        // Pre-seed the frame-interior fill frame-driven at the panel's
+        // off-screen origin so the animation group slides both in
+        // together; remakeContentLayout switches it to constraints.
+        let backdrop = ensureExtensionSidePanelFrameBackdrop()
+        backdrop.translatesAutoresizingMaskIntoConstraints = true
+        backdrop.frame = NSRect(
+            x: panelView.frame.minX,
+            y: panelView.frame.minY - panelInset,
+            width: panelView.frame.width + panelInset,
+            height: panelView.frame.height + panelInset * 2)
 
         let pausedController = currentWebContentController
         pausedController?.setContentFrameSyncPausedForPanelTransition(true)
@@ -1426,6 +1523,8 @@ class WebContentContainerViewController: NSViewController {
 
         if skipsPanelSlideAnimation {
             panelView.removeFromSuperview()
+            extensionSidePanelFrameBackdrop?.removeFromSuperview()
+            extensionSidePanelFrameBackdrop = nil
             remakeContentLayout()
         } else {
             closingExtensionSidePanelView = panelView
@@ -1441,6 +1540,22 @@ class WebContentContainerViewController: NSViewController {
                 panelView.snp.removeConstraints()
                 panelView.translatesAutoresizingMaskIntoConstraints = true
                 panelView.frame = frozenFrame
+                // The frame-interior fill stays put (frozen, not slid): the
+                // re-expanding page container covers it during the group,
+                // so removing it with the ghost is invisible. Sliding it
+                // with the card would expose window background behind the
+                // ghost mid-flight. Demote it below contentContainer for
+                // the ride — while mounted it sits above the container (to
+                // cover the vibrancy strip), but here the growing page must
+                // paint over it.
+                if let backdrop = extensionSidePanelFrameBackdrop {
+                    let backdropFrame = backdrop.frame
+                    backdrop.snp.removeConstraints()
+                    backdrop.translatesAutoresizingMaskIntoConstraints = true
+                    backdrop.frame = backdropFrame
+                    view.addSubview(backdrop, positioned: .below,
+                                    relativeTo: contentContainer)
+                }
                 remakeContentLayout()
                 panelView.frame.origin.x =
                     view.bounds.maxX + WebContentConstant.edgesSpacing
@@ -1452,6 +1567,8 @@ class WebContentContainerViewController: NSViewController {
                 else { return }
                 panelView.removeFromSuperview()
                 self.closingExtensionSidePanelView = nil
+                self.extensionSidePanelFrameBackdrop?.removeFromSuperview()
+                self.extensionSidePanelFrameBackdrop = nil
             })
         }
         settlePanelTransitionOuterBorder()

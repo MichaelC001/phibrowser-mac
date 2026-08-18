@@ -265,6 +265,9 @@ class WebContentViewController: NSViewController {
         return EmbeddedChatViewController(with: state, tab: associatedTab)
     }()
 
+    /// Test-only view of the page card (panel-separation style coverage).
+    var leftContainerViewForTesting: NSView { leftContainerView }
+
     override func loadView() {
         let view = ColoredVisualEffectView()
         view.themedBackgroundColor = .windowOverlayBackground
@@ -547,6 +550,32 @@ class WebContentViewController: NSViewController {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.updateSplitViewLeadingInset()
+            }
+            .store(in: &cancellables)
+
+        // The extension side panel separates the page card (see
+        // updateLeftContainerStyle); restyle on open/close, and on a live
+        // layout-mode switch while the panel stays mounted. The defaults
+        // sink filters on the loaded layout mode actually changing —
+        // defaults writes are frequent and process-wide, and the restyle's
+        // separated branch would otherwise rebuild a theme observation per
+        // write (see the applied-state guard in updateLeftContainerStyle).
+        browserState?.$extensionSidePanel
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.updateLeftContainerStyleForCurrentAIChatState()
+            }
+            .store(in: &cancellables)
+
+        lastStyledLayoutMode = PhiPreferences.GeneralSettings.loadLayoutMode()
+        NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                let mode = PhiPreferences.GeneralSettings.loadLayoutMode()
+                guard mode != self.lastStyledLayoutMode else { return }
+                self.lastStyledLayoutMode = mode
+                self.updateLeftContainerStyleForCurrentAIChatState()
             }
             .store(in: &cancellables)
 
@@ -2635,15 +2664,49 @@ class WebContentViewController: NSViewController {
         webContentProgressBar.isLayoutEnabled = isDefaultLayout
     }
     
-    /// Updates left-container border and inset styling for AI Chat state.
+    /// Last applied page-card separation inputs. updateLeftContainerStyle's
+    /// outputs are fully determined by (shouldSeparatePageCard, panelDocked),
+    /// so equal inputs skip the layer/constraint writes entirely —
+    /// `setBorderColor` rebuilds a full theme observation on every call
+    /// (`Phi.set` tears down and re-creates its subscription, it is NOT
+    /// idempotent), and the restyle entry points fire far more often than
+    /// the state actually flips.
+    private var appliedPageCardSeparated: Bool?
+    private var appliedPanelDockedCorners: Bool?
+
+    /// Layout mode last seen by the defaults-change restyle sink; the sink
+    /// only re-runs the styling when this actually changes.
+    private var lastStyledLayoutMode: LayoutMode?
+
+    /// Updates the page card's (left container) border/inset separation and
+    /// splitViewContainer's corner masking for the AI Chat and extension
+    /// side panel states.
     /// - Parameter isAIChatExpanded: Whether the AI Chat sidebar is expanded.
     private func updateLeftContainerStyle(isAIChatExpanded: Bool) {
         let isPerformanceSplitContent =
             PhiPreferences.GeneralSettings.loadLayoutMode() == .performance &&
             isSplitContentMounted
-        let shouldSeparateExpandedChat = isAIChatExpanded && !isPerformanceSplitContent
+        // A docked extension side panel separates the page card the same
+        // way an expanded chat does — one frame holding two inset cards —
+        // with the same performance-split exception.
+        //
+        // Deliberate asymmetry: this styling keys off the MODEL
+        // (BrowserState.extensionSidePanel), delivered a turn after the
+        // container's synchronous attach/detach, while the container keys
+        // frame ownership off VIEW attachment
+        // (extensionSidePanelView?.superview === view) so the outline and
+        // fill track the slide animations. The two answers may differ for
+        // the animation window only.
+        let panelDocked = browserState?.extensionSidePanel != nil
+        let shouldSeparatePageCard =
+            (isAIChatExpanded || panelDocked) && !isPerformanceSplitContent
 
-        if shouldSeparateExpandedChat {
+        guard shouldSeparatePageCard != appliedPageCardSeparated
+            || panelDocked != appliedPanelDockedCorners else { return }
+        appliedPageCardSeparated = shouldSeparatePageCard
+        appliedPanelDockedCorners = panelDocked
+
+        if shouldSeparatePageCard {
             leftContainerView.layer?.borderWidth = 1
             leftContainerView.phiLayer?.setBorderColor(.border)
             leftContainerInsetConstraint?.update(inset: WebContentConstant.contentEdgeSpacing)
@@ -2651,6 +2714,18 @@ class WebContentViewController: NSViewController {
             leftContainerView.layer?.borderWidth = 0
             leftContainerInsetConstraint?.update(inset: 0)
         }
+
+        // With the panel docked, splitViewContainer's right edge is an
+        // interior boundary meeting the panel's frame fill mid-frame, not
+        // the frame's outer corner — rounding it would carve a see-through
+        // notch exposing the vibrancy material beneath (which shifts with
+        // window activation). Square the right corners for the panel's
+        // stay; every other state keeps all four rounded (an expanded
+        // chat's right corners ARE the frame corners).
+        splitViewContainer.layer?.maskedCorners = panelDocked
+            ? [.layerMinXMinYCorner, .layerMinXMaxYCorner]
+            : [.layerMinXMinYCorner, .layerMinXMaxYCorner,
+               .layerMaxXMinYCorner, .layerMaxXMaxYCorner]
     }
 
     private func updateLeftContainerStyleForCurrentAIChatState() {
