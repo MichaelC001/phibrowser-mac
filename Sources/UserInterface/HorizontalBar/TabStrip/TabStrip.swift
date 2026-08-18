@@ -1174,15 +1174,32 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
             return tabFrame(for: partnerTab, in: coordView)
         }
         let frame = view.convert(view.bounds, to: coordView)
-        // Whole-group drag: members are visually translated via
-        // `layer.transform`; their `.frame` (= the convert result)
-        // stays at drag-start. Mirror the offset so consumers like
-        // the active-tab outline carving track the cursor. When the
-        // cursor left the source strip (.external / .tearOff), the
-        // slice is alpha=0 AND its drag-start slot is now occupied by
-        // other tabs that slid left (excludedGroupRange shrinks the
-        // strip) — emitting any frame here would paint the active
-        // outline over an unrelated tab. Return nil to suppress.
+        // A cell the layout engine took out of the flow carries an empty
+        // frame (`applyLayout`'s `.zero` placeholder). It has no visible
+        // rect to carve around, and callers measure rather than test it:
+        // `appendActiveTabOutline` fed `leftX == rightX` folds its two
+        // inverse curves and both top corners onto one spine, painting a
+        // 2·inverseCornerRadius star at the apex instead of a tab notch.
+        // Report nothing so the content border falls back to its plain
+        // closed outline — which is the truthful rendering, since no cell
+        // of this tab is on screen to connect the card to.
+        guard !frame.isEmpty else { return nil }
+        // Whole-group drag. The whole branch is unreachable today, both
+        // arms: grabbing a chip temp-collapses the group before the drag
+        // snapshot, so `isCollapsedAtDragStart` is true at the single
+        // `startDragging` call site, every member is laid out `.zero`
+        // (`applyLayout` skips only `!isCollapsedAtDragStart` members) and
+        // leaves through the guard above — and `endDragging` clears the
+        // context before the settle restores real frames. Kept for the
+        // case it was written for, a member that keeps its frame while
+        // `applyGroupDragTransforms` drives cursor follow: there the
+        // `.frame` (= the convert result) stays at drag-start, so the
+        // offset has to be mirrored for consumers like the active-tab
+        // outline carving to track the cursor. The .external / .tearOff
+        // suppression belongs to that same case — the slice is alpha=0 AND
+        // its drag-start slot has been taken by tabs that slid left
+        // (excludedGroupRange shrinks the strip), so emitting any frame
+        // would paint the active outline over an unrelated tab.
         if let gctx = groupDragController.context,
            gctx.memberTabIds.contains(tab.guid) {
             switch gctx.pendingDropAction {
