@@ -1,0 +1,1091 @@
+// Copyright 2026 Phinomenon Inc.
+//
+// Use of this source code is governed by an Apache license that can be
+// found in the LICENSE file.
+
+import XCTest
+@testable import Phi
+
+/// The lazy-restore wiring hangs its decisions off pure rules, pinned here
+/// the way the classifier and the snapshot writer already are:
+///
+///   * whether a reopen arms the eager filter at all (`armedEagerWindowIds`)
+///     — the switch, the framework probe, and the two empty-record refusals;
+///   * which live slots a landed snapshot write adopts into the saved-entry
+///     system (`slotAdoptionPlan`) — a minted group without an entry used to
+///     fall out of the record on the write that followed its close;
+///   * whether an activation arriving during that reopen is dropped
+///     (`reopenDropsActivations`) — which is what keeps the switch a real
+///     rollback rather than a change to the default reopen;
+///   * which parked window an activation of a Space materializes
+///     (`parkedGhostWindowId(in:forSpaceId:)`) — including the deterministic
+///     pick on a corrupt duplicate;
+///   * what a failed materialization reports
+///     (`GhostMaterializeFailureLog`) — the two outcomes promise opposite
+///     things about switching again;
+///   * what Chromium's answer does to the parked record
+///     (`materializeFailure(for:)`) — a refusal that leaves the ghost parked
+///     must keep it, or the next switch opens an empty window beside the
+///     window the session file still describes;
+///   * where the coordinator's fallback mint may land
+///     (`steeredFallbackMintSpaceId`) — the one resolution that CREATES a
+///     window, which must not land on a Space whose window is parked;
+///   * which arriving window the coordinator conceals
+///     (`concealsRestoredSibling`) — a rebase-fragile anchor whose drift
+///     makes a materialized window permanently invisible;
+///   * whether a slot minted for a window that never arrived is reclaimed
+///     (`reclaimsMintedSlot`) — the drop above gave every mint-then-activate
+///     call site a new way to end without a window, and a slot stranded that
+///     way disables the windowless reopen for the rest of the run;
+///   * which snapshot windows a by-profile claim may take over
+///     (`fallbackClaimIndex`) — restore's own stand-in window claims by
+///     profile with no grace period, and consuming a parked window's entry
+///     would drop that ghost from the next persist AND leave an empty window
+///     shadowing the Space it was saved for;
+///   * what the reopen does once its restore settles
+///     (`reopenSettleOutcome`) — a restore can report success and still put no
+///     window on screen, which leaves the app windowless and repeating that
+///     same result on every later Dock click until it is restarted;
+///   * what Chromium's park receipt does to the recorded ghosts
+///     (`reconcileGhostReceipt`) — the record is replaced by the receipt
+///     rather than merged with the prediction, and the two ways they can
+///     disagree have opposite answers: a predicted ghost Chromium never
+///     parked is retired, a parked window this side cannot place is reported
+///     and left alone.
+///
+/// What they cannot reach — that `activate`, `deleteSpace`, `changeProfile`
+/// and the coordinator feed these rules their real state — rests on the
+/// call-site comments, the same line `SlotsSnapshotPersistGateTests` draws.
+final class LazySpaceRestoreWiringTests: XCTestCase {
+    // MARK: - Arming (what the reopen sends over the bridge)
+
+    private static func classification(
+        eager: Set<Int>, ghosts: [Int: String], closedGroups: Set<Int> = []
+    ) -> SpaceManager.RestoreWindowClassification {
+        SpaceManager.RestoreWindowClassification(
+            eagerWindowIds: eager, ghostSpaceIdsByWindowId: ghosts,
+            closedGroupWindowIds: closedGroups)
+    }
+
+    func testArmingRequiresTheSwitch() {
+        XCTAssertNil(SpaceManager.armedEagerWindowIds(
+            featureEnabled: false,
+            bridgeSupportsLazyRestore: true,
+            hasSnapshotEntries: true,
+            classification: Self.classification(eager: [1], ghosts: [2: "space-b"])
+        ))
+    }
+
+    func testArmingRequiresTheSelectorFamily() {
+        // An older framework cannot materialize or drop what this reopen
+        // would park — so nothing may park.
+        XCTAssertNil(SpaceManager.armedEagerWindowIds(
+            featureEnabled: true,
+            bridgeSupportsLazyRestore: false,
+            hasSnapshotEntries: true,
+            classification: Self.classification(eager: [1], ghosts: [2: "space-b"])
+        ))
+    }
+
+    func testArmingRequiresASnapshotEntry() {
+        // No record means nothing to gate a replay with — the one shape
+        // where the legacy full restore is the only possible answer.
+        XCTAssertNil(SpaceManager.armedEagerWindowIds(
+            featureEnabled: true,
+            bridgeSupportsLazyRestore: true,
+            hasSnapshotEntries: false,
+            classification: Self.classification(eager: [], ghosts: [:])
+        ))
+    }
+
+    func testArmingWithARecordNamingNoWindowStaysUnarmed() {
+        // Entries exist but every window fell in the neither set (Incognito
+        // or agent Spaces): this side cannot speak for the session file, and
+        // an empty ARMED set would park the whole session instead.
+        XCTAssertNil(SpaceManager.armedEagerWindowIds(
+            featureEnabled: true,
+            bridgeSupportsLazyRestore: true,
+            hasSnapshotEntries: true,
+            classification: Self.classification(eager: [], ghosts: [:])
+        ))
+    }
+
+    func testArmingThatParksNothingStillArmsWithItsEagerSet() {
+        // The gate's reason to exist: the session file can hold records the
+        // snapshot has lost, and only an armed replay parks them. A
+        // classification that parked nothing must still arm, or those records
+        // replay in full and mint a window apiece (tickets 21/25). This is
+        // the deliberate reversal of the earlier "parks nothing stays
+        // unarmed" pin.
+        XCTAssertEqual(
+            SpaceManager.armedEagerWindowIds(
+                featureEnabled: true,
+                bridgeSupportsLazyRestore: true,
+                hasSnapshotEntries: true,
+                classification: Self.classification(eager: [1, 2], ghosts: [:])
+            ),
+            [1, 2].map { NSNumber(value: $0) }
+        )
+    }
+
+    func testArmedEagerSetIsSortedAscending() {
+        XCTAssertEqual(
+            SpaceManager.armedEagerWindowIds(
+                featureEnabled: true,
+                bridgeSupportsLazyRestore: true,
+                hasSnapshotEntries: true,
+                classification: Self.classification(
+                    eager: [55, 7, 102], ghosts: [9: "space-b"])
+            ),
+            [7, 55, 102].map { NSNumber(value: $0) }
+        )
+    }
+
+    func testArmedPlanCarriesTheClosedGroupSetSorted() {
+        // The plan is the eager wire array plus the closed-group windows the
+        // replay seam retires to the undo stack (REQUIREMENTS R3/R4); both
+        // halves sorted so the wire order is deterministic.
+        XCTAssertEqual(
+            SpaceManager.armedRestorePlan(
+                featureEnabled: true,
+                bridgeSupportsLazyRestore: true,
+                hasSnapshotEntries: true,
+                classification: Self.classification(
+                    eager: [1], ghosts: [2: "space-b"], closedGroups: [30, 12])
+            ),
+            SpaceManager.ArmedRestorePlan(
+                eagerWindowIds: [NSNumber(value: 1)],
+                closedGroupWindowIds: [12, 30].map { NSNumber(value: $0) })
+        )
+    }
+
+    func testPlanWireDictionaryUsesTheKeysChromiumParses() {
+        // The two key strings are what Chromium's parse looks up verbatim
+        // (PhiChromiumBridge.mm / phi_bridge_wrapper.mm); both plan channels
+        // send this one encoding, so a drifted key would silently read as
+        // "missing" — which the receiver treats as an empty set.
+        let plan = SpaceManager.ArmedRestorePlan(
+            eagerWindowIds: [NSNumber(value: 1)],
+            closedGroupWindowIds: [NSNumber(value: 2)])
+        XCTAssertEqual(plan.wireDictionary,
+                       ["eager": [NSNumber(value: 1)],
+                        "closedGroup": [NSNumber(value: 2)]])
+    }
+
+    func testARecordOfOnlyClosedGroupsStillArms() {
+        // Scenario 2's record after every group closed by hand: no eager
+        // window, no ghost, closed groups only. The gate must still arm —
+        // unarmed would replay every retained record in full — and the empty
+        // eager set parks nothing on screen while the closed groups retire.
+        XCTAssertEqual(
+            SpaceManager.armedRestorePlan(
+                featureEnabled: true,
+                bridgeSupportsLazyRestore: true,
+                hasSnapshotEntries: true,
+                classification: Self.classification(
+                    eager: [], ghosts: [:], closedGroups: [4])
+            ),
+            SpaceManager.ArmedRestorePlan(
+                eagerWindowIds: [],
+                closedGroupWindowIds: [NSNumber(value: 4)])
+        )
+    }
+
+    // MARK: - Cold-start head (which profile Chromium replays first)
+
+    private static func preferred(
+        _ entries: [(isLandingEntry: Bool, windowMap: [Int: String])],
+        eager: Set<Int>,
+        profiles: [String: String]
+    ) -> [String] {
+        SpaceManager.coldStartPreferredProfileOrder(
+            entries: entries,
+            eagerWindowIds: eager,
+            profileIdForSpaceId: { profiles[$0] })
+    }
+
+    func testColdStartHeadNamesTheLandingEntrysOwnerFirst() {
+        // The landing entry is the group the user was last looking at, and its
+        // owner is the head Chromium has to replay first — whatever position
+        // the entry sits at in the record.
+        XCTAssertEqual(
+            Self.preferred(
+                [(isLandingEntry: false, windowMap: [1: "space-a"]),
+                 (isLandingEntry: true, windowMap: [2: "space-b"])],
+                eager: [1, 2],
+                profiles: ["space-a": "Default", "space-b": "Profile 1"]),
+            ["Profile 1", "Default"])
+    }
+
+    func testColdStartHeadFallsBackToSnapshotOrder() {
+        // No landing entry (a record written before that field existed): the
+        // snapshot order is this project's one deterministic ordering.
+        XCTAssertEqual(
+            Self.preferred(
+                [(isLandingEntry: false, windowMap: [1: "space-a"]),
+                 (isLandingEntry: false, windowMap: [2: "space-b"])],
+                eager: [1, 2],
+                profiles: ["space-a": "Default", "space-b": "Profile 1"]),
+            ["Default", "Profile 1"])
+    }
+
+    func testColdStartHeadOrdersWithinAnEntryByWindowId() {
+        // One group holding two eager windows on two profiles: ascending
+        // window id decides, so the answer cannot depend on dictionary order.
+        XCTAssertEqual(
+            Self.preferred(
+                [(isLandingEntry: true, windowMap: [9: "space-a", 4: "space-b"])],
+                eager: [4, 9],
+                profiles: ["space-a": "Default", "space-b": "Profile 1"]),
+            ["Profile 1", "Default"])
+    }
+
+    func testColdStartHeadNamesEachProfileOnce() {
+        // Two entries bound to the same profile: a repeated name would only
+        // have Chromium look the same profile up twice.
+        XCTAssertEqual(
+            Self.preferred(
+                [(isLandingEntry: true, windowMap: [1: "space-a"]),
+                 (isLandingEntry: false, windowMap: [2: "space-b"])],
+                eager: [1, 2],
+                profiles: ["space-a": "Default", "space-b": "Default"]),
+            ["Default"])
+    }
+
+    func testColdStartHeadIgnoresWindowsThatAreNotEager() {
+        // A parked window's owner is exactly the profile that must NOT lead:
+        // its replay hands nothing back, which is what puts the upstream
+        // fallback's blank window on screen beside the restored one.
+        XCTAssertEqual(
+            Self.preferred(
+                [(isLandingEntry: true, windowMap: [1: "space-a"]),
+                 (isLandingEntry: false, windowMap: [2: "space-b"])],
+                eager: [1],
+                profiles: ["space-a": "Default", "space-b": "Profile 1"]),
+            ["Default"])
+    }
+
+    func testColdStartHeadSkipsSpacesWithNoBoundProfile() {
+        // An unresolved binding names no profile, so it is skipped rather than
+        // guessed at; the next eager owner still leads.
+        XCTAssertEqual(
+            Self.preferred(
+                [(isLandingEntry: true, windowMap: [1: "space-gone"]),
+                 (isLandingEntry: false, windowMap: [2: "space-b"])],
+                eager: [1, 2],
+                profiles: ["space-b": "Profile 1"]),
+            ["Profile 1"])
+    }
+
+    func testColdStartHeadIsEmptyWhenNothingIsEager() {
+        // Empty is what `coldStartPreferredProfiles()` turns into nil: no
+        // answer, and Chromium keeps the replay order it already has.
+        XCTAssertTrue(Self.preferred(
+            [(isLandingEntry: true, windowMap: [1: "space-a"])],
+            eager: [],
+            profiles: ["space-a": "Default"]).isEmpty)
+    }
+
+    // MARK: - Adoption (which live slots a landed write gives a saved entry)
+
+    func testAdoptionPlanSkipsSlotsWithASavedEntry() {
+        XCTAssertTrue(SpaceManager.slotAdoptionPlan(
+            savedEntryCount: 1,
+            liveSlots: [(restoreIndex: 0, windowMap: [1: "space-a"])]
+        ).isEmpty)
+    }
+
+    func testAdoptionPlanSkipsSlotsWithNothingWritable() {
+        // The bar a live slot must clear to be planned at all — and what
+        // keeps a slot minted ahead of a window that never arrived from
+        // occupying an entry.
+        XCTAssertTrue(SpaceManager.slotAdoptionPlan(
+            savedEntryCount: 0,
+            liveSlots: [(restoreIndex: nil, windowMap: [:])]
+        ).isEmpty)
+    }
+
+    func testAdoptionAppendsMintedSlotsAfterTheExistingEntries() {
+        let plan = SpaceManager.slotAdoptionPlan(
+            savedEntryCount: 2,
+            liveSlots: [(restoreIndex: 0, windowMap: [1: "space-a"]),
+                        (restoreIndex: nil, windowMap: [2: "space-b"]),
+                        (restoreIndex: nil, windowMap: [3: "space-c"])])
+        XCTAssertEqual(plan.map(\.position), [1, 2])
+        XCTAssertEqual(plan.map(\.newIndex), [2, 3])
+    }
+
+    // MARK: - Whether a reopen in flight drops activations
+
+    /// The drop exists because an armed reopen leaves part of the group in the
+    /// session file while it replays the rest: switching, spawning or
+    /// materializing into that races the replay and its per-profile session
+    /// commit. An UNARMED reopen replays what this app has always replayed, so
+    /// it has to keep meeting activations exactly as it always did — that is
+    /// what makes the switch a rollback instead of a change to the shipped
+    /// reopen path, which every Dock click takes.
+
+    func testActivationsSurviveAnOrdinaryReopen() {
+        // The switch off (and an older framework, and a run that classified
+        // nothing as parkable) all land here: a reopen is in flight and
+        // activations go through, byte for byte as before the feature.
+        XCTAssertFalse(SpaceManager.reopenDropsActivations(
+            isSessionRestoreInFlight: true, isLazyReopenArmed: false))
+    }
+
+    func testActivationsAreDroppedWhileAnArmedReopenReplays() {
+        XCTAssertTrue(SpaceManager.reopenDropsActivations(
+            isSessionRestoreInFlight: true, isLazyReopenArmed: true))
+    }
+
+    func testNothingIsDroppedOutsideAReopen() {
+        // Load-bearing: the latch outlives the reopen that set it (nothing
+        // clears it until the next one arms), so the in-flight flag is what
+        // bounds the drop. A rule that forgot it would drop every activation
+        // for the rest of the run.
+        XCTAssertFalse(SpaceManager.reopenDropsActivations(
+            isSessionRestoreInFlight: false, isLazyReopenArmed: true))
+        XCTAssertFalse(SpaceManager.reopenDropsActivations(
+            isSessionRestoreInFlight: false, isLazyReopenArmed: false))
+    }
+
+    // MARK: - Which parked window an activation materializes
+
+    func testNoParkedWindowMeansNoMaterialization() {
+        XCTAssertNil(SpaceManager.parkedGhostWindowId(
+            in: [:], forSpaceId: "space-a"))
+        XCTAssertNil(SpaceManager.parkedGhostWindowId(
+            in: [55: "space-b"], forSpaceId: "space-a"))
+    }
+
+    func testTheSpacesParkedWindowIsFound() {
+        XCTAssertEqual(
+            SpaceManager.parkedGhostWindowId(
+                in: [55: "space-b", 7: "space-a"], forSpaceId: "space-b"),
+            55
+        )
+    }
+
+    func testCorruptDuplicateParkPicksTheLowestIdDeterministically() {
+        // A Space maps 1:1 to a window, so two parked ids naming one Space is
+        // damage — but the pick must still be the same every time, not
+        // whatever a hash walk yields first. Lowest id is the project's one
+        // deterministic ordering over snapshot windows.
+        XCTAssertEqual(
+            SpaceManager.parkedGhostWindowId(
+                in: [102: "space-b", 55: "space-b", 7: "space-a"],
+                forSpaceId: "space-b"),
+            55
+        )
+    }
+
+    // MARK: - Which parked window an activation FROM A SLOT materializes
+
+    /// The activation lookup is scoped to the saved entry the activating slot
+    /// reattached to — `entryParkedGhosts` (the snapshot writer's ownership
+    /// rule) feeding the same deterministic pick as the unscoped lookup. A
+    /// ghost belongs to the (entry, Space) combination it was parked from,
+    /// and a slot that owns no entry — Cmd+N, a spawn, a materialization —
+    /// owns no ghosts. Before this scope, whichever window activated a Space
+    /// first claimed any entry's parked ghost (ticket 26).
+
+    private static func entryScopedGhost(
+        recorded: [Int: String],
+        entryWindowMap: [Int: String],
+        spaceId: String
+    ) -> Int? {
+        SpaceManager.parkedGhostWindowId(
+            in: SpaceManager.entryParkedGhosts(
+                recorded: recorded, entryWindowMap: entryWindowMap),
+            forSpaceId: spaceId)
+    }
+
+    func testAnEntryScopedLookupFindsTheEntrysOwnGhost() {
+        XCTAssertEqual(
+            Self.entryScopedGhost(
+                recorded: [55: "space-b", 7: "space-a"],
+                entryWindowMap: [55: "space-b", 3: "space-c"],
+                spaceId: "space-b"),
+            55
+        )
+    }
+
+    func testAGhostParkedForAnotherEntryIsNotClaimed() {
+        // The ticket-26 shape: space-b's ghost (55) was parked from an entry
+        // this slot did not reattach to. The unscoped rule handed it over;
+        // the scoped one must spawn fresh instead.
+        XCTAssertNil(Self.entryScopedGhost(
+            recorded: [55: "space-b"],
+            entryWindowMap: [9: "space-a"],
+            spaceId: "space-b"))
+    }
+
+    func testAnEmptyEntryOwnsNoGhosts() {
+        XCTAssertNil(Self.entryScopedGhost(
+            recorded: [55: "space-b"],
+            entryWindowMap: [:],
+            spaceId: "space-b"))
+    }
+
+    func testEntryScopedDuplicatePickStaysTheLowestId() {
+        // Same deterministic ordering as the unscoped rule, applied after the
+        // entry filter: only the entry's own duplicates compete.
+        XCTAssertEqual(
+            Self.entryScopedGhost(
+                recorded: [102: "space-b", 55: "space-b", 7: "space-b"],
+                entryWindowMap: [102: "space-b", 55: "space-b"],
+                spaceId: "space-b"),
+            55
+        )
+    }
+
+    // MARK: - What a failed materialization reports
+
+    /// The two outcomes differ in the one way that decides what a second
+    /// switch does: whether the parked record survived. Kept, switching again
+    /// retries the same window; dropped, switching again opens an empty
+    /// Space. One text for both made the second case a lie — it invited a
+    /// retry that silently replaces the saved tabs with a blank window. The
+    /// surface is a log line rather than an alert now; the distinction it
+    /// carries is unchanged.
+
+    private static func consequence(
+        _ outcome: SpaceManager.GhostMaterializeFailure
+    ) -> String {
+        SpaceManager.GhostMaterializeFailureLog.consequence(for: outcome)
+    }
+
+    func testEveryFailureHasAConsequence() {
+        // Over `allCases`, not a hand-written pair: a third outcome added
+        // later has to bring its own text with it rather than silently
+        // escaping.
+        for outcome in SpaceManager.GhostMaterializeFailure.allCases {
+            XCTAssertFalse(Self.consequence(outcome).isEmpty,
+                           "Missing log consequence for \(outcome)")
+        }
+    }
+
+    func testAKeptRecordInvitesAnotherAttempt() {
+        XCTAssertTrue(
+            Self.consequence(.recordKept)
+                .localizedCaseInsensitiveContains("switching to this Space again retries it"),
+            "A record that survived the failure is worth retrying, and the log has to say so")
+    }
+
+    func testADroppedRecordSaysSwitchingAgainOpensAnEmptyWindow() {
+        // The specific promise that has to be there: not "try again", but
+        // what actually happens next.
+        XCTAssertTrue(
+            Self.consequence(.recordDropped)
+                .localizedCaseInsensitiveContains("empty window"),
+            "A dropped record cannot be retried — the log has to name what a second switch does")
+    }
+
+    func testTheTwoOutcomesNeverReadAlike() {
+        XCTAssertNotEqual(Self.consequence(.recordKept), Self.consequence(.recordDropped))
+    }
+
+    // MARK: - What Chromium's answer does to the parked record
+
+    /// The record is the only thing between a refusal and a doubled Space:
+    /// drop it and the next switch spawns a fresh window beside the one the
+    /// session file still describes, after the log has already recorded the
+    /// tabs as gone. So only the one answer that means "nothing will ever
+    /// satisfy this intent" may retire it.
+
+    func testARebuiltGhostIsNotAFailure() {
+        XCTAssertNil(SpaceManager.materializeFailure(for: .materialized))
+    }
+
+    func testARefusalForNowKeepsTheRecord() {
+        // Chromium's transient refusals — the profile not loaded there, a
+        // reopen replay of it still in flight — all arrive as this one
+        // answer, and every one of them leaves the ghost parked.
+        XCTAssertEqual(SpaceManager.materializeFailure(for: .refusedForNow),
+                       .recordKept)
+    }
+
+    func testOnlyAMissingGhostDropsTheRecord() {
+        XCTAssertEqual(SpaceManager.materializeFailure(for: .noSuchGhost),
+                       .recordDropped)
+    }
+
+    // MARK: - Where the fallback mint may land
+
+    private static let candidates: [(spaceId: String, profileId: String, isSwitchTarget: Bool)] = [
+        (spaceId: "agent", profileId: "p1", isSwitchTarget: false),
+        (spaceId: "ghosted", profileId: "p1", isSwitchTarget: true),
+        (spaceId: "other-profile", profileId: "p2", isSwitchTarget: true),
+        (spaceId: "clear", profileId: "p1", isSwitchTarget: true),
+    ]
+
+    func testMintOnANonGhostSpaceStandsUnchanged() {
+        XCTAssertEqual(
+            SpaceManager.steeredFallbackMintSpaceId(
+                resolved: "clear",
+                ghostSpaceIds: ["ghosted"],
+                candidates: Self.candidates,
+                profileId: "p1"),
+            "clear"
+        )
+    }
+
+    func testMintOnAGhostSpaceSteersToTheProfilesFirstClearSwitchTarget() {
+        // "agent" is skipped (not a switch target), "other-profile" is
+        // skipped (wrong profile) — strip order lands on "clear".
+        XCTAssertEqual(
+            SpaceManager.steeredFallbackMintSpaceId(
+                resolved: "ghosted",
+                ghostSpaceIds: ["ghosted"],
+                candidates: Self.candidates,
+                profileId: "p1"),
+            "clear"
+        )
+    }
+
+    func testMintWithAnEmptyProfileMaySteerAnywhereClear() {
+        // A window with no profile constraint takes the first clear switch
+        // target in strip order, whatever profile it belongs to.
+        XCTAssertEqual(
+            SpaceManager.steeredFallbackMintSpaceId(
+                resolved: "ghosted",
+                ghostSpaceIds: ["ghosted", "clear"],
+                candidates: Self.candidates,
+                profileId: ""),
+            "other-profile"
+        )
+    }
+
+    func testMintWithNoClearAlternativeKeepsTheGhostSpace() {
+        // Every Space of the profile is parked (or unusable): the doubled
+        // record is the lesser evil next to presenting the window as another
+        // profile's Space, so the resolution stands and the caller logs it.
+        XCTAssertEqual(
+            SpaceManager.steeredFallbackMintSpaceId(
+                resolved: "ghosted",
+                ghostSpaceIds: ["ghosted", "clear"],
+                candidates: Self.candidates,
+                profileId: "p1"),
+            "ghosted"
+        )
+    }
+
+    func testMintWithNoCandidatesKeepsTheGhostSpace() {
+        // Early in a launch the Spaces list is delivered partially and can
+        // still be empty — with nothing to steer to, the resolution stands
+        // rather than answering an id no Space carries.
+        XCTAssertEqual(
+            SpaceManager.steeredFallbackMintSpaceId(
+                resolved: "ghosted",
+                ghostSpaceIds: ["ghosted"],
+                candidates: [],
+                profileId: "p1"),
+            "ghosted"
+        )
+    }
+
+    func testMintWhoseOnlyCandidateIsTheGhostKeepsIt() {
+        // The ghost Space is never its own alternative: steering to it would
+        // read as a steer in the log while changing nothing.
+        XCTAssertEqual(
+            SpaceManager.steeredFallbackMintSpaceId(
+                resolved: "ghosted",
+                ghostSpaceIds: ["ghosted"],
+                candidates: [
+                    (spaceId: "ghosted", profileId: "p1", isSwitchTarget: true),
+                ],
+                profileId: "p1"),
+            "ghosted"
+        )
+    }
+
+    // MARK: - Which arriving window the coordinator conceals
+
+    /// One of the rebase-fragile anchors this feature registers: concealment
+    /// is applied before the window controller exists and undone only by the
+    /// restore burst's reveal, so a window concealed by mistake is simply
+    /// never seen again.
+
+    func testARestoredSiblingSpaceIsConcealed() {
+        XCTAssertTrue(SpaceWindowSlot.concealsRestoredSibling(
+            isRestoredWindow: true,
+            slotActiveSpaceId: "landing",
+            windowSpaceId: "sibling"))
+    }
+
+    func testTheRestoredWindowTheSlotLandsOnIsNotConcealed() {
+        XCTAssertFalse(SpaceWindowSlot.concealsRestoredSibling(
+            isRestoredWindow: true,
+            slotActiveSpaceId: "landing",
+            windowSpaceId: "landing"))
+    }
+
+    func testAWindowThatDidNotComeBackThroughSessionRestoreIsNeverConcealed() {
+        // The half that matters for lazy restore: a materialized ghost
+        // arrives through the pending-spawn claim, into a slot still showing
+        // the Space being switched away from. Comparing Spaces alone would
+        // conceal the very window the user asked for.
+        XCTAssertFalse(SpaceWindowSlot.concealsRestoredSibling(
+            isRestoredWindow: false,
+            slotActiveSpaceId: "previous",
+            windowSpaceId: "materialized"))
+        XCTAssertFalse(SpaceWindowSlot.concealsRestoredSibling(
+            isRestoredWindow: false,
+            slotActiveSpaceId: nil,
+            windowSpaceId: "materialized"))
+    }
+
+    func testARestoredWindowIsConcealedWhenTheSlotHasNoLandingSpace() {
+        // Pinned because it is the case an extraction is most likely to
+        // "clean up" into the opposite answer: a slot whose entry named no
+        // active Space conceals its restored windows all the same, and the
+        // post-burst reconcile picks which one becomes visible.
+        XCTAssertTrue(SpaceWindowSlot.concealsRestoredSibling(
+            isRestoredWindow: true,
+            slotActiveSpaceId: nil,
+            windowSpaceId: "sibling"))
+    }
+
+    // MARK: - Whether a materializing ghost is staged for a deferred reveal
+
+    /// One rule feeds both halves of the animate-first materialization — the
+    /// alpha conceal on arrival and the push-in that reveals it — so the two
+    /// can never disagree (a concealed window nothing reveals is invisible
+    /// forever; an animated switch to a visibly-arriving window double
+    /// presents).
+
+    func testAMaterializingGhostIsStagedForTheReveal() {
+        XCTAssertTrue(SpaceWindowSlot.materializeStagesForReveal(
+            slotHasFullScreenWindow: false))
+    }
+
+    func testAFullscreenSlotKeepsTheVisibleArrival() {
+        // Same exception as spawn's `spawnHidden`: revealing a window that
+        // has never been ordered in through a fullscreen tab group corrupts
+        // NSWindowStackController's bookkeeping and crashes the app.
+        XCTAssertFalse(SpaceWindowSlot.materializeStagesForReveal(
+            slotHasFullScreenWindow: true))
+    }
+
+    // MARK: - Whether a minted slot is reclaimed when no window arrives
+
+    /// A slot minted for a window that never arrives is not merely untidy: it
+    /// makes `slots.isEmpty` false forever, and that is the whole test the
+    /// windowless Dock reopen gates on. Every later reopen then falls back to
+    /// Chromium's handler and lands on the wrong Space until the app restarts.
+    /// The three inputs are what keeps the cure from being worse than that.
+
+    func testAMintThatNeverGotAWindowIsReclaimed() {
+        XCTAssertTrue(SpaceManager.reclaimsMintedSlot(
+            mintedForThisAttempt: true, hostsWindow: false, awaitsSpawnedWindow: false))
+    }
+
+    func testASlotThisAttemptDidNotMintIsNeverReclaimed() {
+        // The call sites resolve `keySlot ?? slots.first ?? mint`, so the
+        // failure path routinely holds a slot full of the user's windows —
+        // and, while the app is windowless, an empty one another attempt is
+        // still waiting on. Neither is this attempt's to drop.
+        XCTAssertFalse(SpaceManager.reclaimsMintedSlot(
+            mintedForThisAttempt: false, hostsWindow: true, awaitsSpawnedWindow: false))
+        XCTAssertFalse(SpaceManager.reclaimsMintedSlot(
+            mintedForThisAttempt: false, hostsWindow: false, awaitsSpawnedWindow: false))
+    }
+
+    func testAFailureReportedOverALiveWindowReclaimsNothing() {
+        // A reported failure does not mean no window: the spawn path reports
+        // one when the user switched Space mid-spawn, leaving the spawned
+        // window registered and merely hidden. Reclaiming there would take a
+        // live window's slot out of the registry.
+        XCTAssertFalse(SpaceManager.reclaimsMintedSlot(
+            mintedForThisAttempt: true, hostsWindow: true, awaitsSpawnedWindow: false))
+    }
+
+    func testAWindowStillOnItsWayKeepsTheSlot() {
+        // Nor does a reported failure mean none is coming: a `createBrowser`
+        // whose registration callback did not run synchronously reports
+        // failure while the windowId-keyed claim still routes the arriving
+        // window into this slot — which would then register into a slot the
+        // manager no longer knows about.
+        XCTAssertFalse(SpaceManager.reclaimsMintedSlot(
+            mintedForThisAttempt: true, hostsWindow: false, awaitsSpawnedWindow: true))
+    }
+
+    // MARK: - Which snapshot windows a by-profile claim may take over
+
+    /// The by-profile fallback is how restore's own stand-in window finds its
+    /// slot, and it matches on profile alone — no id, no grace period. A
+    /// parked window sits in the restore index all the same, because that
+    /// index is what the persist writes its ghost entry back from. Without
+    /// this narrowing the stand-in window could consume that entry: the ghost
+    /// would leave the snapshot at the next persist, and the stand-in would
+    /// register on the ghost's own Space — an empty window shadowing the
+    /// parked session, with no materialization and no alert.
+
+    func testAParkedWindowIsNotAvailableToAByProfileClaim() {
+        // Excluded per window, not per snapshot entry: 7 was saved with the
+        // same slot as the parked 55 and still has to be claimable, or a
+        // reopen that parked one Space of a slot would strand the rest.
+        XCTAssertEqual(
+            SpaceManager.fallbackClaimIndex(
+                [55: 0, 7: 0], parkedGhosts: [55: "space-b"]),
+            [7: 0]
+        )
+    }
+
+    func testEveryWindowParkedLeavesNothingToClaim() {
+        // The shape the defect surfaced in: a profile whose windows were all
+        // parked — here across two saved slots. The claim finds nobody and
+        // the coordinator mints a fresh slot, which is what keeps every
+        // parked Space materializable.
+        XCTAssertEqual(
+            SpaceManager.fallbackClaimIndex(
+                [55: 0, 7: 1], parkedGhosts: [55: "space-b", 7: "space-a"]),
+            [:]
+        )
+    }
+
+    func testAReopenThatParkedNothingOffersTheWholeIndex() {
+        // The rollback story, here as everywhere else: with nothing parked
+        // (switch off, older framework, nothing parkable, or any cold start)
+        // the fallback ranks exactly the candidates it always did.
+        XCTAssertEqual(
+            SpaceManager.fallbackClaimIndex([55: 0, 7: 0], parkedGhosts: [:]),
+            [55: 0, 7: 0]
+        )
+    }
+
+    // MARK: - What the reopen does once its restore settles
+
+    /// `restoredAnyWindow` answers whether a profile STARTED a replay, not
+    /// whether a window appeared, and a reopen that parks every window of the
+    /// session satisfies the first while failing the second. Deciding on it
+    /// alone left the app windowless and self-repeating; `reopenSettleOutcome`
+    /// takes "did one arrive" as its own input. The source comment carries the
+    /// mechanism; this table pins the four quadrants and which one is the
+    /// anomaly.
+
+    func testAReopenThatBroughtWindowsBackRepairsTheirSlots() {
+        // Load-bearing for the three below: a rule that spawned in every
+        // quadrant would satisfy them all, and every ordinary reopen would end
+        // with a stray extra window.
+        XCTAssertEqual(
+            SpaceManager.reopenSettleOutcome(
+                restoredAnyWindow: true, isStillWindowless: false),
+            .repairSlotsWithAbsentActiveSpace)
+    }
+
+    func testARestoreThatReportedAReplayButProducedNoWindowStillSpawns() {
+        // The defect. The restore succeeded on chromium's terms and the user's
+        // tabs are safe in the session file, but not one window reached this
+        // side, so the Dock click the user just made has to produce one — and
+        // this is the quadrant that says so in the log.
+        XCTAssertEqual(
+            SpaceManager.reopenSettleOutcome(
+                restoredAnyWindow: true, isStillWindowless: true),
+            .spawnPersistedSpaceWindow(restoreProducedNoWindow: true))
+    }
+
+    func testNothingRestorableSpawnsAsItAlwaysDid() {
+        // Not the anomaly: nothing replayed, so no window was owed by one.
+        XCTAssertEqual(
+            SpaceManager.reopenSettleOutcome(
+                restoredAnyWindow: false, isStillWindowless: true),
+            .spawnPersistedSpaceWindow(restoreProducedNoWindow: false))
+    }
+
+    func testNothingRestorableSpawnsEvenWithAWindowAlreadyThere() {
+        // The quadrant nothing in the product is known to reach, pinned so the
+        // narrowing above cannot quietly change it: `restoredAnyWindow ==
+        // false` spawned before this rule existed and still does. A window
+        // arriving from somewhere else in the gap is not a reason to withhold
+        // the one the reopen owes the user.
+        XCTAssertEqual(
+            SpaceManager.reopenSettleOutcome(
+                restoredAnyWindow: false, isStillWindowless: false),
+            .spawnPersistedSpaceWindow(restoreProducedNoWindow: false))
+    }
+
+    // MARK: - Whether the settled reopen's fallback window claims its entry
+
+    /// The window a settled reopen owes the user used to stand alone always,
+    /// which left the saved entry it stands for unclaimed — and a slot that
+    /// claimed no entry owns no parked ghosts, so switching to one of that
+    /// entry's other Spaces opened an empty window while the saved one stayed
+    /// in the session file. `reopenFallbackWindowPlan` is the rule that lets
+    /// that window take the entry over instead, screened the way the
+    /// cold-start repair screens its own claim.
+    ///
+    /// The defaults describe the claiming shape; each test flips one input.
+    private static func fallbackPlan(
+        reopenArmedLazyRestore: Bool = true,
+        restoreProducedNoWindow: Bool = true,
+        landingIndex: Int? = 1,
+        restoreEntryCount: Int = 3,
+        landingEntryActiveSpaceId: String? = "space-a",
+        spawnSpaceId: String = "space-a",
+        spawnSpaceIsAutomaticSwitchTarget: Bool = true,
+        spawnSpaceSurfacedByAnotherSlot: Bool = false
+    ) -> SpaceManager.ReopenFallbackWindowPlan {
+        SpaceManager.reopenFallbackWindowPlan(
+            reopenArmedLazyRestore: reopenArmedLazyRestore,
+            restoreProducedNoWindow: restoreProducedNoWindow,
+            landingIndex: landingIndex,
+            restoreEntryCount: restoreEntryCount,
+            landingEntryActiveSpaceId: landingEntryActiveSpaceId,
+            spawnSpaceId: spawnSpaceId,
+            spawnSpaceIsAutomaticSwitchTarget: spawnSpaceIsAutomaticSwitchTarget,
+            spawnSpaceSurfacedByAnotherSlot: spawnSpaceSurfacedByAnotherSlot)
+    }
+
+    func testAnArmedReopenThatProducedNoWindowClaimsItsLandingEntry() {
+        XCTAssertEqual(Self.fallbackPlan(), .claimLandingEntry(index: 1))
+    }
+
+    func testNothingRestorableSpawnsPlainAsItAlwaysDid() {
+        // `restoreProducedNoWindow == false` is every other quadrant of
+        // `reopenSettleOutcome`: nothing replayed, so no entry is owed a
+        // window and the spawn stands alone exactly as before.
+        XCTAssertEqual(Self.fallbackPlan(restoreProducedNoWindow: false),
+                       .plainSpawn)
+    }
+
+    func testAnUnarmedReopenNeverClaims() {
+        // The explicit switch gate. `reopenSettleOutcome` does not read the
+        // arming latch, so "no window arrived" alone would also cover a reopen
+        // with the feature off, an older framework, or a record with nothing
+        // to gate — the leg REQUIREMENTS D10 keeps byte for byte as it is. The
+        // promise may not rest on an invariant nobody wrote down.
+        XCTAssertEqual(Self.fallbackPlan(reopenArmedLazyRestore: false),
+                       .plainSpawn)
+    }
+
+    func testASpawnLandingElsewhereThanTheEntrysActiveSpaceNeverClaims() {
+        // The persisted Space was deleted, so the spawn fell back to the first
+        // switchable one. Claiming the entry anyway would hand this window
+        // another window group's parked ghosts (ticket 26's (entry, Space)
+        // ownership).
+        XCTAssertEqual(Self.fallbackPlan(spawnSpaceId: "space-b"), .plainSpawn)
+        XCTAssertEqual(Self.fallbackPlan(landingEntryActiveSpaceId: nil),
+                       .plainSpawn)
+    }
+
+    func testARecordWithNoEntryOrAnOutOfRangeLandingIndexNeverClaims() {
+        // The floor under the whole rule: whatever the record says, the reopen
+        // still owes the user a window, and the plain spawn is what delivers
+        // it.
+        XCTAssertEqual(
+            Self.fallbackPlan(landingIndex: nil, restoreEntryCount: 0),
+            .plainSpawn)
+        XCTAssertEqual(Self.fallbackPlan(landingIndex: 3), .plainSpawn)
+        XCTAssertEqual(Self.fallbackPlan(landingIndex: -1), .plainSpawn)
+    }
+
+    func testASpaceAnotherSlotAlreadySurfacesIsNeverClaimed() {
+        // Screened the way `performColdStartRepair` screens it — a Space maps
+        // 1:1 to a window, so a second one for it would put the same Space on
+        // screen twice.
+        XCTAssertEqual(
+            Self.fallbackPlan(spawnSpaceSurfacedByAnotherSlot: true),
+            .plainSpawn)
+        // And the Space has to be one automatic switching may use at all.
+        XCTAssertEqual(
+            Self.fallbackPlan(spawnSpaceIsAutomaticSwitchTarget: false),
+            .plainSpawn)
+    }
+
+    func testSlotsInPlayNeverReachTheClaimingSpawn() {
+        // Why the guard above is not this leg's safety, stated as a test: the
+        // claim's precondition is the quadrant where no window arrived, and
+        // that quadrant means `slots` was empty (`isWindowlessWithHostedSlots`,
+        // the same predicate that routed the reopen here). With a slot in play
+        // the settle goes to the repair, or — with nothing restorable — to a
+        // spawn whose flag is false and which therefore cannot claim. So the
+        // Space-already-surfaced guard is constant-true here; what actually
+        // keeps this leg safe is the empty slot list plus the Space equality
+        // above.
+        XCTAssertEqual(
+            SpaceManager.reopenSettleOutcome(restoredAnyWindow: true,
+                                             isStillWindowless: false),
+            .repairSlotsWithAbsentActiveSpace)
+        XCTAssertEqual(
+            SpaceManager.reopenSettleOutcome(restoredAnyWindow: false,
+                                             isStillWindowless: false),
+            .spawnPersistedSpaceWindow(restoreProducedNoWindow: false))
+        XCTAssertEqual(Self.fallbackPlan(restoreProducedNoWindow: false),
+                       .plainSpawn)
+    }
+
+    // MARK: - The park receipt (what chromium says it actually parked)
+
+    func testReceiptReplacesThePredictionRatherThanMergingWithIt() {
+        // 10 was predicted and really parked; 11 was predicted and never
+        // parked; 12 parked without being predicted. Only the receipt
+        // survives — a merge would keep 11 and route a Space switch to a
+        // materialization that can only fail.
+        let reconciliation = SpaceManager.reconcileGhostReceipt(
+            receiptWindowIds: [10, 12],
+            predicted: [10: "space-a", 11: "space-b"],
+            snapshotSpaceIdsByWindowId: [10: "space-a", 11: "space-b",
+                                         12: "space-c"])
+
+        XCTAssertEqual(reconciliation.parkedGhostSpaceIdsByWindowId,
+                       [10: "space-a", 12: "space-c"])
+        XCTAssertEqual(reconciliation.unparked, [11])
+        XCTAssertEqual(reconciliation.unmapped, [])
+    }
+
+    func testEmptyReceiptClearsEveryRecord() {
+        // The arming chromium refused, and the profile that never replayed:
+        // nothing is parked, so nothing may stay recorded.
+        let reconciliation = SpaceManager.reconcileGhostReceipt(
+            receiptWindowIds: [],
+            predicted: [10: "space-a", 11: "space-b"],
+            snapshotSpaceIdsByWindowId: [10: "space-a", 11: "space-b"])
+
+        XCTAssertEqual(reconciliation.parkedGhostSpaceIdsByWindowId, [:])
+        XCTAssertEqual(reconciliation.unparked, [10, 11])
+        XCTAssertEqual(reconciliation.unmapped, [])
+    }
+
+    func testReceiptWindowNoSpaceMapsToIsReportedNotRecorded() {
+        // The reverse divergence, and the half the receipt cannot fix:
+        // windowId → spaceId lives only in the snapshot, so a window it never
+        // named cannot be placed. It stays parked on the chromium side (the
+        // next full restore hands it back) and is reported here.
+        let reconciliation = SpaceManager.reconcileGhostReceipt(
+            receiptWindowIds: [10, 99],
+            predicted: [10: "space-a"],
+            snapshotSpaceIdsByWindowId: [10: "space-a"])
+
+        XCTAssertEqual(reconciliation.parkedGhostSpaceIdsByWindowId,
+                       [10: "space-a"])
+        XCTAssertEqual(reconciliation.unparked, [])
+        XCTAssertEqual(reconciliation.unmapped, [99])
+    }
+
+    func testReceiptPlacesGhostsOfAProfileThatDidNotReplayFromTheSnapshot() {
+        // A profile this reopen never replayed keeps the ghosts an earlier one
+        // parked, and this reopen's classification never predicted them. The
+        // snapshot still names their Spaces, which is what keeps them
+        // reachable instead of stranded.
+        let reconciliation = SpaceManager.reconcileGhostReceipt(
+            receiptWindowIds: [7],
+            predicted: [:],
+            snapshotSpaceIdsByWindowId: [7: "space-old"])
+
+        XCTAssertEqual(reconciliation.parkedGhostSpaceIdsByWindowId,
+                       [7: "space-old"])
+        XCTAssertEqual(reconciliation.unmapped, [])
+    }
+
+    func testReceiptReportsBothDivergencesSorted() {
+        // Both directions at once, and the order is deterministic so a log
+        // bundle reads the same way twice.
+        let reconciliation = SpaceManager.reconcileGhostReceipt(
+            receiptWindowIds: [30, 20],
+            predicted: [12: "space-a", 11: "space-b"],
+            snapshotSpaceIdsByWindowId: [11: "space-b", 12: "space-a"])
+
+        XCTAssertEqual(reconciliation.parkedGhostSpaceIdsByWindowId, [:])
+        XCTAssertEqual(reconciliation.unparked, [11, 12])
+        XCTAssertEqual(reconciliation.unmapped, [20, 30])
+    }
+
+    // MARK: - Cold-start repair (what an entry does with a replay receipt)
+
+    /// The default inputs describe the repairable shape: an unclaimed,
+    /// on-screen entry whose active-Space window the reporting profile's
+    /// file no longer holds. Each test flips one input.
+    private static func repairDecision(
+        activeSpaceId: String? = "space-a",
+        activeSpaceEligible: Bool = true,
+        entryWindowMap: [Int: String] = [10: "space-a", 11: "space-b"],
+        isParkedOnlyEntry: Bool = false,
+        isClaimed: Bool = false,
+        isRepaired: Bool = false,
+        boundProfileId: String? = "profile-1",
+        replayedWindowIdsByProfileId: [String: Set<Int>] = ["profile-1": []],
+        receiptWindowIds: Set<Int> = [11]
+    ) -> SpaceManager.ColdStartRepairDecision {
+        SpaceManager.coldStartRepairDecision(
+            activeSpaceId: activeSpaceId,
+            activeSpaceEligible: activeSpaceEligible,
+            entryWindowMap: entryWindowMap,
+            isParkedOnlyEntry: isParkedOnlyEntry,
+            isClaimed: isClaimed,
+            isRepaired: isRepaired,
+            boundProfileId: boundProfileId,
+            replayedWindowIdsByProfileId: replayedWindowIdsByProfileId,
+            receiptWindowIds: receiptWindowIds)
+    }
+
+    func testRepairsAnEntryWhoseEagerWindowTheFileNoLongerHolds() {
+        XCTAssertEqual(Self.repairDecision(), .repair)
+    }
+
+    func testAReplayedEagerWindowNeedsNoRepair() {
+        XCTAssertEqual(Self.repairDecision(
+            replayedWindowIdsByProfileId: ["profile-1": [10]],
+            receiptWindowIds: [10, 11]
+        ), .none)
+    }
+
+    func testAnUnresolvedProfileBindingDefersInsteadOfJudging() {
+        // The store may not have delivered the Space→profile binding when
+        // the receipt lands. "Not known yet" must not read as "not this
+        // profile" — the receipt is one-shot and would never re-ask.
+        XCTAssertEqual(Self.repairDecision(boundProfileId: nil), .pending)
+    }
+
+    func testAResolvedBindingReJudgesAPendingEntry() {
+        // The re-adjudication leg: same retained receipt, and the binding
+        // arriving is the only thing that changed — the deferral above must
+        // land on the repair it was deferring, not start over. (That
+        // `handleSpacesUpdate` re-runs the adjudication with the retained
+        // receipts is wiring, pinned by its call-site comment.)
+        XCTAssertEqual(Self.repairDecision(boundProfileId: nil), .pending)
+        XCTAssertEqual(Self.repairDecision(boundProfileId: "profile-1"),
+                       .repair)
+    }
+
+    func testAnotherProfilesReceiptDoesNotSettleThisEntry() {
+        // The binding is known and names a profile that has not reported
+        // yet; its own receipt settles this entry when it arrives.
+        XCTAssertEqual(Self.repairDecision(
+            replayedWindowIdsByProfileId: ["profile-2": [77]]
+        ), .none)
+    }
+
+    func testAWindowNamedAnywhereInAReceiptBlocksTheSpawn() {
+        // Drift double-guard: an id seen in any receipt — parked, or
+        // replayed by another profile — is a window some file still holds,
+        // and spawning beside it would double the window (R6).
+        XCTAssertEqual(Self.repairDecision(receiptWindowIds: [10]), .none)
+    }
+
+    func testAClaimedEntryIsNeverRepaired() {
+        XCTAssertEqual(Self.repairDecision(isClaimed: true), .none)
+    }
+
+    func testARepairedEntryIsNeverRepairedTwice() {
+        XCTAssertEqual(Self.repairDecision(isRepaired: true), .none)
+    }
+
+    func testAParkedOnlyEntryIsNeverRepaired() {
+        // Closed window groups retire through the undo stack (D1), not
+        // through the repair.
+        XCTAssertEqual(Self.repairDecision(isParkedOnlyEntry: true), .none)
+    }
+
+    func testAnIneligibleActiveSpaceIsNeverRepaired() {
+        // Incognito and agent Spaces never entered the eager set, so their
+        // absence from the replayed list is not evidence of anything.
+        XCTAssertEqual(Self.repairDecision(activeSpaceEligible: false), .none)
+    }
+
+    func testAnEntryWithNoWindowOnItsActiveSpaceHasNothingToRepair() {
+        XCTAssertEqual(Self.repairDecision(
+            entryWindowMap: [11: "space-b"]
+        ), .none)
+    }
+}

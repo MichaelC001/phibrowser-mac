@@ -33,3 +33,7 @@ Sparkle-bin
 .cursor
 .AGENTS.md
 .superpowers/
+
+# Coverage counters dropped by an instrumented build in the repo root.
+default.profraw
+*.profraw

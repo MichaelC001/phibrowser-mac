@@ -101,6 +101,44 @@ class Tab: WebContentRepresentable {
     /// (the tab's `webContentView` is intentionally NOT niled on crash).
     @Published var crashState: CrashPageData?
 
+    /// Whether the address bar should draw its reader button for this tab.
+    ///
+    /// Two positive signals feed it — Chromium's distillability verdict
+    /// (`isDistillable` sink in `setupObservers`) and the Reader extension's
+    /// in-page probe push (`noteExtensionReaderOfferable`); a navigation
+    /// re-judge (`refreshReaderOfferability`) is what turns it off again.
+    /// Deliberately only the button reads this: the View menu, the shortcut,
+    /// and the page context menu offer the reader regardless, so a page this
+    /// misjudges still opens through any of them.
+    @Published private(set) var isReaderOfferable: Bool = false
+
+    /// Whether the Phi Reader extension's surface is showing in this tab.
+    ///
+    /// The extension reports it over the bridge (`reader.state`) when its
+    /// reader page mounts in the tab or the tab navigates away from it, and
+    /// `BrowserState.toggleReaderView` reads it to decide between
+    /// `reader.open` and `reader.close`.
+    @Published var extensionReaderActive: Bool = false
+
+    /// The URL the reader extension's probe last judged offerable. Held so
+    /// `refreshReaderOfferability` cannot rescind the grant while the tab is
+    /// still on that document: the refresh races the extension's push (a
+    /// slow page drops `isLoading` after the probe has already reported),
+    /// and without this a page the probe accepted but Chromium's model
+    /// declined — a link-digest article, say — went dark again.
+    private var extensionOfferedURLString: String?
+
+    /// Marks the tab offerable on the reader extension's probe verdict.
+    ///
+    /// Positive-only, mirroring the native distillability sink: the
+    /// extension's YES lights the button, and its NO is "no verdict", never a
+    /// rescission — the native signals keep their own say.
+    func noteExtensionReaderOfferable(forURLString urlString: String?) {
+        extensionOfferedURLString = urlString
+        guard !isReaderOfferable else { return }
+        isReaderOfferable = true
+    }
+
     /// Use native NTP rendering when the tab URL is an NTP URL.
     /// Only ever set for off-the-record tabs (see
     /// `BrowserState.consumePendingNativeNTP`). The flag is set after the
@@ -182,7 +220,11 @@ class Tab: WebContentRepresentable {
     var webContentView: NSView? { webContentWrapper?.nativeView }
     
     private var cancellables = Set<AnyCancellable>()
-    private var faviconSnapshotUpdater: ((Data) -> Void)?
+    private var faviconSnapshotUpdater: ((Data, String) -> Void)?
+    /// Held apart from `cancellables`, which `setupObservers` clears wholesale
+    /// on every wrapper swap; this pipeline watches the tab's own published
+    /// state and must outlive the wrapper bindings.
+    private var readerOfferabilityTrigger: AnyCancellable?
     
     init(guid: Int = UUID().hashValue,
          url: String?,
@@ -205,6 +247,35 @@ class Tab: WebContentRepresentable {
         self.profileId = profileId
         self.cachedFaviconData = faviconData
         setupObservers(for: webContentView)
+        setupReaderOfferabilityTrigger()
+    }
+
+    /// Re-judges the reader button whenever the page plausibly changed: a
+    /// load finishing, or the URL moving without one (an SPA navigation).
+    /// Debounced so a redirect chain judges once, at its destination.
+    private func setupReaderOfferabilityTrigger() {
+        readerOfferabilityTrigger = Publishers.Merge(
+            $isLoading.removeDuplicates().filter { !$0 }.map { _ in () },
+            $url.removeDuplicates().map { _ in () }
+        )
+        .debounce(for: .milliseconds(300), scheduler: DispatchQueue.main)
+        .sink { [weak self] in
+            self?.refreshReaderOfferability()
+        }
+    }
+
+    /// Re-judges the button from the signals in hand: the URL gate and
+    /// Chromium's distillability verdict. The heavier judgement — Phi's
+    /// readerable probe and the site rules — lives in the Reader extension,
+    /// which pushes its positive verdicts over the bridge
+    /// (`noteExtensionReaderOfferable`); this reset is what turns the button
+    /// off again when the tab navigates somewhere unreadable.
+    private func refreshReaderOfferability() {
+        isReaderOfferable =
+            ReaderExtractionService.canOfferReader(forURLString: url)
+            && (webContentWrapper?.isDistillable == true
+                || (extensionOfferedURLString != nil
+                    && extensionOfferedURLString == url))
     }
     
     private func setupObservers<Wrapper: WebContentWrapper & NSObject>(for wrapper: Wrapper?) {
@@ -220,16 +291,23 @@ class Tab: WebContentRepresentable {
         faviconUrl = wrapper.favIconURL
         liveFaviconData = wrapper.favIconData
         liveFaviconRevision = wrapper.favIconRevision
-        updateCachedFaviconData(wrapper.favIconData)
+        updateCachedFaviconData(
+            wrapper.favIconData,
+            sourceURLString: wrapper.urlString
+        )
         
         wrapper.publisher(for: \.favIconURL)
             .assign(to: \.faviconUrl, on: self)
             .store(in: &cancellables)
 
         wrapper.publisher(for: \.favIconData)
-            .sink { [weak self] data in
-                self?.liveFaviconData = data
-                self?.updateCachedFaviconData(data)
+            .sink { [weak self, weak wrapper] data in
+                guard let self, let wrapper else { return }
+                self.liveFaviconData = data
+                self.updateCachedFaviconData(
+                    data,
+                    sourceURLString: wrapper.urlString
+                )
             }
             .store(in: &cancellables)
 
@@ -244,7 +322,22 @@ class Tab: WebContentRepresentable {
         wrapper.publisher(for: \.loadProgress)
             .assign(to: \.loadingProgress, on: self)
             .store(in: &cancellables)
-        
+
+        // Chromium's native distillability verdict (see `isDistillable` in
+        // the bridge header). A rising edge re-judges the button; the
+        // verdict lands after parse and again after load, so it can arrive
+        // well after `isLoading` fell — a hydrating SPA. NO never rescinds:
+        // it means "no native verdict", and the Reader extension's own
+        // probe push stands.
+        wrapper.publisher(for: \.isDistillable)
+            .removeDuplicates()
+            .filter { $0 }
+            .sink { [weak self] _ in
+                guard let self, !self.isReaderOfferable else { return }
+                self.refreshReaderOfferability()
+            }
+            .store(in: &cancellables)
+
         wrapper.publisher(for: \.canGoBack)
             .assign(to: \.canGoBack, on: self)
             .store(in: &cancellables)
@@ -295,6 +388,8 @@ class Tab: WebContentRepresentable {
                 guard let self else { return }
                 if let localTitle = self.storedTitle, !localTitle.isEmpty {
                     self.title = localTitle
+                } else if BookmarkManagerRoute.matches(self.url) {
+                    self.title = BookmarkManagerRoute.tabTitle
                 } else if self.usesNativeNTP, Self.isUntitledNTPTitle(title, url: self.url) {
                     // A blank off-the-record chrome://newtab has no page
                     // title, so Chromium reports the raw URL — e.g. in an
@@ -357,14 +452,23 @@ class Tab: WebContentRepresentable {
         setupObservers(for: wrapper)
     }
     
-    func setFaviconSnapshotUpdater(_ updater: @escaping (Data) -> Void) {
+    func setFaviconSnapshotUpdater(_ updater: @escaping (Data, String) -> Void) {
         faviconSnapshotUpdater = updater
     }
     
-    func updateCachedFaviconData(_ data: Data?) {
+    func updateCachedFaviconData(_ data: Data?, sourceURLString: String? = nil) {
+        let resolvedSourceURLString = sourceURLString ?? url
+        if let pinnedUrl {
+            guard let canonicalPinnedURL = canonicalFaviconURLString(pinnedUrl),
+                  canonicalFaviconURLString(resolvedSourceURLString) == canonicalPinnedURL else {
+                return
+            }
+        }
         guard let data, cachedFaviconData != data else { return }
         cachedFaviconData = data
-        faviconSnapshotUpdater?(data)
+        if let resolvedSourceURLString {
+            faviconSnapshotUpdater?(data, resolvedSourceURLString)
+        }
     }
 
     func hydrateCachedFaviconData(_ data: Data?) {
@@ -372,9 +476,9 @@ class Tab: WebContentRepresentable {
         cachedFaviconData = data
     }
 
-    func updateProfileScopedFaviconData(_ data: Data?) {
+    func updateProfileScopedFaviconData(_ data: Data?, sourceURLString: String?) {
         guard allowsProfileScopedFaviconPersistence else { return }
-        updateCachedFaviconData(data)
+        updateCachedFaviconData(data, sourceURLString: sourceURLString)
     }
 
     private func clearFaviconDataIfPageURLChanged(from oldURLString: String?, to newURLString: String?) {

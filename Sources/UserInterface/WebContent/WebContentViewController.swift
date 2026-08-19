@@ -109,6 +109,10 @@ class WebContentViewController: NSViewController {
     /// partner's own VC won't mount the overlay). Kept off the shared
     /// cancellables so it can be cancelled independently on focus/split change.
     private var partnerCrashCancellable: AnyCancellable?
+    /// The focused split host also owns its partner's mounted content view. Watch
+    /// partner URL changes so entering or leaving a native URL renderer replaces
+    /// that pane immediately instead of waiting for a focus switch.
+    private var partnerContentCancellable: AnyCancellable?
     /// Saved superview reference while hostView is re-parented to window.contentView
     /// for HTML5 content fullscreen. Nil when not in fullscreen.
     private weak var savedHostViewSuperview: NSView?
@@ -117,6 +121,7 @@ class WebContentViewController: NSViewController {
     private var isSubscriptionsSetup = false
     private enum ContentMode: Equatable {
         case nativeNtp
+        case bookmarkManager
         case webContent
         case groupOverview(token: String)
     }
@@ -188,6 +193,7 @@ class WebContentViewController: NSViewController {
     private var leftContainerInsetConstraint: Constraint?
     private var splitViewLeadingConstraint: Constraint?
     private var nativeNtpController: NewTabViewController?
+    private var bookmarkManagerController: BookmarkManagerViewController?
     private var groupOverviewController: GroupOverviewViewController?
     /// Native renderer crash page, rebuilt per crash (it renders a fixed
     /// `CrashPageData` snapshot). Non-split only; split panes host their own
@@ -258,6 +264,9 @@ class WebContentViewController: NSViewController {
         guard let state = browserState else { return nil }
         return EmbeddedChatViewController(with: state, tab: associatedTab)
     }()
+
+    /// Test-only view of the page card (panel-separation style coverage).
+    var leftContainerViewForTesting: NSView { leftContainerView }
 
     override func loadView() {
         let view = ColoredVisualEffectView()
@@ -423,10 +432,23 @@ class WebContentViewController: NSViewController {
         }
     }
     
-    /// Focuses the active web content view.
-    private func focusWebContent() {
+    /// Focuses the active web content view. Internal so the container can
+    /// hand focus back to the page when the extension side panel closes.
+    func focusWebContent() {
         guard let tab = associatedTab else {
             AppLogDebug("🔍 [Focus] focusWebContent - no tab or webView")
+            return
+        }
+
+        if shouldShowBookmarkManager(for: tab) {
+            guard browserState?.groupOverviewState == nil,
+                  tab.crashState == nil,
+                  browserState?.splitGroup(forTabId: tab.guid) == nil ||
+                  browserState?.focusingTab?.guid == tab.guid else {
+                return
+            }
+            showBookmarkManager(for: tab)
+            bookmarkManagerController?.focusContent()
             return
         }
 
@@ -514,6 +536,13 @@ class WebContentViewController: NSViewController {
             }
             .store(in: &cancellables)
 
+        AgentSpaceManager.shared.cursorMoved
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] cursor in
+                self?.moveAgentSpaceCursor(cursor)
+            }
+            .store(in: &cancellables)
+
         // Observe AI Chat collapse state once the split item exists.
         setupAIChatObserver()
 
@@ -521,6 +550,32 @@ class WebContentViewController: NSViewController {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.updateSplitViewLeadingInset()
+            }
+            .store(in: &cancellables)
+
+        // The extension side panel separates the page card (see
+        // updateLeftContainerStyle); restyle on open/close, and on a live
+        // layout-mode switch while the panel stays mounted. The defaults
+        // sink filters on the loaded layout mode actually changing —
+        // defaults writes are frequent and process-wide, and the restyle's
+        // separated branch would otherwise rebuild a theme observation per
+        // write (see the applied-state guard in updateLeftContainerStyle).
+        browserState?.$extensionSidePanel
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.updateLeftContainerStyleForCurrentAIChatState()
+            }
+            .store(in: &cancellables)
+
+        lastStyledLayoutMode = PhiPreferences.GeneralSettings.loadLayoutMode()
+        NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                let mode = PhiPreferences.GeneralSettings.loadLayoutMode()
+                guard mode != self.lastStyledLayoutMode else { return }
+                self.lastStyledLayoutMode = mode
+                self.updateLeftContainerStyleForCurrentAIChatState()
             }
             .store(in: &cancellables)
 
@@ -1205,7 +1260,19 @@ class WebContentViewController: NSViewController {
             updateLoginRequiredPresentation(for: tab)
             updateHeaderAndBookmarkBarSeparators()
         }
+        let showsBookmarkManager = shouldShowBookmarkManager(for: tab)
+        // Tear down a solo manager as soon as its URL leaves the native route,
+        // even if this tab's controller is currently off-window. Background
+        // split members defer to the focused host's partner-URL subscription so
+        // their pane is replaced atomically instead of being removed in place.
+        if !showsBookmarkManager,
+           browserState?.splitGroup(forTabId: tab.guid) == nil {
+            hideBookmarkManagerIfNeeded()
+        }
         if browserState?.groupOverviewState != nil {
+            if !showsBookmarkManager {
+                hideBookmarkManagerIfNeeded()
+            }
             return
         }
         // For split members, only the focused VC may run this — same rule the
@@ -1235,6 +1302,9 @@ class WebContentViewController: NSViewController {
             return
         }
         deferredContentUpdateTabId = nil
+        if !showsBookmarkManager {
+            hideBookmarkManagerIfNeeded()
+        }
         // Crashed renderer takes priority over NTP / web content. When the split
         // host can actually be mounted, the per-pane crash overlay (Task 11)
         // handles it; otherwise (not in a split, partner pane not yet ready, or
@@ -1245,10 +1315,15 @@ class WebContentViewController: NSViewController {
             showCrashedPage(for: tab)
         } else {
             teardownCrashedPage()
-            if shouldShowNativeNtp(for: tab) {
+            if showsBookmarkManager {
+                showBookmarkManager(for: tab)
+            } else if shouldShowNativeNtp(for: tab) {
                 showNativeNtp(for: tab)
             } else if let webView = tab.webContentView {
                 showWebContent(webView, tabId: tab.guid)
+                #if DEBUG
+                browserState?.triggerAutoReaderIfRequested(for: tab)
+                #endif
             }
         }
     }
@@ -1346,13 +1421,82 @@ class WebContentViewController: NSViewController {
         guard !tab.isInContentFullscreen,
               let group = browserState?.splitGroup(forTabId: tab.guid),
               let partner = partnerTab(for: group, ownTabId: tab.guid),
-              // A native-NTP partner is mountable even before (or without) a
-              // Chromium view — its pane renders the native NTP view (see
-              // `partnerPaneView(for:)`).
-              partner.webContentView != nil || partner.usesNativeNTP else {
+              // A native renderer partner is mountable even before (or without)
+              // a Chromium view; `partnerPaneView(for:)` resolves its real view.
+              partner.webContentView != nil ||
+              partner.usesNativeNTP ||
+              shouldShowBookmarkManager(for: partner) else {
             return false
         }
         return true
+    }
+
+    private func shouldShowBookmarkManager(for tab: Tab) -> Bool {
+        guard browserState?.isIncognito != true else { return false }
+        return BookmarkManagerRoute.matches(tab.url)
+    }
+
+    private func ensureBookmarkManagerController(
+        state: BrowserState
+    ) -> BookmarkManagerViewController {
+        if let existing = bookmarkManagerController {
+            return existing
+        }
+        let created = BookmarkManagerViewController(browserState: state)
+        bookmarkManagerController = created
+        return created
+    }
+
+    private func showBookmarkManager(for tab: Tab) {
+        guard let state = browserState else { return }
+
+        let controller = ensureBookmarkManagerController(state: state)
+        if controller.parent == nil {
+            addChild(controller)
+        }
+
+        // Match Native NTP's split ownership: only the focused pane installs the
+        // shared split host, while a partner lends this controller's view through
+        // `splitPaneContentView()`.
+        if let group = activeSplitForCurrentTab() {
+            guard view.window != nil else {
+                contentMode = .bookmarkManager
+                return
+            }
+            controller.view.snp.removeConstraints()
+            installSplitContent(
+                group: group,
+                ownTabId: tab.guid,
+                ownNativeView: controller.view
+            )
+            contentMode = .bookmarkManager
+            return
+        }
+
+        if controller.view.superview !== hostView {
+            if let existing = currentSplitHost {
+                existing.removeFromSuperview()
+                currentSplitHost = nil
+                teardownAllSplitCrashViews()
+            }
+            hostView.subviews.forEach { $0.removeFromSuperview() }
+            hostView.addSubview(controller.view)
+            controller.view.snp.remakeConstraints { make in
+                make.edges.equalToSuperview()
+            }
+        }
+        contentMode = .bookmarkManager
+    }
+
+    private func hideBookmarkManagerIfNeeded() {
+        guard let controller = bookmarkManagerController else { return }
+        controller.finishAnalyticsSession()
+        controller.view.removeFromSuperview()
+        controller.removeFromParent()
+        bookmarkManagerController = nil
+        if contentMode == .bookmarkManager {
+            contentMode = nil
+        }
     }
 
     private func shouldShowNativeNtp(for tab: Tab) -> Bool {
@@ -1445,9 +1589,10 @@ class WebContentViewController: NSViewController {
             currentSplitHost = nil
             teardownAllSplitCrashViews()
         }
-        // Check if content view is already the primary view in hostView
+        // Check if content view is already the primary view in hostView.
         if hostView.subviews.contains(contentView),
            contentView.superview === hostView {
+            contentMode = .webContent
             updateLeftContainerStyleForCurrentAIChatState()
             return
         }
@@ -1567,12 +1712,11 @@ class WebContentViewController: NSViewController {
         }
     }
 
-    /// (Re)bind the partner-crash subscription. Active only while this VC is the
-    /// focused member of a split — then it owns the split host and must react to
-    /// the OTHER pane's crash/recover, since the partner's own VC can't mount
-    /// the overlay. Cancels in every other case. Called on split + focus changes.
+    /// (Re)bind subscriptions for partner state owned by the focused split host.
+    /// The partner's own VC cannot safely remount while it is behind this one.
     func updatePartnerCrashSubscription() {
         partnerCrashCancellable = nil
+        partnerContentCancellable = nil
         guard let tab = associatedTab,
               let state = browserState,
               state.focusingTab?.guid == tab.guid,
@@ -1587,13 +1731,27 @@ class WebContentViewController: NSViewController {
             .sink { [weak self] _ in
                 self?.refreshSplitCrashOverlays()
             }
+        partnerContentCancellable = partner.$url
+            .removeDuplicates()
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.refreshContentForSplitPartnerURLChange()
+            }
     }
 
-    /// Drop the partner-crash subscription unconditionally (the container calls
-    /// this on the OUTGOING focused VC during a focus flip — its own observers
-    /// don't re-run, so it can't self-cancel).
+    /// Drop focused-host partner subscriptions unconditionally. The container
+    /// calls this on the outgoing focused VC because its observers do not re-run.
     func cancelPartnerCrashSubscription() {
         partnerCrashCancellable = nil
+        partnerContentCancellable = nil
+    }
+
+    private func refreshContentForSplitPartnerURLChange() {
+        guard let tab = associatedTab,
+              browserState?.focusingTab?.guid == tab.guid,
+              view.window != nil else { return }
+        updateContentForTab(tab)
     }
 
     /// Reconcile both panes' crash overlays against the currently-mounted split
@@ -1606,15 +1764,19 @@ class WebContentViewController: NSViewController {
         reconcileSplitCrashViews(host: host, group: group)
     }
 
-    /// The view representing this controller's tab inside a split pane: the
-    /// native incognito NTP view while the tab is showing it, the Chromium
-    /// web content view otherwise. Ensures the NTP controller exists and
-    /// reflects the tab, so the pane renders the real native NTP even while
-    /// this controller is not the focused one (the focused pane's controller
-    /// borrows this view into its own split host — the same stealing dance
-    /// `installSplitContent` already does with `Tab.webContentView`).
+    /// The view representing this controller's tab inside a split pane. Native
+    /// URL renderers stay owned by this tab's controller even when the focused
+    /// partner borrows their view into its split host.
     func splitPaneContentView() -> NSView? {
         guard let tab = associatedTab else { return nil }
+        if shouldShowBookmarkManager(for: tab), let state = browserState {
+            let controller = ensureBookmarkManagerController(state: state)
+            if controller.parent == nil {
+                addChild(controller)
+            }
+            return controller.view
+        }
+        hideBookmarkManagerIfNeeded()
         if shouldShowNativeNtp(for: tab), let state = browserState {
             let controller = ensureNativeNtpController(state: state)
             if controller.parent == nil {
@@ -1627,10 +1789,9 @@ class WebContentViewController: NSViewController {
     }
 
     /// The partner pane's content view, resolved through the partner tab's
-    /// own controller so a native-NTP partner contributes its native NTP
-    /// view rather than the underlying (blank-ish) Chromium chrome://newtab
-    /// contents. Falls back to the raw web content view when the container
-    /// lookup is unavailable (e.g. this controller not yet parented).
+    /// own controller so a native-rendered partner contributes its native view
+    /// rather than the hidden Chromium contents. Falls back to the raw web view
+    /// when the container lookup is unavailable.
     ///
     /// The lookup is `splitPaneCompanionController` — NOT the focus-switch
     /// get-or-create — because this runs inside `installSplitContent` and the
@@ -2503,15 +2664,49 @@ class WebContentViewController: NSViewController {
         webContentProgressBar.isLayoutEnabled = isDefaultLayout
     }
     
-    /// Updates left-container border and inset styling for AI Chat state.
+    /// Last applied page-card separation inputs. updateLeftContainerStyle's
+    /// outputs are fully determined by (shouldSeparatePageCard, panelDocked),
+    /// so equal inputs skip the layer/constraint writes entirely —
+    /// `setBorderColor` rebuilds a full theme observation on every call
+    /// (`Phi.set` tears down and re-creates its subscription, it is NOT
+    /// idempotent), and the restyle entry points fire far more often than
+    /// the state actually flips.
+    private var appliedPageCardSeparated: Bool?
+    private var appliedPanelDockedCorners: Bool?
+
+    /// Layout mode last seen by the defaults-change restyle sink; the sink
+    /// only re-runs the styling when this actually changes.
+    private var lastStyledLayoutMode: LayoutMode?
+
+    /// Updates the page card's (left container) border/inset separation and
+    /// splitViewContainer's corner masking for the AI Chat and extension
+    /// side panel states.
     /// - Parameter isAIChatExpanded: Whether the AI Chat sidebar is expanded.
     private func updateLeftContainerStyle(isAIChatExpanded: Bool) {
         let isPerformanceSplitContent =
             PhiPreferences.GeneralSettings.loadLayoutMode() == .performance &&
             isSplitContentMounted
-        let shouldSeparateExpandedChat = isAIChatExpanded && !isPerformanceSplitContent
+        // A docked extension side panel separates the page card the same
+        // way an expanded chat does — one frame holding two inset cards —
+        // with the same performance-split exception.
+        //
+        // Deliberate asymmetry: this styling keys off the MODEL
+        // (BrowserState.extensionSidePanel), delivered a turn after the
+        // container's synchronous attach/detach, while the container keys
+        // frame ownership off VIEW attachment
+        // (extensionSidePanelView?.superview === view) so the outline and
+        // fill track the slide animations. The two answers may differ for
+        // the animation window only.
+        let panelDocked = browserState?.extensionSidePanel != nil
+        let shouldSeparatePageCard =
+            (isAIChatExpanded || panelDocked) && !isPerformanceSplitContent
 
-        if shouldSeparateExpandedChat {
+        guard shouldSeparatePageCard != appliedPageCardSeparated
+            || panelDocked != appliedPanelDockedCorners else { return }
+        appliedPageCardSeparated = shouldSeparatePageCard
+        appliedPanelDockedCorners = panelDocked
+
+        if shouldSeparatePageCard {
             leftContainerView.layer?.borderWidth = 1
             leftContainerView.phiLayer?.setBorderColor(.border)
             leftContainerInsetConstraint?.update(inset: WebContentConstant.contentEdgeSpacing)
@@ -2519,6 +2714,18 @@ class WebContentViewController: NSViewController {
             leftContainerView.layer?.borderWidth = 0
             leftContainerInsetConstraint?.update(inset: 0)
         }
+
+        // With the panel docked, splitViewContainer's right edge is an
+        // interior boundary meeting the panel's frame fill mid-frame, not
+        // the frame's outer corner — rounding it would carve a see-through
+        // notch exposing the vibrancy material beneath (which shifts with
+        // window activation). Square the right corners for the panel's
+        // stay; every other state keeps all four rounded (an expanded
+        // chat's right corners ARE the frame corners).
+        splitViewContainer.layer?.maskedCorners = panelDocked
+            ? [.layerMinXMinYCorner, .layerMinXMaxYCorner]
+            : [.layerMinXMinYCorner, .layerMinXMaxYCorner,
+               .layerMaxXMinYCorner, .layerMaxXMaxYCorner]
     }
 
     private func updateLeftContainerStyleForCurrentAIChatState() {
@@ -2603,6 +2810,69 @@ class WebContentViewController: NSViewController {
                 AppLogDebug("[AIChatSidebarCache] expand animation completed, cleared pendingAIChatWidthRestore")
             }
         })
+    }
+
+    /// Pause / resume this page's content frame sync around the extension
+    /// side panel slide animation (driven by the container), mirroring the
+    /// AI Chat transition above: pause so the WebContents isn't relaid out
+    /// on every animation frame, then resume with one force-sync at the
+    /// settled size. Resume leaves a docked DevTools session alone —
+    /// DevTools owns the flag while attached.
+    func setContentFrameSyncPausedForPanelTransition(_ paused: Bool) {
+        if paused {
+            hostView.isFrameSyncPaused = true
+        } else if associatedTab?.devToolsAttached != true {
+            hostView.isFrameSyncPaused = false
+            hostView.forceSyncAllSubviewFrames()
+        }
+    }
+
+    /// Detaches an expanded AI Chat from the split layout right before the
+    /// extension side panel slides in, returning a frame-driven snapshot
+    /// ghost (positioned in `coordView`'s space) for the container to
+    /// slide out alongside the panel's slide-in. nil when the chat is
+    /// collapsed or absent, or when the snapshot fails (the chat then
+    /// simply vanishes under the incoming panel).
+    ///
+    /// The panel ↔ chat mutex normally collapses the chat through the tab
+    /// observers, which apply NSSplitView's own divider animation a
+    /// runloop turn after the panel publish — too late for the slide-in's
+    /// layout target, and inside the narrowing container the chat card is
+    /// dragged left instead of exiting right. Collapsing the split item
+    /// here (state first, no divider animation) removes the chat from the
+    /// solution the slide-in animates to; the later model sweep and its
+    /// observers find the item already collapsed and no-op. The flip is
+    /// deliberately not laid out here: the caller's animation group
+    /// materializes it so the page pane's reflow rides the same implicit
+    /// animation as the panel.
+    func collapseAIChatForPanelTransition(ghostIn coordView: NSView) -> NSView? {
+        guard let aiChatSplitViewItem, !aiChatSplitViewItem.isCollapsed else {
+            return nil
+        }
+        let paneView = aiChatSplitViewItem.viewController.view
+        // Window-server capture (the chat hosts a WebView whose remote
+        // layer defeats local snapshot APIs), taken before the flip while
+        // the pane still shows its committed pixels.
+        let snapshot = WebContentSnapshotter.captureOnScreen(
+            paneView, resolution: .bestResolution)
+        let ghostFrame = paneView.convert(paneView.bounds, to: coordView)
+
+        isUpdatingAIChatState = true
+        aiChatSplitViewItem.isCollapsed = true
+        isUpdatingAIChatState = false
+        // The deferred tab observer skips its persist once it finds the
+        // item already collapsed; record the closed state here instead.
+        persistAIChatSidebarStateIfNeeded(for: associatedTab)
+
+        guard let snapshot else {
+            AppLogWarn("[ExtSidePanel] [Chat] snapshot failed — chat exits without a ghost")
+            return nil
+        }
+        let ghost = NSImageView()
+        ghost.imageScaling = .scaleAxesIndependently
+        ghost.image = snapshot
+        ghost.frame = ghostFrame
+        return ghost
     }
 
     private func clampAIChatWidth(_ width: CGFloat) -> CGFloat {
@@ -2708,10 +2978,20 @@ class WebContentViewController: NSViewController {
         }
         showAgentSpaceOverlay()
         var display = task
-        if let cursor = task.cursor {
+        // Live cursor state streams through `cursorMoved`; the side store
+        // seeds a mounter that (re)appears mid-glide.
+        if let cursor = AgentSpaceManager.shared.cursorBySpaceId[spaceId] {
             display.cursor = convertAgentCursorPoint(cursor)
         }
         agentSpaceOverlay.update(with: display)
+    }
+
+    /// Follows one streamed cursor sample — only the overlay's cursor layer
+    /// moves; the pill and the rest of the task display are untouched.
+    private func moveAgentSpaceCursor(_ cursor: AgentCursorUpdate) {
+        guard let spaceId = browserState?.spaceId, spaceId == cursor.spaceId,
+              agentSpaceOverlay.superview != nil else { return }
+        agentSpaceOverlay.moveCursor(to: convertAgentCursorPoint(cursor.point))
     }
 
     private func showAgentSpaceOverlay() {
@@ -2748,7 +3028,7 @@ class WebContentViewController: NSViewController {
         guard let spaceId = browserState?.spaceId, spaceId == effect.spaceId,
               agentSpaceOverlay.superview != nil else { return }
         guard let raw = effect.point
-                ?? AgentSpaceManager.shared.tasksBySpaceId[spaceId]?.cursor else { return }
+                ?? AgentSpaceManager.shared.cursorBySpaceId[spaceId] else { return }
         agentSpaceOverlay.playEffect(
             kind: effect.kind,
             at: convertAgentCursorPoint(raw),

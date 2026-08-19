@@ -32,4 +32,61 @@ final class TabItemViewCollapsedLayoutTests: XCTestCase {
             "Zero-sized tab items must not expose favicon/title subviews."
         )
     }
+
+    /// The background is the other half of that rule, and the half that is
+    /// easy to miss: it lives in a sublayer rather than a subview, and
+    /// `TabItemView` sets `layer.masksToBounds = false` so the active tab's
+    /// inverse curves can reach past the cell. A path built at the cell's
+    /// measured size therefore keeps drawing — outside the now-empty bounds —
+    /// unless it is dropped too.
+    func test_zeroSizedTabItemDropsItsBackgroundPath() {
+        let view = TabItemView()
+        view.frame = CGRect(x: 0, y: 0, width: 180, height: 32)
+        view.configure(with: TabRenderData(
+            id: "tab-1",
+            title: "Example",
+            url: "https://example.com",
+            isActive: true,
+            isPinned: false,
+            isSplitGroupActive: false,
+            sourceTab: nil
+        ))
+        view.layout()
+
+        guard let background = view.layer?.sublayers?
+            .compactMap({ $0 as? TabBackgroundLayer }).first else {
+            return XCTFail("Tab items should own a TabBackgroundLayer.")
+        }
+        XCTAssertFalse(
+            paintedBox(background).isEmpty,
+            "Precondition: a measured active tab paints its background."
+        )
+
+        view.frame = .zero
+        view.layout()
+
+        XCTAssertTrue(
+            paintedBox(background).isEmpty,
+            "Zero-sized tab items must not keep painting a \(paintedBox(background)) "
+            + "background; the layer is unclipped, so a stale path is a stale drawing."
+        )
+
+        // Measuring the cell again must bring the background back — dropping
+        // the path may not turn into a one-way trip for expanding a group.
+        view.frame = CGRect(x: 0, y: 0, width: 180, height: 32)
+        view.layout()
+
+        XCTAssertFalse(
+            paintedBox(background).isEmpty,
+            "Re-measuring the cell should rebuild its background path."
+        )
+    }
+
+    /// Bounding box of what the layer actually draws. An absent path and an
+    /// empty path both mean "paints nothing".
+    private func paintedBox(_ layer: TabBackgroundLayer) -> CGRect {
+        guard let path = layer.path else { return .zero }
+        let box = path.boundingBoxOfPath
+        return box.isNull || box.isInfinite ? .zero : box
+    }
 }

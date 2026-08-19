@@ -211,12 +211,23 @@ import PostHog
         // missing the app runs without analytics.
         if let token = PostHogEnv.projectToken.value,
            let host = PostHogEnv.host.value {
+            let isMetricsReportingEnabled = chromiumBridge?.isMetricsReportingEnabled() ?? false
             let postHogConfig = PostHogConfig(apiKey: token, host: host)
             postHogConfig.captureApplicationLifecycleEvents = true
+            postHogConfig.reuseAnonymousId = false
             #if DEBUG
             postHogConfig.debug = true
             #endif
             postHogConfig.setBeforeSend { event in
+                if PostHogIdentityResetPolicy.shouldDiscardAnonymousLaunchLifecycleEvent(
+                    eventName: event.event,
+                    isGuest: ApplicationState.shared.isGuest,
+                    isMetricsReportingEnabled: isMetricsReportingEnabled,
+                    distinctId: event.distinctId,
+                    anonymousId: PostHogSDK.shared.getAnonymousId()
+                ) {
+                    return nil
+                }
                 guard event.event == "Application Opened" else { return event }
                 event.properties["layout_mode"] = PhiPreferences.GeneralSettings.loadLayoutMode().rawValue
                 event.properties["ai_enabled"] = PhiPreferences.AISettings.phiAIEnabled.loadValue()
@@ -224,11 +235,23 @@ import PostHog
                 return event
             }
             PostHogSDK.shared.setup(postHogConfig)
+            AccountController.shared.reconcilePostHogIdentityForAnonymousLaunchIfNeeded(
+                isMetricsReportingEnabled: isMetricsReportingEnabled
+            )
             captureUserDefaultsSnapshot()
         } else {
             AppLogInfo("PostHog: project token or host not set in PostHogConfig.generated.swift; skipping init")
         }
         #endif
+
+        // Warm the Space registry before Chromium's cold-start replay can ask
+        // it anything. That replay queries `coldStartEagerWindowIds` from its
+        // own stack, and the singleton's first touch is what loads the restore
+        // snapshot and seeds the Space list; doing it here means the answer is
+        // read from memory instead of built inside the replay. A launch that
+        // has no account bound yet warms nothing and the pull answers nil,
+        // which is the full replay this app has always done.
+        MainActor.assumeIsolated { _ = SpaceManager.shared }
 
         chromiumBridge?.applicationWillFinishLaunching(notification)
     }

@@ -1258,6 +1258,10 @@ final class PhiBrowserTests: XCTestCase {
     }
 
     func testBookmarkMenuContentBuilderAddsBookmarkThisTabAndRecursiveBookmarks() {
+        let previousOverrides = Shortcuts.overridedShortcuts
+        defer { Shortcuts.overridedShortcuts = previousOverrides }
+        Shortcuts.overridedShortcuts[.IDC_SHOW_BOOKMARK_MANAGER] = .some(nil)
+
         let rootBookmark = Bookmark(title: "Phi", url: "https://phibrowser.com")
         let folder = Bookmark(folderTitle: "Favorites")
         let childBookmark = Bookmark(title: "Docs", url: "https://docs.phibrowser.com")
@@ -1272,6 +1276,7 @@ final class PhiBrowserTests: XCTestCase {
             target: target,
             bookmarkThisTabAction: #selector(BookmarkMenuTestTarget.menuAction(_:)),
             bookmarkAllTabsAction: #selector(BookmarkMenuTestTarget.menuAction(_:)),
+            bookmarkManagerAction: #selector(BookmarkMenuTestTarget.menuAction(_:)),
             exportBookmarksAction: #selector(BookmarkMenuTestTarget.menuAction(_:)),
             openBookmarkAction: #selector(BookmarkMenuTestTarget.menuAction(_:))
         )
@@ -1293,10 +1298,19 @@ final class PhiBrowserTests: XCTestCase {
         XCTAssertTrue(menu.items.dropFirst(2).first?.isSeparatorItem == true)
         XCTAssertEqual(
             menu.items.dropFirst(3).first?.title,
+            NSLocalizedString("app.bookmarksMenu.openManager", value: "Manage Bookmarks", comment: "Bookmarks menu - Menu item that opens the bookmark management page")
+        )
+        let managerItem = menu.items.dropFirst(3).first
+        XCTAssertEqual(managerItem?.tag, CommandWrapper.IDC_SHOW_BOOKMARK_MANAGER.rawValue)
+        XCTAssertEqual(managerItem?.action, #selector(BookmarkMenuTestTarget.menuAction(_:)))
+        XCTAssertEqual(managerItem?.keyEquivalent, "b")
+        XCTAssertEqual(managerItem?.keyEquivalentModifierMask, [.command, .option])
+        XCTAssertEqual(
+            menu.items.dropFirst(4).first?.title,
             NSLocalizedString("app.bookmarksMenu.exportCurrentSpace", value: "Export Bookmarks...", comment: "Bookmarks menu - Menu item to export the current Space's bookmarks to an HTML file")
         )
-        XCTAssertTrue(menu.items.dropFirst(4).first?.isSeparatorItem == true)
-        XCTAssertEqual(menu.items.dropFirst(5).map(\.title), ["Phi", "Favorites"])
+        XCTAssertTrue(menu.items.dropFirst(5).first?.isSeparatorItem == true)
+        XCTAssertEqual(menu.items.dropFirst(6).map(\.title), ["Phi", "Favorites"])
         XCTAssertEqual(menu.items.last?.submenu?.items.map(\.title), ["Docs"])
     }
 
@@ -1311,6 +1325,7 @@ final class PhiBrowserTests: XCTestCase {
             target: target,
             bookmarkThisTabAction: #selector(BookmarkMenuTestTarget.menuAction(_:)),
             bookmarkAllTabsAction: #selector(BookmarkMenuTestTarget.menuAction(_:)),
+            bookmarkManagerAction: #selector(BookmarkMenuTestTarget.menuAction(_:)),
             exportBookmarksAction: #selector(BookmarkMenuTestTarget.menuAction(_:)),
             openBookmarkAction: #selector(BookmarkMenuTestTarget.menuAction(_:))
         )
@@ -1324,10 +1339,10 @@ final class PhiBrowserTests: XCTestCase {
             "The Bookmarks menu should disable the Bookmark All Tabs item when the active window does not have more than one bookmarkable open tab."
         )
         XCTAssertFalse(
-            menu.items.dropFirst(3).first?.isEnabled == true,
+            menu.items.dropFirst(4).first?.isEnabled == true,
             "The Bookmarks menu should disable the Export Bookmarks item when the current Space has no bookmarks to export."
         )
-        XCTAssertEqual(menu.items.count, 4)
+        XCTAssertEqual(menu.items.count, 5)
     }
 
     func testBookmarkMenuContentBuilderShowsDisabledEmptyItemForEmptyFolders() {
@@ -1342,11 +1357,12 @@ final class PhiBrowserTests: XCTestCase {
             target: target,
             bookmarkThisTabAction: #selector(BookmarkMenuTestTarget.menuAction(_:)),
             bookmarkAllTabsAction: #selector(BookmarkMenuTestTarget.menuAction(_:)),
+            bookmarkManagerAction: #selector(BookmarkMenuTestTarget.menuAction(_:)),
             exportBookmarksAction: #selector(BookmarkMenuTestTarget.menuAction(_:)),
             openBookmarkAction: #selector(BookmarkMenuTestTarget.menuAction(_:))
         )
 
-        let folderItem = menu.items[5]
+        let folderItem = menu.items[6]
         let emptyItem = try? XCTUnwrap(folderItem.submenu?.items.first)
 
         XCTAssertEqual(folderItem.title, "Empty Folder")
@@ -1371,6 +1387,7 @@ final class PhiBrowserTests: XCTestCase {
             target: target,
             bookmarkThisTabAction: #selector(BookmarkMenuTestTarget.menuAction(_:)),
             bookmarkAllTabsAction: #selector(BookmarkMenuTestTarget.menuAction(_:)),
+            bookmarkManagerAction: #selector(BookmarkMenuTestTarget.menuAction(_:)),
             exportBookmarksAction: #selector(BookmarkMenuTestTarget.menuAction(_:)),
             openBookmarkAction: #selector(BookmarkMenuTestTarget.menuAction(_:))
         )

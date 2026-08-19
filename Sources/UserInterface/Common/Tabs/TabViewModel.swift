@@ -26,6 +26,7 @@ final class TabViewModel {
     var isMultiSelected: Bool = false
     var isHovered: Bool = false
     var isHoverSuppressed: Bool = false
+    var showsTabPreview: Bool = false
     var isPressed: Bool = false
     /// Progress-gated visual loading used by sidebar title effects.
     /// Raw Chromium loading can lag or pulse after progress reaches completion.
@@ -93,6 +94,7 @@ final class TabViewModel {
         isMultiSelected = false
         isHovered = false
         isHoverSuppressed = false
+        showsTabPreview = false
         isPressed = false
         rawIsLoading = false
         isLoading = false
@@ -458,7 +460,10 @@ final class TabViewModel {
             }
             self.profileFaviconImage = result.image
             if result.source == .chromium, let data = result.data {
-                tab?.updateProfileScopedFaviconData(data)
+                tab?.updateProfileScopedFaviconData(
+                    data,
+                    sourceURLString: request.pageURLString
+                )
             }
         }
     }

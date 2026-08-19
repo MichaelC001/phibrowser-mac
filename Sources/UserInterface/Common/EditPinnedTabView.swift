@@ -164,6 +164,7 @@ enum EditPinnedTabPresenter {
         onCancel: (() -> Void)? = nil,
         onRemove: (() -> Void)? = nil,
         onCreateFolder: ((String) -> String?)? = nil,
+        onValidate: ((EditPinnedTabResult) -> Bool)? = nil,
         onSave: @escaping (EditPinnedTabResult) -> Void
     ) {
         let coordinator = Coordinator(onCancel: onCancel, onRemove: onRemove, onSave: onSave)
@@ -185,6 +186,7 @@ enum EditPinnedTabPresenter {
                 coordinator?.remove()
             },
             onCreateFolder: onCreateFolder,
+            onValidate: onValidate,
             onSave: { [weak coordinator] result in
                 coordinator?.save(result)
             }
@@ -309,6 +311,7 @@ struct EditPinnedTabView: View {
     private let onRemove: (() -> Void)?
     private let onSave: ((EditPinnedTabResult) -> Void)?
     private let onCreateFolder: ((String) -> String?)?
+    private let onValidate: ((EditPinnedTabResult) -> Bool)?
     private let dismissesOnAction: Bool
 
     @State private var titleString: String
@@ -341,6 +344,7 @@ struct EditPinnedTabView: View {
         onCancel: (() -> Void)? = nil,
         onRemove: (() -> Void)? = nil,
         onCreateFolder: ((String) -> String?)? = nil,
+        onValidate: ((EditPinnedTabResult) -> Bool)? = nil,
         onSave: ((EditPinnedTabResult) -> Void)? = nil
     ) {
         self.mode = mode
@@ -353,6 +357,7 @@ struct EditPinnedTabView: View {
         self.onCancel = onCancel
         self.onRemove = onRemove
         self.onCreateFolder = onCreateFolder
+        self.onValidate = onValidate
         self.onSave = onSave
         _titleString = State(initialValue: title)
         _urlString = State(initialValue: URLProcessor.phiBrandEnsuredUrlString(urlString))
@@ -677,23 +682,8 @@ struct EditPinnedTabView: View {
                     comment: "Editor - Save button title"
                 )
             ) {
-                let result = EditPinnedTabResult(
-                    title: (mode == .folder || mode == .newFolder || mode == .bookmark || mode == .editOrMoveBookmark || mode == .pin)
-                        ? titleString.trimmingCharacters(in: .whitespacesAndNewlines)
-                        : nil,
-                    url: (mode == .bookmark || mode == .editOrMoveBookmark || mode == .pin)
-                        ? urlString.trimmingCharacters(in: .whitespacesAndNewlines)
-                        : nil,
-                    parentFolderGuid: (mode == .bookmark || mode == .editOrMoveBookmark)
-                        ? selectedFolderGuid
-                        : nil,
-                    secondaryUrl: (isSplitBookmark && (mode == .bookmark || mode == .editOrMoveBookmark || mode == .pin))
-                        ? secondaryUrlString.trimmingCharacters(in: .whitespacesAndNewlines)
-                        : nil,
-                    secondaryTitle: (isSplitBookmark && (mode == .bookmark || mode == .editOrMoveBookmark || mode == .pin))
-                        ? secondaryTitleString.trimmingCharacters(in: .whitespacesAndNewlines)
-                        : nil
-                )
+                let result = editResult(parentFolderGuid: selectedFolderGuid)
+                guard onValidate?(result) != false else { return }
                 onSave?(result)
                 if dismissesOnAction {
                     dismiss()
@@ -726,6 +716,26 @@ struct EditPinnedTabView: View {
             }
             return titleOK && primaryOK
         }
+    }
+
+    private func editResult(parentFolderGuid: String?) -> EditPinnedTabResult {
+        EditPinnedTabResult(
+            title: (mode == .folder || mode == .newFolder || mode == .bookmark || mode == .editOrMoveBookmark || mode == .pin)
+                ? titleString.trimmingCharacters(in: .whitespacesAndNewlines)
+                : nil,
+            url: (mode == .bookmark || mode == .editOrMoveBookmark || mode == .pin)
+                ? urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+                : nil,
+            parentFolderGuid: (mode == .bookmark || mode == .editOrMoveBookmark)
+                ? parentFolderGuid
+                : nil,
+            secondaryUrl: (isSplitBookmark && (mode == .bookmark || mode == .editOrMoveBookmark || mode == .pin))
+                ? secondaryUrlString.trimmingCharacters(in: .whitespacesAndNewlines)
+                : nil,
+            secondaryTitle: (isSplitBookmark && (mode == .bookmark || mode == .editOrMoveBookmark || mode == .pin))
+                ? secondaryTitleString.trimmingCharacters(in: .whitespacesAndNewlines)
+                : nil
+        )
     }
 
     private func setInitialFocus() {
@@ -795,18 +805,10 @@ struct EditPinnedTabView: View {
             Button(NSLocalizedString("common.bookmarkEditor.newFolder.saveButton", value: "Save", comment: "Editor - Save button title")) {
                 let name = newFolderName.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !name.isEmpty else { return }
+                let draft = editResult(parentFolderGuid: selectedFolderGuid)
+                guard onValidate?(draft) != false else { return }
                 let folderGuid = onCreateFolder?(name)
-                let result = EditPinnedTabResult(
-                    title: titleString.trimmingCharacters(in: .whitespacesAndNewlines),
-                    url: urlString.trimmingCharacters(in: .whitespacesAndNewlines),
-                    parentFolderGuid: folderGuid,
-                    secondaryUrl: isSplitBookmark
-                        ? secondaryUrlString.trimmingCharacters(in: .whitespacesAndNewlines)
-                        : nil,
-                    secondaryTitle: isSplitBookmark
-                        ? secondaryTitleString.trimmingCharacters(in: .whitespacesAndNewlines)
-                        : nil
-                )
+                let result = editResult(parentFolderGuid: folderGuid)
                 onSave?(result)
                 if dismissesOnAction { dismiss() }
             }

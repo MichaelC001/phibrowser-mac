@@ -80,7 +80,12 @@ user explicitly asks for work in their own Space ("go to my space 1 and …",
 "open X in my space") — never as a convenience, and switch back to
 `enterContext` for the next ordinary task. Everything you do there
 happens in the user's REAL, visible window: tabs open, navigate, and close
-before their eyes, and `attachTab`/`switchTab` select the tab on screen.
+before their eyes. Driving is still non-intrusive: binding and
+`attachTab`/`switchTab` never change which tab is selected on screen and
+never raise or focus the window — the agent drives its tab silently, even
+as a background tab, so the user's own browsing is not yanked around.
+(`openTab` surfaces its NEW tab in the strip; that is the one deliberate
+on-screen change.)
 
 Semantics and differences from a task Space:
 
@@ -102,6 +107,12 @@ Semantics and differences from a task Space:
   in this mode (the first would visibly reshape the user's tab, the second
   churns a temporary tab through their strip) — use an agent Space for
   both.
+- Background-tab driving: navigation, `observe`, `js`, and input all work
+  in a tab that is not the one selected on screen — but its renderer does
+  not paint (user windows have no agent-mode visibility forcing), so
+  `screenshot()`/`annotatedScreenshot()` of a non-selected tab TIME OUT.
+  Screenshot only the tab the user has selected, or do visual checks in an
+  agent Space.
 - `openTab(url)` in this mode routes through `openSpaceTab` into the bound
   Space's window and returns once the document is ready (no blank-tab
   reuse). Neither `openTab` nor `goto` runs the automatic cookie-consent

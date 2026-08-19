@@ -58,8 +58,11 @@ struct AgentTask {
     var ownership: AgentTaskOwnership
     var status: AgentTaskStatus
     var statusCaption: String
+    /// Display conduit only: the manager keeps live cursor state in
+    /// `cursorBySpaceId` (streamed via `cursorMoved`); mounters copy it in
+    /// here — converted to view coordinates — right before handing the task
+    /// to their overlay's `update(with:)`.
     var cursor: CGPoint?
-    var cursorTabId: Int?
     var hasUnseenError: Bool
     /// The tab currently wearing the operating overlay (the mask AI chat shows
     /// when it drives a tab). Tracked so ownership flips and completion can
@@ -205,6 +208,17 @@ struct AgentEffect {
     let dy: CGFloat?
 }
 
+/// One agent-cursor position sample, streamed straight to the overlay
+/// mounters like `AgentEffect`. Drivers sample cursor glides tens of times a
+/// second, so cursor motion deliberately bypasses the `tasksBySpaceId`
+/// publish — a full task-dictionary fan-out per sample would re-render every
+/// subscriber's whole pill on the main thread for a one-layer position move.
+struct AgentCursorUpdate {
+    let spaceId: String
+    /// Widget-space point, same coordinate space as `AgentEffect.point`.
+    let point: CGPoint
+}
+
 /// A command the user typed into the agent console, waiting for the driving
 /// agent to pick it up. Queued per task (the driver drains at its round
 /// boundaries via `agentSpace.readUserMessages`); a broadcast wakes a live
@@ -277,7 +291,24 @@ final class AgentSpaceManager: ObservableObject {
     /// hint) streamed straight to the overlay mounters — see `AgentEffect`.
     let effectRequested = PassthroughSubject<AgentEffect, Never>()
 
+    /// Live agent-cursor motion, streamed like effects — see
+    /// `AgentCursorUpdate` for why it does not ride `tasksBySpaceId`.
+    let cursorMoved = PassthroughSubject<AgentCursorUpdate, Never>()
+
+    /// Last cursor point per Space, so a mounter that (re)appears mid-glide
+    /// can seed the overlay without waiting for the next sample. Not
+    /// `@Published`: reads ride the task publish that mounted the overlay.
+    private(set) var cursorBySpaceId: [String: CGPoint] = [:]
+
     private var spaceIdByTaskId: [String: String] = [:]
+
+    /// Shadow windows this manager opened, keyed by taskId. Space-less
+    /// siblings of `tasksBySpaceId`: same taskId namespace, same origin/
+    /// principal authorization, same keep-alive clock — but no Space, no pip
+    /// and no transcript, because the window is invisible (see
+    /// AgentSpaceManager+Shadow.swift). Kept here rather than in a manager of
+    /// their own so agent-driven windows have exactly one owner.
+    var shadowWindowsByTaskId: [String: ShadowWindow] = [:]
 
     /// User commands typed into the agent console, per task, until the driver
     /// drains them (`drainUserMessages`). Bounded so an unread console can't
@@ -334,7 +365,7 @@ final class AgentSpaceManager: ObservableObject {
         tasksBySpaceId[spaceId] = task
     }
 
-    private func ensureKeepAliveSweep() {
+    func ensureKeepAliveSweep() {
         guard keepAliveSweepTimer == nil else { return }
         let timer = Timer(timeInterval: Self.keepAliveSweepInterval, repeats: true) { _ in
             MainActor.assumeIsolated { AgentSpaceManager.shared.sweepExpiredTasks() }
@@ -344,7 +375,7 @@ final class AgentSpaceManager: ObservableObject {
     }
 
     private func stopKeepAliveSweepIfIdle() {
-        guard tasksBySpaceId.isEmpty else { return }
+        guard tasksBySpaceId.isEmpty, shadowWindowsByTaskId.isEmpty else { return }
         keepAliveSweepTimer?.invalidate()
         keepAliveSweepTimer = nil
     }
@@ -364,6 +395,7 @@ final class AgentSpaceManager: ObservableObject {
             taskDidComplete(taskId: task.taskId, success: false, keep: false,
                             message: "expired: no agent activity")
         }
+        sweepExpiredShadowWindows(now: now)
         stopKeepAliveSweepIfIdle()
     }
 
@@ -610,7 +642,6 @@ final class AgentSpaceManager: ObservableObject {
             status: .starting,
             statusCaption: "",
             cursor: nil,
-            cursorTabId: nil,
             hasUnseenError: false,
             keepAliveDeadline: (origin == .cdp && !persistent)
                 ? Date().addingTimeInterval(Self.defaultKeepAliveTTL)
@@ -740,7 +771,6 @@ final class AgentSpaceManager: ObservableObject {
                 status: status,
                 statusCaption: "",
                 cursor: nil,
-                cursorTabId: nil,
                 hasUnseenError: false,
                 keepAliveDeadline: .distantFuture,
                 persistent: true,
@@ -1248,11 +1278,13 @@ final class AgentSpaceManager: ObservableObject {
         }
     }
 
+    /// `tabId` is accepted for protocol compatibility (0 = the displayed
+    /// tab) but unused: the overlay is mounted per content view, which
+    /// already scopes the cursor to what is on screen.
     func setCursor(taskId: String, tabId: Int, point: CGPoint) {
-        guard let spaceId = spaceIdByTaskId[taskId], var task = tasksBySpaceId[spaceId] else { return }
-        task.cursor = point
-        task.cursorTabId = tabId
-        tasksBySpaceId[spaceId] = task
+        guard let spaceId = spaceIdByTaskId[taskId], tasksBySpaceId[spaceId] != nil else { return }
+        cursorBySpaceId[spaceId] = point
+        cursorMoved.send(AgentCursorUpdate(spaceId: spaceId, point: point))
     }
 
     func showEffect(taskId: String, kind: AgentEffect.Kind,
@@ -1302,6 +1334,7 @@ final class AgentSpaceManager: ObservableObject {
                          text: success ? "Task completed" : "Task failed",
                          detail: message)
         tasksBySpaceId[spaceId] = nil
+        cursorBySpaceId[spaceId] = nil
         spaceIdByTaskId[taskId] = nil
         tearDownTranscript(taskId: taskId)
         dismissHandoffPrompt(forSpaceId: spaceId)
@@ -1332,6 +1365,7 @@ final class AgentSpaceManager: ObservableObject {
         appendTranscript(taskId: task.taskId, kind: .status,
                          text: "Space deleted by the user — task ended")
         tasksBySpaceId[spaceId] = nil
+        cursorBySpaceId[spaceId] = nil
         spaceIdByTaskId[task.taskId] = nil
         tearDownTranscript(taskId: task.taskId)
         dismissHandoffPrompt(forSpaceId: spaceId)

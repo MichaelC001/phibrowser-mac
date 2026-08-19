@@ -321,6 +321,16 @@ private final class BookmarkOriginTestWebContentWrapper: NSObject, WebContentWra
     @objc dynamic var isBeingMirrored = false
     @objc dynamic var isSharingScreen = false
     @objc dynamic var isInContentFullscreen = false
+    @objc dynamic var isDistillable = false
+    @objc dynamic var devToolsTargetId: String? = nil
+
+    func requestAccessibilityTreeSnapshot(
+        withMinimumPages minimumPages: Int,
+        timeoutMs: Int,
+        completion: @escaping ([String: Any]?) -> Void
+    ) {
+        completion(nil)
+    }
 
     private(set) var navigatedURLs: [String] = []
     private(set) var customValues: [String] = []

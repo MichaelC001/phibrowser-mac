@@ -250,6 +250,65 @@ class WebContentContainerViewController: NSViewController {
     /// Owned by `AgentTranscriptPanelController`; see `attachTranscriptDock`.
     private(set) var transcriptDockView: AgentTranscriptDockView?
     private var transcriptDockEdge: AgentTranscriptDockEdge?
+
+    /// Window-level chrome for the extension side panel NSView adopted from
+    /// Chromium: one per window, beside the per-tab content stack, so the
+    /// panel survives tab switches without joining per-tab view churn.
+    /// Carries the header (extension icon, name, close button), the AI-Chat
+    /// -style card looks, and the drag-resizable width.
+    private var extensionSidePanelView: ExtensionSidePanelView?
+
+    /// Per-window width memory for the extension side panel, shared across
+    /// extensions (v1 semantics; mirrors `lastKnownSidebarWidth`'s role for
+    /// the left rail). Seeded with Chromium's default side panel content
+    /// width; captured from the slot on detach so a close/reopen restores
+    /// the last dragged width.
+    private var extensionSidePanelPreferredWidth: CGFloat = 360
+
+    /// The panel view currently playing its slide-out animation. Already
+    /// detached from `extensionSidePanelView` (state first, animation as
+    /// afterglow) and frame-driven; its Chromium content is gone, replaced
+    /// by a window-server snapshot. Single slot: a reopen during the
+    /// slide-out drops the ghost immediately.
+    private var closingExtensionSidePanelView: ExtensionSidePanelView?
+
+    /// Snapshot of an AI Chat closed by the panel-open mutex, sliding out
+    /// to the right edge while the panel slides in. The real chat leaves
+    /// the split layout before the container narrows — an NSSplitView
+    /// -animated collapse would stay inside the narrowing container and be
+    /// dragged left under the incoming panel instead of exiting right.
+    /// Single slot: dropped early by a panel detach (the chat may be
+    /// re-expanding right there) and whenever another controller takes
+    /// over the content area (see `dropClosingAIChatGhost`).
+    private var closingAIChatGhostView: NSView?
+
+    /// Companion of the panel slot: fills the content frame's interior
+    /// around the panel card with the same `contentOverlayBackground` that
+    /// `splitViewContainer` paints behind the page and chat cards, so the
+    /// panel reads as a sub-card inside one frame (AI Chat parity) instead
+    /// of floating on the window background. Sits just above
+    /// `contentContainer` in z (the container's vibrancy view overlaps 8pt
+    /// under the panel and would otherwise show through as a
+    /// focus-dependent notch); nil whenever the panel is detached. During
+    /// a slide-out it is frozen in place, demoted below the container so
+    /// the re-expanding page covers it, and removed with the ghost.
+    private var extensionSidePanelFrameBackdrop: NSView?
+
+    /// Test seam: skips the panel slide animations so attach/detach settle
+    /// synchronously and layout tests can assert the end state.
+    static var panelSlideAnimationsDisabledForTesting = false
+
+    /// True when a panel attach/detach should settle immediately instead of
+    /// sliding: the test seam is on, or there is no window to animate in.
+    private var skipsPanelSlideAnimation: Bool {
+        Self.panelSlideAnimationsDisabledForTesting || view.window == nil
+    }
+
+    /// Test-only view of the mounted panel slot.
+    var extensionSidePanelViewForTesting: ExtensionSidePanelView? { extensionSidePanelView }
+
+    /// Test-only view of the panel's frame-interior fill.
+    var extensionSidePanelFrameBackdropForTesting: NSView? { extensionSidePanelFrameBackdrop }
     
     // MARK: - Initialization
     
@@ -440,10 +499,14 @@ class WebContentContainerViewController: NSViewController {
     }
 
     /// Single owner of `contentContainer`'s outer constraints: below the tab
-    /// strip (once created) and beside/above the transcript dock (when
-    /// attached). Every path that changes either edge funnels here so no
-    /// remake can drop the other's constraint.
+    /// strip (once created), beside the extension side panel (when attached)
+    /// and beside/above the transcript dock (when attached). Every path that
+    /// changes any of those edges funnels here so no remake can drop
+    /// another's constraint. Right-edge order: [content | extension side
+    /// panel | right transcript dock].
     private func remakeContentLayout() {
+        let panelView = extensionSidePanelView?.superview === view
+            ? extensionSidePanelView : nil
         contentContainer.snp.remakeConstraints { make in
             if let bar = tabStripBarController?.view, bar.superview === view {
                 make.top.equalTo(bar.snp.bottom)
@@ -451,17 +514,37 @@ class WebContentContainerViewController: NSViewController {
                 make.top.equalToSuperview()
             }
             make.leading.equalToSuperview()
+            if let panelView {
+                // A docked panel separates the page card (4pt inset inside
+                // splitViewContainer, see updateLeftContainerStyle) exactly
+                // like an expanded AI Chat. Overlap the container a full
+                // edgesSpacing under the panel so splitViewContainer's
+                // right edge (8pt margin inside the container) lands
+                // exactly on the panel's leading edge: its background then
+                // paints the 4pt page-card ↔ panel-card seam, matching the
+                // chat card's seam fill. Nothing else draws in the
+                // overlapped strip.
+                make.trailing.equalTo(panelView.snp.leading)
+                    .offset(WebContentConstant.edgesSpacing)
+            }
             if let dock = transcriptDockView, let edge = transcriptDockEdge {
                 switch edge {
                 case .right:
-                    make.trailing.equalTo(dock.snp.leading)
+                    if panelView == nil {
+                        make.trailing.equalTo(dock.snp.leading)
+                    }
                     make.bottom.equalToSuperview()
                 case .bottom:
-                    make.trailing.equalToSuperview()
+                    if panelView == nil {
+                        make.trailing.equalToSuperview()
+                    }
                     make.bottom.equalTo(dock.snp.top)
                 }
             } else {
-                make.trailing.bottom.equalToSuperview()
+                if panelView == nil {
+                    make.trailing.equalToSuperview()
+                }
+                make.bottom.equalToSuperview()
             }
         }
         if let dock = transcriptDockView, let edge = transcriptDockEdge {
@@ -478,7 +561,82 @@ class WebContentContainerViewController: NSViewController {
                 }
             }
         }
+        if let panelView {
+            // The panel's own width constraint lives on the panel view
+            // (plain NSLayoutConstraint, untouched by this snp remake) —
+            // same split as the transcript dock's thickness constraint.
+            //
+            // The panel sits inside the content frame as a sub-card with
+            // the same contentEdgeSpacing breathing room the chat card
+            // keeps: 4pt below the frame's top line and 4pt off its right
+            // and bottom edges (the frame itself keeps the shared
+            // edgesSpacing window margins).
+            let panelInset = CGFloat(WebContentConstant.contentEdgeSpacing)
+            panelView.snp.remakeConstraints { make in
+                make.top.equalTo(contentContainer.snp.top).offset(panelInset)
+                make.bottom.equalTo(contentContainer.snp.bottom)
+                    .offset(-(WebContentConstant.edgesSpacing + panelInset))
+                if let dock = transcriptDockView, transcriptDockEdge == .right {
+                    make.trailing.equalTo(dock.snp.leading)
+                } else {
+                    make.trailing.equalToSuperview()
+                        .inset(WebContentConstant.edgesSpacing + panelInset)
+                }
+            }
+            let backdrop = ensureExtensionSidePanelFrameBackdrop()
+            // The fill must stay ABOVE contentContainer: the container
+            // (with the per-tab vibrancy view inside it) overlaps 8pt
+            // under the panel, and vibrancy material shifts with window
+            // activation while the plain fill colors don't — left
+            // underneath, that strip reads as a focus-dependent notch in
+            // the frame interior. A detach demotes the backdrop below the
+            // container again (see detachExtensionSidePanel); re-promote
+            // here when a reopen reclaims it.
+            if let idx = view.subviews.firstIndex(of: backdrop),
+               let containerIdx = view.subviews.firstIndex(of: contentContainer),
+               idx < containerIdx {
+                view.addSubview(backdrop, positioned: .above,
+                                relativeTo: contentContainer)
+            }
+            backdrop.translatesAutoresizingMaskIntoConstraints = false
+            backdrop.snp.remakeConstraints { make in
+                // Same vertical extent as splitViewContainer (top at the
+                // frame's top line, bottom at the shared 8pt window
+                // margin), extended right to wrap the panel card plus its
+                // 4pt margin. The leading edge meets the page container's
+                // right edge (same fill color) exactly at the panel's
+                // leading edge.
+                make.top.equalTo(contentContainer.snp.top)
+                make.bottom.equalTo(panelView.snp.bottom).offset(panelInset)
+                make.leading.equalTo(panelView.snp.leading)
+                make.trailing.equalTo(panelView.snp.trailing).offset(panelInset)
+            }
+        }
         view.needsLayout = true
+    }
+
+    /// Creates (or returns) the panel's frame-interior fill. Constraint
+    /// installation stays in `remakeContentLayout`;
+    /// `slideInExtensionSidePanel` pre-seeds it frame-driven so the fill
+    /// rides the same implicit animation as the panel instead of growing
+    /// in from a zero rect.
+    private func ensureExtensionSidePanelFrameBackdrop() -> NSView {
+        if let existing = extensionSidePanelFrameBackdrop { return existing }
+        let backdrop = NSView()
+        backdrop.wantsLayer = true
+        backdrop.layer?.cornerCurve = .continuous
+        backdrop.layer?.cornerRadius = LiquidGlassCompatible.webContentContainerCornerRadius
+        // Only the frame's outer (right) corners are rounded; the left edge
+        // is an interior boundary meeting the page container's fill, and a
+        // rounded corner there would carve a see-through notch showing the
+        // vibrancy material beneath. splitViewContainer squares its right
+        // corners for the same reason while the panel is open (see
+        // WebContentViewController.updateLeftContainerStyle).
+        backdrop.layer?.maskedCorners = [.layerMaxXMinYCorner, .layerMaxXMaxYCorner]
+        backdrop.phiLayer?.setBackgroundColor(ThemedColor.contentOverlayBackground)
+        view.addSubview(backdrop, positioned: .above, relativeTo: contentContainer)
+        extensionSidePanelFrameBackdrop = backdrop
+        return backdrop
     }
     
     // MARK: - Subscriptions Setup
@@ -518,6 +676,29 @@ class WebContentContainerViewController: NSViewController {
                     self.attachPlaceholderShell()
                 } else {
                     self.detachPlaceholderShell()
+                }
+            }
+            .store(in: &cancellables)
+
+        // Extension side panel attach/detach.
+        //
+        // SYNCHRONOUS by design (no `.receive(on:)`), sharing the placeholder
+        // sink's UAF contract: Chromium may destroy the outgoing panel view
+        // right after its bridge push returns, so the slot must react in the
+        // same turn. On a close, BrowserState.updateExtensionSidePanel
+        // publishes BEFORE detaching the outgoing NSView so this sink can
+        // snapshot it for the slide-out and detach it itself (BrowserState's
+        // backstop then no-ops); on a content replacement the outgoing view
+        // is already detached when the publish arrives. Uses the emitted
+        // value, not the property — @Published emits on willSet, when the
+        // property still holds the old value.
+        browserState?.$extensionSidePanel
+            .sink { [weak self] panel in
+                guard let self else { return }
+                if let panel {
+                    self.attachExtensionSidePanel(panel)
+                } else {
+                    self.detachExtensionSidePanel()
                 }
             }
             .store(in: &cancellables)
@@ -631,8 +812,14 @@ class WebContentContainerViewController: NSViewController {
             return
         }
         let isComfortableLayout = PhiPreferences.GeneralSettings.loadLayoutMode().isTraditional
-        controller.setSplitViewContainerBorderVisible(!isComfortableLayout)
-        guard isComfortableLayout else {
+        let panelMounted = extensionSidePanelView?.superview === view
+        // The vertical layouts frame the content with splitViewContainer's
+        // own 1pt layer border — except while an extension side panel is
+        // docked: then this unified outline wraps [page card | panel card]
+        // as one frame (AI Chat parity), and svc's border would draw a
+        // second frame around the page alone.
+        controller.setSplitViewContainerBorderVisible(!isComfortableLayout && !panelMounted)
+        guard isComfortableLayout || panelMounted else {
             outerBorderLayer.path = nil
             clearGroupBoundaryLayers()
             return
@@ -651,7 +838,16 @@ class WebContentContainerViewController: NSViewController {
         let h = cornerR * kappa
 
         let leftX = r.minX
-        let rightX = r.maxX
+        // With the extension side panel mounted the outline keeps its right
+        // edge at the window margin instead of following the shrunken page
+        // card: the frame wraps the panel sub-card (which sits 4pt inside
+        // it), and — critically for comfortable — the active-tab notch
+        // guard below stays satisfiable for tabs whose chips sit over the
+        // panel region; against the narrow card edge they would fail the
+        // right-side bound and lose their outline entirely.
+        let rightX = panelMounted
+            ? max(r.maxX, view.bounds.maxX - WebContentConstant.edgesSpacing)
+            : r.maxX
         let topY = r.maxY
         let bottomY = r.minY
 
@@ -659,10 +855,16 @@ class WebContentContainerViewController: NSViewController {
         // browserState.focusingTab. During the deferred-first-paint switch
         // path, focusingTab updates before currentWebContentController is
         // promoted; using the visible tab keeps the outline attached to the
-        // tab whose page is actually onscreen.
+        // tab whose page is actually onscreen. The notch only exists in
+        // comfortable — the vertical layouts (reachable here with a panel
+        // mounted) have no horizontal chips, so their frame is the plain
+        // closed outline below.
         let overviewActive = browserState?.groupOverviewState != nil
-        let activeTabForBorder = overviewActive ? nil : controller.associatedTab
-        let activeFrame = tabStripBarController?.tabFrame(for: activeTabForBorder, in: view)
+        let activeTabForBorder =
+            (overviewActive || !isComfortableLayout) ? nil : controller.associatedTab
+        let activeFrame = isComfortableLayout
+            ? tabStripBarController?.tabFrame(for: activeTabForBorder, in: view)
+            : nil
 
         let path = CGMutablePath()
 
@@ -913,6 +1115,12 @@ class WebContentContainerViewController: NSViewController {
         cancelPendingNewTabSwitchIfNeeded(nextTabId: tab.guid, nextIdentifier: identifier)
 
         guard !alreadyShowingExactTab else { return }
+
+        // Any move to a different tab invalidates a flying chat ghost. The
+        // per-controller drop sites below miss the identifier-collision
+        // case above, where the SAME controller is rebound to a different
+        // Chromium tab and swaps its content without a controller switch.
+        dropClosingAIChatGhost()
 
         // Clear status URL when switching tabs
         state.targetURL = ""
@@ -1166,6 +1374,315 @@ class WebContentContainerViewController: NSViewController {
         AppLogInfo("🦖 [Container] detached placeholder shell")
     }
 
+    // MARK: - Extension side panel (window-level right slot)
+
+    /// Mount the extension side panel's NSView in the window-level right
+    /// slot, creating the slot on first open. Re-mounts on content change
+    /// (the bridge pushes a new wrapper when the shown panel is replaced).
+    /// The mount ordering (addSubview first, then
+    /// translatesAutoresizingMaskIntoConstraints, then snp) mirrors the
+    /// placeholder shell — the ordering AppKit needs for out-of-band
+    /// Chromium WebContents views to render. A fresh open slides the slot
+    /// in from the right edge (AI Chat's expand feel); a content
+    /// replacement swaps the payload in place, matching Chrome's
+    /// no-animation tab-switch recomputation.
+    ///
+    /// Internal (not private) only so layout tests can drive the slot
+    /// directly; production traffic must keep flowing through the
+    /// `BrowserState.$extensionSidePanel` sink above.
+    @MainActor
+    func attachExtensionSidePanel(_ panel: BrowserState.ExtensionSidePanelState) {
+        guard let nativeView = panel.wrapper.nativeView else {
+            AppLogWarn("[ExtSidePanel] [Container] attach: wrapper has no nativeView")
+            return
+        }
+        // A reopen while the previous panel is still sliding out: drop the
+        // outgoing ghost immediately so two cards never overlap.
+        if let closing = closingExtensionSidePanelView {
+            closing.removeFromSuperview()
+            closingExtensionSidePanelView = nil
+        }
+        let isFreshOpen = extensionSidePanelView == nil
+        let panelView: ExtensionSidePanelView
+        if let existing = extensionSidePanelView {
+            panelView = existing
+        } else {
+            panelView = ExtensionSidePanelView(
+                initialWidth: extensionSidePanelPreferredWidth)
+            panelView.onCloseRequested = { [weak self] in
+                self?.browserState?.requestExtensionSidePanelClose()
+            }
+            view.addSubview(panelView)
+        }
+        panelView.updateHeader(displayName: panel.displayName,
+                               iconPNG: panel.iconPNG)
+
+        let hostView = panelView.contentHostView
+        if nativeView.superview !== hostView {
+            nativeView.removeFromSuperview()
+            hostView.addSubview(nativeView)
+            nativeView.translatesAutoresizingMaskIntoConstraints = false
+            nativeView.snp.remakeConstraints { make in
+                make.edges.equalToSuperview()
+            }
+        }
+
+        if isFreshOpen {
+            slideInExtensionSidePanel(panelView)
+            // Chrome focuses the panel when it opens; mirror the placeholder
+            // shell's two-step focus so typing lands in the panel page
+            // without a click. Content changes (tab-switch recomputation)
+            // must not steal focus, hence fresh-open only.
+            nativeView.window?.makeFirstResponder(nativeView)
+            if panel.wrapper.responds(to: #selector(WebContentWrapper.focus)) {
+                panel.wrapper.focus()
+            }
+        }
+        AppLogInfo("[ExtSidePanel] [Container] attached panel extensionId=\(panel.extensionId) freshOpen=\(isFreshOpen)")
+    }
+
+    /// Settle a freshly opened panel into the right slot, animating it in
+    /// from the window's right edge while the page area shrinks in the same
+    /// animation group (matching the AI Chat expand: default
+    /// NSAnimationContext duration, page frame sync paused for the ride).
+    /// The panel starts frame-driven just off-screen; re-installing its
+    /// constraints inside the group makes the implicit animation
+    /// interpolate every affected frame to the settled layout.
+    @MainActor
+    private func slideInExtensionSidePanel(_ panelView: ExtensionSidePanelView) {
+        extensionSidePanelView = panelView
+        guard !skipsPanelSlideAnimation else {
+            remakeContentLayout()
+            settlePanelTransitionOuterBorder()
+            return
+        }
+
+        view.layoutSubtreeIfNeeded()
+        // An expanded AI Chat must leave the split layout before this
+        // group targets the narrowed container: the mutex sweep in
+        // `BrowserState.updateExtensionSidePanel` flips the tab model only
+        // after the panel publish, and its per-tab observer lands a turn
+        // later — so this turn's constraint solution would still contain
+        // the expanded chat and the animation would drag the chat card
+        // left. The chat detaches now (state first) and its snapshot ghost
+        // slides out to the right edge — the slide-out afterglow pattern
+        // of `detachExtensionSidePanel`, mirrored. The item flip stays
+        // un-laid-out until the panel group's layout pass so the page
+        // pane's reflow rides the same implicit animation.
+        let chatGhost = currentWebContentController?
+            .collapseAIChatForPanelTransition(ghostIn: view)
+        if let chatGhost {
+            dropClosingAIChatGhost()
+            closingAIChatGhostView = chatGhost
+            view.addSubview(chatGhost, positioned: .above, relativeTo: panelView)
+            AppLogInfo("[ExtSidePanel] [Container] chat ghost sliding out for panel open")
+            // The slide kicks off one turn later, NOT inside the panel
+            // group below: the ghost only enters the layer tree at this
+            // turn's commit, and a same-transaction frame change is
+            // coalesced into that first commit instead of animating — the
+            // ghost pops straight off-screen and the chat appears to
+            // vanish (observed on-device). One turn later it animates
+            // from its committed on-screen frame; the single-frame
+            // stagger against the panel group is the same offset the
+            // approved panel-close ↔ chat-expand transition has.
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.closingAIChatGhostView === chatGhost
+                else { return }
+                NSAnimationContext.runAnimationGroup({ context in
+                    context.allowsImplicitAnimation = true
+                    chatGhost.frame.origin.x =
+                        self.view.bounds.maxX + WebContentConstant.edgesSpacing
+                }, completionHandler: { [weak self] in
+                    guard let self,
+                          self.closingAIChatGhostView === chatGhost
+                    else { return }
+                    chatGhost.removeFromSuperview()
+                    self.closingAIChatGhostView = nil
+                })
+            }
+        }
+        // Off-screen starting frame. y/height only approximate the settled
+        // slot (they assume the default non-flipped geometry); any offset
+        // is absorbed by the animation converging on the constraint
+        // solution.
+        let containerFrame = contentContainer.frame
+        let panelInset = CGFloat(WebContentConstant.contentEdgeSpacing)
+        panelView.translatesAutoresizingMaskIntoConstraints = true
+        panelView.frame = NSRect(
+            x: view.bounds.maxX + WebContentConstant.edgesSpacing,
+            y: containerFrame.minY + WebContentConstant.edgesSpacing + panelInset,
+            width: ExtensionSidePanelView.clampedWidth(extensionSidePanelPreferredWidth),
+            height: max(0, containerFrame.height - WebContentConstant.edgesSpacing
+                        - panelInset * 2))
+        // Pre-seed the frame-interior fill frame-driven at the panel's
+        // off-screen origin so the animation group slides both in
+        // together; remakeContentLayout switches it to constraints.
+        let backdrop = ensureExtensionSidePanelFrameBackdrop()
+        backdrop.translatesAutoresizingMaskIntoConstraints = true
+        backdrop.frame = NSRect(
+            x: panelView.frame.minX,
+            y: panelView.frame.minY - panelInset,
+            width: panelView.frame.width + panelInset,
+            height: panelView.frame.height + panelInset * 2)
+
+        let pausedController = currentWebContentController
+        pausedController?.setContentFrameSyncPausedForPanelTransition(true)
+        NSAnimationContext.runAnimationGroup({ context in
+            context.allowsImplicitAnimation = true
+            panelView.translatesAutoresizingMaskIntoConstraints = false
+            remakeContentLayout()
+            view.layoutSubtreeIfNeeded()
+        }, completionHandler: { [weak self, weak pausedController] in
+            pausedController?.setContentFrameSyncPausedForPanelTransition(false)
+            // Settle on completion only: during the slide the stale outline
+            // still traces the full-width card the panel is covering, while
+            // an immediate snap would draw the narrow outline across the
+            // not-yet-shrunk page.
+            self?.settlePanelTransitionOuterBorder()
+        })
+    }
+
+    /// Drops a mid-flight AI Chat ghost. The snapshot belongs to the pane
+    /// it was captured from: once another controller takes over the
+    /// content area (tab switch, current-tab close, deferred first-paint
+    /// promotion) the afterglow would parade the previous tab's chat
+    /// pixels over the new content, so it goes down with its pane instead
+    /// of finishing the slide.
+    private func dropClosingAIChatGhost() {
+        closingAIChatGhostView?.removeFromSuperview()
+        closingAIChatGhostView = nil
+    }
+
+    /// Remove the right slot, sliding the card out to the right edge while
+    /// the page area grows back (AI Chat's collapse feel). The Chromium
+    /// panel NSView still detaches SYNCHRONOUSLY inside this sink —
+    /// `BrowserState.updateExtensionSidePanel` publishes the close before
+    /// its backstop detach precisely so the still-attached view can be
+    /// snapshotted here first (Chromium may destroy it right after the
+    /// bridge push returns); the slide-out shows that snapshot instead.
+    /// State flips first (`extensionSidePanelView` nils out, the layout
+    /// funnel returns to the no-panel solution); the ghost card animating
+    /// off-screen is pure afterglow.
+    ///
+    /// Internal (not private) only so layout tests can drive the slot
+    /// directly; production traffic must keep flowing through the
+    /// `BrowserState.$extensionSidePanel` sink above.
+    @MainActor
+    func detachExtensionSidePanel() {
+        guard let panelView = extensionSidePanelView else { return }
+        extensionSidePanelPreferredWidth = panelView.preferredWidth
+
+        // A chat ghost from the opening transition must not outlive the
+        // panel: when this close comes from the AI Chat mutex the real
+        // chat is about to re-expand exactly where the ghost still flies.
+        dropClosingAIChatGhost()
+
+        // Window-server snapshot of the closing content (maskClosingTab's
+        // capture path — local snapshot APIs return blank for the remote
+        // Chromium layer). Best effort: without it the card slides out
+        // with its header over an empty background.
+        let snapshot = WebContentSnapshotter.captureOnScreen(
+            panelView.contentHostView, resolution: .bestResolution)
+        for subview in panelView.contentHostView.subviews {
+            subview.removeFromSuperview()
+        }
+        if let snapshot {
+            let imageView = NSImageView()
+            imageView.image = snapshot
+            imageView.imageScaling = .scaleAxesIndependently
+            imageView.frame = panelView.contentHostView.bounds
+            panelView.contentHostView.addSubview(imageView)
+        }
+
+        extensionSidePanelView = nil
+
+        if skipsPanelSlideAnimation {
+            panelView.removeFromSuperview()
+            extensionSidePanelFrameBackdrop?.removeFromSuperview()
+            extensionSidePanelFrameBackdrop = nil
+            remakeContentLayout()
+        } else {
+            closingExtensionSidePanelView = panelView
+            let pausedController = currentWebContentController
+            pausedController?.setContentFrameSyncPausedForPanelTransition(true)
+            NSAnimationContext.runAnimationGroup({ context in
+                context.allowsImplicitAnimation = true
+                // Freeze the card at its current frame, then slide it off
+                // the right edge; the layout funnel (no-panel solution now)
+                // animates the page area back to full width in the same
+                // group.
+                let frozenFrame = panelView.frame
+                panelView.snp.removeConstraints()
+                panelView.translatesAutoresizingMaskIntoConstraints = true
+                panelView.frame = frozenFrame
+                // The frame-interior fill stays put (frozen, not slid): the
+                // re-expanding page container covers it during the group,
+                // so removing it with the ghost is invisible. Sliding it
+                // with the card would expose window background behind the
+                // ghost mid-flight. Demote it below contentContainer for
+                // the ride — while mounted it sits above the container (to
+                // cover the vibrancy strip), but here the growing page must
+                // paint over it.
+                if let backdrop = extensionSidePanelFrameBackdrop {
+                    let backdropFrame = backdrop.frame
+                    backdrop.snp.removeConstraints()
+                    backdrop.translatesAutoresizingMaskIntoConstraints = true
+                    backdrop.frame = backdropFrame
+                    view.addSubview(backdrop, positioned: .below,
+                                    relativeTo: contentContainer)
+                }
+                remakeContentLayout()
+                panelView.frame.origin.x =
+                    view.bounds.maxX + WebContentConstant.edgesSpacing
+                view.layoutSubtreeIfNeeded()
+            }, completionHandler: { [weak self, weak pausedController] in
+                pausedController?.setContentFrameSyncPausedForPanelTransition(false)
+                self?.settlePanelTransitionOuterBorder()
+                guard let self, self.closingExtensionSidePanelView === panelView
+                else { return }
+                panelView.removeFromSuperview()
+                self.closingExtensionSidePanelView = nil
+                self.extensionSidePanelFrameBackdrop?.removeFromSuperview()
+                self.extensionSidePanelFrameBackdrop = nil
+            })
+        }
+        settlePanelTransitionOuterBorder()
+        AppLogInfo("[ExtSidePanel] [Container] detached panel slot")
+
+        // Closing the panel usually leaves the window with no meaningful
+        // first responder: the panel content is already off the hierarchy
+        // (BrowserState detached it synchronously) and the header's close
+        // button died with the slot. Hand focus back to the page — the same
+        // destination Chrome picks after a side panel closes. Skip when
+        // something else (omnibox, sidebar) legitimately holds focus.
+        // Deferred one turn: this sink runs inside Chromium's synchronous
+        // bridge push, where focus work could re-enter Chromium; the hop
+        // also skips the restore naturally when the window is being torn
+        // down (view.window is gone by the time it fires).
+        DispatchQueue.main.async { [weak self] in
+            guard let self,
+                  self.extensionSidePanelView == nil,
+                  let window = self.view.window,
+                  window.firstResponder == nil || window.firstResponder === window
+            else { return }
+            self.currentWebContentController?.focusWebContent()
+        }
+    }
+
+    /// Re-derives the content outline once a panel transition's layout has
+    /// settled. The viewDidLayout recompute that fires inside the
+    /// transition's own layout pass reads `splitViewContainerFrame` before
+    /// the split-view subtree has re-laid out (top-down layout order), so
+    /// the outline is left at the pre-transition geometry — a stray border
+    /// line over the page after a close — and, with the container not laid
+    /// out again, nothing heals it until the next window resize. Same
+    /// stale-convert hazard `switchToWebContentController` documents before
+    /// its own explicit recompute.
+    private func settlePanelTransitionOuterBorder() {
+        view.layoutSubtreeIfNeeded()
+        updateContentOuterBorder()
+    }
+
     // MARK: - Close Snapshot Placeholder
     //
     // Hides the gray/black flash when closing the ACTIVE tab. Must run SYNCHRONOUSLY
@@ -1241,6 +1758,9 @@ class WebContentContainerViewController: NSViewController {
             // Outgoing focused VC no longer owns the split host — drop its
             // partner-crash subscription (its own observers won't re-run).
             current.cancelPartnerCrashSubscription()
+            // A chat ghost snapped from the outgoing pane must not slide
+            // over the incoming tab's content.
+            dropClosingAIChatGhost()
             AppLogDebug("[WebContent] Deferring cleanup of previous controller, waiting for Chromium confirmation")
         }
 
@@ -1414,6 +1934,8 @@ class WebContentContainerViewController: NSViewController {
             controller.removeFromParent()
             currentWebContentController = nil
             currentTabIdentifier = nil
+            // A chat ghost snapped from the removed pane dies with it.
+            dropClosingAIChatGhost()
             // Clear the unified outline so it doesn't linger over the now
             // detached content area until the next focus/layout pass.
             updateContentOuterBorder()
@@ -1560,6 +2082,9 @@ class WebContentContainerViewController: NSViewController {
         if let current = currentWebContentController, current !== pending.controller {
             pendingViewCleanup = (controller: current, view: current.view)
             current.cancelPartnerCrashSubscription()
+            // Same as switchToWebContentController: a chat ghost snapped
+            // from the outgoing pane must not slide over the promoted tab.
+            dropClosingAIChatGhost()
         }
 
         // Bring new view to front

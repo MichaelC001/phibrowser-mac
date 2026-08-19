@@ -66,7 +66,7 @@ struct SideTabView: View {
             }
         }
 //        .debugBorder(.green)
-        .help(model.displayTitle)
+        .help(model.showsTabPreview ? "" : model.displayTitle)
         .padding(.leading, 6)
         .padding(.trailing, 4)
         .frame(maxWidth: .infinity, maxHeight: .infinity)

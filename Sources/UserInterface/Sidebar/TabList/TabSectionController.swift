@@ -349,24 +349,55 @@ class TabSectionController: NSObject {
     /// transaction's single publish, so the value is already written — and
     /// arms the one-shot suppression for the trailing @Published delivery.
     private func applyRestoredTransactionRefresh() {
-        guard let browserState else { return }
-        let tabs = browserState.normalTabs
-        syncHandledNormalTabs = tabs
-        refreshTabItems(tabs, isRestoreTransaction: true)
+        // The transaction publishes `normalTabs` immediately before the signal
+        // that lands here, so that delivery is provably queued behind us —
+        // the one case where arming the one-shot suppression is safe. The
+        // token has no expiry, so arming it with nothing pending would leave
+        // it to swallow an unrelated later delivery.
+        syncHandledNormalTabs = browserState?.normalTabs
+        rebuildFromCurrentNormalTabs(isRestoreTransaction: true, notifyDelegate: true)
     }
 
-    private func refreshTabItems(_ tabs: [Tab], isRestoreTransaction: Bool = false) {
+    /// Rebuilds the tab section from the current `normalTabs` WITHOUT
+    /// notifying the delegate, for a caller that owns the resulting paint
+    /// itself — today the sidebar, opening its restore gate with one combined
+    /// snapshot rather than letting this rebuild trigger a second.
+    ///
+    /// Never arms the suppression above: the gate opens from a bookmark
+    /// delivery, a timeout, or a re-activation replay, and only the first of
+    /// those has a `normalTabs` publish behind it. A trailing delivery that
+    /// does arrive carries the same tabs, so its refresh finds the items
+    /// unchanged and costs one non-structural pass.
+    func rebuildItemsWithoutNotifyingDelegate() {
+        rebuildFromCurrentNormalTabs(isRestoreTransaction: false, notifyDelegate: false)
+    }
+
+    /// Reads `normalTabs` directly — every caller runs after the publish that
+    /// carries it.
+    private func rebuildFromCurrentNormalTabs(isRestoreTransaction: Bool,
+                                              notifyDelegate: Bool) {
+        guard let browserState else { return }
+        refreshTabItems(browserState.normalTabs,
+                        isRestoreTransaction: isRestoreTransaction,
+                        notifyDelegate: notifyDelegate)
+    }
+
+    private func refreshTabItems(_ tabs: [Tab],
+                                 isRestoreTransaction: Bool = false,
+                                 notifyDelegate: Bool = true) {
         let previousItems = tabItems
         guard let browserState else {
             tabItems = []
             previousGroupMembers = [:]
             previousSplitMembers = [:]
-            delegate?.tabSectionDidUpdate(with: TabSectionChange(
-                rootItemsChanged: !previousItems.isEmpty,
-                affectedGroupTokens: [],
-                affectedSplitIds: [],
-                isRestoreTransaction: isRestoreTransaction
-            ))
+            if notifyDelegate {
+                delegate?.tabSectionDidUpdate(with: TabSectionChange(
+                    rootItemsChanged: !previousItems.isEmpty,
+                    affectedGroupTokens: [],
+                    affectedSplitIds: [],
+                    isRestoreTransaction: isRestoreTransaction
+                ))
+            }
             return
         }
         let groups = browserState.groups
@@ -383,6 +414,7 @@ class TabSectionController: NSObject {
         self.previousGroupMembers = newGroupMembers
         self.previousSplitMembers = newSplitMembers
 
+        guard notifyDelegate else { return }
         delegate?.tabSectionDidUpdate(with: TabSectionChange(
             rootItemsChanged: rootItemsChanged,
             affectedGroupTokens: affectedTokens,

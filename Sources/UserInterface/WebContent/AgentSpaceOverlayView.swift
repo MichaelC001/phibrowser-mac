@@ -21,6 +21,10 @@ final class AgentSpaceOverlayView: NSView {
     private let cursorLayer = CALayer()
     private let cursorFillLayer = CAGradientLayer()
     private let cursorStrokeLayer = CAShapeLayer()
+    /// Distinguishes a sampled cursor path from an occasional endpoint update.
+    /// Rapid samples get a short linear bridge; isolated updates retain the
+    /// longer native glide used by older drivers.
+    private var lastCursorTargetUpdate: CFTimeInterval?
     /// The current typing-pulse outline, replaced (not stacked) on rapid fills.
     private weak var typingPulseLayer: CALayer?
     private let pill = NSVisualEffectView()
@@ -317,37 +321,55 @@ final class AgentSpaceOverlayView: NSView {
         primaryButton.title = primaryTitle
         applyPrimaryButtonTint(title: primaryTitle)
 
-        if let point = task.cursor {
-            // Cursor point is in view coordinates (converted by the mounter).
-            let wasHidden = cursorLayer.isHidden
-            cursorLayer.isHidden = false
-            let current = cursorLayer.presentation()?.position ?? cursorLayer.position
-            let distance = hypot(point.x - current.x, point.y - current.y)
-            CATransaction.begin()
-            CATransaction.setDisableActions(true)
-            cursorLayer.position = point
-            CATransaction.commit()
-            if !wasHidden && distance >= 2 {
-                // Glide, scaled with distance, so a watching user sees the
-                // cursor travel to its target instead of teleporting. Explicit
-                // animation with a decel-heavy bezier: accelerate away, ease
-                // softly into the target — the way a hand moves a mouse. The
-                // drivers pause ~450ms after moving the cursor so the click
-                // ripple fires only once the glide has landed. (First
-                // appearance skips the glide: no sliding in from a stale
-                // position.)
-                let glide = CABasicAnimation(keyPath: "position")
-                glide.fromValue = current
-                glide.toValue = point
+        moveCursor(to: task.cursor)
+    }
+
+    /// Moves (or hides, for `nil`) the agent cursor alone — the streamed-
+    /// sample path, called directly by the mounter for each `cursorMoved`
+    /// delivery so cursor motion never re-runs the full pill update above.
+    /// `point` is in this view's coordinates (converted by the mounter).
+    func moveCursor(to point: CGPoint?) {
+        guard let point else {
+            cursorLayer.isHidden = true
+            lastCursorTargetUpdate = nil
+            return
+        }
+        let wasHidden = cursorLayer.isHidden
+        cursorLayer.isHidden = false
+        let current = cursorLayer.presentation()?.position ?? cursorLayer.position
+        let previousTarget = cursorLayer.position
+        let distance = hypot(point.x - current.x, point.y - current.y)
+        let targetChanged = hypot(point.x - previousTarget.x, point.y - previousTarget.y) >= 0.5
+        let now = CACurrentMediaTime()
+        let updateGap = targetChanged ? lastCursorTargetUpdate.map { now - $0 } : nil
+        if targetChanged {
+            lastCursorTargetUpdate = now
+        }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        cursorLayer.position = point
+        CATransaction.commit()
+        if !wasHidden && distance >= 2 {
+            // A sampled driver reports the same path points it dispatches
+            // into the page. Bridge rapid points over approximately one
+            // sample interval so the overlay follows that curved trace.
+            // Older drivers report isolated endpoints; retain their longer
+            // eased glide. First appearance skips animation because there
+            // is no meaningful prior position.
+            let glide = CABasicAnimation(keyPath: "position")
+            glide.fromValue = current
+            glide.toValue = point
+            if let updateGap, updateGap < 0.09 {
+                glide.duration = min(0.05, max(1.0 / 120.0, updateGap * 1.15))
+                glide.timingFunction = CAMediaTimingFunction(name: .linear)
+            } else {
                 glide.duration = min(0.45, max(0.18, distance / 1000))
                 glide.timingFunction = CAMediaTimingFunction(
                     controlPoints: 0.3, 0.0, 0.15, 1.0)
-                cursorLayer.add(glide, forKey: "glide")
-            } else {
-                cursorLayer.removeAnimation(forKey: "glide")
             }
+            cursorLayer.add(glide, forKey: "glide")
         } else {
-            cursorLayer.isHidden = true
+            cursorLayer.removeAnimation(forKey: "glide")
         }
     }
 

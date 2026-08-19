@@ -219,6 +219,9 @@ final class CustomTooltipTests: XCTestCase {
         private(set) var presentCount = 0
         private(set) var dismissCount = 0
         private(set) var lastThemeProvider: ThemeStateProvider?
+        private(set) var lastPlacement: CustomTooltipPlacement?
+        private(set) var lastAnchorScreenRect: CGRect?
+        private(set) var frameAnimationDurations: [TimeInterval] = []
 
         var surfaceIdentifiers: (panel: ObjectIdentifier, hostingView: ObjectIdentifier)? {
             (ObjectIdentifier(panelToken), ObjectIdentifier(hostingViewToken))
@@ -228,11 +231,16 @@ final class CustomTooltipTests: XCTestCase {
             content: AnyView,
             anchorScreenRect: CGRect,
             screen: NSScreen?,
-            themeProvider: ThemeStateProvider
+            themeProvider: ThemeStateProvider,
+            placement: CustomTooltipPlacement,
+            frameAnimationDuration: TimeInterval
         ) {
             isVisible = true
             presentCount += 1
             lastThemeProvider = themeProvider
+            lastPlacement = placement
+            lastAnchorScreenRect = anchorScreenRect
+            frameAnimationDurations.append(frameAnimationDuration)
         }
 
         func dismiss() {
@@ -293,6 +301,45 @@ final class CustomTooltipTests: XCTestCase {
         controller.dismissAll()
     }
 
+    func testReusedPanelAdaptsToContentHeight() throws {
+        let fixture = makeWindow()
+        let controller = CustomTooltipController(
+            window: fixture.window,
+            mouseLocation: { fixture.mouseLocation },
+            isEligibleForPresentation: { _ in true }
+        )
+        let configuration = CustomTooltipConfiguration(
+            showDelay: 0,
+            displayDuration: nil,
+            handoffGroup: .tabPreview
+        )
+
+        controller.pointerEntered(
+            ownerID: UUID(),
+            anchorView: fixture.host,
+            content: AnyView(Color.clear.frame(width: 280, height: 240)),
+            configuration: configuration
+        )
+        let panel = try XCTUnwrap(
+            fixture.window.childWindows?.compactMap { $0 as? NSPanel }.first
+        )
+        let surface = try XCTUnwrap(controller.surfaceIdentifiers)
+        let tallHeight = panel.frame.height
+
+        controller.pointerEntered(
+            ownerID: UUID(),
+            anchorView: fixture.host,
+            content: AnyView(Color.clear.frame(width: 280, height: 60)),
+            configuration: configuration
+        )
+
+        XCTAssertEqual(controller.surfaceIdentifiers?.panel, surface.panel)
+        XCTAssertEqual(controller.surfaceIdentifiers?.hostingView, surface.hostingView)
+        XCTAssertLessThan(panel.frame.height, tallHeight)
+        XCTAssertEqual(panel.frame.height, 60, accuracy: 1)
+        controller.dismissAll()
+    }
+
     func testInitialHoverUsesConfiguredDelay() {
         let fixture = makeWindow()
         let scheduler = ManualScheduler()
@@ -320,6 +367,32 @@ final class CustomTooltipTests: XCTestCase {
         XCTAssertTrue(presenter.isVisible)
         XCTAssertEqual(controller.activeOwnerID, ownerID)
         XCTAssertEqual(presenter.presentCount, 1)
+    }
+
+    func testGeometryRectCanDifferFromHoverHostBounds() {
+        let fixture = makeWindow()
+        let scheduler = ManualScheduler()
+        let presenter = RecordingPresenter()
+        let controller = makeController(
+            fixture: fixture,
+            scheduler: scheduler,
+            presenter: presenter
+        )
+        let geometryBounds = CGRect(x: 90, y: 4, width: 20, height: 24)
+        let expectedRect = fixture.window.convertToScreen(
+            fixture.host.convert(geometryBounds, to: nil)
+        )
+
+        controller.pointerEntered(
+            ownerID: UUID(),
+            anchorView: fixture.host,
+            content: AnyView(Text("Inset geometry")),
+            configuration: CustomTooltipConfiguration(showDelay: 0, displayDuration: nil),
+            anchorRectProvider: { _ in geometryBounds }
+        )
+
+        XCTAssertTrue(presenter.isVisible)
+        XCTAssertEqual(presenter.lastAnchorScreenRect, expectedRect)
     }
 
     func testPointerExitCancelsPendingPresentation() {
@@ -457,6 +530,423 @@ final class CustomTooltipTests: XCTestCase {
         XCTAssertTrue(scheduler.pendingDelays.isEmpty)
         XCTAssertEqual(firstSurface.panel, secondSurface.panel)
         XCTAssertEqual(firstSurface.hostingView, secondSurface.hostingView)
+    }
+
+    func testSeamlessHandoffKeepsSurfaceVisibleUntilNextOwnerEnters() throws {
+        let fixture = makeWindow()
+        let scheduler = ManualScheduler()
+        let presenter = RecordingPresenter()
+        let controller = makeController(
+            fixture: fixture,
+            scheduler: scheduler,
+            presenter: presenter
+        )
+        let firstOwnerID = UUID()
+        let secondOwnerID = UUID()
+        let configuration = CustomTooltipConfiguration(
+            showDelay: 0,
+            displayDuration: nil,
+            handoffDelay: 0.15
+        )
+
+        controller.pointerEntered(
+            ownerID: firstOwnerID,
+            anchorView: fixture.host,
+            content: AnyView(Text("First")),
+            configuration: configuration
+        )
+        let firstSurface = try XCTUnwrap(controller.surfaceIdentifiers)
+        controller.pointerExited(ownerID: firstOwnerID)
+
+        XCTAssertTrue(presenter.isVisible)
+        XCTAssertEqual(controller.activeOwnerID, firstOwnerID)
+        XCTAssertEqual(scheduler.pendingDelays, [0.15])
+        XCTAssertEqual(presenter.dismissCount, 0)
+
+        controller.pointerEntered(
+            ownerID: secondOwnerID,
+            anchorView: fixture.host,
+            content: AnyView(Text("Second")),
+            configuration: configuration
+        )
+        let secondSurface = try XCTUnwrap(controller.surfaceIdentifiers)
+
+        XCTAssertTrue(presenter.isVisible)
+        XCTAssertEqual(controller.activeOwnerID, secondOwnerID)
+        XCTAssertTrue(scheduler.pendingDelays.isEmpty)
+        XCTAssertEqual(presenter.dismissCount, 0)
+        XCTAssertEqual(firstSurface.panel, secondSurface.panel)
+        XCTAssertEqual(firstSurface.hostingView, secondSurface.hostingView)
+        XCTAssertEqual(presenter.frameAnimationDurations, [0, 0])
+
+        scheduler.fireNext()
+        XCTAssertTrue(presenter.isVisible)
+        XCTAssertEqual(controller.activeOwnerID, secondOwnerID)
+    }
+
+    func testSeamlessHandoffAnimatesFrameOnlyForNextOwnerInSameGroup() {
+        let fixture = makeWindow()
+        let scheduler = ManualScheduler()
+        let presenter = RecordingPresenter()
+        let controller = makeController(
+            fixture: fixture,
+            scheduler: scheduler,
+            presenter: presenter
+        )
+        let configuration = CustomTooltipConfiguration(
+            showDelay: 0,
+            displayDuration: nil,
+            handoffDelay: 0.15,
+            handoffGroup: .tabPreview,
+            handoffFrameAnimationDuration: 0.18
+        )
+        let firstOwnerID = UUID()
+
+        controller.pointerEntered(
+            ownerID: firstOwnerID,
+            anchorView: fixture.host,
+            content: AnyView(Text("First")),
+            configuration: configuration
+        )
+        controller.update(
+            ownerID: firstOwnerID,
+            anchorView: fixture.host,
+            content: AnyView(Text("Updated")),
+            configuration: configuration
+        )
+        controller.pointerExited(ownerID: firstOwnerID)
+        controller.pointerEntered(
+            ownerID: UUID(),
+            anchorView: fixture.host,
+            content: AnyView(Text("Second")),
+            configuration: configuration
+        )
+
+        XCTAssertEqual(presenter.frameAnimationDurations, [0, 0, 0.18])
+        XCTAssertEqual(presenter.dismissCount, 0)
+    }
+
+    func testCrossGroupHandoffDoesNotAnimateFrame() {
+        let fixture = makeWindow()
+        let scheduler = ManualScheduler()
+        let presenter = RecordingPresenter()
+        let controller = makeController(
+            fixture: fixture,
+            scheduler: scheduler,
+            presenter: presenter
+        )
+
+        controller.pointerEntered(
+            ownerID: UUID(),
+            anchorView: fixture.host,
+            content: AnyView(Text("Standard")),
+            configuration: CustomTooltipConfiguration(
+                showDelay: 0,
+                displayDuration: nil,
+                handoffGroup: .standard,
+                handoffFrameAnimationDuration: 0.18
+            )
+        )
+        controller.pointerEntered(
+            ownerID: UUID(),
+            anchorView: fixture.host,
+            content: AnyView(Text("Preview")),
+            configuration: CustomTooltipConfiguration(
+                showDelay: 0,
+                displayDuration: nil,
+                handoffGroup: .tabPreview,
+                handoffFrameAnimationDuration: 0.18
+            )
+        )
+
+        XCTAssertEqual(presenter.frameAnimationDurations, [0, 0])
+        XCTAssertEqual(presenter.dismissCount, 1)
+    }
+
+    func testSeamlessHandoffDismissesAfterDelayWithoutNewOwner() {
+        let fixture = makeWindow()
+        let scheduler = ManualScheduler()
+        let presenter = RecordingPresenter()
+        let controller = makeController(
+            fixture: fixture,
+            scheduler: scheduler,
+            presenter: presenter
+        )
+        let ownerID = UUID()
+
+        controller.pointerEntered(
+            ownerID: ownerID,
+            anchorView: fixture.host,
+            content: AnyView(Text("Preview")),
+            configuration: CustomTooltipConfiguration(
+                showDelay: 0,
+                displayDuration: nil,
+                handoffDelay: 0.15
+            )
+        )
+        controller.pointerExited(ownerID: ownerID)
+
+        XCTAssertTrue(presenter.isVisible)
+        scheduler.fireNext()
+        XCTAssertFalse(presenter.isVisible)
+        XCTAssertNil(controller.activeOwnerID)
+        XCTAssertEqual(presenter.dismissCount, 1)
+    }
+
+    func testInvalidNextOwnerDoesNotCancelSeamlessDismissal() {
+        let fixture = makeWindow()
+        let scheduler = ManualScheduler()
+        let presenter = RecordingPresenter()
+        let controller = makeController(
+            fixture: fixture,
+            scheduler: scheduler,
+            presenter: presenter
+        )
+        let configuration = CustomTooltipConfiguration(
+            showDelay: 0,
+            displayDuration: nil,
+            handoffDelay: 0.15
+        )
+        let firstOwnerID = UUID()
+
+        controller.pointerEntered(
+            ownerID: firstOwnerID,
+            anchorView: fixture.host,
+            content: AnyView(Text("First")),
+            configuration: configuration
+        )
+        controller.pointerExited(ownerID: firstOwnerID)
+        controller.pointerEntered(
+            ownerID: UUID(),
+            anchorView: NSView(frame: fixture.host.bounds),
+            content: AnyView(Text("Detached")),
+            configuration: configuration
+        )
+
+        XCTAssertEqual(controller.activeOwnerID, firstOwnerID)
+        XCTAssertEqual(scheduler.pendingDelays, [0.15])
+        scheduler.fireNext()
+        XCTAssertFalse(presenter.isVisible)
+    }
+
+    func testStaleUpdateDoesNotCancelSeamlessDismissal() {
+        let fixture = makeWindow()
+        let scheduler = ManualScheduler()
+        let presenter = RecordingPresenter()
+        let controller = makeController(
+            fixture: fixture,
+            scheduler: scheduler,
+            presenter: presenter
+        )
+        let configuration = CustomTooltipConfiguration(
+            showDelay: 0,
+            displayDuration: nil,
+            handoffDelay: 0.15
+        )
+        let ownerID = UUID()
+
+        controller.pointerEntered(
+            ownerID: ownerID,
+            anchorView: fixture.host,
+            content: AnyView(Text("Preview")),
+            configuration: configuration
+        )
+        controller.pointerExited(ownerID: ownerID)
+        controller.update(
+            ownerID: UUID(),
+            anchorView: fixture.host,
+            content: AnyView(Text("Stale")),
+            configuration: configuration
+        )
+
+        XCTAssertEqual(scheduler.pendingDelays, [0.15])
+        scheduler.fireNext()
+        XCTAssertFalse(presenter.isVisible)
+    }
+
+    func testWarmStateDoesNotCrossHandoffGroups() {
+        let fixture = makeWindow()
+        let scheduler = ManualScheduler()
+        let presenter = RecordingPresenter()
+        let controller = makeController(
+            fixture: fixture,
+            scheduler: scheduler,
+            presenter: presenter
+        )
+        let firstOwnerID = UUID()
+
+        controller.pointerEntered(
+            ownerID: firstOwnerID,
+            anchorView: fixture.host,
+            content: AnyView(Text("Standard")),
+            configuration: CustomTooltipConfiguration(showDelay: 0, displayDuration: nil)
+        )
+        controller.pointerExited(ownerID: firstOwnerID)
+        controller.pointerEntered(
+            ownerID: UUID(),
+            anchorView: fixture.host,
+            content: AnyView(Text("Preview")),
+            configuration: CustomTooltipConfiguration(
+                showDelay: 0.5,
+                displayDuration: nil,
+                handoffGroup: .tabPreview
+            )
+        )
+
+        XCTAssertFalse(presenter.isVisible)
+        XCTAssertEqual(scheduler.pendingDelays, [0.5])
+    }
+
+    func testExpiredSeamlessHandoffReturnsToColdDelay() {
+        let fixture = makeWindow()
+        let scheduler = ManualScheduler()
+        let presenter = RecordingPresenter()
+        let controller = makeController(
+            fixture: fixture,
+            scheduler: scheduler,
+            presenter: presenter
+        )
+        let firstOwnerID = UUID()
+        let configuration = CustomTooltipConfiguration(
+            showDelay: 0,
+            displayDuration: nil,
+            handoffDelay: 0.15,
+            handoffGroup: .tabPreview
+        )
+
+        controller.pointerEntered(
+            ownerID: firstOwnerID,
+            anchorView: fixture.host,
+            content: AnyView(Text("First")),
+            configuration: configuration
+        )
+        controller.pointerExited(ownerID: firstOwnerID)
+        scheduler.fireNext()
+        controller.pointerEntered(
+            ownerID: UUID(),
+            anchorView: fixture.host,
+            content: AnyView(Text("Second")),
+            configuration: CustomTooltipConfiguration(
+                showDelay: 0.5,
+                displayDuration: nil,
+                handoffDelay: 0.15,
+                handoffGroup: .tabPreview
+            )
+        )
+
+        XCTAssertFalse(presenter.isVisible)
+        XCTAssertEqual(scheduler.pendingDelays, [0.5])
+    }
+
+    func testPreparationRunsOnlyWhenDelayedPresentationFires() {
+        let fixture = makeWindow()
+        let scheduler = ManualScheduler()
+        let presenter = RecordingPresenter()
+        let controller = makeController(
+            fixture: fixture,
+            scheduler: scheduler,
+            presenter: presenter
+        )
+        var preparationCount = 0
+
+        controller.pointerEntered(
+            ownerID: UUID(),
+            anchorView: fixture.host,
+            content: AnyView(Text("Deferred")),
+            configuration: CustomTooltipConfiguration(showDelay: 0.5, displayDuration: nil),
+            prepareForPresentation: {
+                preparationCount += 1
+                return true
+            }
+        )
+
+        XCTAssertEqual(preparationCount, 0)
+        scheduler.fireNext()
+        XCTAssertEqual(preparationCount, 1)
+        XCTAssertTrue(presenter.isVisible)
+    }
+
+    func testCancelledDelayedPresentationDoesNotRunPreparation() {
+        let fixture = makeWindow()
+        let scheduler = ManualScheduler()
+        let presenter = RecordingPresenter()
+        let controller = makeController(
+            fixture: fixture,
+            scheduler: scheduler,
+            presenter: presenter
+        )
+        let ownerID = UUID()
+        var preparationCount = 0
+
+        controller.pointerEntered(
+            ownerID: ownerID,
+            anchorView: fixture.host,
+            content: AnyView(Text("Cancelled")),
+            configuration: CustomTooltipConfiguration(showDelay: 0.5, displayDuration: nil),
+            prepareForPresentation: {
+                preparationCount += 1
+                return true
+            }
+        )
+        controller.pointerExited(ownerID: ownerID)
+        scheduler.fireNext()
+
+        XCTAssertEqual(preparationCount, 0)
+        XCTAssertFalse(presenter.isVisible)
+    }
+
+    func testRightPlacementFlipsLeftAndClampsVertically() {
+        let visibleFrame = CGRect(x: 0, y: 0, width: 500, height: 300)
+        let origin = CustomTooltipGeometry.origin(
+            contentSize: CGSize(width: 180, height: 220),
+            anchorScreenRect: CGRect(x: 450, y: 260, width: 30, height: 30),
+            visibleFrame: visibleFrame,
+            placement: .right
+        )
+
+        XCTAssertEqual(origin.x, 264)
+        XCTAssertEqual(origin.y, 76)
+    }
+
+    func testBelowPlacementFlipsAboveNearScreenBottom() {
+        let visibleFrame = CGRect(x: 0, y: 0, width: 500, height: 400)
+        let origin = CustomTooltipGeometry.origin(
+            contentSize: CGSize(width: 200, height: 120),
+            anchorScreenRect: CGRect(x: 200, y: 10, width: 100, height: 30),
+            visibleFrame: visibleFrame,
+            placement: .below
+        )
+
+        XCTAssertEqual(origin.x, 150)
+        XCTAssertEqual(origin.y, 46)
+    }
+
+    func testAttachedRightPlacementAlignsLeftAndTopEdges() {
+        let contentSize = CGSize(width: 280, height: 220)
+        let anchorRect = CGRect(x: 100, y: 400, width: 200, height: 40)
+        let origin = CustomTooltipGeometry.origin(
+            contentSize: contentSize,
+            anchorScreenRect: anchorRect,
+            visibleFrame: CGRect(x: 0, y: 0, width: 1_000, height: 1_000),
+            placement: .rightTopAttached
+        )
+
+        XCTAssertEqual(origin.x, anchorRect.maxX)
+        XCTAssertEqual(origin.y + contentSize.height, anchorRect.maxY)
+    }
+
+    func testAttachedBelowPlacementAlignsCentersAndEdges() {
+        let contentSize = CGSize(width: 280, height: 220)
+        let anchorRect = CGRect(x: 300, y: 400, width: 120, height: 40)
+        let origin = CustomTooltipGeometry.origin(
+            contentSize: contentSize,
+            anchorScreenRect: anchorRect,
+            visibleFrame: CGRect(x: 0, y: 0, width: 1_000, height: 1_000),
+            placement: .belowAttached
+        )
+
+        XCTAssertEqual(origin.x + contentSize.width / 2, anchorRect.midX)
+        XCTAssertEqual(origin.y + contentSize.height, anchorRect.minY)
     }
 
     func testStaleExitCannotDismissNewOwner() {

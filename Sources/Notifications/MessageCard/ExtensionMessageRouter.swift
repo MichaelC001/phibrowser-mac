@@ -115,6 +115,29 @@ final class ExtensionMessageRouter {
             return AgentAnimationManager.shared.handleRequest(context: context)
         }
 
+        // Both reader types ack synchronously — the extension's reports are
+        // fire-and-forget, and a nil return would leave its sendMessageToApp
+        // promise pending until the bridge's 30s timeout rejects it.
+        register(type: "reader.offerable") { context in
+            ReaderExtensionBridge.handleOfferable(context)
+            return "{}"
+        }
+        register(type: "reader.state") { context in
+            ReaderExtensionBridge.handleState(context)
+            return "{}"
+        }
+        register(type: "reader.getStyle") { context in
+            return ReaderExtensionBridge.handleGetStyle(context)
+        }
+        register(type: "reader.setStyle") { context in
+            ReaderExtensionBridge.handleSetStyle(context)
+            return "{}"
+        }
+        register(type: "reader.extractResult") { context in
+            ReaderExtensionBridge.handleExtractResult(context)
+            return "{}"
+        }
+
         register(type: "agentSpace.create") { context in
             AgentSpaceRouter.handleCreate(context: context)
             return nil  // async reply via ExtensionMessaging
@@ -164,8 +187,38 @@ final class ExtensionMessageRouter {
         register(type: "agentSpace.openTab") { context in
             return AgentSpaceRouter.handleOpenTab(context: context)
         }
+        register(type: "agentSpace.readerArticle") { context in
+            AgentSpaceRouter.handleReaderArticle(context: context)
+        }
+        register(type: "agentSpace.readerDocument") { context in
+            AgentSpaceRouter.handleReaderDocument(context: context)
+        }
+
         register(type: "agentSpace.captureWindow") { context in
             return AgentSpaceRouter.handleCaptureWindow(context: context)
+        }
+
+        // Shadow windows (AgentSpaceRouter+Shadow.swift): invisible background
+        // windows with no pip, no transcript and no takeover. Registered as
+        // user-space-managed so the whole feature sits behind the same "Agent
+        // control" consent as operating the user's Spaces — a user who has not
+        // granted agents reach beyond their own visible Spaces must not get
+        // invisible ones.
+        registerUserSpaceManaged(type: "agentSpace.shadow.create") { context in
+            AgentSpaceRouter.handleShadowCreate(context: context)
+            return nil  // async reply via ExtensionMessaging
+        }
+        registerUserSpaceManaged(type: "agentSpace.shadow.list") { context in
+            return AgentSpaceRouter.handleShadowList(context: context)
+        }
+        registerUserSpaceManaged(type: "agentSpace.shadow.openTab") { context in
+            return AgentSpaceRouter.handleShadowOpenTab(context: context)
+        }
+        registerUserSpaceManaged(type: "agentSpace.shadow.ping") { context in
+            return AgentSpaceRouter.handleShadowPing(context: context)
+        }
+        registerUserSpaceManaged(type: "agentSpace.shadow.close") { context in
+            return AgentSpaceRouter.handleShadowClose(context: context)
         }
 
         // Management surface (AgentSpaceRouter+Management.swift): browser

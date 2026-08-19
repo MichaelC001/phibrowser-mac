@@ -273,9 +273,6 @@ class BrowserDataImporter {
         AppLogInfo("Import started: browsers=\(options.map { Self.browserName(for: $0) }), "
             + "profileId=\(targetProfileId), spaceId=\(targetSpaceId)")
 
-        AppLogInfo("Import started: browsers=\(options.map { Self.browserName(for: $0) }), "
-            + "profileId=\(targetProfileId), spaceId=\(targetSpaceId)")
-
         // Validate the file source before any destructive work: if its path is
         // missing/unreadable (the file was moved or deleted after picking, or a nil
         // path reached us from a programmatic caller), drop `.file` so we neither
@@ -457,15 +454,6 @@ class BrowserDataImporter {
                 self.importContinuations[option] = continuation
 
                 DispatchQueue.main.async {
-                    // Without a bridge there is nothing to dispatch to, and the
-                    // continuation stays unresolved, leaving the import in flight
-                    // forever — record it rather than failing silently.
-                    guard let bridge = ChromiumLauncher.sharedInstance().bridge else {
-                        // Named type rather than `Self` so the closure captures nothing.
-                        AppLogError("Import from \(BrowserDataImporter.browserName(for: option)) "
-                            + "was not dispatched: no Chromium bridge")
-                        return
-                    }
                     if option == .file {
                         // File import: Chromium sniffs the file type + parses it, staging
                         // the result into its BookmarkModel to be pulled back like the

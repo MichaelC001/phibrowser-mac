@@ -11,6 +11,11 @@ final class WebContentAddressBarViewModel: ObservableObject {
     @Published var displayText: String = ""
     @Published var addressBarWidth: CGFloat = 0
     @Published var isInPlaceholderMode: Bool = false
+    /// Whether the reader affordance applies to this tab. Mirrors
+    /// `Tab.isReaderOfferable`: a matching site rule, or Mozilla's
+    /// readerability heuristic passing in the live page.
+    @Published var isReaderApplicable: Bool = false
+    @Published var isReaderViewActive: Bool = false
 
     private weak var browserState: BrowserState?
     private var cancellables = Set<AnyCancellable>()
@@ -48,8 +53,24 @@ final class WebContentAddressBarViewModel: ObservableObject {
 
         guard let tab = currentTab else {
             displayText = ""
+            isReaderApplicable = false
+            isReaderViewActive = false
             return
         }
+
+        tab.$isReaderOfferable
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .assign(to: \.isReaderApplicable, on: self)
+            .store(in: &cancellables)
+
+        // "In the reader" is the Phi Reader extension's page being shown in
+        // the tab; the extension reports it over the bridge.
+        tab.$extensionReaderActive
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .assign(to: \.isReaderViewActive, on: self)
+            .store(in: &cancellables)
 
         let alwaysShowURLPathPublisher = NotificationCenter.default
             .publisher(for: UserDefaults.didChangeNotification)
@@ -84,6 +105,8 @@ final class WebContentAddressBarViewModel: ObservableObject {
     }
 
     private func formattedDisplayText(urlString: String, alwaysShowURLPath: Bool) -> String {
+        // A reader page stands in for its article: show the article's URL.
+        let urlString = ReaderExtensionBridge.sourceURLString(fromReaderPageURL: urlString) ?? urlString
         guard !urlString.isEmpty else {
             return ""
         }
@@ -224,6 +247,7 @@ struct WebContentAddressBarView: View {
 
                 if !viewModel.isInPlaceholderMode {
                     HStack(spacing: 2) {
+                        readerButton
                         copyURLButton
                         menuButton
                     }
@@ -345,6 +369,28 @@ struct WebContentAddressBarView: View {
     }
 
     @ViewBuilder
+    private var readerButton: some View {
+        if viewModel.isReaderApplicable {
+            ReaderButtonView(
+                isActive: viewModel.isReaderViewActive,
+                isAddressBarHovering: isHovering,
+                isMenuShown: isMenuShown,
+                action: {
+                    anchorView?.window?.customTooltipController.dismissAll()
+                    guard let tab = currentTab else { return }
+                    browserState?.toggleReaderView(for: tab, from: .addressBar)
+                }
+            )
+            .customTooltip {
+                CommandShortcutTooltipContent(
+                    title: NSLocalizedString("browser.webContentAddressBar.readerViewTooltip", value: "Reader View", comment: "Reader View shortcut tooltip title in the address bar"),
+                    command: .PHI_TOGGLE_READER
+                )
+            }
+        }
+    }
+
+    @ViewBuilder
     private var copyURLButton: some View {
         CopyURLButtonView(
             currentTab: currentTab,
@@ -407,6 +453,47 @@ struct WebContentAddressBarView: View {
 
 }
 
+/// Address-bar affordance for Reader View.
+///
+/// Hover-gated like `CopyURLButtonView`, except it stays visible while Reader
+/// View is on so the selected state doesn't disappear with the pointer.
+private struct ReaderButtonView: View {
+    let isActive: Bool
+    let isAddressBarHovering: Bool
+    let isMenuShown: Bool
+    let action: () -> Void
+
+    @State private var isButtonHovering = false
+    @Environment(\.phiTheme) private var theme
+    @Environment(\.phiAppearance) private var appearance
+
+    var body: some View {
+        Button(action: action) {
+            ZStack {
+                Circle()
+                    .fill(Color(.sidebarTabHovered))
+                    .frame(width: 24, height: 24)
+                    .opacity((isButtonHovering || isActive) ? 1 : 0)
+
+                Image(systemName: "doc.plaintext")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(
+                        ThemedColor.textPrimary.swiftUIColor(theme: theme,
+                                                             appearance: appearance))
+            }
+        }
+        .buttonStyle(.plain)
+        .frame(width: 24, height: 24)
+        .onHover { hovering in
+            isButtonHovering = hovering
+        }
+        .opacity((isAddressBarHovering || isMenuShown || isActive) ? 1 : 0)
+        .animation(.easeInOut(duration: 0.15), value: isAddressBarHovering || isMenuShown)
+        .animation(.easeInOut(duration: 0.15), value: isButtonHovering)
+        .animation(.easeInOut(duration: 0.15), value: isActive)
+    }
+}
+
 private struct CopyURLButtonView: View {
     let currentTab: Tab?
     @Binding var showCopyConfirmation: Bool
@@ -426,7 +513,8 @@ private struct CopyURLButtonView: View {
 
         Button {
             dismissTooltip()
-            guard let urlString = currentTab?.url, !urlString.isEmpty else { return }
+            guard var urlString = currentTab?.url, !urlString.isEmpty else { return }
+            urlString = ReaderExtensionBridge.sourceURLString(fromReaderPageURL: urlString) ?? urlString
             let branded = URLProcessor.phiBrandEnsuredUrlString(urlString)
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(branded, forType: .string)

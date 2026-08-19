@@ -237,11 +237,6 @@ class AccountSettingViewController: NSViewController, SettingsPane {
                 _ = await AuthManager.shared.reauthenticateExpiredSession()
             }
         }
-        accountView.reauthenticationAction = {
-            Task { @MainActor in
-                _ = await AuthManager.shared.reauthenticateExpiredSession()
-            }
-        }
 
         updateAccessPresentation()
         #endif

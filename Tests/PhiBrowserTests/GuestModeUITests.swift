@@ -120,6 +120,29 @@ final class GuestModeUITests: XCTestCase {
         XCTAssertNil(context.consume(startedInGuestMode: true))
     }
 
+    @MainActor
+    func testCompletingGuestOOBESetsComfortableLayout() {
+        let layoutModeKey = PhiPreferences.GeneralSettings.layoutModeKey
+        let originalLayoutMode = UserDefaults.standard.string(forKey: layoutModeKey)
+        defer {
+            if let originalLayoutMode {
+                UserDefaults.standard.set(originalLayoutMode, forKey: layoutModeKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: layoutModeKey)
+            }
+        }
+
+        PhiPreferences.GeneralSettings.saveLayoutMode(.balanced)
+
+        let controller = OnboardingWindowController()
+        controller.completeGuestOOBE()
+
+        XCTAssertEqual(
+            PhiPreferences.GeneralSettings.loadLayoutMode(),
+            .comfortable
+        )
+    }
+
     func testLoginRequiredPolicyFailsClosedForStaleEnabledGuestAIState() {
         for surface in [
             LoginRequiredSurface.newTabPage,

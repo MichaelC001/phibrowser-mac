@@ -25,6 +25,8 @@ class PinnedSplitItem: NSCollectionViewItem, NSMenuDelegate {
     private var rightFaviconHandle: ProfileScopedFaviconLoadHandle?
     private weak var themeProvider: ThemeStateProvider?
     private var themeSubscription: AnyObject?
+    private let splitTabPreviewRegistration = SplitTabPreviewRegistration()
+    private var showsSplitTabPreview = false
 
     /// Tab whose action runs when the cell is clicked (the pane the user
     /// most recently interacted with, or the left pane as fallback).
@@ -53,6 +55,7 @@ class PinnedSplitItem: NSCollectionViewItem, NSMenuDelegate {
         rightFaviconHandle = nil
         leftIconView.image = nil
         rightIconView.image = nil
+        splitTabPreviewRegistration.invalidate()
         leftTab = nil
         rightTab = nil
     }
@@ -69,12 +72,21 @@ class PinnedSplitItem: NSCollectionViewItem, NSMenuDelegate {
         backgroundView.selectedColor = .sidebarTabSelected
         backgroundView.enableClickAnimation = true
         backgroundView.clickAction = { [weak self] in
+            self?.splitTabPreviewRegistration.cancelForInteraction()
             self?.itemClicked?(self?.preferredClickTab())
         }
         backgroundView.doubleClickAction = { [weak self] event in
             guard let self else { return }
+            self.splitTabPreviewRegistration.cancelForInteraction()
             let point = self.backgroundView.convert(event.locationInWindow, from: nil)
             self.itemDoubleClicked?(self.tab(at: point), event.modifierFlags)
+        }
+        backgroundView.hoverStateChanged = { [weak self] isHovered in
+            self?.splitTabPreviewRegistration.setHovering(isHovered)
+        }
+        splitTabPreviewRegistration.onEligibilityChanged = { [weak self] isEligible in
+            self?.showsSplitTabPreview = isEligible
+            self?.updateToolTip()
         }
 
         leftIconView = makeIconView()
@@ -115,7 +127,12 @@ class PinnedSplitItem: NSCollectionViewItem, NSMenuDelegate {
         return iv
     }
 
-    func configure(leftTab: Tab, rightTab: Tab, themeProvider: ThemeStateProvider) {
+    func configure(
+        leftTab: Tab,
+        rightTab: Tab,
+        browserState: BrowserState? = nil,
+        themeProvider: ThemeStateProvider
+    ) {
         self.leftTab = leftTab
         self.rightTab = rightTab
         self.themeProvider = themeProvider
@@ -128,7 +145,18 @@ class PinnedSplitItem: NSCollectionViewItem, NSMenuDelegate {
 
         refreshFavicon(for: leftTab)
         refreshFavicon(for: rightTab)
-        view.toolTip = "\(leftTab.title) | \(rightTab.title)"
+        if let browserState,
+           let target = SplitTabPreviewTarget.make(representing: leftTab, in: browserState) {
+            splitTabPreviewRegistration.configure(
+                anchorView: view,
+                target: target,
+                browserState: browserState,
+                placement: .belowAttached
+            )
+        } else {
+            splitTabPreviewRegistration.invalidate()
+        }
+        updateToolTip()
 
         // Expose to UI testing, sharing the pinned-grid identifier with
         // `PinnedTabItem` so the test reset can find and unpin every item.
@@ -218,8 +246,7 @@ class PinnedSplitItem: NSCollectionViewItem, NSMenuDelegate {
         Publishers.CombineLatest(tab.$title, tab.$url)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _, _ in
-                guard let self, let l = self.leftTab, let r = self.rightTab else { return }
-                self.view.toolTip = "\(l.title) | \(r.title)"
+                self?.updateToolTip()
             }
             .store(in: &cancellables)
     }
@@ -256,12 +283,24 @@ class PinnedSplitItem: NSCollectionViewItem, NSMenuDelegate {
         handle = ProfileScopedFaviconRepository.shared.loadFavicon(for: request) { [weak imageView, weak tab] result in
             imageView?.image = result.image
             if result.source == .chromium, let data = result.data {
-                tab?.updateProfileScopedFaviconData(data)
+                tab?.updateProfileScopedFaviconData(
+                    data,
+                    sourceURLString: request.pageURLString
+                )
             }
         }
     }
 
+    private func updateToolTip() {
+        guard let leftTab, let rightTab, !showsSplitTabPreview else {
+            view.toolTip = nil
+            return
+        }
+        view.toolTip = "\(leftTab.title) | \(rightTab.title)"
+    }
+
     func menuNeedsUpdate(_ menu: NSMenu) {
+        splitTabPreviewRegistration.cancelForInteraction()
         leftTab?.makeContextMenu(on: menu)
     }
 }

@@ -22,6 +22,13 @@ NS_ASSUME_NONNULL_BEGIN
 // is ignored on creation and reported as the synthetic wire id
 // "PhiIncognitoSpace" (the OTR's real basename is its parent's, which would
 // collide with regular Spaces).
+// ChromiumBrowserTypeShadowIncognito means a shadow browser (is_shadow, see
+// ChromiumBrowserTypeShadow) on a unique off-the-record profile derived from
+// the requested profile — one fresh session per window, isolated from both
+// the incognito primary OTR and the Incognito Space, destroyed when the
+// window closes. Chromium reports such windows as ChromiumBrowserTypeShadow
+// (is_shadow takes precedence in type resolution); this value exists as a
+// creation request, not a reported type.
 typedef NS_ENUM(NSUInteger, ChromiumBrowserType) {
     ChromiumBrowserTypeNormal = 0,
     ChromiumBrowserTypePopup,
@@ -32,7 +39,8 @@ typedef NS_ENUM(NSUInteger, ChromiumBrowserType) {
     ChromiumBrowserTypeDevTools,
     ChromiumBrowserTypeShadow,
     ChromiumBrowserTypeIncognitoSpace,  // TYPE_NORMAL + Incognito Space OTR profile
-    ChromiumBrowserTypeAgentSpace
+    ChromiumBrowserTypeAgentSpace,
+    ChromiumBrowserTypeShadowIncognito  // is_shadow + unique per-window OTR profile
 };
 
 typedef NS_ENUM(NSUInteger, BrowserType) {
@@ -85,6 +93,25 @@ typedef NS_ENUM(NSInteger, PhiWindowCloseState) {
     PhiWindowCloseStateAttemptingClose = 1,
     /// Alive with the attempting flag cleared — the user kept this window.
     PhiWindowCloseStateNotAttempting = 2,
+};
+
+/// What a `materializeGhostWindow:` attempt did. The two refusals are told
+/// apart because they demand opposite things of the caller's own parked
+/// record — the one thing it can act on.
+typedef NS_ENUM(NSInteger, PhiGhostMaterializeOutcome) {
+    /// Rebuilt as a live window, announced through mainBrowserWindowCreated.
+    PhiGhostMaterializeOutcomeMaterialized = 0,
+    /// Refused for now, with nothing changed: the profile is not loaded
+    /// (deleted, never loaded, or still initializing), a reopen replay of it
+    /// is still in flight, or a service the rebuild needs is not up. The
+    /// ghost is still parked and asking again once that replay has settled
+    /// can still succeed, so the caller must KEEP its record — dropping it
+    /// would send the next switch to a fresh window that stands beside the
+    /// parked one as a doubled Space.
+    PhiGhostMaterializeOutcomeRefusedForNow = 1,
+    /// No such ghost is parked. Nothing changed either, but nothing ever
+    /// will: the caller's record is stale and may be dropped.
+    PhiGhostMaterializeOutcomeNoSuchGhost = 2,
 };
 
 @protocol PhiChromiumBridgeDelegate <NSObject>
@@ -362,6 +389,12 @@ typedef NS_ENUM(NSInteger, PhiWindowCloseState) {
                                            url:(NSString *)url
                                       windowId:(int64_t)windowId;
 
+/// Right-click "Open in Reading Mode" — Chromium asks Mac to show Reader View
+/// for the tab identified by `tabId`. Reader View is the Mac client's: it
+/// extracts the article and swaps a native surface over the tab's content, so
+/// Chromium can only name the tab and hand the request across.
+- (void)openReaderViewForTabId:(int64_t)tabId windowId:(int64_t)windowId;
+
 @optional
 // Per-window extension action badge state (text/colors/visibility/enabled).
 // Keys: windowId, extensionId, tabId, badgeText, backgroundColor, textColor,
@@ -424,6 +457,28 @@ typedef NS_ENUM(NSInteger, PhiWindowCloseState) {
                         windowId:(int64_t)windowId
             restoredFromWindowId:(int64_t)restoredFromWindowId
                  restoredSpaceId:(NSString * _Nullable)restoredSpaceId;
+/// Undo-stack variant of the above — preferred by the bridge when implemented.
+/// `restoredClosedWindowId` is non-zero only when the tab-restore stack
+/// re-created this window, and then carries the PREVIOUS session's windowId of
+/// the window that entry describes (stamped into the entry when it closed). It
+/// travels with `restoredSpaceId`: an entry carrying no Space reports neither.
+///
+/// It is NOT `restoredFromWindowId` and must not be matched against the restore
+/// snapshot. That one names a window session restore replayed into its saved
+/// slot; this one names a window the undo stack has just rebuilt as a brand-new
+/// window group, which claims no saved slot and consumes no snapshot entry.
+///
+/// Its one use: the client retires its own parked-ghost bookkeeping for that
+/// window. Chromium has already dropped the parked record for the same id
+/// before this call, so a client that keeps its half would send the user's next
+/// switch to that Space into a materialization that can only fail.
+- (void)mainBrowserWindowCreated:(NSWindow *)window
+                            type:(ChromiumBrowserType)browserType
+                       profileId:(NSString *)profileId
+                        windowId:(int64_t)windowId
+            restoredFromWindowId:(int64_t)restoredFromWindowId
+                 restoredSpaceId:(NSString * _Nullable)restoredSpaceId
+          restoredClosedWindowId:(int64_t)restoredClosedWindowId;
 // Relationship snapshot version increases monotonically per window.
 - (void)tabRelationshipSnapshotChanged:(NSDictionary *)snapshot
                              windowId:(int64_t)windowId
@@ -489,6 +544,34 @@ typedef NS_ENUM(NSInteger, PhiWindowCloseState) {
 /// @param windowId The window's session id.
 - (void)windowDidExitPlaceholderMode:(int64_t)windowId;
 
+// ==========================================================================
+// Extension side panel (Chromium → Mac notification)
+// ==========================================================================
+
+/// The extension side panel shown in `windowId` changed. Fires when a panel
+/// opens, when the shown content is replaced (another extension's panel, or
+/// the global/contextual entry recomputation after a tab switch), and when
+/// the panel closes. One panel per window; it survives tab switches, so the
+/// adopted NSView must NOT participate in per-tab view churn.
+///
+/// Non-nil `info` + `wrapper` = open / content change. Mac must adopt
+/// wrapper.nativeView as the window's extension side panel view, replacing
+/// any previously adopted panel view.
+///
+/// Nil `info` + nil `wrapper` = closed. Mac must SYNCHRONOUSLY detach the
+/// previously adopted panel NSView before returning: Chromium destroys the
+/// panel's view (and with it that NSView) right after this call returns.
+///
+/// `info` keys: extensionId (NSString), displayName (NSString), iconPNG
+/// (NSData, PNG bytes; absent when no icon is available).
+///
+/// The panel WebContents stays owned by Chromium's extension view host —
+/// never call `close` on `wrapper`. Request closure through
+/// `closeExtensionSidePanel:` instead.
+- (void)extensionSidePanelChanged:(int64_t)windowId
+                             info:(NSDictionary<NSString *, id> * _Nullable)info
+                        panelView:(id<WebContentWrapper> _Nullable)wrapper;
+
 /// The current Phi account's display info, shown on the chrome://settings
 /// account row. Same nickname/email source as the Mac client's account
 /// settings page. Keys: nickname (NSString), email (NSString), avatarPNG
@@ -526,6 +609,103 @@ typedef NS_ENUM(NSInteger, PhiWindowCloseState) {
 /// entry/exit alone does not fire this — no preference write happens, and
 /// the Mac client owns those transitions.
 - (void)metricsReportingEnabledChanged:(BOOL)enabled;
+
+/// The eager window id set for a COLD START replay, or nil to replay
+/// everything the session file holds (today's behaviour).
+///
+/// A cold start's replay is started by Chromium, not by the client, so the
+/// client has no call of its own to attach an eager set to the way a Dock
+/// reopen does (`restorePreviousSessionWithPreferredProfile:eagerWindowIds:…`).
+/// Chromium asks instead: once per profile it is about to replay,
+/// SYNCHRONOUSLY, on the main thread, from inside the replay. Answer from
+/// state already in memory — the restore snapshot — and do not block.
+///
+/// The contract of the returned set is the reopen one, unchanged: every saved
+/// normal window whose id is absent from it is parked instead of rebuilt, and
+/// the client hears what was actually parked through
+/// `coldStartParkedGhostWindows:`. It is therefore a reverse whitelist, and an
+/// EMPTY array is a valid answer meaning "park everything" — return nil, not
+/// an empty array, when there is nothing to gate (no snapshot, feature off,
+/// no account bound yet). Asked once per profile with the same snapshot in
+/// hand, so the answer must be idempotent.
+///
+/// Never asked while the client's own reopen is in flight: that replay
+/// already carries its eager set, or deliberately carries none.
+- (nullable NSArray<NSNumber *> *)coldStartEagerWindowIds;
+
+/// The plan-shaped cold-start answer, asked INSTEAD of
+/// `coldStartEagerWindowIds` by a framework that understands it (the old
+/// selector stays as the older-framework fallback and must keep answering
+/// consistently). Same pull, same timing, same idempotency contract.
+///
+/// Keys: @"eager" carries exactly what `coldStartEagerWindowIds` would have
+/// returned; @"closedGroup" names the saved windows that belong to window
+/// groups the user closed by hand (the snapshot's parked-only entries).
+/// Chromium retires a closed-group window at the replay seam — neither
+/// rebuilt nor parked, and its "Reopen Closed Window" undo entry survives —
+/// instead of parking it forever. A window in neither array parks exactly as
+/// before. A missing @"closedGroup" key reads as empty. nil = unarmed, the
+/// full replay, exactly like the old selector's nil.
+- (nullable NSDictionary<NSString *, NSArray<NSNumber *> *> *)coldStartRestorePlan;
+
+/// Which profiles own the eager windows of THIS cold start — profile
+/// directory basenames, the landing group's owner first — or nil to keep the
+/// replay order Chromium already has (today's behaviour).
+///
+/// Asked ONCE per cold start, before any profile replays, synchronously on the
+/// main thread. Same gate, same classification and same tick as
+/// `coldStartRestorePlan`, so a profile named here is one whose replay is
+/// about to hand a window back; answer from memory and do not block.
+///
+/// Chromium replays its stored profile list in order and launches only the
+/// head of it synchronously. When THAT replay hands nothing back — which is
+/// what a profile whose every saved window is parked does — the upstream
+/// startup fallback opens a plain new-tab-page window, and it used to stand
+/// next to the window a later profile restored. Chromium moves the first name
+/// in this list that it is actually replaying to the head; a name it is not
+/// replaying is skipped, and an empty or unmatched list leaves the order
+/// exactly as it was.
+///
+/// This is a reordering, never a suppression: the fallback window still opens
+/// whenever a launch restores nothing at all, so answering here can only
+/// change WHICH profile leads, never whether a window appears.
+///
+/// Read-only and idempotent, like the pulls above.
+- (nullable NSArray<NSString *> *)coldStartPreferredProfiles;
+
+/// What Chromium has parked after a cold-start replay: profile directory
+/// basename → previous-session window ids, in adoption order — the whole
+/// ghost registry, exactly as `parkedCompletion:` reports it for a reopen.
+///
+/// Delivered once per replayed profile rather than once for the whole cold
+/// start, because a cold start has no single settlement: the primary
+/// profile replays synchronously and secondary profiles asynchronously, with
+/// no point at which all of them are known to be done. The registry only
+/// grows across those calls, so a window missing from one of them may simply
+/// belong to a profile that has not replayed yet — absence here is NOT
+/// evidence that a window was not parked, which is the one way this differs
+/// from the reopen receipt.
+- (void)coldStartParkedGhostWindows:
+    (NSDictionary<NSString *, NSArray<NSNumber *> *> *)parkedWindowIdsByProfileId;
+
+/// The receipt with the replay half attached, delivered INSTEAD of
+/// `coldStartParkedGhostWindows:` by a framework that knows this selector
+/// (implement both; the plain one keeps serving an older framework). Same
+/// parked registry, same per-profile timing and growth contract.
+///
+/// `profileBasename` names the profile whose replay this receipt settles;
+/// `replayedWindowIds` are the previous-session window ids that replay
+/// matched from the eager set — the windows being rebuilt right now. The
+/// replay scanned that profile's WHOLE session file before reporting, so an
+/// eager id whose window belongs to this profile and which is absent from
+/// `replayedWindowIds` names a window the file no longer holds: no window
+/// will ever arrive for it, this launch or any later one. That is the
+/// settlement signal the client's cold-start repair hangs on — per profile,
+/// with no timer and no all-profiles barrier.
+- (void)coldStartParkedGhostWindows:
+            (NSDictionary<NSString *, NSArray<NSNumber *> *> *)parkedWindowIdsByProfileId
+        replayedForProfile:(NSString *)profileBasename
+         replayedWindowIds:(NSArray<NSNumber *> *)replayedWindowIds;
 @end
 
 @protocol PhiChromiumBridgeProtocol <NSObject>
@@ -861,6 +1041,13 @@ typedef NS_ENUM(NSInteger, PhiWindowCloseState) {
 - (void)unpinExtensionWithId:(NSString *)extensionId windowId:(int64_t)windowId;
 - (void)movePinnedExtensionWithId:(NSString *)extensionId toIndex:(int)newIndex windowId:(int64_t)windowId;
 
+/// Close the extension side panel showing in `windowId` (the Mac client's
+/// close entry point, e.g. the panel header's close button). Routes to the
+/// window's SidePanelUI::Close, so the extension observes the same event
+/// sequence as an icon toggle-close. No-op when the window is gone or no
+/// panel is showing.
+- (void)closeExtensionSidePanel:(int64_t)windowId;
+
 /// Enable all three Phi built-in extensions.
 /// Mac must update its own state before calling this so that
 /// shouldEnablePhiExtensions returns YES during policy checks.
@@ -1102,6 +1289,113 @@ typedef NS_ENUM(NSInteger, PhiWindowCloseState) {
 /// replayed. Gate this on isRestorePreviousSessionEnabled. Main thread only.
 - (void)restorePreviousSessionWithPreferredProfile:(NSString * _Nullable)preferredProfileId
                                         completion:(void (^)(BOOL restoredAnyWindow))completion;
+
+/// Same restore, plus the lazy-restore eager filter. `eagerWindowIds` names
+/// the previous-session window ids (the wire ids the previous run's windows
+/// carried, which restored windows echo as `restoredFromWindowId`) to rebuild
+/// eagerly this reopen; every other window of the previous session is parked
+/// as a ghost — kept in its profile's session file, ready to materialize on
+/// demand — instead of being rebuilt. Pass nil to restore everything: exactly
+/// the selector above, and the safe fallback whenever no eager set is known.
+/// An empty array is a valid armed state in which every window parks; ids
+/// that name no window of the previous session are ignored. The
+/// `restoredAnyWindow` contract is unchanged — it reports whether any
+/// profile started a replay, not whether a window appeared, and the two DO
+/// diverge: the filter is a reverse whitelist, so an eager set naming only
+/// ids the session file no longer holds matches nothing, parks every window
+/// and still reports YES. The receipt selector below reports that case and
+/// says what actually got parked, and is what the client calls today; this
+/// one is kept as the rollback carrier — parking without a receipt leaves
+/// the client holding a prediction nothing ever checks. Main thread only.
+- (void)restorePreviousSessionWithPreferredProfile:(NSString * _Nullable)preferredProfileId
+                                    eagerWindowIds:(NSArray<NSNumber *> * _Nullable)eagerWindowIds
+                                        completion:(void (^)(BOOL restoredAnyWindow))completion;
+
+/// Same restore and the same `eagerWindowIds` contract as the selector
+/// above, with the settlement reported instead of a bare BOOL.
+///
+/// `parkedWindowIdsByProfileId` is what Chromium ACTUALLY has parked when
+/// the restore settles: profile directory basename → previous-session window
+/// ids, in adoption order. It is the whole ghost registry, not just what this
+/// reopen diverted — a profile this reopen never replayed keeps whatever an
+/// earlier one parked for it — and it is authoritative: replace whatever the
+/// caller predicted with it rather than merging the two. An empty dictionary
+/// means nothing is parked (including when Chromium refused to arm), so the
+/// caller must clear its records, not keep its prediction. A window in it
+/// that the caller cannot map back to a Space is a real parked window with no
+/// way to reach it: report it, never drop it silently.
+///
+/// `eagerFilterMatchedNothing` is YES when this reopen armed a non-empty
+/// eager set and none of those ids named a window of any replayed profile:
+/// everything parked and no window came back, whatever `restoredAnyWindow`
+/// says. The caller's eager set went stale.
+///
+/// The `parkedCompletion:` label distinguishes this from the BOOL-only shape
+/// above, so a caller's selector probe rejects a framework that cannot report
+/// a receipt instead of silently keeping its own guess. Main thread only.
+- (void)restorePreviousSessionWithPreferredProfile:(NSString * _Nullable)preferredProfileId
+                                    eagerWindowIds:(NSArray<NSNumber *> * _Nullable)eagerWindowIds
+                                  parkedCompletion:(void (^)(BOOL restoredAnyWindow,
+                                                             NSDictionary<NSString *, NSArray<NSNumber *> *> *parkedWindowIdsByProfileId,
+                                                             BOOL eagerFilterMatchedNothing))completion;
+
+/// Same restore and the same settlement receipt as the selector above, with
+/// the arming carried as a plan dictionary instead of a bare eager array.
+///
+/// Keys: @"eager" is the eager array, contract unchanged. @"closedGroup"
+/// names the saved windows belonging to window groups the user closed by
+/// hand (the caller's parked-only entries). Chromium retires a closed-group
+/// window at the replay seam instead of parking it: not rebuilt, its session
+/// record dropped at the next rebuild, and its "Reopen Closed Window" undo
+/// entry left alone so cmd+shift+t can bring the group back. Retirement is
+/// per window and only with the undo entry actually on the stack — a
+/// closed-group window with no undo entry to answer for it parks exactly as
+/// before, so nothing can be lost to a record the undo stack never got. A
+/// window in neither array parks as before. A missing @"closedGroup" key
+/// reads as empty; a nil `restorePlan` restores everything, exactly like a
+/// nil `eagerWindowIds`. The receipt may still name a closed-group window
+/// whose retirement is pending (it is checked against the undo stack after
+/// the stack loads); such a window disappears from the registry once its
+/// retirement lands. Main thread only.
+- (void)restorePreviousSessionWithPreferredProfile:(NSString * _Nullable)preferredProfileId
+                                       restorePlan:(NSDictionary<NSString *, NSArray<NSNumber *> *> * _Nullable)restorePlan
+                                  parkedCompletion:(void (^)(BOOL restoredAnyWindow,
+                                                             NSDictionary<NSString *, NSArray<NSNumber *> *> *parkedWindowIdsByProfileId,
+                                                             BOOL eagerFilterMatchedNothing))completion;
+
+/// Materializes the ghost window parked as `previousSessionWindowId` for
+/// `profileId` (a profile directory basename, the same wire id
+/// mainBrowserWindowCreated reports): rebuilds it as a live window — tabs,
+/// pins, groups and split layout intact — that shows immediately and is
+/// announced through mainBrowserWindowCreated with restoredFromWindowId ==
+/// previousSessionWindowId before `completion` runs, which is how the caller
+/// re-attaches it to its Space. `completion` runs synchronously before this
+/// returns, with what happened (`PhiGhostMaterializeOutcome`): rebuilt,
+/// refused for now, or refused because no such ghost is parked. On either
+/// refusal nothing changed — no window appeared — and only the last one means
+/// the record is stale; a ghost refused for now stays materializable. Do not
+/// fall back to opening a plain window on a refusal: the session file may
+/// still describe the parked window, and a fallback would stand beside it as
+/// a doubled Space. The `outcomeCompletion:` label distinguishes this from
+/// the earlier `completion:(void (^)(BOOL))` shape, so a caller's selector
+/// probe rejects a framework that can only answer yes-or-no instead of
+/// misreading its result. Main thread only.
+- (void)materializeGhostWindow:(int32_t)previousSessionWindowId
+                     profileId:(NSString *)profileId
+             outcomeCompletion:(void (^)(PhiGhostMaterializeOutcome outcome))completion;
+
+/// Drops the ghost window parked as `previousSessionWindowId` for `profileId`
+/// without rebuilding it — the session-side half of closing a Space whose
+/// window exists only as a ghost (the Space was deleted, or its window group
+/// was closed). The parked record is retired under a window-closed command
+/// and the session file is rewritten without it, so the window can neither be
+/// materialized later nor replayed as a loose window by the next unfiltered
+/// restore. `completion` runs synchronously before this returns: YES on
+/// success; NO when no such ghost is parked or the profile is not loaded, and
+/// then nothing changed. Main thread only.
+- (void)dropGhostWindow:(int32_t)previousSessionWindowId
+              profileId:(NSString *)profileId
+             completion:(void (^)(BOOL ok))completion;
 
 #pragma mark - Security / Certificate
 
@@ -1353,6 +1647,45 @@ typedef NS_ENUM(NSInteger, PhiWindowCloseState) {
 @property(nonatomic, assign, readonly) BOOL isBeingMirrored;
 @property(nonatomic, assign, readonly) BOOL isSharingScreen;
 @property(nonatomic, assign, readonly) BOOL isInContentFullscreen;
+
+/// Chromium's native verdict on whether this tab's page is a distillable
+/// article — upstream DOM Distiller's AdaBoost model over features Blink
+/// computes during layout, delivered after parse and again after load, so
+/// reading it costs nothing and no script is injected. Positive-only for
+/// Reader View: upstream suppresses short articles and non-HTTPS pages, so
+/// NO means "no native verdict", never "not readable" — the extraction
+/// probe stays the authority on that side. Reset to NO when a new page
+/// commits; a same-document (SPA) navigation keeps the last verdict.
+@property(nonatomic, assign, readonly) BOOL isDistillable;
+
+/// DevTools page target id for this tab, or nil when the contents are gone.
+/// Lets the app open its own CDP session on the tab through the FD-injection
+/// transport (`AppDevToolsPageSession`) — the app is the client, no listener
+/// and no consent prompt. Reader View uses it to run extraction inside the
+/// page; the credential autofill path takes the same id from its caller.
+/// Creating the agent host does not attach a debugger or show any UI.
+@property(nonatomic, copy, readonly, nullable) NSString* devToolsTargetId;
+
+/// Captures an accessibility snapshot of this tab and returns it as
+/// `{ rootId, nodes: [ { id, role, name, level, url, children } ], pageCount,
+/// complete }`, or nil when nothing could be captured.
+///
+/// Exists because the PDF plugin's subtree is unreachable any other way: it is
+/// only populated once the BROWSER pushes an AXMode containing kWebContents,
+/// which neither CDP's accessibility domain nor RequestAXTreeSnapshot does.
+/// Accessibility is enabled for the capture only and released immediately
+/// after; no screen reader is involved and no platform AT is enabled.
+///
+/// The plugin builds its tree page by page, so a long document would otherwise
+/// block the caller for seconds. `minimumPages` returns early once that many
+/// pages exist — pass 0 to wait for the whole document. `complete` reports
+/// whether the tree had stopped growing, so the caller knows to ask again.
+/// `timeoutMs` bounds the wait; pass 0 for the default. `completion` always
+/// runs, on the main thread.
+- (void)requestAccessibilityTreeSnapshotWithMinimumPages:(NSInteger)minimumPages
+                                               timeoutMs:(NSInteger)timeoutMs
+                                              completion:
+    (void (^)(NSDictionary<NSString*, id>* _Nullable snapshot))completion;
 
 - (void)close;
 - (void)reload;

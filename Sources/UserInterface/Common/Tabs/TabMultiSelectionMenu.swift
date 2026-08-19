@@ -149,7 +149,7 @@ enum TabMultiSelectionMenu {
             let deleteItem = NSMenuItem(
                 title: deleteBookmarksTitle(for: bookmarkDeletion),
                 action: #selector(TabMultiSelectionMenuController.deleteSelectedBookmarks),
-                keyEquivalent: "")
+                keyEquivalent: "d")
             deleteItem.keyEquivalentModifierMask = [.command]
             items.append(deleteItem)
         }

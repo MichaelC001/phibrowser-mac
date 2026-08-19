@@ -316,6 +316,12 @@ final class AgentDirectConnection {
     private static let wsGUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
     private static let maxFrameBytes = 8 * 1024 * 1024
 
+    /// How long one write may wait for a client that has stopped reading.
+    /// Generous, because the alternative is dropping a reply the caller is
+    /// still waiting on, and bounded, because a wedged client must not pin
+    /// this connection's queue forever.
+    private static let writeStallTimeoutMs = 15_000
+
     init(fd: Int32, agentName: String = "", agentPid: pid_t? = nil,
          driverPrincipalId: String, agentCapability: String) {
         self.fd = fd
@@ -540,14 +546,43 @@ final class AgentDirectConnection {
 
     private func writeAll(_ bytes: [UInt8]) {
         var offset = 0
+        var completed = true
         bytes.withUnsafeBytes { raw in
             while offset < bytes.count {
                 let n = write(fd, raw.baseAddress!.advanced(by: offset), bytes.count - offset)
                 if n > 0 { offset += n; continue }
                 if n < 0 && errno == EINTR { continue }
-                break  // EAGAIN on a full buffer or a dead socket: drop.
+                if n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK),
+                   waitWritable() {
+                    continue
+                }
+                completed = false
+                break
             }
         }
+        guard !completed else { return }
+        // A frame's length prefix promises bytes that will now never arrive,
+        // so the client would misread this frame and every one after it. A
+        // closed connection is recoverable; a desynchronised one is not.
+        teardown()
+    }
+
+    /// Waits for the socket to accept more bytes.
+    ///
+    /// The fd is non-blocking, so any response larger than the send buffer
+    /// hits EAGAIN partway through a frame — a big page snapshot or an
+    /// extracted article will do it. This runs on the connection's own serial
+    /// queue, so the wait delays only this connection's later writes and never
+    /// the app. False means the peer stopped reading for longer than a stalled
+    /// client is worth, or the socket failed.
+    private func waitWritable() -> Bool {
+        var descriptor = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
+        let ready = poll(&descriptor, 1, Int32(Self.writeStallTimeoutMs))
+        if ready > 0 {
+            return (descriptor.revents & Int16(POLLOUT)) != 0
+        }
+        // A signal is not the peer's fault; anything else is give-up.
+        return ready < 0 && errno == EINTR
     }
 
     // MARK: - Buffer helpers

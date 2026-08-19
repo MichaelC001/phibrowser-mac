@@ -15,6 +15,7 @@ struct BookmarkMenuContentBuilder {
                          target: AnyObject,
                          bookmarkThisTabAction: Selector,
                          bookmarkAllTabsAction: Selector,
+                         bookmarkManagerAction: Selector,
                          exportBookmarksAction: Selector,
                          openBookmarkAction: Selector) -> NSMenu {
         let menu = NSMenu(title: NSLocalizedString("app.bookmarksMenu.title", value: "Bookmarks", comment: "Bookmarks menu - Menu title"))
@@ -26,6 +27,7 @@ struct BookmarkMenuContentBuilder {
                  target: target,
                  bookmarkThisTabAction: bookmarkThisTabAction,
                  bookmarkAllTabsAction: bookmarkAllTabsAction,
+                 bookmarkManagerAction: bookmarkManagerAction,
                  exportBookmarksAction: exportBookmarksAction,
                  openBookmarkAction: openBookmarkAction)
         return menu
@@ -39,6 +41,7 @@ struct BookmarkMenuContentBuilder {
                          target: AnyObject,
                          bookmarkThisTabAction: Selector,
                          bookmarkAllTabsAction: Selector,
+                         bookmarkManagerAction: Selector,
                          exportBookmarksAction: Selector,
                          openBookmarkAction: Selector) {
         menu.removeAllItems()
@@ -68,6 +71,20 @@ struct BookmarkMenuContentBuilder {
         menu.addItem(bookmarkAllTabsItem)
 
         menu.addItem(.separator())
+        let bookmarkManagerItem = NSMenuItem(
+            title: NSLocalizedString(
+                "app.bookmarksMenu.openManager",
+                value: "Manage Bookmarks",
+                comment: "Bookmarks menu - Menu item that opens the bookmark management page"
+            ),
+            action: bookmarkManagerAction,
+            keyEquivalent: "b"
+        )
+        bookmarkManagerItem.keyEquivalentModifierMask = [.command, .option]
+        bookmarkManagerItem.tag = CommandWrapper.IDC_SHOW_BOOKMARK_MANAGER.rawValue
+        bookmarkManagerItem.target = target
+        menu.addItem(bookmarkManagerItem)
+
         let exportBookmarksItem = NSMenuItem(
             title: NSLocalizedString("app.bookmarksMenu.exportCurrentSpace", value: "Export Bookmarks...", comment: "Bookmarks menu - Menu item to export the current Space's bookmarks to an HTML file"),
             action: exportBookmarksAction,

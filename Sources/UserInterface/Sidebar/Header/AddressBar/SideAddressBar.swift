@@ -50,6 +50,31 @@ class SideAddressBar: NSView {
         return button
     }()
 
+    private lazy var readerButton: HoverableButtonNSView = {
+        let config = HoverableButtonConfig(
+            imageSize: .init(width: 12, height: 12),
+            systemName: "doc.plaintext",
+            symbolWeight: .medium,
+            hoverBackgroundColor: .hover,
+            cornerRadius: 4
+        )
+        let button = HoverableButtonNSView(config: config) { [weak self] in
+            self?.toggleReaderView()
+        }
+        button.toolTip = NSLocalizedString("sidebar.addressBar.readerViewButtonTooltip", value: "Reader View", comment: "Sidebar address bar - Reader View button tooltip")
+        button.setCustomTooltip {
+            CommandShortcutTooltipContent(
+                title: NSLocalizedString("sidebar.addressBar.readerViewShortcutTooltip", value: "Reader View", comment: "Reader View shortcut tooltip title"),
+                command: .PHI_TOGGLE_READER
+            )
+        }
+        button.snp.makeConstraints { make in
+            make.size.equalTo(CGSize(width: 24, height: 24))
+        }
+        button.isHidden = true
+        return button
+    }()
+
     private lazy var extensionMenuHostingView: NSHostingView<ExtensionPopoverButton> = {
         let hosting = NSHostingView(rootView: ExtensionPopoverButton(extensionManager: nil))
         hosting.translatesAutoresizingMaskIntoConstraints = false
@@ -146,6 +171,24 @@ class SideAddressBar: NSView {
                 self.copyURLButton.isHidden = isPlaceholder
                 self.extensionMenuHostingView.isHidden = isPlaceholder
                 self.extensionIconsStackView.isHidden = isPlaceholder
+                self.updateReaderButtonVisibility()
+            }
+            .store(in: &cancellables)
+
+        // The tab judges its own reader-worthiness per navigation (site rule
+        // or in-page readerability heuristic — see Tab.isReaderOfferable);
+        // this bar only mirrors the verdict.
+        $currentTab
+            .flatMap { tab -> AnyPublisher<Bool, Never> in
+                guard let tab else {
+                    return Just(false).eraseToAnyPublisher()
+                }
+                return tab.$isReaderOfferable.eraseToAnyPublisher()
+            }
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.updateReaderButtonVisibility()
             }
             .store(in: &cancellables)
 
@@ -261,7 +304,9 @@ class SideAddressBar: NSView {
             textField.stringValue = ""
             return
         }
-        textField.stringValue = URLProcessor.displayName(for: url)
+        // A reader page stands in for its article: show the article's URL.
+        let displayURL = ReaderExtensionBridge.sourceURLString(fromReaderPageURL: url) ?? url
+        textField.stringValue = URLProcessor.displayName(for: displayURL)
     }
 
     private func shouldDisplayPinnedExtensionsWithinSidebar(
@@ -359,10 +404,28 @@ class SideAddressBar: NSView {
     }
     
     private func copyCurrentURL() {
-        guard let urlString = currentTab?.url, !urlString.isEmpty else { return }
+        guard var urlString = currentTab?.url, !urlString.isEmpty else { return }
+        urlString = ReaderExtensionBridge.sourceURLString(fromReaderPageURL: urlString) ?? urlString
         let branded = URLProcessor.phiBrandEnsuredUrlString(urlString)
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(branded, forType: .string)
+    }
+
+    private func toggleReaderView() {
+        guard let tab = currentTab,
+              let browserState = unsafeBrowserState else { return }
+        browserState.toggleReaderView(for: tab, from: .addressBar)
+    }
+
+    private func updateReaderButtonVisibility() {
+        let isPlaceholder = unsafeBrowserState?.isInPlaceholderMode ?? false
+        // The tab's verdict comes from the extraction service (site rule or
+        // readerability probe), not a local copy of the test, so the button
+        // and the feature cannot disagree about a page. They did once: this
+        // bar kept its own "is this a real web page" and went on offering the
+        // reader on a PDF after extraction had begun refusing it.
+        readerButton.isHidden = isPlaceholder
+            || !(currentTab?.isReaderOfferable ?? false)
     }
 
     @objc private func extensionButtonClicked(_ sender: NSView) {
@@ -459,6 +522,7 @@ class SideAddressBar: NSView {
         }
         
         rightStackView.addArrangedSubview(extensionIconsStackView)
+        rightStackView.addArrangedSubview(readerButton)
         rightStackView.addArrangedSubview(copyURLButton)
         rightStackView.addArrangedSubview(extensionMenuHostingView)
         extensionMenuHostingView.snp.makeConstraints { make in

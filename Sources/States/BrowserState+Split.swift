@@ -1236,7 +1236,8 @@ extension BrowserState {
                            newTabSlot: SplitSlot = .right,
                            partnerNavigateURL: String? = nil,
                            boundBookmarkGuid: String? = nil,
-                           insertionIndex: Int? = nil) -> Bool {
+                           insertionIndex: Int? = nil,
+                           closePartnerOnTimeout: Bool = false) -> Bool {
         guard splitGroup(forTabId: partnerTabId) == nil,
               ChromiumLauncher.sharedInstance().bridge != nil else {
             return false
@@ -1252,7 +1253,8 @@ extension BrowserState {
             partnerTabId: partnerTabId,
             newTabSlot: newTabSlot,
             boundBookmarkGuid: boundBookmarkGuid,
-            insertionIndex: insertionIndex
+            insertionIndex: insertionIndex,
+            closePartnerOnTimeout: closePartnerOnTimeout
         )
         // Mark the partner BEFORE `createTab`. Chromium's active-tab handler
         // runs synchronously inside the new-tab creation and would otherwise
@@ -1290,13 +1292,16 @@ extension BrowserState {
         let wid = windowId
         DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
             guard let self else { return }
-            guard self.pendingSplitPartnerByCustomGuid[pendingGuid] != nil else {
+            guard let pending = self.pendingSplitPartnerByCustomGuid.removeValue(forKey: pendingGuid) else {
                 return  // already consumed
             }
-            self.pendingSplitPartnerByCustomGuid.removeValue(forKey: pendingGuid)
             ChromiumLauncher.sharedInstance().bridge?
                 .clearPendingSplitPartner(withTabId: partnerId.int64Value,
                                           windowId: wid.int64Value)
+            if pending.closePartnerOnTimeout {
+                self.tabs.first(where: { $0.guid == partnerId })?
+                    .webContentWrapper?.close()
+            }
         }
         return true
     }
@@ -1630,6 +1635,10 @@ struct PendingSplitPartner {
     /// specific spot; `consumePendingSplitPartner` forwards it so
     /// `handleSplitCreated` can relocate the pair off the strip's end.
     var insertionIndex: Int? = nil
+    /// Closes the existing partner if its requested pane never arrives.
+    /// Used when that partner is a transient bookmark-group seed rather than
+    /// user-owned content that should survive a failed split request.
+    var closePartnerOnTimeout: Bool = false
 }
 
 /// Stored alongside a pending "open a tab to replace a split pane" request.

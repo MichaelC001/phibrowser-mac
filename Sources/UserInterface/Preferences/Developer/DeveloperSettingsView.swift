@@ -833,3 +833,4 @@ private struct SkillInstallRowView: View {
                 response: .alertFirstButtonReturn)))
     }
 }
+

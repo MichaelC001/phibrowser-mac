@@ -962,6 +962,18 @@ final class TabGroupCellView: SidebarCellView {
 // MARK: - Click activation
 
 extension TabGroupCellView {
+    func cancelVisibleTabPreviews() {
+        let visibleRows = innerTable.rows(in: innerTable.visibleRect)
+        guard visibleRows.location != NSNotFound else { return }
+        for row in visibleRows.location..<NSMaxRange(visibleRows) {
+            (innerTable.view(
+                atColumn: 0,
+                row: row,
+                makeIfNecessary: false
+            ) as? TabPreviewInteractionCancelling)?.cancelTabPreviewForInteraction()
+        }
+    }
+
     /// `NSTableView.action` target. Activates the clicked grouped tab
     /// the same way `outlineViewClicked` does for ungrouped rows —
     /// inner table's `selectionHighlightStyle = .none` skips the row
@@ -973,6 +985,11 @@ extension TabGroupCellView {
         guard row >= 0,
               currentMemberOrder.indices.contains(row)
         else { return }
+        (sender.view(
+            atColumn: 0,
+            row: row,
+            makeIfNecessary: false
+        ) as? TabPreviewInteractionCancelling)?.cancelTabPreviewForInteraction()
         activateMemberRow(for: currentMemberOrder[row])
     }
 
@@ -1070,6 +1087,7 @@ extension TabGroupCellView: GroupTabsTableViewDelegate {
             AppLogDebug("[TAB_GROUPS][INNER_DRAG] cell.beginDraggingRow failed (no view)")
             return
         }
+        (rowView as? TabPreviewInteractionCancelling)?.cancelTabPreviewForInteraction()
         activeDragTabGuid = tab.guid
         AppLogDebug(
             "[TAB_GROUPS][INNER_DRAG] cell.beginDragging tab=\(tab.guid) token=\(token)"
@@ -1086,6 +1104,11 @@ extension TabGroupCellView: GroupTabsTableViewDelegate {
         guard currentMemberOrder.indices.contains(row) else {
             return
         }
+        (tableView.view(
+            atColumn: 0,
+            row: row,
+            makeIfNecessary: false
+        ) as? TabPreviewInteractionCancelling)?.cancelTabPreviewForInteraction()
         let key = currentMemberOrder[row]
         if modifierFlags.isPureOptionClick,
            let tab = tabsByGuid[key],
@@ -1124,6 +1147,11 @@ extension TabGroupCellView: GroupTabsTableViewDelegate {
                    didMiddleClickRow row: Int,
                    at location: NSPoint) {
         guard currentMemberOrder.indices.contains(row) else { return }
+        (tableView.view(
+            atColumn: 0,
+            row: row,
+            makeIfNecessary: false
+        ) as? TabPreviewInteractionCancelling)?.cancelTabPreviewForInteraction()
         let key = currentMemberOrder[row]
         if let pair = splitPairsByKey[key] {
             // Merged in-group split row renders both panes side-by-side —
@@ -1149,6 +1177,11 @@ extension TabGroupCellView: GroupTabsTableViewDelegate {
 
         switch target {
         case .close:
+            (tableView.view(
+                atColumn: 0,
+                row: row,
+                makeIfNecessary: false
+            ) as? TabPreviewInteractionCancelling)?.cancelTabPreviewForInteraction()
             groupCellDelegate?.tabGroupCell(self, tabDidRequestClose: tab)
         case .mute:
             tab.setAudioMuted(!tab.isAudioMuted)

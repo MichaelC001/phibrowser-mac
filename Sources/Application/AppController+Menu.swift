@@ -334,6 +334,7 @@ extension AppController {
                     item.tag == CommandWrapper.PHI_TOGGLE_SIDEBAR.rawValue ||
                     item.tag == CommandWrapper.PHI_TOGGLE_CHATBAR.rawValue ||
                     item.tag == CommandWrapper.PHI_NEW_CONVERSATION.rawValue ||
+                    item.tag == CommandWrapper.PHI_TOGGLE_READER.rawValue ||
                     item.tag == AppController.viewMenuPhiSectionSeparatorTag ||
                     item.tag == AppController.toggleBookmarkBarItemTag ||
                     item.tag == AppController.toggleBookmarkBarOnNewTabItemTag ||
@@ -350,7 +351,20 @@ extension AppController {
                     topSeparator.tag = AppController.viewMenuPhiSectionSeparatorTag
                     submenu.addItem(topSeparator)
                 }
-                
+
+                let toggleReaderItem = NSMenuItem(title: NSLocalizedString("app.viewMenu.toggleReaderView", value: "Toggle Reader View", comment: "View menu - Menu item that switches the current page between Reader View and the normal page"),
+                                                  action: #selector(toggleReaderView(_:)),
+                                                  keyEquivalent: "r")
+                toggleReaderItem.keyEquivalentModifierMask = [.command, .option]
+                toggleReaderItem.tag = CommandWrapper.PHI_TOGGLE_READER.rawValue
+                Shortcuts.updateShortcut(for: toggleReaderItem)
+                toggleReaderItem.target = self
+                submenu.addItem(toggleReaderItem)
+
+                let readerSeparator = NSMenuItem.separator()
+                readerSeparator.tag = AppController.viewMenuPhiSectionSeparatorTag
+                submenu.addItem(readerSeparator)
+
                 let layoutTtitle = NSMenuItem.sectionHeader(title: NSLocalizedString("app.viewMenu.layoutModeSectionTitle", value: "Layout Mode", comment: "View menu - Layout mode section header in View menu"))
                 layoutTtitle.tag = AppController.layoutModeTitleItemTag
                 submenu.addItem(layoutTtitle)
@@ -506,6 +520,7 @@ extension AppController {
                 configureBookmarksMenuItem(menuItem)
             case .hideSystemItem:
                 menuItem.isHidden = true
+                clearKeyEquivalents(in: menuItem.submenu)
             case .ignore:
                 break
             }
@@ -734,6 +749,15 @@ extension AppController {
         rebuildBookmarksMenu(submenu)
     }
 
+    private func clearKeyEquivalents(in menu: NSMenu?) {
+        guard let menu else { return }
+        for item in menu.items {
+            item.keyEquivalent = ""
+            item.keyEquivalentModifierMask = []
+            clearKeyEquivalents(in: item.submenu)
+        }
+    }
+
     private func installBookmarksMenu(in mainMenu: NSMenu) {
         let menuItem = NSMenuItem(
             title: NSLocalizedString("app.mainMenu.bookmarksInstalledTitle", value: "Bookmarks", comment: "Main menu - Top-level Bookmarks menu title in the application menu bar"),
@@ -797,6 +821,7 @@ extension AppController {
             target: self,
             bookmarkThisTabAction: #selector(bookmarkThisTab(_:)),
             bookmarkAllTabsAction: #selector(bookmarkAllTabs(_:)),
+            bookmarkManagerAction: #selector(openBookmarkManager(_:)),
             exportBookmarksAction: #selector(exportBookmarks(_:)),
             openBookmarkAction: #selector(openBookmarkMenuItem(_:))
         )
@@ -879,6 +904,15 @@ extension AppController {
         MainBrowserWindowControllersManager.shared.activeWindowController?.browserState.toggleAIChat(
             trigger: .shortcut
         )
+    }
+
+    @MainActor
+    @objc func toggleReaderView(_ sender: Any?) {
+        guard let state = MainBrowserWindowControllersManager.shared.activeWindowController?.browserState,
+              let tab = state.focusingTab else {
+            return
+        }
+        state.toggleReaderView(for: tab, from: .viewMenu)
     }
 
     @MainActor
@@ -971,6 +1005,15 @@ extension AppController {
                                               url: url,
                                               faviconData: tab.liveFaviconData ?? tab.cachedFaviconData)
         }
+    }
+
+    @objc func openBookmarkManager(_ sender: Any?) {
+        guard let state = MainBrowserWindowControllersManager.shared
+            .activeWindowController?.browserState,
+              !state.isIncognito else {
+            return
+        }
+        state.openTab(URLProcessor.processUserInput("phi://bookmarks"))
     }
 
     @objc func openBookmarkMenuItem(_ sender: Any?) {
@@ -1980,7 +2023,25 @@ extension AppController {
                 // No browser window open (menu-bar-only state): mint a slot
                 // and spawn the Space's window into it, the same shape a
                 // Chromium-initiated Cmd+N takes.
-                manager.createSlot(initialSpaceId: spaceId).activate(spaceId: spaceId)
+                let slot = manager.createSlot(initialSpaceId: spaceId)
+                slot.activate(spaceId: spaceId, onActivationFailed: {
+                    // Undo the whole menu action rather than half of it: with
+                    // nothing on screen, a Space left in the strip behind a
+                    // reclaimed slot is one the user has no surface to reach.
+                    //
+                    // Conditioned on the reclaim, not on the failure report:
+                    // `activate` also reports failure with the spawned window
+                    // registered (the user switched Space mid-spawn), and
+                    // closing the Space there would tear down a window that
+                    // did arrive. `reclaimMintedSlot` is the one place that
+                    // tells those two apart.
+                    //
+                    // Slot first: `closeIncognitoSpace` retreats any slot
+                    // showing the Space to the default one, which would spawn
+                    // a window into the very slot being reclaimed.
+                    guard manager.reclaimMintedSlot(slot, mintedForThisAttempt: true) else { return }
+                    manager.closeIncognitoSpace(spaceId: spaceId)
+                })
             }
         }
     }
@@ -2153,6 +2214,12 @@ extension AppController {
         if item.action == #selector(showPreferences(_:)) {
             return ApplicationState.shared.canUseBrowser
         }
+
+        if item.action == #selector(openBookmarkManager(_:)) {
+            return ApplicationState.shared.canUseBrowser &&
+                MainBrowserWindowControllersManager.shared.activeWindowController != nil &&
+                !isActiveWindowIncognito()
+        }
         
         #if !PHI_OSS_BUILD
         if item.action == #selector(checkForUpdate(_:)) {
@@ -2188,6 +2255,20 @@ extension AppController {
         if item.action == #selector(toggleAgentAutoView(_:)) {
             if let menuItem = item as? NSMenuItem {
                 menuItem.state = PhiPreferences.AgentSpaces.autoViewEnabled ? .on : .off
+                return ApplicationState.shared.canUseBrowser
+            }
+        }
+
+        if item.action == #selector(toggleReaderView(_:)) {
+            if let menuItem = item as? NSMenuItem {
+                let tab = MainActor.assumeIsolated {
+                    MainBrowserWindowControllersManager.shared
+                        .activeWindowController?.browserState.focusingTab
+                }
+                menuItem.state = (tab?.extensionReaderActive ?? false) ? .on : .off
+                // Nothing to distill on the native NTP: it has no WebContents,
+                // so there is no page to run extraction against.
+                guard let tab, !tab.isShowingNativeNTP else { return false }
                 return ApplicationState.shared.canUseBrowser
             }
         }
@@ -2407,6 +2488,14 @@ extension AppController {
         // per-profile commit (which would conclude the profile still has a
         // window and suppress its restore). The user can reissue once the
         // restored windows arrive.
+        //
+        // This gate reads the flag directly, so it applies to EVERY windowless
+        // reopen. The Space-switch gate next door
+        // (`SpaceManager.reopenDropsActivations`) additionally requires that
+        // the reopen armed the lazy filter. The asymmetry is deliberate and
+        // documented there: this one shipped before that feature, so leaving it
+        // unconditional is what keeps "the lazy switch off means today's
+        // behavior" true.
         if SpaceManager.shared.isSessionRestoreInFlight,
            let tag = (sender as? NSMenuItem)?.tag,
            Self.windowlessSpawnCommandTags.contains(tag) {

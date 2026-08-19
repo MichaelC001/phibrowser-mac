@@ -35,6 +35,58 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
             && PhiPreferences.AISettings.phiAIEnabled.loadValue()
     }
 
+    /// Chromium is about to replay a profile's session at cold start and is
+    /// asking which windows to rebuild now. Answered from the restore
+    /// snapshot already in memory; nil keeps the full replay. Synchronous by
+    /// contract — the replay is waiting on this stack.
+    func coldStartEagerWindowIds() -> [NSNumber]? {
+        MainActor.assumeIsolated { SpaceManager.shared.coldStartEagerWindowIds() }
+    }
+
+    func coldStartRestorePlan() -> [String: [NSNumber]]? {
+        MainActor.assumeIsolated { SpaceManager.shared.coldStartRestorePlan() }
+    }
+
+    /// Which profiles own this cold start's eager windows, so the replay can
+    /// start with one that will hand a window back. Same gate, classification
+    /// and tick as the plan above; nil keeps Chromium's stored order.
+    func coldStartPreferredProfiles() -> [String]? {
+        MainActor.assumeIsolated { SpaceManager.shared.coldStartPreferredProfiles() }
+    }
+
+    /// What that replay actually parked, per profile, as it happens.
+    func coldStartParkedGhostWindows(
+        _ parkedWindowIdsByProfileId: [String: [NSNumber]]
+    ) {
+        let windowIdsByProfileId = parkedWindowIdsByProfileId.mapValues {
+            $0.map(\.intValue)
+        }
+        MainActor.assumeIsolated {
+            SpaceManager.shared.applyColdStartParkedGhostReceipt(
+                windowIdsByProfileId: windowIdsByProfileId)
+        }
+    }
+
+    /// The receipt with the replay half: the same parked registry, plus
+    /// which profile's replay this receipt settles and the saved window ids
+    /// that replay matched — the cold-start repair hook. A framework that
+    /// knows this selector calls it INSTEAD of the plain one above.
+    func coldStartParkedGhostWindows(
+        _ parkedWindowIdsByProfileId: [String: [NSNumber]],
+        replayedForProfile profileBasename: String,
+        replayedWindowIds: [NSNumber]
+    ) {
+        let windowIdsByProfileId = parkedWindowIdsByProfileId.mapValues {
+            $0.map(\.intValue)
+        }
+        MainActor.assumeIsolated {
+            SpaceManager.shared.applyColdStartReplayReceipt(
+                windowIdsByProfileId: windowIdsByProfileId,
+                reportingProfileId: profileBasename,
+                replayedWindowIds: replayedWindowIds.map(\.intValue))
+        }
+    }
+
     /// Source of truth for the browser-process DevTools gate that blocks
     /// remote-debugging clients from the user's own Spaces. Read live per gated
     /// command, so the Settings toggle applies without a relaunch.
@@ -434,6 +486,7 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
         SentinelTelemetryConsentPublisher.shared.metricsReportingEnabledChanged(
             enabled
         )
+        AccountController.shared.metricsReportingEnabledChanged(enabled)
     }
 
     func getAuth0AccessTokenSyncly() -> String {
@@ -471,6 +524,31 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
                                  windowId: windowId,
                                  restoredFromWindowId: restoredFromWindowId,
                                  restoredSpaceId: nil)
+    }
+
+    func mainBrowserWindowCreated(_ window: NSWindow, type browserType: ChromiumBrowserType, profileId: String, windowId: Int64, restoredFromWindowId: Int64, restoredSpaceId: String?, restoredClosedWindowId: Int64) {
+        // The undo stack rebuilt the whole window saved as
+        // `restoredClosedWindowId`, and Chromium dropped its parked record for
+        // that id before making this call. Retire this side's half first, so
+        // the placement below — and the snapshot persist a window arrival
+        // triggers — never runs against a record describing a window the user
+        // is looking at.
+        //
+        // Deliberately its own field rather than `restoredFromWindowId`: that
+        // one is matched against the restore snapshot
+        // (`claimRestoredWindow`), and this window claims no saved slot — it
+        // is a brand-new group the stack built. Feeding it there would consume
+        // the entry's index and re-point the slot the entry belongs to.
+        if restoredClosedWindowId > 0 {
+            SpaceManager.shared.retireParkedGhostReopenedFromUndoStack(
+                windowId: Int(restoredClosedWindowId))
+        }
+        mainBrowserWindowCreated(window,
+                                 type: browserType,
+                                 profileId: profileId,
+                                 windowId: windowId,
+                                 restoredFromWindowId: restoredFromWindowId,
+                                 restoredSpaceId: restoredSpaceId)
     }
 
     func mainBrowserWindowCreated(_ window: NSWindow, type browserType: ChromiumBrowserType, profileId: String, windowId: Int64, restoredFromWindowId: Int64, restoredSpaceId: String?) {
@@ -570,16 +648,37 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
                 spaceId = SpaceManager.shared.spaceId(boundTo: profileId,
                                                       preferring: restored.spaceId)
                 isRestoredWindow = true
+                // Where a restored window ends up is decided in three steps —
+                // which snapshot entry claimed it, what that entry said its
+                // visible Space was, and the profile-consistency re-resolve
+                // above — and today a wrong landing Space leaves no record of
+                // which one of them was wrong. All three go on this one line,
+                // stated positively so the reading never rests on a line being
+                // absent.
+                AppLogInfo("🌐 [Chromium] restore attribution: restoredFrom=\(restoredFromWindowId) claimed by \(restored.matchedBy.rawValue) → space=\(spaceId) (claimed=\(restored.spaceId), snapshot entry active=\(restored.entryActiveSpaceId ?? "nil"))")
             } else {
                 let initial = SpaceManager.shared.keySlot?.activeSpaceId
                     ?? SpaceManager.shared.persistedActiveSpaceId
                     ?? LocalStore.defaultSpaceId
                 // Correct BEFORE creating the slot so it starts on the
                 // resolved Space and the window surfaces as the slot's
-                // active window below.
-                spaceId = SpaceManager.shared.spaceId(boundTo: profileId,
-                                                      preferring: initial)
+                // active window below. The mint variant also steers off a
+                // Space whose window is parked as a lazy-restore ghost —
+                // this is the one path that CREATES a window for the Space
+                // it answers, and a fresh window there would stand beside
+                // the parked record as a doubled Space.
+                spaceId = SpaceManager.shared.fallbackMintSpaceId(boundTo: profileId,
+                                                                  preferring: initial)
                 resolvedSlot = SpaceManager.shared.createSlot(initialSpaceId: spaceId)
+                // The other half of the attribution line above, and the one
+                // that matters: a window Chromium replayed but no snapshot
+                // entry claimed lands on whatever `initial` seeded — the key
+                // slot's Space, else the persisted one, else the default —
+                // which is the wrong-Space symptom itself. Logged for every
+                // window taking this branch, ordinary Cmd+N included
+                // (`restoredFrom=0` with no restore running names those), so
+                // the judgement never has to rest on a missing line.
+                AppLogInfo("🌐 [Chromium] restore attribution: restoredFrom=\(restoredFromWindowId) claimed nothing in the snapshot → space=\(spaceId) (minted preferring=\(initial))")
             }
         } else {
             // Incognito / shadow windows are orthogonal to Spaces.
@@ -598,8 +697,14 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
             // tab-group enrollment (a transparent window selected into the
             // shared group frame blanks the visible active window). Revealed
             // by the slot's visibility reconcile once the burst settles.
-            if isRestoredWindow, let resolvedSlot,
-               resolvedSlot.activeSpaceId != spaceId {
+            //
+            // Which windows qualify is `SpaceWindowSlot.concealsRestoredSibling`;
+            // having a slot at all is the call site's question and stays here.
+            if let resolvedSlot,
+               SpaceWindowSlot.concealsRestoredSibling(
+                   isRestoredWindow: isRestoredWindow,
+                   slotActiveSpaceId: resolvedSlot.activeSpaceId,
+                   windowSpaceId: spaceId) {
                 resolvedSlot.markRestoredSiblingForConcealment(spaceId: spaceId)
             }
             let mainWindowController = MainBrowserWindowController(
@@ -1194,6 +1299,53 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
     }
 
     // =========================================================================
+    // Extension side panel (Chromium → Mac)
+    //
+    // Mirrors the Chromium-side contract in PhiChromiumBridgeHeader.h:
+    // non-nil info+wrapper = adopt the panel NSView (open / content change),
+    // nil = closed. The close leg shares placeholder mode's synchronous
+    // detach contract, hence MainActor.assumeIsolated rather than an async
+    // hop — Chromium destroys the outgoing panel view right after this
+    // bridge callback returns.
+    // =========================================================================
+
+    func extensionSidePanelChanged(_ windowId: Int64,
+                                   info: [String: Any]?,
+                                   panelView wrapper: (any WebContentWrapper)?) {
+        guard let windowController = MainBrowserWindowControllersManager.shared
+                .getAllWindows()
+                .first(where: { $0.windowId == Int(windowId) }) else {
+            // Normal during window teardown: Chromium pushes the close from
+            // the browser's pre-destruction sweep after the Mac side already
+            // dropped the window controller.
+            AppLogInfo("[ExtSidePanel] [Coordinator] no controller for windowId=\(windowId) (info=\(info == nil ? "nil" : "set"))")
+            return
+        }
+
+        let panelState: BrowserState.ExtensionSidePanelState?
+        if let info, let wrapper {
+            guard let nsWrapper = wrapper as? (WebContentWrapper & NSObject) else {
+                AppLogWarn("[ExtSidePanel] [Coordinator] wrapper cast failed windowId=\(windowId)")
+                return
+            }
+            panelState = BrowserState.ExtensionSidePanelState(
+                extensionId: info["extensionId"] as? String ?? "",
+                displayName: info["displayName"] as? String ?? "",
+                iconPNG: info["iconPNG"] as? Data,
+                wrapper: nsWrapper
+            )
+        } else {
+            panelState = nil
+        }
+
+        // Synchronous (NOT Task { @MainActor in ... }) so the outgoing NSView
+        // is out of the hierarchy before returning to Chromium.
+        MainActor.assumeIsolated {
+            windowController.browserState.updateExtensionSidePanel(panelState)
+        }
+    }
+
+    // =========================================================================
     // Tab groups (Chromium → Mac)
     //
     // Forwards all 5 bridge callbacks through EventBus, matching the
@@ -1412,6 +1564,14 @@ extension PhiChromiumCoordinator {
         EventBus.shared.send(SplitEvent(
             browserId: windowId.intValue,
             action: .removed(splitId: splitId)))
+    }
+
+    func openReaderView(forTabId tabId: Int64, windowId: Int64) {
+        AppLogDebug("[Reader] context menu asked for Reader View: " +
+                    "tab=\(tabId) window=\(windowId)")
+        EventBus.shared.send(TabEvent(
+            browserId: windowId.intValue,
+            action: .openReaderView(tabId: tabId.intValue)))
     }
 
     func openLinkAsSplitPartner(withPartnerTabId partnerTabId: Int64,

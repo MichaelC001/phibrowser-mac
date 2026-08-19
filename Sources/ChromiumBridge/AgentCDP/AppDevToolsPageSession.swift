@@ -61,6 +61,12 @@ final class AppDevToolsPageSession: @unchecked Sendable {
     private static let wsGUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
     private static let maxFrameBytes = 8 * 1024 * 1024
 
+    /// How long one write may wait for a DevTools server that has stopped
+    /// reading. Shorter than the agent channel's equivalent: the peer here is
+    /// the browser's own server across an in-app socketpair, so a stall
+    /// outlasting a couple of seconds means the session is finished, not busy.
+    private static let writeStallTimeoutMs = 2_000
+
     /// Dials the browser's DevTools server and upgrades onto `targetId`'s page
     /// endpoint. Throws `transportUnavailable` when the bridge can't adopt the
     /// fd, `upgradeFailed` when the target doesn't exist.
@@ -485,21 +491,45 @@ final class AppDevToolsPageSession: @unchecked Sendable {
 
     private func writeAll(_ bytes: [UInt8]) {
         var offset = 0
+        var completed = true
         bytes.withUnsafeBytes { raw in
             while offset < bytes.count {
                 let n = write(fd, raw.baseAddress!.advanced(by: offset), bytes.count - offset)
                 if n > 0 { offset += n; continue }
                 if n < 0 && errno == EINTR { continue }
-                if n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) {
-                    // The fd is non-blocking for the read loop; a command frame
-                    // can exceed a momentarily full buffer, so wait it out
-                    // (bounded) instead of dropping mid-frame.
-                    var pfd = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
-                    if poll(&pfd, 1, 2000) > 0 { continue }
+                if n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK),
+                   waitWritable() {
+                    continue
                 }
-                break   // dead socket or stuck buffer: the read side will fail
+                completed = false
+                break
             }
         }
+        guard !completed else { return }
+        // A frame's length prefix promises bytes that will now never arrive,
+        // so the server would misread this frame and every one after it.
+        // Failing the exchange reports that now; a silently truncated command
+        // would strand the caller until its timeout on a connection that can
+        // no longer carry a reply.
+        fail(.connectionClosed)
+    }
+
+    /// Waits for the socket to accept more bytes.
+    ///
+    /// The fd is non-blocking for the read loop, so a command larger than the
+    /// send buffer (8 KiB on a unix socket) hits EAGAIN partway through a
+    /// frame — an autofill dispatch carrying a long selector will do it. This
+    /// runs on the session's own serial queue, so the wait delays only this
+    /// session. False means the server stopped reading for longer than a
+    /// stalled peer is worth, or the socket failed.
+    private func waitWritable() -> Bool {
+        var descriptor = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
+        let ready = poll(&descriptor, 1, Int32(Self.writeStallTimeoutMs))
+        if ready > 0 {
+            return (descriptor.revents & Int16(POLLOUT)) != 0
+        }
+        // A signal is not the peer's fault; anything else is give-up.
+        return ready < 0 && errno == EINTR
     }
 
     // MARK: - Helpers

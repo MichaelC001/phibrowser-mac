@@ -27,6 +27,7 @@ struct CommandDispatcher {
         .PHI_SELECT_PREVIOUS_SPACE,
         .PHI_FARRINGDON_TOGGLE,
         .PHI_COPY_URL,
+        .PHI_TOGGLE_READER,
     ] + CommandWrapper.spaceSelectionCommands
 
     /// Commands swallowed while the focused tab shows the native NTP — it has no
@@ -195,6 +196,13 @@ struct CommandDispatcher {
             guard state.copySelectedTabURLs() else { return false }
             OverlayToastCenter.shared.showURLCopyConfirmation(copiedURLCount: copiedURLCount, in: state)
             return true
+        case .PHI_TOGGLE_READER:
+            let state = windowController.browserState
+            guard let tab = state.focusingTab, !tab.isShowingNativeNTP else {
+                return false
+            }
+            state.toggleReaderView(for: tab, from: .shortcut)
+            return true
         case let c where c.spaceSelectionIndex != nil:
             guard let index = c.spaceSelectionIndex else { return false }
             return activateSpace(at: index, from: windowController)
@@ -220,6 +228,12 @@ struct CommandDispatcher {
             return true
         case .IDC_BOOKMARK_THIS_TAB:
             windowController.toggleBookmark(nil)
+            return true
+        case .IDC_SHOW_BOOKMARK_MANAGER:
+            guard !windowController.browserState.isIncognito else { return true }
+            windowController.browserState.openTab(
+                URLProcessor.processUserInput("phi://bookmarks")
+            )
             return true
         case let c where c.rawValue >= CommandWrapper.IDC_SELECT_TAB_0.rawValue && c.rawValue <= CommandWrapper.IDC_SELECT_TAB_7.rawValue:
             MainBrowserWindowControllersManager.shared.findControllerWith(window: window)?.selectTabWithIndex(c.rawValue - CommandWrapper.IDC_SELECT_TAB_0.rawValue)

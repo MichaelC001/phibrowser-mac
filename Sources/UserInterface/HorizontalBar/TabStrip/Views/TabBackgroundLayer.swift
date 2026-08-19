@@ -85,7 +85,18 @@ final class TabBackgroundLayer: CAShapeLayer {
     }
 
     func updatePath(in bounds: CGRect) {
-        guard bounds.width > 0 && bounds.height > 0 else { return }
+        // A cell the layout engine has taken out of the flow gets a `.zero`
+        // frame (collapsed group member, drag placeholder, collapsed split
+        // pane) and must paint nothing. Keeping the previous path would keep
+        // drawing it at its old size: `TabItemView` sets
+        // `layer.masksToBounds = false` on purpose — the active tab's inverse
+        // curves reach past the cell — so nothing clips a stale path back to
+        // the empty bounds. `layout()` rebuilds it once the cell is measured
+        // again.
+        guard bounds.width > 0 && bounds.height > 0 else {
+            self.path = nil
+            return
+        }
         self.path = createPath(for: bounds, state: tabState, isPinned: isPinned)
         updateAppearance()
     }

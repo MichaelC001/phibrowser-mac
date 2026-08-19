@@ -1179,12 +1179,32 @@ final class BrowserStateMultiSelectionTests: XCTestCase {
 
         state.toggleBookmarkMultiSelection(bookmarkGuid: firstFolderGuid)
         state.toggleBookmarkMultiSelection(bookmarkGuid: secondFolderGuid)
-        XCTAssertEqual(deleteMenuItem(in: state)?.title, "Delete 2 Folders")
+        XCTAssertEqual(
+            deleteMenuItem(in: state)?.title,
+            String(
+                format: NSLocalizedString(
+                    "common.tabMultiSelectionContextMenu.deleteMultipleFoldersAction",
+                    value: "Delete %d Folders",
+                    comment: "Tab multi-selection context menu - delete selected bookmark folders"
+                ),
+                2
+            )
+        )
 
         state.clearMultiSelection()
         state.toggleBookmarkMultiSelection(bookmarkGuid: firstBookmarkGuid)
         state.toggleBookmarkMultiSelection(bookmarkGuid: secondBookmarkGuid)
-        XCTAssertEqual(deleteMenuItem(in: state)?.title, "Delete 2 Bookmarks")
+        XCTAssertEqual(
+            deleteMenuItem(in: state)?.title,
+            String(
+                format: NSLocalizedString(
+                    "common.tabMultiSelectionContextMenu.deleteMultipleBookmarksAction",
+                    value: "Delete %d Bookmarks",
+                    comment: "Tab multi-selection context menu - delete selected bookmarks"
+                ),
+                2
+            )
+        )
 
         state.clearMultiSelection()
         state.toggleMultiSelection(for: state.tabs[1])
@@ -1197,7 +1217,17 @@ final class BrowserStateMultiSelectionTests: XCTestCase {
         XCTAssertEqual(context.bookmarkCount, 2)
 
         let deleteItem = try XCTUnwrap(deleteMenuItem(in: state))
-        XCTAssertEqual(deleteItem.title, "Delete 3 Items")
+        XCTAssertEqual(
+            deleteItem.title,
+            String(
+                format: NSLocalizedString(
+                    "common.tabMultiSelectionContextMenu.deleteMultipleItemsAction",
+                    value: "Delete %d Items",
+                    comment: "Tab multi-selection context menu - delete selected bookmark items"
+                ),
+                3
+            )
+        )
         XCTAssertEqual(deleteItem.keyEquivalent, "d")
         XCTAssertEqual(deleteItem.keyEquivalentModifierMask, [.command])
     }
@@ -2407,6 +2437,16 @@ private final class TestWebContentWrapper: NSObject, WebContentWrapper {
     @objc dynamic var isBeingMirrored = false
     @objc dynamic var isSharingScreen = false
     @objc dynamic var isInContentFullscreen = false
+    @objc dynamic var isDistillable = false
+    @objc dynamic var devToolsTargetId: String? = nil
+
+    func requestAccessibilityTreeSnapshot(
+        withMinimumPages minimumPages: Int,
+        timeoutMs: Int,
+        completion: @escaping ([String: Any]?) -> Void
+    ) {
+        completion(nil)
+    }
 
     private(set) var setAsActiveTabCallCount = 0
     private(set) var updatedCustomValues: [String] = []

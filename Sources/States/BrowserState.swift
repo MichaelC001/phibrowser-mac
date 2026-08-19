@@ -56,6 +56,19 @@ class BrowserState {
         let splitActions: [SplitEvent.SplitAction]
     }
 
+    /// The extension side panel Chromium is showing in this window. One
+    /// panel per window; it survives tab switches and does not participate
+    /// in per-tab view churn. The wrapper's WebContents (and NSView) stay
+    /// owned by Chromium's extension view host — never call `close` on the
+    /// wrapper; `wrapper.nativeView` is invalid once the panel state goes
+    /// nil (Chromium destroys the view right after pushing the close).
+    struct ExtensionSidePanelState {
+        let extensionId: String
+        let displayName: String
+        let iconPNG: Data?
+        let wrapper: WebContentWrapper & NSObject
+    }
+
     /// Fires synchronously at the end of a restored-window snapshot
     /// transaction, right after its single `normalTabs` publish. Subscribed
     /// WITHOUT `receive(on:)` (mirrors the synchronous `$isInPlaceholderMode`
@@ -138,6 +151,22 @@ class BrowserState {
     }
     /// Pending insertion state for tabs created by drag/drop into the normal-tab section.
     private var pendingNormalTabInsertion: PendingNormalTabInsertion?
+
+    private struct PendingGroupedTabInsertion {
+        let id: UUID
+        let groupToken: String
+        let url: String
+        let index: Int
+        let existingTabGuids: Set<Int>
+    }
+    private var pendingGroupedTabInsertions: [PendingGroupedTabInsertion] = []
+    private static let pendingGroupedTabInsertionTimeoutSeconds: TimeInterval = 5
+
+    private struct PendingBookmarkGroupCreation {
+        let bookmarkGuids: [String]
+    }
+    private var pendingBookmarkGroupCreations: [String: PendingBookmarkGroupCreation] = [:]
+    private static let bookmarkGroupSeedTimeoutSeconds: TimeInterval = 5
 
     /// Pending insertion state for a CROSS-WINDOW group arrival. Set by
     /// the source's `moveGroupSliceToWindow` on this (target) state
@@ -269,6 +298,13 @@ class BrowserState {
     /// returns.
     private(set) var placeholderWrapper: (WebContentWrapper & NSObject)? = nil
 
+    /// The extension side panel currently shown in this window, nil when
+    /// closed. Driven by PhiChromiumCoordinator.extensionSidePanelChanged;
+    /// the container view controller mounts/unmounts the panel NSView from a
+    /// SYNCHRONOUS subscription (no async hop — see the close contract on
+    /// `ExtensionSidePanelState`).
+    @Published private(set) var extensionSidePanel: ExtensionSidePanelState? = nil
+
     @Published var isDraggingTab = false
 
     /// Side-by-side tab splits, mirrored from Chromium (source of truth).
@@ -354,6 +390,11 @@ class BrowserState {
     
     /// Prefix for AI Chat tab customGuid.
     static let aiChatIdPrefix = "ai-chat-for:"
+
+    /// Prefix carried only by transient NTP tabs that seed bookmark-manager
+    /// group creation. Recognizing it lets stale arrivals shed the marker and
+    /// become ordinary tabs instead of trying to reattach to persisted data.
+    static let bookmarkGroupSeedGuidPrefix = "bookmark-group-seed:"
     
     /// Returns the AI Chat customGuid for a tab identifier.
     static func aiChatId(for identifier: String) -> String {
@@ -370,6 +411,10 @@ class BrowserState {
     static func associatedIdentifier(from aiChatGuid: String) -> String? {
         guard aiChatGuid.hasPrefix(aiChatIdPrefix) else { return nil }
         return String(aiChatGuid.dropFirst(aiChatIdPrefix.count))
+    }
+
+    static func isBookmarkGroupSeedGuid(_ customGuid: String?) -> Bool {
+        customGuid?.hasPrefix(bookmarkGroupSeedGuidPrefix) == true
     }
     
     /// Returns the identifier used to associate AI Chat tabs with a browser tab.
@@ -506,8 +551,12 @@ class BrowserState {
         // a runtime tab still opens inside this window's Chromium profile.
         tab.profileId = profileId
         if let guid = tab.guidInLocalDB {
-            tab.setFaviconSnapshotUpdater { [weak self] data in
-                self?.localStore.updateTabFavicon(guid, favicon: data)
+            tab.setFaviconSnapshotUpdater { [weak self] data, sourceURLString in
+                self?.localStore.updatePinnedTabFavicon(
+                    guid,
+                    favicon: data,
+                    sourceURLString: sourceURLString
+                )
             }
         }
         return tab
@@ -1037,8 +1086,12 @@ class BrowserState {
 
     /// Records an explicit open source until the visible chat controller
     /// consumes it. State-driven openings use the default `.restore` source.
+    /// Every explicit AI Chat expand entry funnels through here before
+    /// flipping tab state, which makes it the choke point where an open
+    /// extension side panel gets closed (the panel ↔ chat mutex).
     func prepareAIChatSidebarOpen(trigger: AIChatSidebarOpenTrigger) {
         pendingAIChatSidebarOpenTrigger = trigger
+        closeExtensionSidePanelForAIChatExpandIfNeeded()
     }
 
     func consumeAIChatSidebarOpenTrigger() -> AIChatSidebarOpenTrigger {
@@ -1049,6 +1102,11 @@ class BrowserState {
     /// Sets the AI Chat collapsed state for a tab, mirroring it to the tab's
     /// split partner so both panes of a split share one expand/collapse state.
     func setAIChatCollapsed(for tab: Tab, collapsed: Bool) {
+        if !collapsed {
+            // Mirrored expands (split-item KVO, split sync) bypass
+            // prepareAIChatSidebarOpen; keep the panel ↔ chat mutex here too.
+            closeExtensionSidePanelForAIChatExpandIfNeeded()
+        }
         tab.toggleAIChat(collapsed)
         guard let group = splitGroup(forTabId: tab.guid),
               let partnerId = group.partnerTabId(of: tab.guid),
@@ -1110,6 +1168,90 @@ class BrowserState {
         if placeholderWrapper != nil {
             AppLogWarn("🦖 [BrowserState] deinit reached with placeholderWrapper still set — teardown paths skipped windowId=\(windowId)")
         }
+    }
+
+    // =========================================================================
+    // Extension side panel (window-level right slot)
+    //
+    // Driven by PhiChromiumCoordinator.extensionSidePanelChanged, which
+    // relays PhiSidePanelUI's bridge pushes. Same synchronous-detach contract
+    // as placeholder mode: on a close (nil) or a content replacement,
+    // Chromium may destroy the outgoing panel view right after the bridge
+    // call returns, so the outgoing NSView must leave the AppKit hierarchy
+    // before this method returns.
+    // =========================================================================
+
+    @MainActor
+    func updateExtensionSidePanel(_ newPanel: ExtensionSidePanelState?) {
+        let previous = extensionSidePanel
+        let outgoingWrapper = previous?.wrapper !== newPanel?.wrapper
+            ? previous?.wrapper : nil
+        if let outgoingWrapper, newPanel != nil {
+            // Content replacement: detach the outgoing view before the
+            // publish so the container's attach never sees two panel views
+            // stacked in the slot.
+            outgoingWrapper.nativeView?.removeFromSuperview()
+        }
+        extensionSidePanel = newPanel
+        if let outgoingWrapper, newPanel == nil {
+            // Close: published first so the container's synchronous sink
+            // can snapshot the still-attached view for its slide-out
+            // animation and detach it itself. This backstop keeps the
+            // synchronous-detach contract (Chromium may destroy the NSView
+            // right after this method returns) when no sink is installed.
+            outgoingWrapper.nativeView?.removeFromSuperview()
+        }
+        if newPanel != nil, previous == nil {
+            // Mutex with the AI Chat panel (CONTEXT.md: the two never show
+            // at the same time): a panel open collapses AI Chat on every
+            // tab of this window, so later tab switches can't bring a chat
+            // back up beside the panel. Same sweep as `closeAllAIContent`,
+            // minus the content teardown. The reverse direction lives in
+            // `closeExtensionSidePanelForAIChatExpandIfNeeded`.
+            for tab in tabs where !tab.aiChatCollapsed {
+                tab.toggleAIChat(true)
+            }
+            aiChatCollapsed = true
+            AppLogInfo("[ExtSidePanel] [BrowserState] panel opened windowId=\(windowId)")
+        } else if newPanel == nil, previous != nil {
+            AppLogInfo("[ExtSidePanel] [BrowserState] panel closed windowId=\(windowId)")
+        }
+    }
+
+    /// Asks Chromium to close the extension side panel of this window (the
+    /// Mac-side close entry point; the panel header's close button lands
+    /// here). Routes through SidePanelUI::Close so the extension observes
+    /// the same event sequence as an icon toggle-close. The panel state
+    /// flips when Chromium pushes the close back, not here.
+    @MainActor
+    func requestExtensionSidePanelClose() {
+        guard let bridge = ChromiumLauncher.sharedInstance().bridge,
+              bridge.responds(to: #selector(PhiChromiumBridgeProtocol.closeExtensionSidePanel(_:)))
+        else { return }
+        bridge.closeExtensionSidePanel(Int64(windowId))
+    }
+
+    /// Test seam for the AI Chat ↔ extension side panel mutex: unit tests
+    /// set this to observe the close request that normally goes to the
+    /// Chromium bridge (absent in the test process) and to simulate
+    /// Chromium's close push. nil in production.
+    var extensionSidePanelCloseRequestOverrideForTesting: (() -> Void)?
+
+    /// The other half of the panel ↔ AI Chat mutex: an AI Chat expand
+    /// request closes an open extension side panel first. With the
+    /// in-process bridge the close push lands back synchronously through
+    /// `updateExtensionSidePanel(nil)` before the expand proceeds, and the
+    /// extension observes its normal onClosed sequence. Called from every
+    /// expand entry (`prepareAIChatSidebarOpen` covers the explicit toggle
+    /// paths; `setAIChatCollapsed` covers state mirrors such as the split
+    /// item's divider-drag KVO).
+    private func closeExtensionSidePanelForAIChatExpandIfNeeded() {
+        guard extensionSidePanel != nil else { return }
+        if let requestClose = extensionSidePanelCloseRequestOverrideForTesting {
+            requestClose()
+            return
+        }
+        MainActor.assumeIsolated { requestExtensionSidePanelClose() }
     }
 
     func toggleFullScreenMode(_ fullScreen: Bool) {
@@ -1450,6 +1592,16 @@ class BrowserState {
         copyURLsToPasteboard(urls)
     }
 
+    /// Copies links for an explicit bookmark selection without consulting or
+    /// clearing the sidebar's multi-selection. Selected descendants of a
+    /// selected folder are suppressed by the shared bookmark-root semantics.
+    @discardableResult
+    @MainActor
+    func copyBookmarkLinks(bookmarkGuids: [String]) -> Bool {
+        let bookmarks = bookmarkRoots(for: Set(bookmarkGuids))
+        return copyURLsToPasteboard(copyableURLStrings(from: bookmarks))
+    }
+
     private var urlsForCopyingSelectedURLs: [String] {
         if multiSelection.isActive {
             return copyableURLStringsForCurrentMultiSelection()
@@ -1533,6 +1685,14 @@ class BrowserState {
         return canMoveSpaceTransfer(plan, to: targetSpace, sourceHasSpaceSlot: false)
     }
 
+    @MainActor
+    func canMoveBookmarks(bookmarkGuids: [String], to targetSpace: SpaceModel) -> Bool {
+        guard let plan = spaceTransferPlan(tabs: [], bookmarkGuids: Set(bookmarkGuids)) else {
+            return false
+        }
+        return canMoveSpaceTransfer(plan, to: targetSpace, sourceHasSpaceSlot: false)
+    }
+
     private func canMoveSpaceTransfer(_ plan: MultiSelectionSpaceTransferPlan,
                                       to targetSpace: SpaceModel,
                                       sourceHasSpaceSlot: Bool) -> Bool {
@@ -1603,6 +1763,31 @@ class BrowserState {
         return true
     }
 
+    /// Moves an explicit bookmark selection without depending on sidebar
+    /// selection state or activating the destination Space.
+    @discardableResult
+    @MainActor
+    func moveBookmarks(bookmarkGuids: [String], toSpaceId targetSpaceId: String) -> Bool {
+        guard let targetSpace = SpaceManager.shared.spaces.first(where: { $0.spaceId == targetSpaceId }) else {
+            return false
+        }
+        return moveBookmarks(bookmarkGuids: bookmarkGuids, to: targetSpace)
+    }
+
+    /// Moves an explicit bookmark selection while preserving live bookmark
+    /// cleanup and the existing cross-Space persistence semantics.
+    @discardableResult
+    @MainActor
+    func moveBookmarks(bookmarkGuids: [String], to targetSpace: SpaceModel) -> Bool {
+        guard let plan = spaceTransferPlan(tabs: [], bookmarkGuids: Set(bookmarkGuids)),
+              canMoveSpaceTransfer(plan, to: targetSpace, sourceHasSpaceSlot: false) else {
+            return false
+        }
+
+        commitBookmarkSpaceMove(plan, to: targetSpace)
+        return true
+    }
+
     @MainActor
     func canCloneMultiSelection(toSpaceId targetSpaceId: String) -> Bool {
         guard let targetSpace = SpaceManager.shared.spaces.first(where: { $0.spaceId == targetSpaceId }) else {
@@ -1627,6 +1812,14 @@ class BrowserState {
     @MainActor
     func canCloneBookmark(_ bookmark: Bookmark, to targetSpace: SpaceModel) -> Bool {
         guard let plan = spaceTransferPlan(tabs: [], bookmarkGuids: [bookmark.guid]) else {
+            return false
+        }
+        return canCloneSpaceTransfer(plan, to: targetSpace, sourceHasSpaceSlot: false)
+    }
+
+    @MainActor
+    func canCloneBookmarks(bookmarkGuids: [String], to targetSpace: SpaceModel) -> Bool {
+        guard let plan = spaceTransferPlan(tabs: [], bookmarkGuids: Set(bookmarkGuids)) else {
             return false
         }
         return canCloneSpaceTransfer(plan, to: targetSpace, sourceHasSpaceSlot: false)
@@ -1690,6 +1883,31 @@ class BrowserState {
     @MainActor
     func cloneBookmark(_ bookmark: Bookmark, to targetSpace: SpaceModel) -> Bool {
         guard let plan = spaceTransferPlan(tabs: [], bookmarkGuids: [bookmark.guid]),
+              canCloneSpaceTransfer(plan, to: targetSpace, sourceHasSpaceSlot: false) else {
+            return false
+        }
+
+        commitBookmarkSpaceClone(plan, to: targetSpace)
+        return true
+    }
+
+    /// Clones an explicit bookmark selection without depending on sidebar
+    /// selection state or activating the destination Space.
+    @discardableResult
+    @MainActor
+    func cloneBookmarks(bookmarkGuids: [String], toSpaceId targetSpaceId: String) -> Bool {
+        guard let targetSpace = SpaceManager.shared.spaces.first(where: { $0.spaceId == targetSpaceId }) else {
+            return false
+        }
+        return cloneBookmarks(bookmarkGuids: bookmarkGuids, to: targetSpace)
+    }
+
+    /// Clones an explicit bookmark selection while preserving source bookmark
+    /// bindings and the existing cross-Space persistence semantics.
+    @discardableResult
+    @MainActor
+    func cloneBookmarks(bookmarkGuids: [String], to targetSpace: SpaceModel) -> Bool {
+        guard let plan = spaceTransferPlan(tabs: [], bookmarkGuids: Set(bookmarkGuids)),
               canCloneSpaceTransfer(plan, to: targetSpace, sourceHasSpaceSlot: false) else {
             return false
         }
@@ -1863,6 +2081,21 @@ class BrowserState {
                 openTwoURLsAsSplit(primaryURL: leftURL, secondaryURL: rightURL)
             }
         }
+        duplicateBookmarkRoots(bookmarks)
+    }
+
+    /// Opens fresh tabs for an explicit bookmark selection without reading
+    /// the sidebar's multi-selection. Bookmark records remain unchanged.
+    @discardableResult
+    @MainActor
+    func duplicateBookmarks(bookmarkGuids: [String]) -> Bool {
+        duplicateBookmarkRoots(bookmarkRoots(for: Set(bookmarkGuids)))
+    }
+
+    @discardableResult
+    @MainActor
+    private func duplicateBookmarkRoots(_ bookmarks: [Bookmark]) -> Bool {
+        var didRequestDuplicate = false
         for bookmark in bookmarks where !bookmark.isFolder {
             guard let url = bookmark.url, !url.isEmpty else { continue }
             if let secondaryURL = bookmark.secondaryUrl, !secondaryURL.isEmpty {
@@ -1873,7 +2106,9 @@ class BrowserState {
                           customGuid: nil,
                           focusAfterCreate: true)
             }
+            didRequestDuplicate = true
         }
+        return didRequestDuplicate
     }
 
     private enum MultiSelectionTabUnit {
@@ -2256,6 +2491,177 @@ class BrowserState {
         clearMultiSelection()
     }
 
+    @MainActor
+    func canCreateGroupFromBookmarks(bookmarkGuids: [String]) -> Bool {
+        bookmarkRootsForGrouping(bookmarkGuids: bookmarkGuids) != nil
+    }
+
+    /// Creates a tab group from an explicit bookmark selection without using
+    /// the sidebar's multi-selection. A transient unfocused NTP seeds the
+    /// Chromium group; selected bookmarks are resolved and joined only after
+    /// that group token has been created successfully.
+    @discardableResult
+    @MainActor
+    func createGroupFromBookmarks(bookmarkGuids: [String]) -> Bool {
+        guard let bridge = ChromiumLauncher.sharedInstance().bridge,
+              let bookmarks = bookmarkRootsForGrouping(bookmarkGuids: bookmarkGuids) else {
+            return false
+        }
+
+        let customGuid = "\(Self.bookmarkGroupSeedGuidPrefix)\(UUID().uuidString)"
+        pendingBookmarkGroupCreations[customGuid] = PendingBookmarkGroupCreation(
+            bookmarkGuids: bookmarks.map(\.guid)
+        )
+        bridge.createNewTab(withUrl: "chrome://newtab/",
+                            windowId: windowId.int64Value,
+                            customGuid: customGuid,
+                            focusAfterCreate: false)
+        scheduleBookmarkGroupSeedTimeout(customGuid: customGuid)
+        return true
+    }
+
+    private func consumeBookmarkGroupSeedRequest(
+        for tab: Tab
+    ) -> PendingBookmarkGroupCreation? {
+        guard let customGuid = tab.guidInLocalDB,
+              Self.isBookmarkGroupSeedGuid(customGuid) else {
+            return nil
+        }
+        tab.guidInLocalDB = nil
+        tab.webContentWrapper?.updateTabCustomValue("")
+        return pendingBookmarkGroupCreations.removeValue(forKey: customGuid)
+    }
+
+    @MainActor
+    private func finishBookmarkGroupCreation(
+        _ pending: PendingBookmarkGroupCreation,
+        seedTabId: Int
+    ) {
+        guard let seedTab = tabs.first(where: { $0.guid == seedTabId }) else { return }
+        var shouldCloseSeed = true
+        defer {
+            if shouldCloseSeed {
+                seedTab.webContentWrapper?.close()
+            }
+        }
+        guard let bookmarks = bookmarkRootsForGrouping(bookmarkGuids: pending.bookmarkGuids),
+              let bridge = ChromiumLauncher.sharedInstance().bridge else {
+            return
+        }
+
+        let token = bridge.createGroupFromTabs(
+            withWindowId: Int64(windowId),
+            tabIds: [NSNumber(value: Int64(seedTab.guid))],
+            title: nil,
+            color: nil
+        )
+        guard !token.isEmpty else { return }
+        applyOptimisticGroupMembership(tabId: seedTab.guid, newToken: token)
+
+        let seedBookmark = bookmarkGroupSeedReuseCandidate(in: bookmarks)
+        if let seedBookmark {
+            guard reuseBookmarkGroupSeed(seedTab, for: seedBookmark) else { return }
+            // The seed is now real selected content. For a split bookmark it
+            // remains the primary pane until the asynchronously-created
+            // partner arrives and inherits the seed's group token.
+            shouldCloseSeed = false
+        }
+
+        let seedRepresentedTabCount = seedBookmark?.secondaryUrl?.isEmpty == false ? 2 : 1
+        var groupIndex = seedRepresentedTabCount
+        var normalTabsIndex = groupInsertionIndex(after: [seedTab])
+        if seedRepresentedTabCount == 2 {
+            normalTabsIndex += 1
+        }
+        var joinedLiveBookmarkSynchronously = false
+        for bookmark in bookmarks {
+            if bookmark.guid == seedBookmark?.guid { continue }
+            let hadLiveRepresentation = bookmarkHasLiveRepresentation(bookmark)
+            if moveBookmarkIntoGroup(bookmark,
+                                     toGroup: token,
+                                     groupIndex: groupIndex,
+                                     normalTabsIndex: normalTabsIndex,
+                                     focusAfterCreate: false) {
+                let representedTabCount = bookmark.secondaryUrl?.isEmpty == false ? 2 : 1
+                groupIndex += representedTabCount
+                normalTabsIndex += representedTabCount
+                joinedLiveBookmarkSynchronously =
+                    joinedLiveBookmarkSynchronously || hadLiveRepresentation
+            }
+        }
+
+        // When every selected bookmark was already live, the temporary seed
+        // can leave only after at least one real member has synchronously
+        // joined the group. Otherwise keep the failure path transactional by
+        // closing the seed and allowing the empty group to disappear.
+        if seedBookmark == nil, !joinedLiveBookmarkSynchronously {
+            return
+        }
+        updateNormalTabs()
+    }
+
+    /// Returns the bookmark whose content should replace the transient group
+    /// seed. Closed split bookmarks take priority so the seed can anchor the
+    /// group while their partner pane is created asynchronously; otherwise a
+    /// closed normal bookmark reuses it for the same empty-group protection.
+    @MainActor
+    func bookmarkGroupSeedReuseCandidateGuid(bookmarkGuids: [String]) -> String? {
+        guard let bookmarks = bookmarkRootsForGrouping(bookmarkGuids: bookmarkGuids) else {
+            return nil
+        }
+        return bookmarkGroupSeedReuseCandidate(in: bookmarks)?.guid
+    }
+
+    private func bookmarkGroupSeedReuseCandidate(in bookmarks: [Bookmark]) -> Bookmark? {
+        bookmarks.first(where: {
+            $0.secondaryUrl?.isEmpty == false && !bookmarkHasLiveRepresentation($0)
+        }) ?? bookmarks.first(where: {
+            $0.secondaryUrl?.isEmpty != false && !bookmarkHasLiveRepresentation($0)
+        })
+    }
+
+    private func bookmarkHasLiveRepresentation(_ bookmark: Bookmark) -> Bool {
+        if bookmark.secondaryUrl?.isEmpty == false {
+            guard let splitId = splitBookmarkBindings[bookmark.guid],
+                  let split = splits.first(where: { $0.id == splitId }) else {
+                return false
+            }
+            return [split.primaryTabId, split.secondaryTabId].allSatisfy { tabId in
+                tabs.contains(where: { $0.guid == tabId })
+            }
+        }
+        return tabs.contains(where: { $0.guidInLocalDB == bookmark.guid })
+    }
+
+    @MainActor
+    private func reuseBookmarkGroupSeed(_ seedTab: Tab, for bookmark: Bookmark) -> Bool {
+        guard let primaryURL = bookmark.url, !primaryURL.isEmpty,
+              let wrapper = seedTab.webContentWrapper else {
+            return false
+        }
+        let processedPrimaryURL = URLProcessor.processUserInput(primaryURL)
+        seedTab.url = processedPrimaryURL
+        wrapper.navigate(toURL: processedPrimaryURL)
+
+        guard let secondaryURL = bookmark.secondaryUrl, !secondaryURL.isEmpty else {
+            return true
+        }
+        return openNewTabAsSplit(
+            partnerTabId: seedTab.guid,
+            newTabSlot: .right,
+            partnerNavigateURL: URLProcessor.processUserInput(secondaryURL),
+            closePartnerOnTimeout: true
+        )
+    }
+
+    private func scheduleBookmarkGroupSeedTimeout(customGuid: String) {
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + Self.bookmarkGroupSeedTimeoutSeconds
+        ) { [weak self] in
+            self?.pendingBookmarkGroupCreations.removeValue(forKey: customGuid)
+        }
+    }
+
     /// Targets to add to an existing group, excluding tabs already in it.
     func multiSelectionTargets(forAddingToGroup token: String) -> [Tab] {
         orderedMultiSelectedTabs.filter { $0.groupToken != token }
@@ -2297,6 +2703,73 @@ class BrowserState {
         if didMove {
             clearMultiSelection()
         }
+    }
+
+    /// Returns whether an existing group can accept at least one selected
+    /// bookmark root that is not already represented by live content there.
+    @MainActor
+    func canAddBookmarks(bookmarkGuids: [String], toGroup token: String) -> Bool {
+        guard !token.isEmpty,
+              groups[token] != nil,
+              let bookmarks = bookmarkRootsForGrouping(bookmarkGuids: bookmarkGuids) else {
+            return false
+        }
+        return bookmarks.contains { !bookmarkIsLive($0, inGroup: token) }
+    }
+
+    /// Adds explicit bookmark roots to an existing tab group while keeping
+    /// every bookmark record. Closed normal and split bookmarks are opened by
+    /// the shared bookmark-to-group path.
+    @discardableResult
+    @MainActor
+    func addBookmarks(bookmarkGuids: [String], toGroup token: String) -> Bool {
+        guard canAddBookmarks(bookmarkGuids: bookmarkGuids, toGroup: token),
+              let bookmarks = bookmarkRootsForGrouping(bookmarkGuids: bookmarkGuids) else {
+            return false
+        }
+
+        var didAdd = false
+        var groupIndex = normalTabs.lazy.filter { $0.groupToken == token }.count
+        var normalTabsIndex = groupInsertionIndex(forGroup: token)
+        for bookmark in bookmarks {
+            if bookmarkIsLive(bookmark, inGroup: token) { continue }
+            if moveBookmarkIntoGroup(bookmark,
+                                     toGroup: token,
+                                     groupIndex: groupIndex,
+                                     normalTabsIndex: normalTabsIndex,
+                                     focusAfterCreate: false) {
+                let representedTabCount = bookmark.secondaryUrl?.isEmpty == false ? 2 : 1
+                groupIndex += representedTabCount
+                normalTabsIndex += representedTabCount
+                didAdd = true
+            }
+        }
+        return didAdd
+    }
+
+    private func bookmarkIsLive(_ bookmark: Bookmark, inGroup token: String) -> Bool {
+        if tabs.contains(where: {
+            $0.guidInLocalDB == bookmark.guid && $0.groupToken == token
+        }) {
+            return true
+        }
+        guard let splitId = splitBookmarkBindings[bookmark.guid],
+              let split = splits.first(where: { $0.id == splitId }) else {
+            return false
+        }
+        return [split.primaryTabId, split.secondaryTabId].allSatisfy { tabId in
+            tabs.first(where: { $0.guid == tabId })?.groupToken == token
+        }
+    }
+
+    @MainActor
+    private func bookmarkRootsForGrouping(bookmarkGuids: [String]) -> [Bookmark]? {
+        let bookmarks = bookmarkRoots(for: Set(bookmarkGuids))
+        guard !bookmarks.isEmpty,
+              !bookmarks.contains(where: { $0.isFolder }) else {
+            return nil
+        }
+        return bookmarks
     }
 
     private struct MultiSelectionGroupPreparation {
@@ -2513,6 +2986,20 @@ class BrowserState {
             return  // Don't add to regular tabs
         }
 
+        // Strip the transient seed identity before persisted pinned/bookmark
+        // reattachment runs below. A late arrival belongs to a request that
+        // already failed, so close it instead of leaving a stray NTP behind.
+        let isBookmarkGroupSeed = Self.isBookmarkGroupSeedGuid(tab.guidInLocalDB)
+        let pendingBookmarkGroupCreation = consumeBookmarkGroupSeedRequest(for: tab)
+        if isBookmarkGroupSeed, pendingBookmarkGroupCreation == nil {
+            tab.webContentWrapper?.close()
+            return
+        }
+
+        if BookmarkManagerRoute.matches(tab.url) {
+            tab.title = BookmarkManagerRoute.tabTitle
+        }
+
         defer {
             consumePendingSplitPartner(for: tab)
             consumePendingPrimarySplit(for: tab)
@@ -2580,6 +3067,15 @@ class BrowserState {
                                      visibleNormalTabIds: normalTabs.map(\.guid))
         let elapsed = (CFAbsoluteTimeGetCurrent() - t0) * 1000
         AppLogDebug("[NativeTab] ⏱ handleNewTabFromChromium tabId=\(tab.guid) took \(String(format: "%.2f", elapsed))ms")
+        if let pendingBookmarkGroupCreation {
+            let seedTabId = tab.guid
+            DispatchQueue.main.async { [weak self] in
+                self?.finishBookmarkGroupCreation(
+                    pendingBookmarkGroupCreation,
+                    seedTabId: seedTabId
+                )
+            }
+        }
     }
 
     /// Reattaches an arriving live tab to its pinned record when the local
@@ -2668,6 +3164,9 @@ class BrowserState {
         }
 
         // Honor any pending insertion target for tabs promoted into the normal tab list.
+        if consumePendingGroupedTabInsertion(for: tab) {
+            return
+        }
         if consumePendingNormalTabInsertion(for: tab) {
             return
         }
@@ -2733,6 +3232,14 @@ class BrowserState {
                 }
                 aiChatTabs[identifier] = tab
                 _ = PhiChromiumCoordinator.shared.drainPendingCrash(tabId: tab.guid)
+                continue
+            }
+            if Self.isBookmarkGroupSeedGuid(tab.guidInLocalDB) {
+                tab.guidInLocalDB = nil
+                DispatchQueue.main.async {
+                    tab.webContentWrapper?.updateTabCustomValue("")
+                    tab.webContentWrapper?.close()
+                }
                 continue
             }
             guard seenGuids.insert(tab.guid).inserted,
@@ -3136,6 +3643,7 @@ class BrowserState {
         for tabId in initialTabIds {
             if let tab = tabs.first(where: { $0.guid == tabId }) {
                 tab.groupToken = token
+                _ = consumePendingGroupedTabInsertion(for: tab)
             } else {
                 pendingGroupClaims[tabId] = token
             }
@@ -3196,8 +3704,11 @@ class BrowserState {
         }
         if let tab = tabs.first(where: { $0.guid == tabId }) {
             tab.groupToken = token
-            _ = consumePendingNormalTabInsertion(for: tab)
-            relocateJoinerIntoGroupRun(tabId: tabId, token: token)
+            let consumedGroupedInsertion = consumePendingGroupedTabInsertion(for: tab)
+            if !consumedGroupedInsertion {
+                _ = consumePendingNormalTabInsertion(for: tab)
+                relocateJoinerIntoGroupRun(tabId: tabId, token: token)
+            }
             // Tab.groupToken is @Published but the sidebar's
             // TabSectionController doesn't subscribe per-tab; nudge the
             // group's objectWillChange so the wrapper re-resolves children
@@ -3501,7 +4012,10 @@ class BrowserState {
             AppLogWarn("tab not found for id: \(tabId)")
             return
         }
-        if tab.title != newTitle {
+        let displayTitle = BookmarkManagerRoute.matches(tab.url)
+            ? BookmarkManagerRoute.tabTitle
+            : newTitle
+        if tab.title != displayTitle {
             // `tab.title` is @Published on the Tab itself and every title
             // renderer (sidebar cells, pinned items, TabViewModel, group
             // overview) subscribes to `tab.$title` directly, so this alone
@@ -3518,7 +4032,7 @@ class BrowserState {
             // Chromium's UI thread — so with enough continuously-active
             // renderers the queue behind it grew until `agentSpace.*` calls
             // (and CDP) blew past their client timeouts.
-            tab.title = newTitle
+            tab.title = displayTitle
         }
     }
     
@@ -4749,6 +5263,42 @@ class BrowserState {
                                  at: pending.index,
                                  syncChromiumOrder: pending.syncChromiumOrder)
         pendingNormalTabInsertion = nil
+        return true
+    }
+
+    private func scheduleGroupedTabInsertion(at index: Int, groupToken: String, url: String) {
+        let pending = PendingGroupedTabInsertion(
+            id: UUID(),
+            groupToken: groupToken,
+            url: url,
+            index: index,
+            existingTabGuids: Set(tabs.map(\.guid))
+        )
+        pendingGroupedTabInsertions.append(pending)
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + Self.pendingGroupedTabInsertionTimeoutSeconds
+        ) { [weak self] in
+            self?.pendingGroupedTabInsertions.removeAll { $0.id == pending.id }
+        }
+    }
+
+    @discardableResult
+    private func consumePendingGroupedTabInsertion(for tab: Tab) -> Bool {
+        guard let groupToken = tab.groupToken, let tabURL = tab.url else {
+            return false
+        }
+        let pendingIndex = pendingGroupedTabInsertions.firstIndex(where: { pending in
+            !pending.existingTabGuids.contains(tab.guid)
+                && pending.groupToken == groupToken
+                && URLProcessor.areEquivalentForOriginNavigation(tabURL, pending.url)
+        })
+        guard let pendingIndex else { return false }
+        let pending = pendingGroupedTabInsertions.remove(at: pendingIndex)
+        insertIntoNormalTabOrder(
+            tabGuid: tab.guid,
+            at: pending.index,
+            syncChromiumOrder: false
+        )
         return true
     }
 
@@ -6016,6 +6566,7 @@ class BrowserState {
             migrateAIChatTab(for: chromiumTab, toNewIdentifier: nil)
             chromiumTab.guidInLocalDB = nil
             chromiumTab.webContentWrapper?.updateTabCustomValue("")
+            clearBookmarkOpenedStateForComfortableLayout(realBookmark)
             applyOptimisticGroupMembership(tabId: chromiumTab.guid, newToken: tokenHex)
             insertIntoNormalTabOrder(tabGuid: chromiumTab.guid,
                                      at: normalTabsIndex,
@@ -6026,9 +6577,11 @@ class BrowserState {
                                   tabIds: tabIds,
                                   tokenHex: tokenHex)
         } else {
-            scheduleNextNormalTabInsertion(at: normalTabsIndex,
-                                           syncChromiumOrder: false,
-                                           expectedGroupToken: tokenHex)
+            scheduleGroupedTabInsertion(
+                at: normalTabsIndex,
+                groupToken: tokenHex,
+                url: url
+            )
             bridge.createTabInGroup(withWindowId: windowId.int64Value,
                                     tokenHex: tokenHex,
                                     url: url,
@@ -6198,9 +6751,11 @@ class BrowserState {
                                   tabIds: tabIds,
                                   tokenHex: tokenHex)
         } else {
-            scheduleNextNormalTabInsertion(at: normalTabsIndex,
-                                           syncChromiumOrder: false,
-                                           expectedGroupToken: tokenHex)
+            scheduleGroupedTabInsertion(
+                at: normalTabsIndex,
+                groupToken: tokenHex,
+                url: url
+            )
             bridge.createTabInGroup(withWindowId: windowId.int64Value,
                                     tokenHex: tokenHex,
                                     url: url,
