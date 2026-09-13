@@ -254,14 +254,18 @@ import PostHog
         // main() (UserDataRemovalBootstrap), before Chromium reads any state.
 
         #if !PHI_OSS_BUILD
-        // Set up PostHog before `didFinishLaunchingNotification` fires so the
-        // SDK can observe the app-opened lifecycle event. If either value is
-        // missing the app runs without analytics.
+        // Set up PostHog before `didFinishLaunchingNotification` fires. If
+        // either value is missing the app runs without analytics.
         if let token = PostHogEnv.projectToken.value,
            let host = PostHogEnv.host.value {
             let isMetricsReportingEnabled = chromiumBridge?.isMetricsReportingEnabled() ?? false
             let postHogConfig = PostHogConfig(apiKey: token, host: host)
-            postHogConfig.captureApplicationLifecycleEvents = true
+            // The SDK's lifecycle integration maps `Application Opened` /
+            // `Application Backgrounded` to `didBecomeActive` / `didResignActive`,
+            // which on macOS is every Cmd-Tab in and out — ~35 pairs per user
+            // per day, 265k events a week, none of them a launch. Off; the one
+            // launch event we want is captured by hand below.
+            postHogConfig.captureApplicationLifecycleEvents = false
             postHogConfig.reuseAnonymousId = false
             #if DEBUG
             postHogConfig.debug = true
@@ -299,6 +303,7 @@ import PostHog
             AccountController.shared.reconcilePostHogIdentityForAnonymousLaunchIfNeeded(
                 isMetricsReportingEnabled: isMetricsReportingEnabled
             )
+            captureApplicationOpened()
             captureUserDefaultsSnapshot()
         } else {
             AppLogInfo("PostHog: project token or host not set in PostHogConfig.generated.swift; skipping init")

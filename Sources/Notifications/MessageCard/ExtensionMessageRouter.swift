@@ -56,13 +56,35 @@ final class ExtensionMessageRouter {
             if let denied = AgentSpaceRouter.userSpaceOperationsRefusal() {
                 return denied
             }
-            PostHogSDK.shared.capture("agent_user_space_command", properties: [
-                "command": context.type,
-                "agent_name": AgentDriverBadge.telemetryName(context.agentName),
-            ])
+            if !Self.untrackedUserSpaceCommands.contains(context.type) {
+                PostHogSDK.shared.capture("agent_user_space_command", properties: [
+                    "command": context.type,
+                    "agent_name": AgentDriverBadge.telemetryName(context.agentName),
+                ])
+            }
             return handler(context)
         }
     }
+
+    /// Managed types that read state or probe liveness rather than change
+    /// anything. They are not counted as `agent_user_space_command`: the
+    /// metric is meant to say "an agent touched the user's browsing data",
+    /// and these ride machine loops — the browser-use-sonic CDP connection
+    /// heartbeats with `agentSpace.spaces.list` every 30s for as long as the
+    /// browser is up, and the shadow-window keep-alive pings every 45s — so
+    /// they were 98.7% of a 2.2M-event week with no user action behind them.
+    /// `credentials.get` / `credentials.getTotp` stay tracked: reading a
+    /// secret is consequential even though it mutates nothing.
+    static let untrackedUserSpaceCommands: Set<String> = [
+        "agentSpace.bookmarks.list",
+        "agentSpace.pinnedTabs.list",
+        "agentSpace.shadow.list",
+        "agentSpace.shadow.ping",
+        "agentSpace.spaces.list",
+        "agentSpace.spaces.listTabs",
+        "agentSpace.urlRules.list",
+        "credentials.status",
+    ]
 
     func register(type: String, handler: @escaping ExtensionMessageHandler) {
         handlers[type] = handler

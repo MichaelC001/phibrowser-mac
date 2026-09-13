@@ -178,6 +178,26 @@ extension AppController {
 
     // MARK: - Launch Preferences Analytics
 
+    /// Captures `Application Opened` once per launch, in the shape the PostHog
+    /// SDK's lifecycle integration gave its fresh-launch event (`from_background`
+    /// false plus the bundle version and build) so existing dashboards keep
+    /// working. The SDK integration itself is off: on macOS it re-fired this on
+    /// every `didBecomeActive`, i.e. every Cmd-Tab. `layout_mode`, `ai_enabled`
+    /// and `is_guest_mode` are added by the `beforeSend` hook in
+    /// `applicationWillFinishLaunching`, keyed on the event name, exactly as
+    /// they were for the SDK-emitted event.
+    func captureApplicationOpened() {
+        var properties: [String: Any] = ["from_background": false]
+        let info = Bundle.main.infoDictionary
+        if let version = info?["CFBundleShortVersionString"] as? String {
+            properties["version"] = version
+        }
+        if let build = info?["CFBundleVersion"] as? String {
+            properties["build"] = build
+        }
+        PostHogSDK.shared.capture("Application Opened", properties: properties)
+    }
+
     /// Captures the user's current preference selections once per app launch.
     func captureUserDefaultsSnapshot() {
         let defaultBrowser = Self.getDefaultBrowserInfo()
