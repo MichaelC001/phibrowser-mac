@@ -7,6 +7,52 @@ import Foundation
 import AppKit
 import PostHog
 
+/// Rate-limits the activation-driven `Application Opened` PostHog event.
+///
+/// The SDK's lifecycle integration fired it on every `didBecomeActive` — every
+/// Cmd-Tab — and a launch-only event starves active-day metrics for users who
+/// never quit the browser. This sits in between: launch always emits, and a
+/// later activation emits only once `minimumInterval` has passed since the
+/// last emission. The last-emission time is persisted so the throttle survives
+/// a relaunch. The clock and the store are injectable for tests.
+final class ApplicationOpenedThrottle {
+    /// Lei Zhang's review of e748d9f4: once an hour keeps daily-active metrics
+    /// alive for never-quit users without the per-Cmd-Tab flood.
+    static let minimumInterval: TimeInterval = 3600
+
+    /// UserDefaults key for the last emission date.
+    static let lastEmissionKey = "posthogApplicationOpenedLastEmission"
+
+    private let now: () -> Date
+    private let defaults: UserDefaults
+
+    init(now: @escaping () -> Date = Date.init, defaults: UserDefaults = .standard) {
+        self.now = now
+        self.defaults = defaults
+    }
+
+    var lastEmission: Date? {
+        defaults.object(forKey: Self.lastEmissionKey) as? Date
+    }
+
+    /// Whether an activation-driven emission is due: never emitted, or the
+    /// last emission is at least `minimumInterval` old. An emission recorded
+    /// moments ago — the launch emission, seen by the startup activation —
+    /// is therefore skipped, which is what keeps launch from emitting twice.
+    static func shouldEmit(lastEmission: Date?, now: Date) -> Bool {
+        guard let lastEmission else { return true }
+        return now.timeIntervalSince(lastEmission) >= minimumInterval
+    }
+
+    func shouldEmit() -> Bool {
+        Self.shouldEmit(lastEmission: lastEmission, now: now())
+    }
+
+    func recordEmission() {
+        defaults.set(now(), forKey: Self.lastEmissionKey)
+    }
+}
+
 extension AppController {
     /// Public read-only launch context exposed to the rest of the app.
     struct LaunchContext {
@@ -178,24 +224,51 @@ extension AppController {
 
     // MARK: - Launch Preferences Analytics
 
-    /// Captures `Application Opened` once per launch, in the shape the PostHog
-    /// SDK's lifecycle integration gave its fresh-launch event (`from_background`
-    /// false plus the bundle version and build) so existing dashboards keep
-    /// working. The SDK integration itself is off: on macOS it re-fired this on
-    /// every `didBecomeActive`, i.e. every Cmd-Tab. `layout_mode`, `ai_enabled`
-    /// and `is_guest_mode` are added by the `beforeSend` hook in
-    /// `applicationWillFinishLaunching`, keyed on the event name, exactly as
-    /// they were for the SDK-emitted event.
-    func captureApplicationOpened() {
-        var properties: [String: Any] = ["from_background": false]
-        let info = Bundle.main.infoDictionary
-        if let version = info?["CFBundleShortVersionString"] as? String {
-            properties["version"] = version
+    /// Captures `Application Opened` in the shape the PostHog SDK's lifecycle
+    /// integration gave it (`from_background`, plus the bundle version and
+    /// build on launch) so existing dashboards keep working. The SDK
+    /// integration itself is off: on macOS it re-fired this on every
+    /// `didBecomeActive`, i.e. every Cmd-Tab. Launch calls this unthrottled;
+    /// later activations go through `captureApplicationOpenedIfDue`.
+    /// `layout_mode`, `ai_enabled` and `is_guest_mode` are added by the
+    /// `beforeSend` hook in `applicationWillFinishLaunching`, keyed on the
+    /// event name, exactly as they were for the SDK-emitted event.
+    func captureApplicationOpened(fromBackground: Bool = false) {
+        var properties: [String: Any] = ["from_background": fromBackground]
+        if !fromBackground {
+            let info = Bundle.main.infoDictionary
+            if let version = info?["CFBundleShortVersionString"] as? String {
+                properties["version"] = version
+            }
+            if let build = info?["CFBundleVersion"] as? String {
+                properties["build"] = build
+            }
         }
-        if let build = info?["CFBundleVersion"] as? String {
-            properties["build"] = build
-        }
+        applicationOpenedThrottle.recordEmission()
         PostHogSDK.shared.capture("Application Opened", properties: properties)
+    }
+
+    /// Activation-driven `Application Opened`, at most once per
+    /// `ApplicationOpenedThrottle.minimumInterval`. The launch emission
+    /// records its own timestamp, so the activation macOS delivers as part of
+    /// startup lands inside the interval and is skipped — launch never emits
+    /// twice.
+    func captureApplicationOpenedIfDue() {
+        guard applicationOpenedThrottle.shouldEmit() else { return }
+        captureApplicationOpened(fromBackground: true)
+    }
+
+    /// Emits the throttled activation event on every `didBecomeActive` for
+    /// the rest of the process. Installed only once PostHog is configured.
+    func observeApplicationActivationForAnalytics() {
+        guard applicationActivationObservation == nil else { return }
+        applicationActivationObservation = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.captureApplicationOpenedIfDue() }
+        }
     }
 
     /// Captures the user's current preference selections once per app launch.

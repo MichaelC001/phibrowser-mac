@@ -46,6 +46,8 @@ import PostHog
     /// after setup, over the network, and every menu built before then read
     /// each flag as off.
     var featureFlagObservation: NSObjectProtocol?
+    var applicationActivationObservation: NSObjectProtocol?
+    let applicationOpenedThrottle = ApplicationOpenedThrottle()
 
     // MARK: - Auth0 login gating
     private var pendingLaunchAfterLogin: Bool = true
@@ -304,6 +306,7 @@ import PostHog
                 isMetricsReportingEnabled: isMetricsReportingEnabled
             )
             captureApplicationOpened()
+            observeApplicationActivationForAnalytics()
             captureUserDefaultsSnapshot()
         } else {
             AppLogInfo("PostHog: project token or host not set in PostHogConfig.generated.swift; skipping init")
