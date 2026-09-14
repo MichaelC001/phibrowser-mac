@@ -335,6 +335,19 @@ final class TabItemView: NSView {
     private let muteButtonSize = CGSize(width: 16, height: 16)
     private let recordingIconSize = CGSize(width: 14, height: 14)
     private let defaultMergedFaviconGap: CGFloat = 2
+    private let separatedMergedFaviconGap: CGFloat = 7
+
+    private var mergedFaviconGap: CGFloat {
+        guard let sourceTab, let pinnedSplitPartner else { return defaultMergedFaviconGap }
+        let bothShowOutlines = TabFaviconPresentation.showsDashedOutline(
+            isDiscarded: sourceTab.isDiscarded,
+            isUnloaded: sourceTab.isUnloaded
+        ) && TabFaviconPresentation.showsDashedOutline(
+            isDiscarded: pinnedSplitPartner.isDiscarded,
+            isUnloaded: pinnedSplitPartner.isUnloaded
+        )
+        return bothShowOutlines ? separatedMergedFaviconGap : defaultMergedFaviconGap
+    }
 
     // MARK: - Layout
 
@@ -421,7 +434,8 @@ final class TabItemView: NSView {
                 // occupies a single slot in the strip's layout.
                 let centerY = bounds.height / 2
                 let iconSize = metrics.faviconSize
-                let pairWidth = iconSize.width * 2 + defaultMergedFaviconGap
+                let gap = mergedFaviconGap
+                let pairWidth = iconSize.width * 2 + gap
                 let leftX = (bounds.width - pairWidth) / 2
                 faviconHostingView.isHidden = false
                 faviconHostingView.frame = CGRect(
@@ -432,7 +446,7 @@ final class TabItemView: NSView {
                 )
                 secondaryFaviconHostingView.isHidden = false
                 secondaryFaviconHostingView.frame = CGRect(
-                    x: leftX + iconSize.width + defaultMergedFaviconGap,
+                    x: leftX + iconSize.width + gap,
                     y: centerY - iconSize.height / 2,
                     width: iconSize.width,
                     height: iconSize.height

@@ -54,7 +54,7 @@ final class BrowserStateBookmarkLayoutTests: XCTestCase {
         XCTAssertTrue(waitUntil { !tab.isUnloaded })
     }
 
-    func testSidebarSplitPairTracksEachPanesMemoryReclaimedFaviconOpacity() {
+    func testSidebarSplitPairKeepsFaviconsOpaqueAcrossReclaimedStatesAndPreferenceChanges() {
         let defaults = UserDefaults.standard
         let key = PhiPreferences.GeneralSettings.dimUnloadedTabIcons.rawValue
         let originalValue = defaults.object(forKey: key)
@@ -89,7 +89,7 @@ final class BrowserStateBookmarkLayoutTests: XCTestCase {
             browserState: nil
         ))
 
-        XCTAssertEqual(cell.faviconOpacity(isLeft: true), 0.3)
+        XCTAssertEqual(cell.faviconOpacity(isLeft: true), 1)
         XCTAssertEqual(cell.faviconOpacity(isLeft: false), 1)
 
         defaults.set(false, forKey: key)
@@ -108,7 +108,7 @@ final class BrowserStateBookmarkLayoutTests: XCTestCase {
         NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: defaults)
         XCTAssertTrue(waitUntil {
             cell.faviconOpacity(isLeft: true) == 1 &&
-                cell.faviconOpacity(isLeft: false) == 0.3
+                cell.faviconOpacity(isLeft: false) == 1
         })
 
         cell.prepareForReuse()
