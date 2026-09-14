@@ -46,13 +46,18 @@ extension LocalStore {
     }
 
     @MainActor
-    func getAllURLRules() -> [SpaceURLRule] {
+    func getAllURLRules() -> [SpaceRoutingRule] {
         guard let context = mainContext else { return [] }
         do {
             let descriptor = FetchDescriptor<SpaceURLRule>(
                 sortBy: [SortDescriptor(\.spaceId), SortDescriptor(\.sortOrder)]
             )
-            return try context.fetch(descriptor)
+            return try context.fetch(descriptor).map { model in
+                SpaceRoutingRule(id: model.id, spaceId: model.spaceId, host: model.host,
+                                 pathPrefix: model.pathPrefix,
+                                 askBeforeRouting: model.askBeforeRouting,
+                                 sortOrder: model.sortOrder, createdDate: model.createdDate)
+            }
         } catch {
             AppLogError("[LocalStore] getAllURLRules failed: \(error)")
             return []
@@ -60,14 +65,19 @@ extension LocalStore {
     }
 
     @MainActor
-    func getURLRules(forSpaceId spaceId: String) -> [SpaceURLRule] {
+    func getURLRules(forSpaceId spaceId: String) -> [SpaceRoutingRule] {
         guard let context = mainContext else { return [] }
         do {
             let descriptor = FetchDescriptor<SpaceURLRule>(
                 predicate: #Predicate { $0.spaceId == spaceId },
                 sortBy: [SortDescriptor(\.sortOrder)]
             )
-            return try context.fetch(descriptor)
+            return try context.fetch(descriptor).map { model in
+                SpaceRoutingRule(id: model.id, spaceId: model.spaceId, host: model.host,
+                                 pathPrefix: model.pathPrefix,
+                                 askBeforeRouting: model.askBeforeRouting,
+                                 sortOrder: model.sortOrder, createdDate: model.createdDate)
+            }
         } catch {
             AppLogError("[LocalStore] getURLRules(forSpaceId:) failed: \(error)")
             return []
@@ -147,12 +157,12 @@ extension LocalStore {
     }
 
     @MainActor
-    func urlRulesPublisher() -> AnyPublisher<[SpaceURLRule], Never> {
+    func urlRulesPublisher() -> AnyPublisher<[SpaceRoutingRule], Never> {
         guard mainContext != nil else {
             return Just([]).eraseToAnyPublisher()
         }
 
-        let subject = CurrentValueSubject<[SpaceURLRule], Never>([])
+        let subject = CurrentValueSubject<[SpaceRoutingRule], Never>([])
         let fetch = { self.getAllURLRules() }
         subject.send(fetch())
 
@@ -168,18 +178,10 @@ extension LocalStore {
             .sink { _ in subject.send(fetch()) }
 
         return subject
-            .removeDuplicates { lhs, rhs in
-                guard lhs.count == rhs.count else { return false }
-                return zip(lhs, rhs).allSatisfy { l, r in
-                    l.id == r.id &&
-                    l.spaceId == r.spaceId &&
-                    l.host == r.host &&
-                    l.pathPrefix == r.pathPrefix &&
-                    l.askBeforeRouting == r.askBeforeRouting &&
-                    l.sortOrder == r.sortOrder
-                }
-            }
+            .removeDuplicates()
             .handleEvents(receiveCancel: { cancellable.cancel() })
+            .prefix(untilOutputFrom: NotificationCenter.default.publisher(
+                for: Self.willCloseNotification, object: self))
             .eraseToAnyPublisher()
     }
 

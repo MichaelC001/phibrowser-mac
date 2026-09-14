@@ -64,9 +64,6 @@
 		376B66B03000ABBA004BEA29 /* PhiSparkleUpdateViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 376B66AF3000ABBA004BEA29 /* PhiSparkleUpdateViewController.swift */; };
 		376CE2F32F27226A0093D937 /* NewTabViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 376CE2F22F27226A0093D937 /* NewTabViewController.swift */; };
 		376CE4002F2891670093D937 /* ExtensionMessageEnvelope.swift in Sources */ = {isa = PBXBuildFile; fileRef = 376CE3FA2F2891670093D937 /* ExtensionMessageEnvelope.swift */; };
-		747241560000000000000001 /* TravelBackScene.swift in Sources */ = {isa = PBXBuildFile; fileRef = 747241560000000000000011 /* TravelBackScene.swift */; };
-		747241560000000000000002 /* BrowserState+TravelBack.swift in Sources */ = {isa = PBXBuildFile; fileRef = 747241560000000000000012 /* BrowserState+TravelBack.swift */; };
-		747241560000000000000003 /* TravelBackMessageHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 747241560000000000000013 /* TravelBackMessageHandler.swift */; };
 		376CE4012F2891670093D937 /* ExtensionMessageRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 376CE3FB2F2891670093D937 /* ExtensionMessageRouter.swift */; };
 		376CE4022F2891670093D937 /* ExtensionMessaging.swift in Sources */ = {isa = PBXBuildFile; fileRef = 376CE3FC2F2891670093D937 /* ExtensionMessaging.swift */; };
 		376CE4032F2891670093D937 /* NotificationCardManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 376CE3FD2F2891670093D937 /* NotificationCardManager.swift */; };
@@ -232,6 +229,9 @@
 		6A4750023B12345600000402 /* BrowserMigrationSpaceIconResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A4750023B12345600000401 /* BrowserMigrationSpaceIconResolver.swift */; };
 		6A4750023B12345600000502 /* ZenDataParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A4750023B12345600000501 /* ZenDataParser.swift */; };
 		6A4750023B12345600000602 /* FaviconBackfill.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A4750023B12345600000601 /* FaviconBackfill.swift */; };
+		747241560000000000000001 /* TravelBackScene.swift in Sources */ = {isa = PBXBuildFile; fileRef = 747241560000000000000011 /* TravelBackScene.swift */; };
+		747241560000000000000002 /* BrowserState+TravelBack.swift in Sources */ = {isa = PBXBuildFile; fileRef = 747241560000000000000012 /* BrowserState+TravelBack.swift */; };
+		747241560000000000000003 /* TravelBackMessageHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 747241560000000000000013 /* TravelBackMessageHandler.swift */; };
 		793C1DDEA1022CC850FEFFF9 /* SentinelWatchdog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A44C5FF60DF6F7860A061D4 /* SentinelWatchdog.swift */; };
 		7A5B00A02EF0000000000001 /* MemoryButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A5B00A02EF0000000000002 /* MemoryButton.swift */; };
 		7B00AAAA000000050000A5B5 /* PostHogEnv.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B00AAAA000000040000A4B4 /* PostHogEnv.swift */; };
@@ -445,6 +445,7 @@
 		CC5025FC2E702603004223DC /* NSImage+Extension.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC5025FB2E702603004223DC /* NSImage+Extension.swift */; };
 		CC5025FE2E702603004223DC /* NSFont+Extension.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC5025FD2E702603004223DC /* NSFont+Extension.swift */; };
 		CC59CE000001000000000001 /* SpaceManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC59CE000001000000000002 /* SpaceManager.swift */; };
+		CC59CE0000010000000000A1 /* Space.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC59CE0000010000000000A2 /* Space.swift */; };
 		CC59CE000002000000000001 /* SpacesStripView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC59CE000002000000000002 /* SpacesStripView.swift */; };
 		CC59CE0000020000000000A1 /* SpaceSwitchBandSurface.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC59CE0000020000000000A2 /* SpaceSwitchBandSurface.swift */; };
 		CC59CE000003000000000001 /* ProfileManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC59CE000003000000000002 /* ProfileManager.swift */; };
@@ -499,7 +500,7 @@
 		CCBF8F4D2E6543E800B9A99E /* TabSectionController.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCBF8F4B2E6543E800B9A99E /* TabSectionController.swift */; };
 		CCBF8F4E2E6543E800B9A99E /* SidebarCellViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCBF8F4A2E6543E800B9A99E /* SidebarCellViews.swift */; };
 		CCBF8F502E65445800B9A99E /* SidebarTabListViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCBF8F4F2E65445800B9A99E /* SidebarTabListViewController.swift */; };
-		CCBF8F592E656DC000B9A99E /* TabModel+Sidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCBF8F582E656DC000B9A99E /* TabModel+Sidebar.swift */; };
+		CCBF8F592E656DC000B9A99E /* Tab+Sidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCBF8F582E656DC000B9A99E /* Tab+Sidebar.swift */; };
 		CCBF8F622E65719600B9A99E /* SideBarOutlineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCBF8F612E65719600B9A99E /* SideBarOutlineView.swift */; };
 		CCBF8F642E65835900B9A99E /* BookmarkModel+Sidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCBF8F632E65835900B9A99E /* BookmarkModel+Sidebar.swift */; };
 		CCBF8F662E65A9A500B9A99E /* ExtensionModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCBF8F652E65A9A500B9A99E /* ExtensionModel.swift */; };
@@ -760,9 +761,6 @@
 		376CE2F22F27226A0093D937 /* NewTabViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewTabViewController.swift; sourceTree = "<group>"; };
 		376CE3F92F2891670093D937 /* WindowThemeMessageRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowThemeMessageRouter.swift; sourceTree = "<group>"; };
 		376CE3FA2F2891670093D937 /* ExtensionMessageEnvelope.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtensionMessageEnvelope.swift; sourceTree = "<group>"; };
-		747241560000000000000011 /* TravelBackScene.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TravelBackScene.swift; sourceTree = "<group>"; };
-		747241560000000000000012 /* BrowserState+TravelBack.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "BrowserState+TravelBack.swift"; sourceTree = "<group>"; };
-		747241560000000000000013 /* TravelBackMessageHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TravelBackMessageHandler.swift; sourceTree = "<group>"; };
 		376CE3FB2F2891670093D937 /* ExtensionMessageRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtensionMessageRouter.swift; sourceTree = "<group>"; };
 		376CE3FC2F2891670093D937 /* ExtensionMessaging.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtensionMessaging.swift; sourceTree = "<group>"; };
 		376CE3FD2F2891670093D937 /* NotificationCardManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationCardManager.swift; sourceTree = "<group>"; };
@@ -924,6 +922,9 @@
 		6A4750023B12345600000501 /* ZenDataParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZenDataParser.swift; sourceTree = "<group>"; };
 		6A4750023B12345600000601 /* FaviconBackfill.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FaviconBackfill.swift; sourceTree = "<group>"; };
 		6B568F1D10AE6DD4026219CF /* AdvancedSettingHostingViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdvancedSettingHostingViewController.swift; sourceTree = "<group>"; };
+		747241560000000000000011 /* TravelBackScene.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TravelBackScene.swift; sourceTree = "<group>"; };
+		747241560000000000000012 /* BrowserState+TravelBack.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "BrowserState+TravelBack.swift"; sourceTree = "<group>"; };
+		747241560000000000000013 /* TravelBackMessageHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TravelBackMessageHandler.swift; sourceTree = "<group>"; };
 		7A5B00A02EF0000000000002 /* MemoryButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemoryButton.swift; sourceTree = "<group>"; };
 		7B00AAAA000000040000A4B4 /* PostHogEnv.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PostHogEnv.swift; sourceTree = "<group>"; };
 		7B00AAAA000000060000A6B6 /* PostHogConfig.generated.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PostHogConfig.generated.swift; sourceTree = "<group>"; };
@@ -1145,6 +1146,7 @@
 		CC5025FD2E702603004223DC /* NSFont+Extension.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "NSFont+Extension.swift"; sourceTree = "<group>"; };
 		CC50262C2E716982004223DC /* OmniBoxViewController+Suggestion.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "OmniBoxViewController+Suggestion.swift"; sourceTree = "<group>"; };
 		CC59CE000001000000000002 /* SpaceManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpaceManager.swift; sourceTree = "<group>"; };
+		CC59CE0000010000000000A2 /* Space.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Space.swift; sourceTree = "<group>"; };
 		CC59CE000002000000000002 /* SpacesStripView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpacesStripView.swift; sourceTree = "<group>"; };
 		CC59CE0000020000000000A2 /* SpaceSwitchBandSurface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpaceSwitchBandSurface.swift; sourceTree = "<group>"; };
 		CC59CE000003000000000002 /* ProfileManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileManager.swift; sourceTree = "<group>"; };
@@ -1202,7 +1204,7 @@
 		CCBF8F4A2E6543E800B9A99E /* SidebarCellViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarCellViews.swift; sourceTree = "<group>"; };
 		CCBF8F4B2E6543E800B9A99E /* TabSectionController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabSectionController.swift; sourceTree = "<group>"; };
 		CCBF8F4F2E65445800B9A99E /* SidebarTabListViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarTabListViewController.swift; sourceTree = "<group>"; };
-		CCBF8F582E656DC000B9A99E /* TabModel+Sidebar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "TabModel+Sidebar.swift"; sourceTree = "<group>"; };
+		CCBF8F582E656DC000B9A99E /* Tab+Sidebar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Tab+Sidebar.swift"; sourceTree = "<group>"; };
 		CCBF8F612E65719600B9A99E /* SideBarOutlineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SideBarOutlineView.swift; sourceTree = "<group>"; };
 		CCBF8F632E65835900B9A99E /* BookmarkModel+Sidebar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "BookmarkModel+Sidebar.swift"; sourceTree = "<group>"; };
 		CCBF8F652E65A9A500B9A99E /* ExtensionModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtensionModel.swift; sourceTree = "<group>"; };
@@ -2303,7 +2305,7 @@
 				8E8008F72FA1A73A00EB24C5 /* TabGroupSidebarItem.swift */,
 				CCBF8F452E653F6900B9A99E /* BookmarkModel.swift */,
 				CCBF8F632E65835900B9A99E /* BookmarkModel+Sidebar.swift */,
-				CCBF8F582E656DC000B9A99E /* TabModel+Sidebar.swift */,
+				CCBF8F582E656DC000B9A99E /* Tab+Sidebar.swift */,
 				CCBF8F4B2E6543E800B9A99E /* TabSectionController.swift */,
 				CCBF8F4F2E65445800B9A99E /* SidebarTabListViewController.swift */,
 				C0D1D0012FEA000000000001 /* SidebarTabListViewController+MultiSelectionDragPreview.swift */,
@@ -2433,6 +2435,7 @@
 		CC59CE000001000000000003 /* Space */ = {
 			isa = PBXGroup;
 			children = (
+				CC59CE0000010000000000A2 /* Space.swift */,
 				CC59CE000001000000000002 /* SpaceManager.swift */,
 				CC4F00020000000000000002 /* URLRouter.swift */,
 				EAD00000000000000000001B /* URLPatternMatcher.swift */,
@@ -3378,7 +3381,7 @@
 				8E9DAF422F765E83004EA160 /* PasswordManagerViewController.swift in Sources */,
 				CCBF8F502E65445800B9A99E /* SidebarTabListViewController.swift in Sources */,
 				C0D1D0022FEA000000000002 /* SidebarTabListViewController+MultiSelectionDragPreview.swift in Sources */,
-				CCBF8F592E656DC000B9A99E /* TabModel+Sidebar.swift in Sources */,
+				CCBF8F592E656DC000B9A99E /* Tab+Sidebar.swift in Sources */,
 				37C1B2F52EE287E700DD4496 /* OverlayToastContainer.swift in Sources */,
 				C0D3F1082026090800000001 /* SidebarFileDropView.swift in Sources */,
 				CC288A692E4F12CB004A6C1C /* SidebarViewController.swift in Sources */,
@@ -3546,6 +3549,7 @@
 				3758B1E52F962BA50036F2AF /* AuthManager+Provider.swift in Sources */,
 				CC288A8A2E5333CC004A6C1C /* main.m in Sources */,
 				CCBF8FA52E69915200B9A99E /* ApplicationState.swift in Sources */,
+				CC59CE0000010000000000A1 /* Space.swift in Sources */,
 				CC59CE000001000000000001 /* SpaceManager.swift in Sources */,
 				CC59CE000002000000000001 /* SpacesStripView.swift in Sources */,
 				CC59CE0000020000000000A1 /* SpaceSwitchBandSurface.swift in Sources */,

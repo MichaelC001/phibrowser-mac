@@ -486,7 +486,7 @@ final class BookmarkManagerViewController: NSViewController {
             .store(in: &cancellables)
     }
 
-    private func updateSpaceIndicator(spaces: [SpaceModel]) {
+    private func updateSpaceIndicator(spaces: [Space]) {
         let userSpaceCount = spaces.lazy.filter {
             !SpaceManager.isIncognitoSpaceId($0.spaceId) && !$0.isAgentSpace
         }.count
@@ -950,7 +950,7 @@ final class BookmarkManagerViewController: NSViewController {
     private func appendSpaceSubmenu(
         to menu: NSMenu,
         title: String,
-        spaces: [SpaceModel],
+        spaces: [Space],
         guids: [String],
         action: Selector
     ) {

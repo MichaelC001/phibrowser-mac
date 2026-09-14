@@ -972,7 +972,7 @@ extension LocalStore {
     /// Returns only bookmark rows for the requested Spaces, ordered by most
     /// recently opened first. The scripting API consumes a flat list, so this
     /// intentionally avoids reconstructing the bookmark folder tree.
-    func fetchBookmarkTabs(in spaces: [SpaceModel]) -> [TabDataModel] {
+    func fetchBookmarkTabs(in spaces: [Space]) -> [TabDataModel] {
         guard !spaces.isEmpty, let context = mainContext else { return [] }
 
         let profileIdBySpaceId = Dictionary(

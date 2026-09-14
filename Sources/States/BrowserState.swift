@@ -376,7 +376,7 @@ class BrowserState {
     let localStore: LocalStore
     let profileId: String
     /// Identifies which Space this window renders. Persisted pinned tabs and
-    /// bookmarks under the same Space share this id; see `SpaceModel`.
+    /// bookmarks under the same Space share this id; see `Space`.
     let spaceId: String
     /// True for every off-the-record window — standalone incognito windows
     /// AND the Incognito Space's window — so all data-privacy guards
@@ -1785,13 +1785,13 @@ class BrowserState {
     }
 
     @MainActor
-    private func canMoveMultiSelection(to targetSpace: SpaceModel) -> Bool {
+    private func canMoveMultiSelection(to targetSpace: Space) -> Bool {
         canMoveMultiSelection(to: targetSpace,
                               sourceHasSpaceSlot: SpaceManager.shared.slot(forWindowId: windowId) != nil)
     }
 
     @MainActor
-    func canMoveMultiSelection(to targetSpace: SpaceModel,
+    func canMoveMultiSelection(to targetSpace: Space,
                                sourceHasSpaceSlot: Bool) -> Bool {
         guard multiSelection.isActive,
               let plan = multiSelectionSpaceTransferPlan() else {
@@ -1803,7 +1803,7 @@ class BrowserState {
     }
 
     @MainActor
-    func canMoveBookmark(_ bookmark: Bookmark, to targetSpace: SpaceModel) -> Bool {
+    func canMoveBookmark(_ bookmark: Bookmark, to targetSpace: Space) -> Bool {
         guard let plan = spaceTransferPlan(tabs: [], bookmarkGuids: [bookmark.guid]) else {
             return false
         }
@@ -1811,7 +1811,7 @@ class BrowserState {
     }
 
     @MainActor
-    func canMoveBookmarks(bookmarkGuids: [String], to targetSpace: SpaceModel) -> Bool {
+    func canMoveBookmarks(bookmarkGuids: [String], to targetSpace: Space) -> Bool {
         guard let plan = spaceTransferPlan(tabs: [], bookmarkGuids: Set(bookmarkGuids)) else {
             return false
         }
@@ -1819,7 +1819,7 @@ class BrowserState {
     }
 
     private func canMoveSpaceTransfer(_ plan: MultiSelectionSpaceTransferPlan,
-                                      to targetSpace: SpaceModel,
+                                      to targetSpace: Space,
                                       sourceHasSpaceSlot: Bool) -> Bool {
         guard PhiPreferences.GeneralSettings.spacesFeatureEnabled.loadValue(),
               !isIncognito,
@@ -1878,7 +1878,7 @@ class BrowserState {
 
     @discardableResult
     @MainActor
-    func moveBookmark(_ bookmark: Bookmark, to targetSpace: SpaceModel) -> Bool {
+    func moveBookmark(_ bookmark: Bookmark, to targetSpace: Space) -> Bool {
         guard let plan = spaceTransferPlan(tabs: [], bookmarkGuids: [bookmark.guid]),
               canMoveSpaceTransfer(plan, to: targetSpace, sourceHasSpaceSlot: false) else {
             return false
@@ -1903,7 +1903,7 @@ class BrowserState {
     /// cleanup and the existing cross-Space persistence semantics.
     @discardableResult
     @MainActor
-    func moveBookmarks(bookmarkGuids: [String], to targetSpace: SpaceModel) -> Bool {
+    func moveBookmarks(bookmarkGuids: [String], to targetSpace: Space) -> Bool {
         guard let plan = spaceTransferPlan(tabs: [], bookmarkGuids: Set(bookmarkGuids)),
               canMoveSpaceTransfer(plan, to: targetSpace, sourceHasSpaceSlot: false) else {
             return false
@@ -1923,7 +1923,7 @@ class BrowserState {
     }
 
     @MainActor
-    func canCloneMultiSelection(to targetSpace: SpaceModel,
+    func canCloneMultiSelection(to targetSpace: Space,
                                 sourceHasSpaceSlot: Bool) -> Bool {
         guard multiSelection.isActive,
               let plan = multiSelectionSpaceTransferPlan() else {
@@ -1935,7 +1935,7 @@ class BrowserState {
     }
 
     @MainActor
-    func canCloneBookmark(_ bookmark: Bookmark, to targetSpace: SpaceModel) -> Bool {
+    func canCloneBookmark(_ bookmark: Bookmark, to targetSpace: Space) -> Bool {
         guard let plan = spaceTransferPlan(tabs: [], bookmarkGuids: [bookmark.guid]) else {
             return false
         }
@@ -1943,7 +1943,7 @@ class BrowserState {
     }
 
     @MainActor
-    func canCloneBookmarks(bookmarkGuids: [String], to targetSpace: SpaceModel) -> Bool {
+    func canCloneBookmarks(bookmarkGuids: [String], to targetSpace: Space) -> Bool {
         guard let plan = spaceTransferPlan(tabs: [], bookmarkGuids: Set(bookmarkGuids)) else {
             return false
         }
@@ -1951,7 +1951,7 @@ class BrowserState {
     }
 
     private func canCloneSpaceTransfer(_ plan: MultiSelectionSpaceTransferPlan,
-                                       to targetSpace: SpaceModel,
+                                       to targetSpace: Space,
                                        sourceHasSpaceSlot: Bool) -> Bool {
         guard PhiPreferences.GeneralSettings.spacesFeatureEnabled.loadValue(),
               !isIncognito,
@@ -2006,7 +2006,7 @@ class BrowserState {
 
     @discardableResult
     @MainActor
-    func cloneBookmark(_ bookmark: Bookmark, to targetSpace: SpaceModel) -> Bool {
+    func cloneBookmark(_ bookmark: Bookmark, to targetSpace: Space) -> Bool {
         guard let plan = spaceTransferPlan(tabs: [], bookmarkGuids: [bookmark.guid]),
               canCloneSpaceTransfer(plan, to: targetSpace, sourceHasSpaceSlot: false) else {
             return false
@@ -2031,7 +2031,7 @@ class BrowserState {
     /// bindings and the existing cross-Space persistence semantics.
     @discardableResult
     @MainActor
-    func cloneBookmarks(bookmarkGuids: [String], to targetSpace: SpaceModel) -> Bool {
+    func cloneBookmarks(bookmarkGuids: [String], to targetSpace: Space) -> Bool {
         guard let plan = spaceTransferPlan(tabs: [], bookmarkGuids: Set(bookmarkGuids)),
               canCloneSpaceTransfer(plan, to: targetSpace, sourceHasSpaceSlot: false) else {
             return false
@@ -2050,7 +2050,7 @@ class BrowserState {
 
     @MainActor
     private func commitBookmarkSpaceMove(_ plan: MultiSelectionSpaceTransferPlan,
-                                         to targetSpace: SpaceModel) {
+                                         to targetSpace: Space) {
         if !plan.detachedBookmarkGuids.isEmpty {
             detachBookmarkTabsForComfortableLayout(bookmarkGuids: plan.detachedBookmarkGuids)
         }
@@ -2064,7 +2064,7 @@ class BrowserState {
 
     @MainActor
     private func commitBookmarkSpaceClone(_ plan: MultiSelectionSpaceTransferPlan,
-                                          to targetSpace: SpaceModel) {
+                                          to targetSpace: Space) {
         guard !plan.bookmarkGuids.isEmpty else { return }
         localStore.cloneBookmarks(plan.bookmarkGuids,
                                   sourceProfileId: profileId,

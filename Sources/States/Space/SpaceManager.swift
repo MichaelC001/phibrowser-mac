@@ -217,7 +217,7 @@ final class SpaceManager: ObservableObject {
 
     /// spaceId prefix shared by every Incognito Space. Their ids are minted
     /// at creation (`createIncognitoSpace`) and never persisted — each Space
-    /// is a detached `SpaceModel` appended in `handleSpacesUpdate`, so store
+    /// is a detached `Space` appended in `handleSpacesUpdate`, so store
     /// mutations keyed by such an id are no-ops. The prefix also matches the
     /// pre-multi-Space sentinel id ("space.incognito"), keeping legacy
     /// persisted references (URL rules, restore snapshots) classified as
@@ -261,7 +261,7 @@ final class SpaceManager: ObservableObject {
     /// the Space's last window with it).
     private var incognitoSpaces: [IncognitoSpaceDescriptor] = []
 
-    /// Builds the detached `SpaceModel` for one live Incognito Space,
+    /// Builds the detached `Space` for one live Incognito Space,
     /// backed by the shared Chromium off-the-record profile (in-memory only;
     /// destroyed when the last Incognito Space window closes or the app
     /// quits). Detached from SwiftData by construction (never inserted into
@@ -269,7 +269,7 @@ final class SpaceManager: ObservableObject {
     /// Rebuilt on every spaces emission. A single Incognito Space is plainly
     /// "Incognito"; siblings are told apart by their ordinal ("Incognito 1",
     /// "Incognito 2", …).
-    private func makeIncognitoSpace(descriptor: IncognitoSpaceDescriptor, sortOrder: Int) -> SpaceModel {
+    private func makeIncognitoSpace(descriptor: IncognitoSpaceDescriptor, sortOrder: Int) -> Space {
         let name: String
         if incognitoSpaces.count > 1 {
             name = String(
@@ -279,13 +279,14 @@ final class SpaceManager: ObservableObject {
         } else {
             name = NSLocalizedString("spaces.builtIn.incognito.singleSpaceName", value: "Incognito", comment: "Built-in Incognito Space name when only one is open")
         }
-        return SpaceModel(
+        return Space(
             spaceId: descriptor.spaceId,
             profileId: Self.incognitoProfileId,
             name: name,
             colorHex: "#5F6368",
             iconName: descriptor.iconName,
-            sortOrder: sortOrder
+            sortOrder: sortOrder,
+            storeIdentifier: storeIdentifier
         )
     }
 
@@ -315,22 +316,23 @@ final class SpaceManager: ObservableObject {
     /// "Incognito" entry — regardless of how many Incognito Spaces are live —
     /// by the rules editor's target picker and the ask-rule Space chooser.
     /// Never inserted into a model context and never part of `spaces`.
-    func incognitoRuleTargetSpace() -> SpaceModel {
-        SpaceModel(
+    func incognitoRuleTargetSpace() -> Space {
+        Space(
             spaceId: Self.incognitoRuleTargetId,
             profileId: Self.incognitoProfileId,
             name: NSLocalizedString("spaces.builtIn.incognito.routingTargetName", value: "Incognito", comment: "Built-in Incognito target name used by URL routing"),
             colorHex: "#5F6368",
             iconName: Self.incognitoSpaceDefaultIcon,
-            sortOrder: spaces.count
+            sortOrder: spaces.count,
+            storeIdentifier: storeIdentifier
         )
     }
 
     /// Detached stand-in for the Kiosk URL-rule target. Like the generic
     /// Incognito target, this exists only to reuse the rules editor's existing
     /// Space-shaped picker model and is never inserted into SwiftData.
-    func kioskRuleTargetSpace() -> SpaceModel {
-        SpaceModel(
+    func kioskRuleTargetSpace() -> Space {
+        Space(
             spaceId: Self.kioskRuleTargetId,
             profileId: "",
             name: NSLocalizedString(
@@ -340,7 +342,8 @@ final class SpaceManager: ObservableObject {
             ),
             colorHex: "#5F6368",
             iconName: "macwindow",
-            sortOrder: spaces.count + 1
+            sortOrder: spaces.count + 1,
+            storeIdentifier: storeIdentifier
         )
     }
 
@@ -355,17 +358,9 @@ final class SpaceManager: ObservableObject {
     /// menu, whose key equivalents fire while the menu is closed) can rebuild
     /// it. Agent Spaces come and go without the user touching any of those
     /// surfaces, so nothing else would tell them to.
-    @Published private(set) var spaces: [SpaceModel] = [] {
+    @Published private(set) var spaces: [Space] = [] {
         didSet {
-            // Compare against ids snapshotted at the previous assignment —
-            // never against `oldValue`'s models. `SpaceModel`s are live
-            // SwiftData references, and a store teardown between two
-            // assignments (guest→account promotion's terminal close, an
-            // account switch releasing the old container) resets their
-            // backing data, so the first persisted-property read on one
-            // traps (PHIBROWSER-MAC-QP). The incoming array is safe to
-            // read: every assignment site fetched it from a live context
-            // in the same main-thread turn, or assigned empty.
+            // Keep menu order comparison independent of mutable presentation fields.
             let newIds = spaces.map(\.spaceId)
             let orderChanged = Self.spaceOrderDidChange(from: publishedSpaceIds,
                                                         to: newIds)
@@ -396,7 +391,7 @@ final class SpaceManager: ObservableObject {
     /// Excludes runtime-only Incognito Spaces and ephemeral agent Spaces;
     /// the General pane's Theme section locks when this holds more than
     /// one Space.
-    var userSpaces: [SpaceModel] {
+    var userSpaces: [Space] {
         spaces.filter { !Self.isIncognitoSpaceId($0.spaceId) && !$0.isAgentSpace }
     }
 
@@ -408,7 +403,7 @@ final class SpaceManager: ObservableObject {
     /// global theme (their exact rendered look) once per launch, so their
     /// color no longer shifts when the default Space's theme changes.
     /// Agent Spaces are skipped — ephemeral and orphan-swept at launch.
-    private func migrateLegacyFollowGlobalPinsIfNeeded(storeSpaces: [SpaceModel]) {
+    private func migrateLegacyFollowGlobalPinsIfNeeded(storeSpaces: [Space]) {
         guard !hasMigratedLegacyThemePins, !storeSpaces.isEmpty,
               let account = boundAccount else { return }
         hasMigratedLegacyThemePins = true
@@ -434,7 +429,7 @@ final class SpaceManager: ObservableObject {
     /// Spaces are ephemeral task workspaces and an Incognito Space is a
     /// deliberate destination — both are surfaced only by an explicit user
     /// switch, never picked as a fallback.
-    fileprivate func isAutomaticSwitchTarget(_ space: SpaceModel) -> Bool {
+    fileprivate func isAutomaticSwitchTarget(_ space: Space) -> Bool {
         !Self.isIncognitoSpaceId(space.spaceId) && !space.isAgentSpace
     }
 
@@ -442,7 +437,7 @@ final class SpaceManager: ObservableObject {
     /// Spaces. Kept so `refreshIncognitoSpacePresence()` can recompute when
     /// an Incognito Space is created or closed without waiting for the next
     /// SwiftData write.
-    private var lastStoreSpaces: [SpaceModel] = []
+    private var lastStoreSpaces: [Space] = []
 
     /// Live slots, one per user-perceived browser window. A slot is created
     /// when a new Chromium window can't be matched to an existing slot's
@@ -540,6 +535,37 @@ final class SpaceManager: ObservableObject {
     }
 
     private weak var boundAccount: Account?
+    @Published private(set) var storeIdentifier: UUID?
+    private var storeBindingGeneration = UUID()
+    private var isStoreBindingSuspended = false
+
+    /// A delayed action belongs to the store that produced its presentation.
+    /// Nil is reserved for immediate callers without a retained presentation.
+    func acceptsStoreAction(from expectedStoreIdentifier: UUID? = nil) -> Bool {
+        guard !isStoreBindingSuspended, let store = boundAccount?.localStorage else { return false }
+        return MainActor.assumeIsolated {
+            !store.isClosedForAccountDirectoryRemoval
+                && (expectedStoreIdentifier == nil || expectedStoreIdentifier == store.identifier)
+        }
+    }
+
+    @objc private func handleStoreWillClose(_ notification: Notification) {
+        guard let store = notification.object as? LocalStore,
+              store === boundAccount?.localStorage else { return }
+        suspendStoreBinding()
+    }
+
+    private func suspendStoreBinding() {
+        isStoreBindingSuspended = true
+        storeBindingGeneration = UUID()
+        spacesCancellable?.cancel()
+        spacesCancellable = nil
+        rulesCancellable?.cancel()
+        rulesCancellable = nil
+        // Detached presentation remains readable while migration awaits import.
+        // Slots and live Chromium windows must survive this transition.
+    }
+
     /// First normal Chromium profile observed this app session. Chromium can
     /// report a dangling window before browser access is granted, so retain
     /// the value independently of account binding for a later Guest entry.
@@ -552,7 +578,7 @@ final class SpaceManager: ObservableObject {
     /// `pushRoutingTableToChromium` doesn't hit the SwiftData main context on
     /// every slot lifecycle event (and lets `rules(forSpaceId:)` answer from
     /// memory). Updated only on the main thread via the publisher sink.
-    private var cachedURLRules: [SpaceURLRule] = []
+    private var cachedURLRules: [SpaceRoutingRule] = []
 
     /// True once the initial URL-rule snapshot from `urlRulesPublisher` has
     /// arrived (even if empty). External URL opens are held on this in
@@ -894,7 +920,11 @@ final class SpaceManager: ObservableObject {
     }
     private var pendingProfileChangeReopens: [String: PendingProfileChangeReopen] = [:]
 
-    private init() {
+    init(observeAccountChanges: Bool = true) {
+        NotificationCenter.default.addObserver(self, selector: #selector(handleStoreWillClose),
+                                               name: LocalStore.willCloseNotification, object: nil)
+        guard observeAccountChanges else { return }
+
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(handleLoginCompleted),
@@ -998,7 +1028,7 @@ final class SpaceManager: ObservableObject {
     }
 
     /// Currently-active Space of the key slot, derived from `activeSpaceId`.
-    var activeSpace: SpaceModel? {
+    var activeSpace: Space? {
         guard let id = activeSpaceId else { return nil }
         return spaces.first { $0.spaceId == id }
     }
@@ -5151,7 +5181,7 @@ final class SpaceManager: ObservableObject {
                      iconName: String,
                      profileId: String,
                      makeDefaultActive: Bool = true) -> String? {
-        guard let account = boundAccount else { return nil }
+        guard acceptsStoreAction(), let account = boundAccount else { return nil }
         let newSpaceId = UUID().uuidString
         account.localStorage.createSpace(
             profileId: profileId,
@@ -5166,19 +5196,20 @@ final class SpaceManager: ObservableObject {
         // SQLite fsync → NSManagedObjectContextDidSave → main-thread re-fetch),
         // which is what made "New Space" feel slow. The persisted row stays
         // authoritative: once its emission lands, `handleSpacesUpdate` replaces
-        // this array wholesale with the context-attached models. We mirror
+        // the presentation fields with the stored values. We mirror
         // `LocalStore.createSpace`'s GLOBAL max+1 sortOrder (the strip is one
         // combined list, so appending past the global max is what lands the
         // new pill last) and reuse `getAllSpaces`'s (sortOrder, profileId,
         // createdDate) ordering so the pill's position is identical before
         // and after that reconciliation — no visible reposition.
         let nextOrder = (spaces.map(\.sortOrder).max() ?? -1) + 1
-        spaces.append(SpaceModel(spaceId: newSpaceId,
+        spaces.append(Space(spaceId: newSpaceId,
                                  profileId: profileId,
                                  name: name,
                                  colorHex: colorHex,
                                  iconName: iconName,
-                                 sortOrder: nextOrder))
+                                 sortOrder: nextOrder,
+                                 storeIdentifier: account.localStorage.identifier))
         spaces.sort { lhs, rhs in
             // Mirror `handleSpacesUpdate`'s agent-Space grouping first, so a
             // user Space created while an agent Space lives appears before the
@@ -5693,16 +5724,19 @@ final class SpaceManager: ObservableObject {
         return true
     }
 
-    func renameSpace(spaceId: String, to name: String) {
+    func renameSpace(spaceId: String, to name: String, expectedStoreIdentifier: UUID? = nil) {
+        guard acceptsStoreAction(from: expectedStoreIdentifier) else { return }
         boundAccount?.localStorage.updateSpace(spaceId: spaceId, name: name)
     }
 
-    func recolorSpace(spaceId: String, colorHex: String) {
+    func recolorSpace(spaceId: String, colorHex: String, expectedStoreIdentifier: UUID? = nil) {
+        guard acceptsStoreAction(from: expectedStoreIdentifier) else { return }
         boundAccount?.localStorage.updateSpace(spaceId: spaceId, colorHex: colorHex)
     }
 
-    func changeIcon(spaceId: String, iconName: String) {
-        // An Incognito Space has no SpaceModel row — its icon lives on the
+    func changeIcon(spaceId: String, iconName: String, expectedStoreIdentifier: UUID? = nil) {
+        guard acceptsStoreAction(from: expectedStoreIdentifier) else { return }
+        // An Incognito Space has no SwiftData row — its icon lives on the
         // runtime descriptor; rebuild the synthetic entry so the strip
         // updates immediately.
         if Self.isIncognitoSpaceId(spaceId) {
@@ -5714,7 +5748,8 @@ final class SpaceManager: ObservableObject {
         boundAccount?.localStorage.updateSpace(spaceId: spaceId, iconName: iconName)
     }
 
-    func deleteSpace(spaceId: String) {
+    func deleteSpace(spaceId: String, expectedStoreIdentifier: UUID? = nil) {
+        guard acceptsStoreAction(from: expectedStoreIdentifier) else { return }
         // Incognito Spaces have no store rows to delete — "delete" for them
         // is closing the Space. No UI offers delete for them; this redirect
         // is a safety net for stray callers.
@@ -5882,7 +5917,7 @@ final class SpaceManager: ObservableObject {
     /// is an orphan and must not linger as a stale "Agent" pip. Matched by the
     /// agent-Space visual signature and confirmed taskless before deletion.
     @MainActor
-    private func deleteOrphanedAgentSpaces(from allSpaces: [SpaceModel]) {
+    private func deleteOrphanedAgentSpaces(from allSpaces: [Space]) {
         for space in allSpaces {
             guard AgentSpaceManager.isAgentSpaceModel(
                     name: space.name,
@@ -5904,7 +5939,8 @@ final class SpaceManager: ObservableObject {
     /// on the new profile (the spawn path re-reads the Space's profileId
     /// from `spaces`) and reopens the captured tabs. The user never leaves
     /// the Space. Tagged rows and URL rules stay with the Space.
-    func changeProfile(spaceId: String, toProfileId newProfileId: String) {
+    func changeProfile(spaceId: String, toProfileId newProfileId: String, expectedStoreIdentifier: UUID? = nil) {
+        guard acceptsStoreAction(from: expectedStoreIdentifier) else { return }
         guard spaceId != LocalStore.defaultSpaceId else {
             AppLogWarn("[SpaceManager] refusing to change the default space's profile")
             return
@@ -5969,13 +6005,18 @@ final class SpaceManager: ObservableObject {
             let hostSlot = keySlot ?? slots.first
             let slot = hostSlot ?? createSlot(initialSpaceId: spaceId)
             AppLogInfo("[SpaceManager] changeProfile: materializing ghost window \(ghostWindowId) of \(spaceId) first")
+            // Resolve the actual store even when the initial command was unscoped.
+            // Profile loading can finish after a different account has bound.
+            let originatingStoreIdentifier = storeIdentifier
             slot.materializeParkedGhost(windowId: ghostWindowId, spaceId: spaceId) { [weak self] ok in
-                guard let self else { return }
+                guard let self, let originatingStoreIdentifier,
+                      self.acceptsStoreAction(from: originatingStoreIdentifier) else { return }
                 guard ok else {
                     self.reclaimMintedSlot(slot, mintedForThisAttempt: hostSlot == nil)
                     return
                 }
-                self.changeProfile(spaceId: spaceId, toProfileId: newProfileId)
+                self.changeProfile(spaceId: spaceId, toProfileId: newProfileId,
+                                   expectedStoreIdentifier: originatingStoreIdentifier)
                 // The window arrived alpha-concealed (staged for a reveal it
                 // owes nobody on this path). The re-entry above retires it as
                 // a background window on the common path — a window never
@@ -6053,9 +6094,10 @@ final class SpaceManager: ObservableObject {
     /// renumbering would tie Spaces from different profiles on `sortOrder`,
     /// and the profileId tiebreak in `getAllSpaces` could then display an
     /// order other than the one the user produced.
-    func reorder(spaceIds: [String]) {
+    func reorder(spaceIds: [String], expectedStoreIdentifier: UUID? = nil) {
+        guard acceptsStoreAction(from: expectedStoreIdentifier) else { return }
         guard let account = boundAccount else { return }
-        // Incognito Spaces have no SpaceModel rows to renumber; each one's
+        // Incognito Spaces have no SwiftData rows to renumber; each one's
         // position is captured on its runtime descriptor (as an index into
         // the full list) and the store write gets the remaining ids. The
         // explicit refresh republishes the arrangement right away — a drag
@@ -6103,7 +6145,8 @@ final class SpaceManager: ObservableObject {
     /// resolved theme is applied to every live controller bound to that
     /// Space — a Space can have a live controller in multiple slots
     /// simultaneously, so we iterate.
-    func setTheme(forSpaceId spaceId: String, themeId: String?) {
+    func setTheme(forSpaceId spaceId: String, themeId: String?, expectedStoreIdentifier: UUID? = nil) {
+        guard acceptsStoreAction(from: expectedStoreIdentifier) else { return }
         guard let account = boundAccount else { return }
         var map = account.userDefaults.spaceThemeIds()
         if let themeId {
@@ -6149,7 +6192,8 @@ final class SpaceManager: ObservableObject {
     /// Persists the current appearance's overlay saturation and, in dark mode,
     /// the matching dark window-background saturation, then applies the
     /// resolved theme to live windows.
-    func setOverlaySaturation(_ saturation: CGFloat, forSpaceId spaceId: String, appearance: Appearance) {
+    func setOverlaySaturation(_ saturation: CGFloat, forSpaceId spaceId: String, appearance: Appearance, expectedStoreIdentifier: UUID? = nil) {
+        guard acceptsStoreAction(from: expectedStoreIdentifier) else { return }
         guard let account = boundAccount else { return }
         let clampedSaturation = min(max(saturation, 0.1), 0.9)
         var map = account.userDefaults.spaceThemeSaturations()
@@ -6214,7 +6258,8 @@ final class SpaceManager: ObservableObject {
 
     /// Persists one Pure-theme slider position and maps it to the separate
     /// light and dark brightness ranges.
-    func setPureThemeSliderValue(_ sliderValue: Double, forSpaceId spaceId: String) {
+    func setPureThemeSliderValue(_ sliderValue: Double, forSpaceId spaceId: String, expectedStoreIdentifier: UUID? = nil) {
+        guard acceptsStoreAction(from: expectedStoreIdentifier) else { return }
         guard let account = boundAccount else { return }
         let clampedSliderValue = min(max(sliderValue, 0), 100)
         var map = account.userDefaults.spacePureThemeSliderValues()
@@ -6343,7 +6388,7 @@ final class SpaceManager: ObservableObject {
     /// Reads from the in-memory snapshot kept by `urlRulesPublisher` — safe
     /// to call from any UI path.
     @MainActor
-    func rules(forSpaceId spaceId: String) -> [SpaceURLRule] {
+    func rules(forSpaceId spaceId: String) -> [SpaceRoutingRule] {
         cachedURLRules.filter { $0.spaceId == spaceId }
     }
 
@@ -6352,7 +6397,7 @@ final class SpaceManager: ObservableObject {
     /// universal URL Rules editor where every rule lives in a single list
     /// rather than one Space at a time.
     @MainActor
-    var allRules: [SpaceURLRule] {
+    var allRules: [SpaceRoutingRule] {
         cachedURLRules
     }
 
@@ -6363,7 +6408,8 @@ final class SpaceManager: ObservableObject {
     /// same table a second time — `replaceAllURLRules` regenerates row ids
     /// on every save, so `removeDuplicates` never suppresses it — which is
     /// harmless: Chromium replaces the table atomically.
-    func setAllRules(_ byTargetSpaceId: [String: [LocalStore.URLRuleDraft]]) {
+    func setAllRules(_ byTargetSpaceId: [String: [LocalStore.URLRuleDraft]], expectedStoreIdentifier: UUID? = nil) {
+        guard acceptsStoreAction(from: expectedStoreIdentifier) else { return }
         guard let account = boundAccount else { return }
         account.localStorage.replaceAllURLRules(byTargetSpaceId)
         pushOptimisticAllRoutingTable(byTargetSpaceId)
@@ -6428,7 +6474,8 @@ final class SpaceManager: ObservableObject {
     /// round-trip completes; the publisher re-emission then pushes the same
     /// table a second time (fresh row ids defeat `removeDuplicates`), which
     /// is harmless — Chromium replaces the table atomically.
-    func setRules(_ drafts: [LocalStore.URLRuleDraft], forSpaceId spaceId: String) {
+    func setRules(_ drafts: [LocalStore.URLRuleDraft], forSpaceId spaceId: String, expectedStoreIdentifier: UUID? = nil) {
+        guard acceptsStoreAction(from: expectedStoreIdentifier) else { return }
         guard let account = boundAccount else { return }
         account.localStorage.replaceURLRules(forSpaceId: spaceId, with: drafts)
         pushOptimisticRoutingTable(drafts: drafts, forSpaceId: spaceId)
@@ -7051,11 +7098,14 @@ final class SpaceManager: ObservableObject {
 
     @objc private func handleLoginCompleted() {
         refreshAccountBindingForBrowserAccess()
+        let generation = storeBindingGeneration
         // Re-run the reconcile skipped before browser access. Async so it lands after
         // the window manager registers the dangling windows on this same
         // `.loginCompleted` post, so `activate` swaps instead of spawning.
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
+            guard self.storeBindingGeneration == generation,
+                  !self.isStoreBindingSuspended else { return }
             // Read fresh from the bound account; `self.spaces` may still hold the
             // pre-login default-account emission (bind refreshes it async).
             let spaces = self.boundAccount?.localStorage.getAllSpaces() ?? self.spaces
@@ -7117,9 +7167,13 @@ final class SpaceManager: ObservableObject {
         }
     }
 
-    private func bind(to account: Account) {
-        guard boundAccount !== account else { return }
+    func bind(to account: Account) {
+        guard boundAccount !== account || isStoreBindingSuspended else { return }
+        guard MainActor.assumeIsolated({ !account.localStorage.isClosedForAccountDirectoryRemoval }) else { return }
+        suspendStoreBinding()
         boundAccount = account
+        storeIdentifier = account.localStorage.identifier
+        let generation = storeBindingGeneration
         // The pointer the next launch's cold-start pull follows to this
         // account's snapshot before anything binds (`coldStartPreferredProfiles`).
         UserDefaults.standard.set(account.userID, forKey: Self.lastBoundAccountUserIDKey)
@@ -7157,20 +7211,16 @@ final class SpaceManager: ObservableObject {
         let seededSpaces = MainActor.assumeIsolated {
             account.localStorage.getAllSpaces()
         }
-        // Reassigned even when the fetch is empty: a rebind reaches here
-        // without an intervening `unbind` (`refreshAccountBindingForBrowserAccess`
-        // binds the new account directly), and keeping the PREVIOUS
-        // account's models in `lastStoreSpaces` hands
-        // `refreshIncognitoSpacePresence()` references that die with that
-        // store's container. `spaces` keeps the non-empty gate so the strip
-        // isn't blanked before the new store's first delivery.
-        lastStoreSpaces = seededSpaces
-        if !seededSpaces.isEmpty {
-            spaces = seededSpaces
-        }
+        lastStoreSpaces = Space.reconcile(seededSpaces, with: spaces)
+        spaces = lastStoreSpaces
+        cachedURLRules = MainActor.assumeIsolated { account.localStorage.getAllURLRules() }
+        hasLoadedURLRules = true
+        isStoreBindingSuspended = false
 
         Task { @MainActor [weak self] in
-            guard let self, self.boundAccount === account else { return }
+            guard let self, self.boundAccount === account,
+                  self.storeBindingGeneration == generation,
+                  !self.isStoreBindingSuspended else { return }
             // Agent Spaces are ephemeral — they should exist only while their
             // (in-memory) task runs. Any that were persisted and outlived their
             // task, e.g. across this relaunch, are orphans with no live task;
@@ -7184,13 +7234,19 @@ final class SpaceManager: ObservableObject {
                 .spacesPublisher()
                 .receive(on: DispatchQueue.main)
                 .sink { [weak self] spaces in
-                    self?.handleSpacesUpdate(spaces)
+                    guard let self, self.boundAccount === account,
+                          self.storeBindingGeneration == generation,
+                          !self.isStoreBindingSuspended else { return }
+                    self.handleSpacesUpdate(spaces)
                 }
             self.rulesCancellable = account.localStorage
                 .urlRulesPublisher()
                 .receive(on: DispatchQueue.main)
                 .sink { [weak self] rules in
-                    self?.handleURLRulesUpdate(rules)
+                    guard let self, self.boundAccount === account,
+                          self.storeBindingGeneration == generation,
+                          !self.isStoreBindingSuspended else { return }
+                    self.handleURLRulesUpdate(rules)
                 }
             self.ensureDefaultSpaceForCurrentAccountIfReady()
         }
@@ -7355,6 +7411,8 @@ final class SpaceManager: ObservableObject {
     }
 
     private func unbind() {
+        suspendStoreBinding()
+        storeIdentifier = nil
         let hadBoundAccount = boundAccount != nil
         boundAccount = nil
         if hadBoundAccount {
@@ -7420,13 +7478,14 @@ final class SpaceManager: ObservableObject {
         pushSpaceStateToChromium()
     }
 
-    private func handleURLRulesUpdate(_ rules: [SpaceURLRule]) {
+    private func handleURLRulesUpdate(_ rules: [SpaceRoutingRule]) {
         cachedURLRules = rules
         hasLoadedURLRules = true
         pushRoutingTableToChromium()
     }
 
-    private func handleSpacesUpdate(_ storeSpaces: [SpaceModel]) {
+    private func handleSpacesUpdate(_ storeSpaces: [Space]) {
+        guard !isStoreBindingSuspended else { return }
         // Strip any synthetic entry from the input first: callers like
         // `handleLoginCompleted` can fall back to re-feeding `self.spaces`,
         // which already carries the appended Incognito Spaces — without this
@@ -7444,7 +7503,6 @@ final class SpaceManager: ObservableObject {
         // reorder commit (which persists the displayed order) renumbers the
         // store toward this arrangement rather than fighting it.
         updated = updated.filter { !$0.isAnyAgentSpace } + updated.filter(\.isAnyAgentSpace)
-        lastStoreSpaces = updated
         migrateLegacyFollowGlobalPinsIfNeeded(storeSpaces: updated)
         // Every live Incognito Space joins the list at its runtime position —
         // after all user Spaces (in ordinal order) until it's dragged,
@@ -7464,6 +7522,8 @@ final class SpaceManager: ObservableObject {
             let index = min(max(descriptor.sortIndex ?? defaultIndex, 0), updated.count)
             updated.insert(makeIncognitoSpace(descriptor: descriptor, sortOrder: index), at: index)
         }
+        updated = Space.reconcile(updated, with: spaces)
+        lastStoreSpaces = updated.filter { !Self.isIncognitoSpaceId($0.spaceId) }
         spaces = updated
         let defaultSpaceId = currentDefaultSpaceId
         if updated.contains(where: { $0.spaceId == defaultSpaceId }) {
@@ -7492,7 +7552,8 @@ final class SpaceManager: ObservableObject {
         // dangling and not yet in any slot's `windowsBySpaceId`, so `activate`'s
         // spawn guard cannot see them and would spawn a duplicate empty window.
         // Access-state changes re-run this once windows are registered.
-        if ApplicationState.shared.canUseBrowser {
+        if ApplicationState.shared.canUseBrowser,
+           !ApplicationState.shared.isGuestAccountPromotionInProgress {
             for slot in slots {
                 // A slot mid-cascade is on its way out: activating a fallback
                 // would respawn a window into it and fight the teardown. Hit
@@ -8302,6 +8363,10 @@ final class SpaceWindowSlot: ObservableObject {
         guard let manager,
               manager.spaces.contains(where: { $0.spaceId == spaceId }) else {
             AppLogWarn("[SpaceWindowSlot] activate ignored: unknown spaceId \(spaceId)")
+            onActivationFailed?()
+            return
+        }
+        if userInitiated, !manager.acceptsStoreAction() {
             onActivationFailed?()
             return
         }
@@ -12148,6 +12213,7 @@ final class SpaceWindowSlot: ObservableObject {
             return false
         }
 
+        prepareAccountTransitionPendingWindow(from: sourceSpaceId, to: destinationSpaceId)
         _ = evictWindow(for: sourceSpaceId, removeSlotIfEmpty: false)
         if activeSpaceId == sourceSpaceId || visibleController === controller {
             activeSpaceId = destinationSpaceId
@@ -12317,13 +12383,13 @@ final class SpaceWindowSlot: ObservableObject {
     /// changes; the spawn gap itself publishes nothing, so a strip can offer a
     /// brand-new agent pip for the ~100ms until its window registers — the
     /// switch route drops such a click rather than acting on it.
-    func presents(_ space: SpaceModel) -> Bool {
+    func presents(_ space: Space) -> Bool {
         guard space.isAnyAgentSpace else { return true }
         return agentSpaceSwitchRoute(for: space.spaceId) == .local
     }
 
     /// `manager.spaces` — strip order — reduced to what this slot presents.
-    var presentedSpaces: [SpaceModel] {
+    var presentedSpaces: [Space] {
         manager?.spaces.filter { presents($0) } ?? []
     }
 

@@ -20,7 +20,7 @@ enum ExternalKioskURLRuleResolver {
 
     static func decision(
         for url: URL,
-        rules: [SpaceURLRule]
+        rules: [SpaceRoutingRule]
     ) -> Decision {
         guard let rule = URLRouter.matchingRule(for: url, rules: rules),
               rule.spaceId != SpaceManager.kioskRuleTargetId else {

@@ -187,7 +187,7 @@ extension Bookmark: ContextMenuRepresentable {
     @MainActor
     func appendSpaceTransferMenuItems(to menu: NSMenu,
                                       browserState: BrowserState,
-                                      spaces: [SpaceModel]) -> Bool {
+                                      spaces: [Space]) -> Bool {
         let moveTargets = spaces.filter { browserState.canMoveBookmark(self, to: $0) }
         let cloneTargets = spaces.filter { browserState.canCloneBookmark(self, to: $0) }
         guard !moveTargets.isEmpty || !cloneTargets.isEmpty else { return false }

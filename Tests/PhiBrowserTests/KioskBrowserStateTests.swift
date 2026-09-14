@@ -71,7 +71,7 @@ final class KioskBrowserStateTests: XCTestCase {
     }
 
     func testSpaceMenuPrimaryTargetPrefersActiveThenDefaultSpace() {
-        let defaultSpace = SpaceModel(
+        let defaultSpace = Space(
             spaceId: LocalStore.defaultSpaceId,
             profileId: "profile",
             name: "Default",
@@ -79,7 +79,7 @@ final class KioskBrowserStateTests: XCTestCase {
             iconName: "rectangle.stack",
             sortOrder: 0
         )
-        let activeSpace = SpaceModel(
+        let activeSpace = Space(
             spaceId: "active-space",
             profileId: "profile",
             name: "Active",
@@ -113,7 +113,7 @@ final class KioskBrowserStateTests: XCTestCase {
     }
 
     func testSpaceMenuPrefersURLRuleTargetWhenSpacesShareProfile() {
-        let activeSpace = SpaceModel(
+        let activeSpace = Space(
             spaceId: "active-space",
             profileId: LocalStore.defaultProfileId,
             name: "Active",
@@ -121,7 +121,7 @@ final class KioskBrowserStateTests: XCTestCase {
             iconName: "circle",
             sortOrder: 0
         )
-        let ruleSpace = SpaceModel(
+        let ruleSpace = Space(
             spaceId: "rule-space",
             profileId: LocalStore.defaultProfileId,
             name: "Rule Target",

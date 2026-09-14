@@ -19,6 +19,48 @@ final class GuestDataMigrationTests: XCTestCase {
         temporaryDirectories.removeAll()
     }
 
+    func testMigrationRebindPublishesTargetSpacesAndRemapsGuestSelection() async throws {
+        let previousAccountID = UserDefaults.standard.object(forKey: SpaceManager.lastBoundAccountUserIDKey)
+        defer { UserDefaults.standard.set(previousAccountID, forKey: SpaceManager.lastBoundAccountUserIDKey) }
+        let root = try makeTemporaryDirectory()
+        let source = try makeFileBackedStore(userID: "space-migration-source-\(UUID().uuidString)",
+                                             directory: root.appendingPathComponent("source"))
+        let target = try makeFileBackedStore(userID: "space-migration-target-\(UUID().uuidString)",
+                                             directory: root.appendingPathComponent("target"))
+        temporaryDirectories.append(source.account.userDataStorage)
+        temporaryDirectories.append(target.account.userDataStorage)
+        source.account.localStorage = source.store
+        target.account.localStorage = target.store
+        try seedRichGuestStore(source.store)
+        try seedExistingTargetStore(target.store)
+        let manager = SpaceManager(observeAccountChanges: false)
+        manager.bind(to: source.account)
+        let guestSpace = try XCTUnwrap(manager.spaces.first { $0.spaceId == "space-work" })
+        let slot = SpaceWindowSlot(manager: manager, initialSpaceId: guestSpace.spaceId)
+
+        let receipt = try await GuestDataMigrationCoordinator.migrate(
+            sourceStore: source.store, sourceDefaults: source.defaults, sourceUserID: source.account.userID,
+            targetStore: target.store, targetDefaults: target.defaults, targetUserID: target.account.userID,
+            journalStore: GuestDataMigrationJournalStore(rootURL: root.appendingPathComponent("journal")),
+            receiptStore: GuestDataMigrationReceiptStore(rootURL: root.appendingPathComponent("receipts")))
+        XCTAssertNil(source.store.getMainContext())
+        XCTAssertFalse(manager.acceptsStoreAction(from: guestSpace.storeIdentifier))
+        manager.bind(to: target.account)
+        let mappedID = try XCTUnwrap(receipt.mappings.spaceIDs[guestSpace.spaceId])
+        XCTAssertNotEqual(mappedID, guestSpace.spaceId)
+        slot.prepareAccountTransitionPendingWindow(from: guestSpace.spaceId, to: mappedID)
+        let displayed = try XCTUnwrap(slot.presentedSpaces.first { $0.spaceId == slot.activeSpaceId })
+        XCTAssertEqual(displayed.spaceId, mappedID)
+        XCTAssertEqual(displayed.profileId, receipt.mappings.targetSpaceProfileIDs[mappedID])
+        XCTAssertEqual(displayed.name, "Guest Work")
+        XCTAssertEqual(displayed.storeIdentifier, target.store.identifier)
+        XCTAssertEqual(manager.spaces.map(\.spaceId), target.store.getAllSpaces().map(\.spaceId))
+        XCTAssertTrue(manager.spaces.allSatisfy { $0.storeIdentifier == target.store.identifier })
+        XCTAssertEqual(manager.allRules, target.store.getAllURLRules())
+        XCTAssertEqual(guestSpace.name, "Guest Work", "Retained Guest presentation survives store destruction")
+        try await target.store.closeForAccountDirectoryRemoval()
+    }
+
     func testPendingGuestAccessRequiresRecoveryBeforeSourceStaging() {
         let targetUserID = "journal-target"
 

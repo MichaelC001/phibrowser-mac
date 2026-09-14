@@ -211,7 +211,7 @@ final class LocalStoreProfileTests: XCTestCase {
         try context.save()
 
         XCTAssertEqual(
-            store.fetchBookmarkTabs(in: [selectedSpace]).map(\.guid),
+            store.fetchBookmarkTabs(in: store.getAllSpaces().filter { $0.spaceId == selectedSpace.spaceId }).map(\.guid),
             ["recent", "older", "never"]
         )
     }

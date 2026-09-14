@@ -747,8 +747,8 @@ extension BookmarkManager {
         for model in sortedModels {
             let bookmark = reusableBookmark(for: model, reusingExistingBookmarks: reusingExistingBookmarks) ?? Bookmark(model)
             bookmark.updateSidebarFields(from: model)
-            bookmark.setFaviconSnapshotUpdater { [weak self] data in
-                self?.browserState?.localStore.updateTabFavicon(model.guid, favicon: data)
+            bookmark.setFaviconSnapshotUpdater { [weak self, guid = model.guid] data in
+                self?.browserState?.localStore.updateTabFavicon(guid, favicon: data)
             }
             bookmarkMap[model.guid] = bookmark
         }
@@ -776,7 +776,7 @@ extension BookmarkManager {
         // dereferencing `profile.bookmarkRoot` so the same code works
         // whether the active Space is the default (root shared with the
         // Profile) or a user-created Space (root owned only by the
-        // SpaceModel).
+        // Space).
         let rootGuid = sortedModels.first { $0.parent == nil && $0.dataType == .bookmarkFolder }?.guid
 
         var topLevel: [Bookmark] = []

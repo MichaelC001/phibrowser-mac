@@ -85,6 +85,13 @@ struct SpacesSettingsView: View {
         .onReceive(NotificationCenter.default.publisher(for: .spaceThemeDidChange)) { _ in
             syncThemeControls()
         }
+        .onChange(of: spaceManager.storeIdentifier) { _, _ in
+            draggingSpaceId = nil
+            orderedIds = listedSpaces.map(\.spaceId)
+            selectedSpaceId = nil
+            selectInitialSpace()
+            syncThemeControls()
+        }
         .onReceive(NotificationCenter.default.publisher(for: .themeDidChange)) { _ in
             syncThemeControls()
         }
@@ -97,7 +104,7 @@ struct SpacesSettingsView: View {
     /// Incognito Spaces are excluded: they are runtime-only (created from
     /// File ▸ New Incognito Space, gone once closed), so settings has
     /// nothing to manage for them.
-    private var listedSpaces: [SpaceModel] {
+    private var listedSpaces: [Space] {
         spaceManager.spaces.filter { !SpaceManager.isIncognitoSpaceId($0.spaceId) }
     }
 
@@ -155,14 +162,16 @@ struct SpacesSettingsView: View {
         .onDrop(of: [.text], delegate: SpaceListResetDropDelegate(
             draggingSpaceId: $draggingSpaceId,
             orderedIds: $orderedIds,
-            commit: { spaceManager.reorder(spaceIds: $0) }
+            commit: { [storeIdentifier = spaceManager.storeIdentifier] in
+                spaceManager.reorder(spaceIds: $0, expectedStoreIdentifier: storeIdentifier)
+            }
         ))
     }
 
     /// Rows in drag order: the local `orderedIds` snapshot (rearranged live as a
     /// drag hovers across rows), with any Space the snapshot doesn't know yet
     /// appended in the manager's order. Mirrors SpacesStripView.orderedSpaces.
-    private var orderedSpaces: [SpaceModel] {
+    private var orderedSpaces: [Space] {
         // Drop agent Spaces — ephemeral background workspaces (CDP / phi-agent)
         // the user can't meaningfully rename, recolor, re-profile, or delete.
         // The incognito Space is intentionally kept (see `listedSpaces`).
@@ -175,7 +184,7 @@ struct SpacesSettingsView: View {
         return result
     }
 
-    private func spaceListRow(_ space: SpaceModel) -> some View {
+    private func spaceListRow(_ space: Space) -> some View {
         let isSelected = space.spaceId == selectedSpaceId
         // The well-known default-space row's profile is immutable (its
         // bookmark root is shared with the legacy per-profile root) — keyed
@@ -244,11 +253,13 @@ struct SpacesSettingsView: View {
             targetSpaceId: space.spaceId,
             draggingSpaceId: $draggingSpaceId,
             orderedIds: $orderedIds,
-            commit: { spaceManager.reorder(spaceIds: $0) }
+            commit: { [storeIdentifier = spaceManager.storeIdentifier] in
+                spaceManager.reorder(spaceIds: $0, expectedStoreIdentifier: storeIdentifier)
+            }
         ))
     }
 
-    private func spaceSwatch(_ space: SpaceModel, size: CGFloat, isSelected: Bool = false) -> some View {
+    private func spaceSwatch(_ space: Space, size: CGFloat, isSelected: Bool = false) -> some View {
         SpaceIconView(
             storedValue: space.iconName,
             size: size * 0.8,
@@ -264,7 +275,7 @@ struct SpacesSettingsView: View {
     /// item it came from rather than a smaller content-hugging chip. A
     /// dedicated, full-opacity view because the implicit snapshot inherited
     /// the dimmed in-list row and blanked the dragged item.
-    private func spaceDragPreview(_ space: SpaceModel) -> some View {
+    private func spaceDragPreview(_ space: Space) -> some View {
         let profileName = profileManager.profile(for: space.profileId)?.displayName ?? ""
         return HStack(spacing: 8) {
             Image(systemName: "line.3.horizontal")
@@ -342,7 +353,7 @@ struct SpacesSettingsView: View {
                             width: geo.size.width,
                             fillsAvailableHeight: true,
                             onSelect: { selection in
-                                spaceManager.changeIcon(spaceId: space.spaceId, iconName: selection.storageValue)
+                                spaceManager.changeIcon(spaceId: space.spaceId, iconName: selection.storageValue, expectedStoreIdentifier: space.storeIdentifier)
                             }
                         )
                     }
@@ -516,7 +527,7 @@ struct SpacesSettingsView: View {
 
     // MARK: - Selection
 
-    private var selectedSpace: SpaceModel? {
+    private var selectedSpace: Space? {
         guard let id = selectedSpaceId else { return nil }
         return listedSpaces.first(where: { $0.spaceId == id })
     }
@@ -608,7 +619,10 @@ struct SpacesSettingsView: View {
                         dotDiameter: Self.themeSwatchDiameter,
                         ringDiameter: Self.themeSwatchRingDiameter,
                         titleFontSize: Self.themeSwatchTitleFontSize,
-                        action: { selectTheme(theme.id, for: spaceId) }
+                        action: { [storeIdentifier = spaceManager.storeIdentifier] in
+                            guard spaceManager.acceptsStoreAction(from: storeIdentifier) else { return }
+                            selectTheme(theme.id, for: spaceId)
+                        }
                     )
                     .frame(width: Self.themeSwatchDiameter)
                 }
@@ -630,9 +644,11 @@ struct SpacesSettingsView: View {
     }
 
     private func themeSliderBinding(_ spaceId: String) -> Binding<Double> {
-        Binding(
+        let storeIdentifier = spaceManager.storeIdentifier
+        return Binding(
             get: { spaceThemeSliderValue },
             set: { newValue in
+                guard spaceManager.acceptsStoreAction(from: storeIdentifier) else { return }
                 spaceThemeSliderValue = newValue
                 if spaceManager.resolvedThemeId(forSpaceId: spaceId) == Theme.pure.id {
                     spaceManager.setPureThemeSliderValue(
@@ -668,9 +684,11 @@ struct SpacesSettingsView: View {
     }
 
     private func profileBinding(_ spaceId: String) -> Binding<String> {
-        Binding(
+        let storeIdentifier = spaceManager.storeIdentifier
+        return Binding(
             get: { spaceManager.spaces.first(where: { $0.spaceId == spaceId })?.profileId ?? "" },
             set: { newProfileId in
+                guard spaceManager.acceptsStoreAction(from: storeIdentifier) else { return }
                 guard let profile = profileManager.profile(for: newProfileId) else { return }
                 changeSpaceProfile(spaceId: spaceId, to: profile)
             }
@@ -703,7 +721,7 @@ struct SpacesSettingsView: View {
         renameSpace(space)
     }
 
-    private func renameSpace(_ space: SpaceModel) {
+    private func renameSpace(_ space: Space) {
         let alert = NSAlert()
         alert.messageText = NSLocalizedString("settings.spaces.renameDialog.title", value: "Rename Space", comment: "Title of the rename-Space dialog")
         alert.informativeText = NSLocalizedString("settings.spaces.renameDialog.message", value: "Enter a new name for this Space.", comment: "Body of the rename-Space dialog")
@@ -720,10 +738,11 @@ struct SpacesSettingsView: View {
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         let trimmed = textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, trimmed != space.name else { return }
-        spaceManager.renameSpace(spaceId: space.spaceId, to: trimmed)
+        spaceManager.renameSpace(spaceId: space.spaceId, to: trimmed, expectedStoreIdentifier: space.storeIdentifier)
     }
 
     private func changeSpaceProfile(spaceId: String, to profile: PhiBrowserProfile) {
+        let storeIdentifier = spaceManager.storeIdentifier
         guard let space = spaceManager.spaces.first(where: { $0.spaceId == spaceId }),
               spaceId != LocalStore.defaultSpaceId,
               space.profileId != profile.profileId else { return }
@@ -737,10 +756,10 @@ struct SpacesSettingsView: View {
         alert.addButton(withTitle: NSLocalizedString("settings.spaces.changeProfileConfirmation.confirmButton", value: "Change Profile", comment: "Confirm button of the change-Space-profile confirmation"))
         alert.addButton(withTitle: NSLocalizedString("settings.spaces.changeProfileConfirmation.cancelButton", value: "Cancel", comment: "Cancel button"))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
-        spaceManager.changeProfile(spaceId: spaceId, toProfileId: profile.profileId)
+        spaceManager.changeProfile(spaceId: spaceId, toProfileId: profile.profileId, expectedStoreIdentifier: storeIdentifier)
     }
 
-    private func deleteSpace(_ space: SpaceModel) {
+    private func deleteSpace(_ space: Space) {
         guard spaceManager.canDeleteSpace(spaceId: space.spaceId) else { return }
         let alert = NSAlert()
         alert.messageText = String(
@@ -752,7 +771,7 @@ struct SpacesSettingsView: View {
         alert.addButton(withTitle: NSLocalizedString("settings.spaces.deleteConfirmation.deleteButton", value: "Delete", comment: "Destructive button"))
         alert.addButton(withTitle: NSLocalizedString("settings.spaces.deleteConfirmation.cancelButton", value: "Cancel", comment: "Cancel button"))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
-        spaceManager.deleteSpace(spaceId: space.spaceId)
+        spaceManager.deleteSpace(spaceId: space.spaceId, expectedStoreIdentifier: space.storeIdentifier)
         PostHogSDK.shared.capture("space_deleted")
     }
 

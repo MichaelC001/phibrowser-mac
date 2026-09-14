@@ -356,6 +356,17 @@ struct SpacesStripView: View {
         // view's chip flight — outermost, so the frames include the strip's
         // own padding and match the hosting view's bounds.
         .coordinateSpace(name: Self.stripRootSpaceName)
+        .onChange(of: manager.storeIdentifier) { _, _ in
+            isPickerOpen = false
+            isIconPickerOpen = false
+            iconEditSpaceId = nil
+            hoveredSpaceId = nil
+            highlightedPipId = nil
+            stripDraggingId = nil
+            stripOrderedIds = []
+            stripGeometry.pipFrames = [:]
+            tooltipController.dismissImmediately()
+        }
         .onChange(of: slot.iconPickerRequestToken) { _, _ in
             openActiveIconPicker()
         }
@@ -507,12 +518,12 @@ struct SpacesStripView: View {
         }
     }
 
-    private func spaceModel(_ id: String?) -> SpaceModel? {
+    private func spaceModel(_ id: String?) -> Space? {
         guard let id else { return nil }
         return manager.spaces.first { $0.spaceId == id }
     }
 
-    private func label(for space: SpaceModel?) -> some View {
+    private func label(for space: Space?) -> some View {
         activeIcon(for: space)
     }
 
@@ -547,7 +558,7 @@ struct SpacesStripView: View {
     /// (popped by the hosting view), not the icon picker — but this view still
     /// hosts the icon-picker popover that the menu's / tab-area "Change Icon…"
     /// entry anchors to.
-    private func activeIcon(for space: SpaceModel?) -> some View {
+    private func activeIcon(for space: Space?) -> some View {
         stripIcon(
             storedValue: space?.iconName,
             symbolWeight: .semibold,
@@ -561,13 +572,13 @@ struct SpacesStripView: View {
     }
 
     @ViewBuilder
-    private func iconPicker(for space: SpaceModel?) -> some View {
+    private func iconPicker(for space: Space?) -> some View {
         if let space {
             IconPicker(
                 selected: IconPickerSelection.fromStorageValue(space.iconName),
                 showsGroups: true,
                 onSelect: { selection in
-                    manager.changeIcon(spaceId: space.spaceId, iconName: selection.storageValue)
+                    manager.changeIcon(spaceId: space.spaceId, iconName: selection.storageValue, expectedStoreIdentifier: space.storeIdentifier)
                     isIconPickerOpen = false
                 }
             )
@@ -655,9 +666,9 @@ struct SpacesStripView: View {
         .onDrop(of: [.text], delegate: SpaceListResetDropDelegate(
             draggingSpaceId: $stripDraggingId,
             orderedIds: $stripOrderedIds,
-            commit: { ids in
+            commit: { [storeIdentifier = manager.storeIdentifier] ids in
                 guard !slot.isCreatingSpace else { return }
-                manager.reorder(spaceIds: ids)
+                manager.reorder(spaceIds: ids, expectedStoreIdentifier: storeIdentifier)
             }
         ))
         .onAppear {
@@ -735,9 +746,9 @@ struct SpacesStripView: View {
                         targetSpaceId: space.spaceId,
                         draggingSpaceId: $stripDraggingId,
                         orderedIds: $stripOrderedIds,
-                        commit: { ids in
+                        commit: { [storeIdentifier = manager.storeIdentifier] ids in
                             guard !slot.isCreatingSpace else { return }
-                            manager.reorder(spaceIds: ids)
+                            manager.reorder(spaceIds: ids, expectedStoreIdentifier: storeIdentifier)
                         }
                     ))
             }
@@ -990,7 +1001,7 @@ struct SpacesStripView: View {
     /// Drawn from `slot.presentedSpaces`, not `manager.spaces`: an agent Space
     /// is offered only by the window hosting it, so this strip skips the agent
     /// pips that belong to other windows (`SpaceWindowSlot.presents`).
-    private var stripOrderedSpaces: [SpaceModel] {
+    private var stripOrderedSpaces: [Space] {
         let presented = slot.presentedSpaces
         guard !stripOrderedIds.isEmpty else { return presented }
         let byId = Dictionary(uniqueKeysWithValues: presented.map { ($0.spaceId, $0) })
@@ -1046,7 +1057,7 @@ struct SpacesStripView: View {
     /// stored icon when no task is live (e.g. a persistent agent Space between
     /// rounds).
     @ViewBuilder
-    private func pipIcon(for space: SpaceModel) -> some View {
+    private func pipIcon(for space: Space) -> some View {
         if let task = agentSpaceManager.tasksBySpaceId[space.spaceId] {
             let badge = AgentDriverBadge.make(agentName: task.agentName, origin: task.origin)
             Group {
@@ -1072,7 +1083,7 @@ struct SpacesStripView: View {
         }
     }
 
-    private func spacePip(for space: SpaceModel) -> some View {
+    private func spacePip(for space: Space) -> some View {
         // The highlight follows `activeSpaceId` (matching the Spaces menu).
         // `activate` flips it to the target up front — before the vertical
         // push-in animation starts — so the active pip moves to the new Space
@@ -1090,8 +1101,10 @@ struct SpacesStripView: View {
             .matchedGeometryEffect(id: space.spaceId, in: pipGlassNamespace)
             // Same frame again, measured for the hosting view's chip flight
             // (matchedGeometryEffect anchors are SwiftUI-internal).
-            .background(publishGeometry { geometry, frame in
-                geometry.pipFrames[space.spaceId] = frame
+            // Layout callbacks can outlive the Guest store during migration.
+            // Capture the ID now, while the model's backing data is valid.
+            .background(publishGeometry { [spaceId = space.spaceId] geometry, frame in
+                geometry.pipFrames[spaceId] = frame
             })
             .background {
                 // A hovered inactive pip gets the sidebar's dim hover wash,
@@ -1143,7 +1156,7 @@ struct SpacesStripView: View {
                 selected: IconPickerSelection.fromStorageValue(space.iconName),
                 showsGroups: true,
                 onSelect: { selection in
-                    manager.changeIcon(spaceId: space.spaceId, iconName: selection.storageValue)
+                    manager.changeIcon(spaceId: space.spaceId, iconName: selection.storageValue, expectedStoreIdentifier: space.storeIdentifier)
                     iconEditSpaceId = nil
                 }
             )
@@ -1151,7 +1164,8 @@ struct SpacesStripView: View {
     }
 
     /// Shared click handling for a pip and its peek stand-in.
-    private func activatePip(_ space: SpaceModel) {
+    private func activatePip(_ space: Space) {
+        guard manager.acceptsStoreAction(from: space.storeIdentifier) else { return }
         // While the Create-a-Space overlay is open the strip stays visible
         // for reference only: a click must NOT switch Spaces (that swaps
         // away the very window hosting the form). Hover still shows the
@@ -1197,7 +1211,7 @@ struct SpacesStripView: View {
     /// stand-in covers only what the user can see. Visuals come from the real
     /// pip underneath — the shared `highlightedPipId` draws its hover wash
     /// (clipped to the same sliver) and `hoverBegan` presents its hover card.
-    private func peekHitTarget(for space: SpaceModel) -> some View {
+    private func peekHitTarget(for space: Space) -> some View {
         Button {
             activatePip(space)
         } label: {
@@ -1226,7 +1240,7 @@ struct SpacesStripView: View {
     /// stays visible beside the form there and its clicks are disabled, so the
     /// hover card is the only way to read a pip's info. `.onHover` drives
     /// `hoveredSpaceId`.
-    private func isHoverCardPresented(for space: SpaceModel) -> Bool {
+    private func isHoverCardPresented(for space: Space) -> Bool {
         hoveredSpaceId == space.spaceId && stripDraggingId == nil && iconEditSpaceId == nil
             && slot.hoverCardSuppressedSpaceId != space.spaceId
     }
@@ -1337,7 +1351,7 @@ struct SpacesStripView: View {
 
     /// Presents the icon/emoji picker anchored to a pip when its right-click
     /// "Change Icon…" entry has targeted that Space.
-    private func iconEditBinding(for space: SpaceModel) -> Binding<Bool> {
+    private func iconEditBinding(for space: Space) -> Binding<Bool> {
         Binding(
             get: { iconEditSpaceId == space.spaceId },
             set: { presented in
@@ -1355,7 +1369,7 @@ struct SpacesStripView: View {
     /// `SpaceHoverTooltipController`) so it can't swallow the click that switches
     /// Spaces. The shortcut is empty for Spaces past the ninth, which have no
     /// ⌃-number binding.
-    private func hoverCard(for space: SpaceModel) -> SpaceHoverCard {
+    private func hoverCard(for space: Space) -> SpaceHoverCard {
         SpaceHoverCard(
             profileName: profileDisplayName(for: space.profileId),
             iconStoredValue: space.iconName,
@@ -1369,7 +1383,7 @@ struct SpacesStripView: View {
     /// The effective (remap-aware) switch shortcut for a Space, resolved from its
     /// position in the manager's order — mirroring how the Spaces menu binds
     /// ⌃1…⌃9. Nil past the ninth Space or if the binding was cleared.
-    private func spaceShortcut(for space: SpaceModel) -> ShortcutsKey? {
+    private func spaceShortcut(for space: Space) -> ShortcutsKey? {
         guard let index = manager.spaces.firstIndex(where: { $0.spaceId == space.spaceId }),
               let command = CommandWrapper.spaceSelectionCommand(at: index) else { return nil }
         return Shortcuts.key(for: command)
@@ -1448,7 +1462,8 @@ struct SpacesStripView: View {
             slot: slot,
             profileManager: profileManager,
             windowAppearance: windowAppearance,
-            onActivate: { spaceId in
+            onActivate: { [storeIdentifier = manager.storeIdentifier] spaceId in
+                guard manager.acceptsStoreAction(from: storeIdentifier) else { return }
                 slot.activate(spaceId: spaceId, userInitiated: true)
                 isPickerOpen = false
             },
@@ -1456,8 +1471,12 @@ struct SpacesStripView: View {
                 isPickerOpen = false
                 promptRename(for: space)
             },
-            onChangeIcon: { manager.changeIcon(spaceId: $0, iconName: $1) },
-            onSetTheme: { manager.setTheme(forSpaceId: $0, themeId: $1) },
+            onChangeIcon: { [storeIdentifier = manager.storeIdentifier] in
+                manager.changeIcon(spaceId: $0, iconName: $1, expectedStoreIdentifier: storeIdentifier)
+            },
+            onSetTheme: { [storeIdentifier = manager.storeIdentifier] in
+                manager.setTheme(forSpaceId: $0, themeId: $1, expectedStoreIdentifier: storeIdentifier)
+            },
             currentThemeId: { manager.resolvedThemeId(forSpaceId: $0) },
             onDelete: { space in
                 isPickerOpen = false
@@ -1472,7 +1491,7 @@ struct SpacesStripView: View {
         )
     }
 
-    private var activeSpace: SpaceModel? {
+    private var activeSpace: Space? {
         if let id = slot.activeSpaceId {
             return manager.spaces.first { $0.spaceId == id }
         }
@@ -1487,13 +1506,13 @@ struct SpacesStripView: View {
 
     /// A Space's effective theme, resolved through the single source of
     /// truth (pinned theme + custom overlay opacity).
-    private func theme(for space: SpaceModel) -> Theme {
+    private func theme(for space: Space) -> Theme {
         manager.resolvedTheme(forSpaceId: space.spaceId)
     }
 
     /// Each Space's accent comes from its resolved theme, so the
     /// active-Space icon previews what the window currently looks like.
-    fileprivate func iconColor(for space: SpaceModel) -> Color {
+    fileprivate func iconColor(for space: Space) -> Color {
         Color(nsColor: theme(for: space).color(for: .textPrimary, appearance: windowAppearance))
     }
 
@@ -1502,11 +1521,11 @@ struct SpacesStripView: View {
     /// address bar's shortcut tooltip. Resolved here (not in the card) because
     /// the card is hosted in a standalone panel outside the window's theme
     /// environment.
-    private func hoverCardAccentColor(for space: SpaceModel) -> Color {
+    private func hoverCardAccentColor(for space: Space) -> Color {
         Color(nsColor: theme(for: space).color(for: .themeColor, appearance: windowAppearance))
     }
 
-    private func promptRename(for space: SpaceModel) {
+    private func promptRename(for space: Space) {
         let alert = NSAlert()
         alert.messageText = NSLocalizedString("sidebar.renameSpaceDialog.title", value: "Rename Space", comment: "Title of the rename-Space dialog")
         alert.informativeText = NSLocalizedString("sidebar.renameSpaceDialog.message", value: "Enter a new name for this Space.", comment: "Body of the rename-Space dialog")
@@ -1524,10 +1543,10 @@ struct SpacesStripView: View {
         guard response == .alertFirstButtonReturn else { return }
         let trimmed = textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, trimmed != space.name else { return }
-        manager.renameSpace(spaceId: space.spaceId, to: trimmed)
+        manager.renameSpace(spaceId: space.spaceId, to: trimmed, expectedStoreIdentifier: space.storeIdentifier)
     }
 
-    private func confirmDelete(_ space: SpaceModel) {
+    private func confirmDelete(_ space: Space) {
         let alert = NSAlert()
         alert.messageText = String(
             format: NSLocalizedString("sidebar.deleteSpaceConfirmation.title", value: "Delete \u{201C}%@\u{201D}?", comment: "Title of the delete-Space confirmation"),
@@ -1546,7 +1565,7 @@ struct SpacesStripView: View {
         alert.addButton(withTitle: NSLocalizedString("sidebar.deleteSpaceConfirmation.deleteButton", value: "Delete", comment: "Destructive button"))
         alert.addButton(withTitle: NSLocalizedString("sidebar.deleteSpaceConfirmation.cancelButton", value: "Cancel", comment: "Cancel button"))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
-        manager.deleteSpace(spaceId: space.spaceId)
+        manager.deleteSpace(spaceId: space.spaceId, expectedStoreIdentifier: space.storeIdentifier)
         PostHogSDK.shared.capture("space_deleted")
     }
 }
@@ -1560,11 +1579,11 @@ private struct SpacePickerPopup: View {
     @ObservedObject var profileManager: ProfileManager
     let windowAppearance: Appearance
     let onActivate: (String) -> Void
-    let onRename: (SpaceModel) -> Void
+    let onRename: (Space) -> Void
     let onChangeIcon: (String, String) -> Void
     let onSetTheme: (String, String) -> Void
     let currentThemeId: (String) -> String
-    let onDelete: (SpaceModel) -> Void
+    let onDelete: (Space) -> Void
     let onCreate: () -> Void
     /// Spaces already shown as pips in the strip, hidden from this list so the
     /// overflow popover only surfaces the Spaces that didn't fit. Empty for the
@@ -1615,7 +1634,9 @@ private struct SpacePickerPopup: View {
                             targetSpaceId: space.spaceId,
                             draggingSpaceId: $draggingSpaceId,
                             orderedIds: $orderedIds,
-                            commit: { manager.reorder(spaceIds: $0) }
+                            commit: { [storeIdentifier = manager.storeIdentifier] in
+                                manager.reorder(spaceIds: $0, expectedStoreIdentifier: storeIdentifier)
+                            }
                         ))
                     }
                 }
@@ -1653,7 +1674,9 @@ private struct SpacePickerPopup: View {
         .onDrop(of: [.text], delegate: SpaceListResetDropDelegate(
             draggingSpaceId: $draggingSpaceId,
             orderedIds: $orderedIds,
-            commit: { manager.reorder(spaceIds: $0) }
+            commit: { [storeIdentifier = manager.storeIdentifier] in
+                manager.reorder(spaceIds: $0, expectedStoreIdentifier: storeIdentifier)
+            }
         ))
         .onAppear { orderedIds = manager.spaces.map(\.spaceId) }
         .onChange(of: manager.spaces.map(\.spaceId)) { ids in
@@ -1669,9 +1692,9 @@ private struct SpacePickerPopup: View {
     /// know yet appended in strip order. Drawn from `slot.presentedSpaces` for
     /// the same reason as the strip: agent Spaces hosted by other windows are
     /// not offered here.
-    private var orderedSpaces: [SpaceModel] {
+    private var orderedSpaces: [Space] {
         let presented = slot.presentedSpaces
-        let ordered: [SpaceModel]
+        let ordered: [Space]
         if orderedIds.isEmpty {
             ordered = presented
         } else {
@@ -1685,7 +1708,7 @@ private struct SpacePickerPopup: View {
         return ordered.filter { !excludedSpaceIds.contains($0.spaceId) }
     }
 
-    private func iconColor(for space: SpaceModel) -> Color {
+    private func iconColor(for space: Space) -> Color {
         let theme = manager.resolvedTheme(forSpaceId: space.spaceId)
         return Color(nsColor: theme.color(for: .textPrimary, appearance: windowAppearance))
     }
@@ -2043,7 +2066,7 @@ private struct SpaceSwitcherMenuAnchor: NSViewRepresentable {
 }
 
 private struct SpacePickerRow: View {
-    let space: SpaceModel
+    @ObservedObject var space: Space
     let isActive: Bool
     let isDeletable: Bool
     let showsIconAction: Bool
@@ -2259,7 +2282,7 @@ struct SpaceIconView: View {
     }
 }
 
-/// SpaceModel.iconName may be either an IconPicker storage value or the legacy
+/// Space.iconName may be either an IconPicker storage value or the legacy
 /// SF Symbol id (e.g. "rectangle.stack"). Legacy symbols are resolved at view
 /// time so old rows keep rendering without a data migration.
 private func systemSymbolName(for stored: String) -> String? {

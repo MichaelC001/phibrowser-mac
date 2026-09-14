@@ -2018,7 +2018,7 @@ extension AppController {
     /// this synchronous menu-build path isn't `@MainActor`-isolated, so assume
     /// the isolation the helpers require rather than ripple the annotation
     /// through it.
-    private func spaceMenuIcon(for space: SpaceModel) -> NSImage? {
+    private func spaceMenuIcon(for space: Space) -> NSImage? {
         MainActor.assumeIsolated {
             guard let task = AgentSpaceManager.shared.tasksBySpaceId[space.spaceId] else {
                 return SpaceIconView.menuImage(for: space.iconName)
@@ -2214,7 +2214,7 @@ extension AppController {
         rebuildDeleteProfileSubmenu(deleteSubmenu)
     }
 
-    private func makeSpacesProfileSubmenu(for space: SpaceModel?) -> NSMenu {
+    private func makeSpacesProfileSubmenu(for space: Space?) -> NSMenu {
         let menu = NSMenu(title: NSLocalizedString("app.spacesMenu.profileSubmenu.title", value: "Change Profile", comment: "Spaces menu - Profile submenu title for the active Space"))
         // The agent's fallback profile belongs to the agent — the user can't
         // re-bind a normal Space to it (matches the create-Space pickers).
@@ -2241,7 +2241,7 @@ extension AppController {
             ?? SpaceManager.shared.keySlot
     }
 
-    fileprivate func currentActiveSpace() -> SpaceModel? {
+    fileprivate func currentActiveSpace() -> Space? {
         let slot = currentSpacesSlot()
         let id = slot?.activeSpaceId ?? SpaceManager.shared.activeSpaceId
         guard let id else { return nil }
@@ -2252,7 +2252,7 @@ extension AppController {
     /// an agent Space hosted by another window is neither listed nor cycled
     /// through from here (`SpaceWindowSlot.presents`). The full list stands in
     /// when no slot resolves, matching `currentActiveSpace`'s fallback.
-    fileprivate func currentPresentedSpaces() -> [SpaceModel] {
+    fileprivate func currentPresentedSpaces() -> [Space] {
         currentSpacesSlot()?.presentedSpaces ?? SpaceManager.shared.spaces
     }
 
@@ -2330,7 +2330,7 @@ extension AppController {
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         let trimmed = textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, trimmed != space.name else { return }
-        SpaceManager.shared.renameSpace(spaceId: space.spaceId, to: trimmed)
+        SpaceManager.shared.renameSpace(spaceId: space.spaceId, to: trimmed, expectedStoreIdentifier: space.storeIdentifier)
     }
 
     /// Opens the icon/emoji picker for the active Space, anchored below its icon
@@ -2395,7 +2395,7 @@ extension AppController {
         alert.addButton(withTitle: NSLocalizedString("app.changeSpaceProfileConfirmation.confirmButton", value: "Change Profile", comment: "Confirm button of the change-Space-profile confirmation"))
         alert.addButton(withTitle: NSLocalizedString("app.changeSpaceProfileConfirmation.cancelButton", value: "Cancel", comment: "Cancel button"))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
-        SpaceManager.shared.changeProfile(spaceId: space.spaceId, toProfileId: profileId)
+        SpaceManager.shared.changeProfile(spaceId: space.spaceId, toProfileId: profileId, expectedStoreIdentifier: space.storeIdentifier)
     }
 
     @objc func deleteActiveSpace(_ sender: Any?) {
@@ -2422,7 +2422,7 @@ extension AppController {
         alert.addButton(withTitle: NSLocalizedString("app.deleteSpaceConfirmation.deleteButton", value: "Delete", comment: "Destructive button"))
         alert.addButton(withTitle: NSLocalizedString("app.deleteSpaceConfirmation.cancelButton", value: "Cancel", comment: "Cancel button"))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
-        SpaceManager.shared.deleteSpace(spaceId: space.spaceId)
+        SpaceManager.shared.deleteSpace(spaceId: space.spaceId, expectedStoreIdentifier: space.storeIdentifier)
     }
 
     /// Closes the active Incognito Space: its windows across all slots go,

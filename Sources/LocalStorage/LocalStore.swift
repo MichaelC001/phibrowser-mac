@@ -34,6 +34,8 @@ actor LocalStoreActor {
 }
 
 class LocalStore {
+    /// Sent synchronously on the main actor before the terminal FIFO operation.
+    static let willCloseNotification = Notification.Name("LocalStore.willClose")
     static let defaultProfileId = "Default"
     static let compatibilityConfiguration = LocalStoreCompatibilityConfiguration(
         currentStoreFormatVersion: 10,
@@ -43,6 +45,8 @@ class LocalStore {
 
     private(set) var container: ModelContainer?
     let account: Account
+    /// Unique per open store, including a reopened account after rollback.
+    let identifier = UUID()
     private let userStorageURL: URL
     private var cancellable: AnyCancellable?
     private var writeActor: LocalStoreActor?
@@ -640,6 +644,7 @@ extension LocalStore {
         }
 
         writeJobContinuation = nil
+        NotificationCenter.default.post(name: Self.willCloseNotification, object: self)
         let result: Result
         do {
             result = try await withCheckedThrowingContinuation {

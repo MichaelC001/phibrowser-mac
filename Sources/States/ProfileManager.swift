@@ -11,7 +11,7 @@ import PostHog
 /// One row from the Chromium-side profile attributes store, projected to
 /// Swift. `profileId` is the on-disk basename and the wire identifier used
 /// in every bridge call. `isInUse` reflects whether a live Chromium Browser
-/// is currently bound to this profile (orthogonal to whether a `SpaceModel`
+/// is currently bound to this profile (orthogonal to whether a `Space`
 /// references it — that check lives on `SpaceManager`).
 struct PhiBrowserProfile: Hashable, Identifiable {
     let profileId: String
