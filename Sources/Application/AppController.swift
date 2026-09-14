@@ -21,6 +21,9 @@ import PostHog
     @objc static private(set)var shared: AppController!
     
     var settingsWindowController: SettingsWindowController?
+    /// The application the settings window took the foreground from, so
+    /// closing the window can hand activation back to it.
+    var settingsActivationSource: NSRunningApplication?
     /// Whether `settingsWindowController` was built with the Developer pane.
     /// The pane list is fixed at window creation, so this goes stale when the
     /// General-tab "Developer mode" toggle changes while the window is open;
