@@ -7,7 +7,7 @@ import Cocoa
 import SwiftUI
 
 @MainActor
-class FeedbackViewController: NSViewController {
+class FeedbackViewController: NSViewController, NSWindowDelegate {
     private(set) var hostWindowController: MainBrowserWindowController
     
     private let viewModel = FeedbackViewModel()
@@ -68,6 +68,7 @@ class FeedbackViewController: NSViewController {
         // Update ViewModel directly.
         // Since FeedbackView observes this viewModel, it will update UI.
         DispatchQueue.main.async {
+            guard self.viewModel.previousSessionCrash == nil else { return }
             self.viewModel.urlString = string ?? ""
         }
     }
@@ -97,12 +98,23 @@ class FeedbackViewController: NSViewController {
     func setCrashContextTab(_ tab: Tab?) {
         // Leave an in-flight submit's draft untouched (see rebindHost): mutating
         // url/title mid-submit would be read by the pending enqueue after its await.
-        guard !viewModel.isSubmitting else { return }
+        guard !viewModel.isSubmitting, viewModel.previousSessionCrash == nil else { return }
         crashContext = tab.map { (url: $0.url, title: $0.title) }
         refreshFeedbackContext()
     }
 
+    @discardableResult
+    func setPreviousSessionCrash(_ context: PreviousSessionCrashContext) -> Bool {
+        guard viewModel.setPreviousSessionCrash(context) else { return false }
+        crashContext = nil
+        return true
+    }
+
     private func refreshFeedbackContext() {
+        viewModel.componentVersions = hostWindowController.browserState.extensionManager.phiExtensionVersions
+        // The current tab after relaunch is not evidence of the crash site.
+        // Preserve only the URL the user explicitly enters in this form.
+        guard viewModel.previousSessionCrash == nil else { return }
         if let crashContext {
             viewModel.urlString = URLProcessor.phiBrandEnsuredUrlString(crashContext.url ?? "")
             viewModel.pageTitle = crashContext.title
@@ -110,7 +122,6 @@ class FeedbackViewController: NSViewController {
             viewModel.urlString = URLProcessor.phiBrandEnsuredUrlString(tab.url ?? "")
             viewModel.pageTitle = tab.title
         }
-        viewModel.componentVersions = hostWindowController.browserState.extensionManager.phiExtensionVersions
     }
 
     private func submitFeedback() {
@@ -120,20 +131,33 @@ class FeedbackViewController: NSViewController {
         viewModel.isSubmitting = true
 
         let windowId = Int64(hostWindowController.browserState.windowId)
+        let submittingAccountID = AccountController.shared.account?.userID
         Task { @MainActor [weak self] in
             guard let self else { return }
+            defer {
+                viewModel.isSubmitting = false
+                if view.window?.isVisible != true {
+                    viewModel.clearPreviousSessionCrash()
+                }
+            }
             let chromiumSystemLogsText = await fetchChromiumSystemLogsText(windowId: windowId)
 
             do {
+                guard AccountController.shared.account?.userID == submittingAccountID else {
+                    throw FeedbackOutboxError.missingAccount
+                }
                 try viewModel.enqueueFeedback(chromiumSystemLogsText: chromiumSystemLogsText)
                 closeWindow()
             } catch {
                 AppLogError("Feedback V2 enqueue failed: \(error.localizedDescription)")
                 viewModel.localSaveError = error.localizedDescription
             }
-
-            viewModel.isSubmitting = false
         }
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        guard !viewModel.isSubmitting else { return }
+        viewModel.clearPreviousSessionCrash()
     }
 
     private func fetchChromiumSystemLogsText(windowId: Int64) async -> String? {

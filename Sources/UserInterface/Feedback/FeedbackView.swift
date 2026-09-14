@@ -69,6 +69,15 @@ struct FeedbackView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
+                    if viewModel.previousSessionCrash != nil {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(NSLocalizedString("feedback.crash.title", value: "Phi quit unexpectedly last time", comment: "Crash feedback - Heading shown after restarting following an app crash"))
+                                .font(.headline)
+                            Text(NSLocalizedString("feedback.crash.message", value: "Sorry for the interruption. A few details about what happened before the crash can help us understand the issue and make Phi more reliable.", comment: "Crash feedback - Apology and invitation to share details about what happened before the crash"))
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                     descriptionSection
                     additionalInfoSection
                     legalSection
@@ -88,6 +97,7 @@ struct FeedbackView: View {
         .frame(width: 520)
         .frame(maxHeight: .infinity)
         .background(windowBackgroundColor)
+        .disabled(viewModel.isSubmitting)
         .background(FeedbackPasteImageMonitor { image in
             viewModel.addPastedImage(image)
         })
@@ -225,7 +235,15 @@ struct FeedbackView: View {
         VStack(spacing: 0) {
             HStack {
                 Spacer()
-                Button(NSLocalizedString("feedback.form.sendButton", value: "Send", comment: "Feedback form - Send button to submit feedback")) {
+                if viewModel.previousSessionCrash != nil {
+                    Button(NSLocalizedString("feedback.crash.notNowButton", value: "Not Now", comment: "Crash feedback - Dismiss the invitation without sending feedback")) {
+                        onCancel?()
+                    }
+                    .keyboardShortcut(.cancelAction)
+                }
+                Button(viewModel.previousSessionCrash != nil
+                       ? NSLocalizedString("feedback.crash.sendButton", value: "Send Feedback", comment: "Crash feedback - Submit the user's description and diagnostic logs")
+                       : NSLocalizedString("feedback.form.sendButton", value: "Send", comment: "Feedback form - Send button to submit feedback")) {
                     guard viewModel.canSend else { return }
                     onSend?()
                 }

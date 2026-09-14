@@ -74,6 +74,7 @@ import PostHog
     private var pendingHotKioskPresentationInFlight = false
     private var pendingHotKioskPresentationWorkItem: DispatchWorkItem?
     private var hasFinishedLaunching = false
+    private var crashFeedbackCoordinator: CrashFeedbackCoordinator?
     /// Cached in `applicationWillFinishLaunching`; weak — owned by `ChromiumLauncher`, not AppController.
     private weak var chromiumBridge: (any PhiChromiumBridgeProtocol)?
     private lazy var kioskGlobalShortcutRegistrar =
@@ -148,7 +149,14 @@ import PostHog
         setupKinfisherCache()
         
         #if !PHI_OSS_BUILD
-        SentryService.setup()
+        let crashFeedbackCoordinator = CrashFeedbackCoordinator()
+        self.crashFeedbackCoordinator = crashFeedbackCoordinator
+        SentryService.setup { [weak crashFeedbackCoordinator] context in
+            // Delivery resumes after this launch callback has finished.
+            DispatchQueue.main.async {
+                crashFeedbackCoordinator?.enqueue(context)
+            }
+        }
         #endif
         
         MemoryUsageMonitor.shared.start()
@@ -326,6 +334,7 @@ import PostHog
     }
     
     func applicationWillTerminate(_ notification: Notification) {
+        crashFeedbackCoordinator?.stop()
         coldOpenURLForwardWorkItem?.cancel()
         coldOpenURLForwardWorkItem = nil
         pendingHotKioskPresentationWorkItem?.cancel()
@@ -891,6 +900,7 @@ import PostHog
     
     @MainActor
     @objc func phiWillTryToTerminateApplicationNotification(_ notification: Notification) {
+        crashFeedbackCoordinator?.suspendForTermination()
         // Posted (synchronously, main thread) by phi_app_controller_mac.mm's
         // -tryToTerminateApplication once the quit is past the confirm sheet and
         // the in-progress-downloads prompt, BEFORE chrome::CloseAllBrowsers()
@@ -914,6 +924,7 @@ import PostHog
         // Nothing is written here; a change refused during the freeze is still
         // pending and lands with the next write.
         SpaceManager.shared.clearTerminating()
+        crashFeedbackCoordinator?.resumeAfterCancelledTermination()
     }
 
     @objc private func loginStatusRefreshCompleted(_ notification: Notification) {

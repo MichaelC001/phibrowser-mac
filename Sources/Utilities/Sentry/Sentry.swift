@@ -6,6 +6,20 @@
 import Foundation
 import Sentry
 
+struct PreviousSessionCrashContext: Sendable {
+    let eventID: String
+    let timestamp: Date?
+    let logSnapshot: Data?
+
+    var metadata: [String: String] {
+        var values = [
+            "sentry_event_id": eventID,
+        ]
+        values["crash_timestamp"] = timestamp.map { ISO8601DateFormatter().string(from: $0) }
+        return values
+    }
+}
+
 enum TimeMachineSentryTrace: Codable, Equatable {
     case backup(TimeMachineBackupTrace)
     case restorePreparation(TimeMachineRestorePreparationTrace)
@@ -122,7 +136,7 @@ struct TimeMachineSentryTraceStore {
     private static var pendingTimeMachineTraces: [TimeMachineSentryTrace] = []
     private static var timeMachineTraceStore = TimeMachineSentryTraceStore()
 
-    @objc static func setup() {
+    static func setup(onPreviousSessionCrash: @escaping @Sendable (PreviousSessionCrashContext) -> Void) {
         pendingTimeMachineTraceLock.lock()
         guard !hasStarted, !isStarting else {
             pendingTimeMachineTraceLock.unlock()
@@ -132,7 +146,7 @@ struct TimeMachineSentryTraceStore {
         pendingTimeMachineTraceLock.unlock()
 
         SentrySDK.start { options in
-            options.dsn = ""
+            options.dsn = "https://25f25943199ae1e81dd0dfdf8343aac7@o4510181852708864.ingest.us.sentry.io/4510181889933312"
             options.enableLogs = true
             
             if let basePath = NSSearchPathForDirectoriesInDomains(.applicationSupportDirectory, .userDomainMask, true).first,
@@ -155,6 +169,17 @@ struct TimeMachineSentryTraceStore {
             options.enableAppHangTracking = false
             options.enableMetricKit = true
             options.enableMetricKitRawPayload = true
+
+            options.onLastRunStatusDetermined = { status, event in
+                guard status == .didCrash, let event else { return }
+                // Snapshot retained logs before this launch can rotate them away.
+                // The SDK callback can run off the main thread; pass value data only.
+                onPreviousSessionCrash(PreviousSessionCrashContext(
+                    eventID: event.eventId.sentryIdString,
+                    timestamp: event.timestamp,
+                    logSnapshot: PhiLogging.applicationLogSnapshot(maxBytes: 1024 * 1024)
+                ))
+            }
             
             options.beforeSend = { event in
                 let isMetricKitDiskWrite =

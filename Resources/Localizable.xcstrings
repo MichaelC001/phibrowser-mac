@@ -40815,6 +40815,50 @@
         }
       }
     },
+    "feedback.crash.message" : {
+      "comment" : "Crash feedback - Apology and invitation to share details about what happened before the crash",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sorry for the interruption. A few details about what happened before the crash can help us understand the issue and make Phi more reliable."
+          }
+        }
+      }
+    },
+    "feedback.crash.notNowButton" : {
+      "comment" : "Crash feedback - Dismiss the invitation without sending feedback",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Not Now"
+          }
+        }
+      }
+    },
+    "feedback.crash.sendButton" : {
+      "comment" : "Crash feedback - Submit the user's description and diagnostic logs",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Send Feedback"
+          }
+        }
+      }
+    },
+    "feedback.crash.title" : {
+      "comment" : "Crash feedback - Heading shown after restarting following an app crash",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Phi quit unexpectedly last time"
+          }
+        }
+      }
+    },
     "feedback.form.additionalInfoSection.title" : {
       "comment" : "Feedback form - Section header for optional additional information",
       "extractionState" : "extracted_with_value",
