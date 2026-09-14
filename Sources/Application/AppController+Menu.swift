@@ -349,7 +349,7 @@ extension AppController {
             if let submenu = menuItem.submenu, menuRole == .view {
                 submenu.items.forEach {
                     let tag = $0.tag
-                    if [40009, 40250, 40259, 40282, 40296, 40251].contains(tag) {
+                    if [40009, 40250, 40259, 40282, 40296, 40299, 40251].contains(tag) {
                         $0.isHidden = true
                     }
                 }
