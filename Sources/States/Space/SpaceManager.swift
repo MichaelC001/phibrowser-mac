@@ -9912,7 +9912,9 @@ final class SpaceWindowSlot: ObservableObject {
             // ordered in, alpha 0). A spawned window was never ordered in,
             // its renderer produces no frames while hidden, and waiting
             // would only ever hit the deadline — it presents immediately, as
-            // before. Already-painted targets present immediately too.
+            // before. Already-painted targets present immediately too, and
+            // so does a native NTP (`Tab.isReadyToDisplay`): its Chromium
+            // side never paints, so waiting on it can only hit the deadline.
             //
             // Bounded: a page that never paints presents at the deadline,
             // where the page-pane mask covers it exactly as today. The wait
@@ -9921,7 +9923,7 @@ final class SpaceWindowSlot: ObservableObject {
             let container = target.mainSplitViewController
                 .webContentContainerViewController
             let canPaintConcealed = target.window?.isVisible == true
-            let alreadyPainted = target.browserState.focusingTab?.hasFirstPaint == true
+            let alreadyPainted = target.browserState.focusingTab?.isReadyToDisplay == true
             if canPaintConcealed && !alreadyPainted {
                 var fired = false
                 let presentOnce: (TimeInterval) -> Void = { settle in

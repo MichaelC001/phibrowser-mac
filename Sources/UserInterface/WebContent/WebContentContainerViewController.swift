@@ -1263,8 +1263,10 @@ class WebContentContainerViewController: NSViewController {
         } ?? false
         let enteringSplit = state.splitGroup(forTabId: tab.guid) != nil
 
-        if tab.hasFirstPaint {
-            // Scenario 1: Tab has already painted, switch immediately (bring to front)
+        if tab.isReadyToDisplay {
+            // Scenario 1: Tab has already painted (or paints natively — the
+            // incognito NTP, see `Tab.isReadyToDisplay`), switch immediately
+            // (bring to front)
             // AppLogDebug("[FlickerFix][Mac] Tab has first paint, using immediate switch (scenario 1)")
             switchToWebContentController(controller)
             currentTabIdentifier = identifier
@@ -2017,6 +2019,20 @@ class WebContentContainerViewController: NSViewController {
 
         // Settled successor is now painted on top — drop the close snapshot (if any).
         clearClosePlaceholder()
+
+        // A cold Space reveal waiting on this window's content is answered by
+        // a ready tab landing on top — the spawned Incognito Space's native
+        // NTP mounts here under the cold-reveal mask, and no first-paint
+        // promotion will ever follow to lift it. Same one-turn deferral as
+        // the promotion path: the content reaches the WindowServer on this
+        // turn's commit.
+        if let ready = onColdContentReady {
+            onColdContentReady = nil
+            ready()
+        }
+        DispatchQueue.main.async { [weak self] in
+            self?.clearColdRevealMask()
+        }
 
         cleanUpPendingSplitPartnerViewIfNeeded(incoming: controller)
     }
