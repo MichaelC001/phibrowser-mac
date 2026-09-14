@@ -809,6 +809,16 @@ enum SaveForLaterService {
                 "browser.folio.reasonNotAWebPage",
                 value: "Only web pages can be saved.",
                 comment: "Folio - Failure toast detail: the tab was not showing an ordinary web page")
+        case "page_gone":
+            return NSLocalizedString(
+                "browser.folio.reasonPageGone",
+                value: "The page closed before it could be saved.",
+                comment: "Folio - Failure toast detail: the tab went away while the save was still reading it, so neither the article nor the webpage copy was captured")
+        case "nothing_captured":
+            return NSLocalizedString(
+                "browser.folio.reasonNothingCaptured",
+                value: "Neither the article nor a webpage copy could be captured.",
+                comment: "Folio - Failure toast detail: the page stayed open but yielded no article and no webpage copy, so nothing was kept")
         default:
             AppLogDebug("[SaveForLater] unworded toast reason: \(code)")
             return ""
@@ -1018,12 +1028,18 @@ enum SaveForLaterService {
             .first(where: { controller in
                 controller.browserState.tabs.contains(where: { $0.guid == tab.guid })
             })?.browserState.windowId
+        // The page as it was at the trigger. With these the extension never
+        // has to look at the tab: it reads the page from a hidden copy of
+        // its own, and the tab can close or move on the moment Save is
+        // pressed.
         var payload: [String: Any] = [
             "tabId": tab.guid,
             "requestId": requestId,
             "trigger": context.trigger.frontmatterValue,
             "isAutomatic": context.trigger.isAutomatic,
             "highlightBlocks": context.highlightBlocks,
+            "url": context.sourceURL,
+            "pageTitle": context.pageTitle,
         ]
         if let windowId { payload["windowId"] = windowId }
         guard let data = try? JSONSerialization.data(withJSONObject: payload),

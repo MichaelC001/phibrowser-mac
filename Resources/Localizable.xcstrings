@@ -26375,6 +26375,30 @@
         }
       }
     },
+    "browser.folio.reasonNothingCaptured" : {
+      "comment" : "Folio - Failure toast detail: the page stayed open but yielded no article and no webpage copy, so nothing was kept",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Neither the article nor a webpage copy could be captured."
+          }
+        }
+      }
+    },
+    "browser.folio.reasonPageGone" : {
+      "comment" : "Folio - Failure toast detail: the tab went away while the save was still reading it, so neither the article nor the webpage copy was captured",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "The page closed before it could be saved."
+          }
+        }
+      }
+    },
     "browser.folio.reasonWriteFailed" : {
       "comment" : "Folio - Failure toast detail: the destination folder could not be written to",
       "extractionState" : "extracted_with_value",
