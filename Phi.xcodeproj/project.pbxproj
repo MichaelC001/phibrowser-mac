@@ -64,6 +64,9 @@
 		376B66B03000ABBA004BEA29 /* PhiSparkleUpdateViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 376B66AF3000ABBA004BEA29 /* PhiSparkleUpdateViewController.swift */; };
 		376CE2F32F27226A0093D937 /* NewTabViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 376CE2F22F27226A0093D937 /* NewTabViewController.swift */; };
 		376CE4002F2891670093D937 /* ExtensionMessageEnvelope.swift in Sources */ = {isa = PBXBuildFile; fileRef = 376CE3FA2F2891670093D937 /* ExtensionMessageEnvelope.swift */; };
+		747241560000000000000001 /* TravelBackScene.swift in Sources */ = {isa = PBXBuildFile; fileRef = 747241560000000000000011 /* TravelBackScene.swift */; };
+		747241560000000000000002 /* BrowserState+TravelBack.swift in Sources */ = {isa = PBXBuildFile; fileRef = 747241560000000000000012 /* BrowserState+TravelBack.swift */; };
+		747241560000000000000003 /* TravelBackMessageHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 747241560000000000000013 /* TravelBackMessageHandler.swift */; };
 		376CE4012F2891670093D937 /* ExtensionMessageRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 376CE3FB2F2891670093D937 /* ExtensionMessageRouter.swift */; };
 		376CE4022F2891670093D937 /* ExtensionMessaging.swift in Sources */ = {isa = PBXBuildFile; fileRef = 376CE3FC2F2891670093D937 /* ExtensionMessaging.swift */; };
 		376CE4032F2891670093D937 /* NotificationCardManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 376CE3FD2F2891670093D937 /* NotificationCardManager.swift */; };
@@ -757,6 +760,9 @@
 		376CE2F22F27226A0093D937 /* NewTabViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewTabViewController.swift; sourceTree = "<group>"; };
 		376CE3F92F2891670093D937 /* WindowThemeMessageRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowThemeMessageRouter.swift; sourceTree = "<group>"; };
 		376CE3FA2F2891670093D937 /* ExtensionMessageEnvelope.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtensionMessageEnvelope.swift; sourceTree = "<group>"; };
+		747241560000000000000011 /* TravelBackScene.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TravelBackScene.swift; sourceTree = "<group>"; };
+		747241560000000000000012 /* BrowserState+TravelBack.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "BrowserState+TravelBack.swift"; sourceTree = "<group>"; };
+		747241560000000000000013 /* TravelBackMessageHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TravelBackMessageHandler.swift; sourceTree = "<group>"; };
 		376CE3FB2F2891670093D937 /* ExtensionMessageRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtensionMessageRouter.swift; sourceTree = "<group>"; };
 		376CE3FC2F2891670093D937 /* ExtensionMessaging.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtensionMessaging.swift; sourceTree = "<group>"; };
 		376CE3FD2F2891670093D937 /* NotificationCardManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationCardManager.swift; sourceTree = "<group>"; };
@@ -1426,6 +1432,7 @@
 				376CE3FA2F2891670093D937 /* ExtensionMessageEnvelope.swift */,
 				376CE3FB2F2891670093D937 /* ExtensionMessageRouter.swift */,
 				AB7090700000000000000003 /* SiteMemoryMessageRouter.swift */,
+				747241560000000000000013 /* TravelBackMessageHandler.swift */,
 				376CE3FC2F2891670093D937 /* ExtensionMessaging.swift */,
 				376CE3FD2F2891670093D937 /* NotificationCardManager.swift */,
 				376CE3F92F2891670093D937 /* WindowThemeMessageRouter.swift */,
@@ -2655,6 +2662,8 @@
 				EE7E00000000000000000011 /* BrowserPeekState.swift */,
 				EE7E00000000000000000014 /* BrowserReaderOverlayState.swift */,
 				CCBF8FA62E69948D00B9A99E /* BrowserState.swift */,
+				747241560000000000000011 /* TravelBackScene.swift */,
+				747241560000000000000012 /* BrowserState+TravelBack.swift */,
 				5A454E000000000000000011 /* KioskBrowserState.swift */,
 				CCAA000C2F00010000000002 /* BrowserState+PinnedTabScope.swift */,
 				CCAA000E2F00010000000002 /* BrowserState+PinnedTabTransfer.swift */,
@@ -3138,6 +3147,9 @@
 				376CE4002F2891670093D937 /* ExtensionMessageEnvelope.swift in Sources */,
 				376CE4012F2891670093D937 /* ExtensionMessageRouter.swift in Sources */,
 				AB7090710000000000000003 /* SiteMemoryMessageRouter.swift in Sources */,
+				747241560000000000000001 /* TravelBackScene.swift in Sources */,
+				747241560000000000000002 /* BrowserState+TravelBack.swift in Sources */,
+				747241560000000000000003 /* TravelBackMessageHandler.swift in Sources */,
 				376CE4022F2891670093D937 /* ExtensionMessaging.swift in Sources */,
 				376CE4032F2891670093D937 /* NotificationCardManager.swift in Sources */,
 				376CE4042F2891670093D937 /* WindowThemeMessageRouter.swift in Sources */,

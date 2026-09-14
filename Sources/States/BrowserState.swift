@@ -279,6 +279,9 @@ class BrowserState {
     /// multiple chat view controllers (e.g. sidebar + traditional layout)
     /// before `aiChatTabs` is populated.
     private var aiChatTabsBeingCreated: Set<String> = []
+    // Request lifetime only; not a second sidebar ownership registry.
+    var travelBackRunning = false
+    let travelBackTabCreated = PassthroughSubject<(marker: String, tab: Tab), Never>()
     
     @Published var sidebarCollapsed = false
     @Published var sidebarWidth: CGFloat = 0
@@ -481,6 +484,8 @@ class BrowserState {
         let secondaryId = getTabIdentifier(for: secondary)
         if aiChatTabs[primaryId] != nil { return primaryId }
         if aiChatTabs[secondaryId] != nil { return secondaryId }
+        if aiChatTabsBeingCreated.contains(primaryId) { return primaryId }
+        if aiChatTabsBeingCreated.contains(secondaryId) { return secondaryId }
         // Neither pane has a chat yet: bind to the caller's tab so the chat
         // follows the pane the user invoked from, not whichever pane happens
         // to be focused at split-creation time. Keyed by tab.guid, so
@@ -1384,6 +1389,7 @@ class BrowserState {
         }
         tabSwitchManager.handleExternalFocusChange()
         focusingTab = tab
+        notifyTravelBackSceneChanged(tabIds: [tab.guid])
         tabSwitchManager.recordActiveTab(tab)
         // Agent Space: the tab the agent just switched to is its operating tab
         // (kept as the active tab). Mask it like AI chat masks a tab it drives.
@@ -3096,6 +3102,13 @@ class BrowserState {
             // crash for this tab so it doesn't linger in the buffer.
             _ = PhiChromiumCoordinator.shared.drainPendingCrash(tabId: tab.guid)
             return  // Don't add to regular tabs
+        }
+
+        let travelBackMarker = MainActor.assumeIsolated { consumeTravelBackTabMarker(tab) }
+        defer {
+            if let travelBackMarker {
+                travelBackTabCreated.send((marker: travelBackMarker, tab: tab))
+            }
         }
 
         // Strip the transient seed identity before persisted pinned/bookmark

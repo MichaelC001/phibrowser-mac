@@ -171,6 +171,16 @@ final class ExtensionMessageRouter {
             return "{}"
         }
 
+        for type in TravelBackMessageHandler.messageTypes {
+            register(type: type) { context in
+                Task { @MainActor in
+                    let reply = await TravelBackMessageHandler.handle(context)
+                    ExtensionMessaging.shared.sendResponse(reply, requestId: context.requestId)
+                }
+                return nil
+            }
+        }
+
         register(type: "sidecar.aiOutputState") { context in
             MainActor.assumeIsolated {
                 SidecarAIOutputStateStore.shared.handle(context)
