@@ -1135,7 +1135,9 @@ enum FeedbackOutbox {
                 name: "Phi Browser",
                 version: SystemUtils.appVersion,
                 channel: channelName,
-                revision: SystemUtils.buildNumber
+                revision: SystemUtils.buildNumber,
+                aiEnabled: PhiPreferences.AISettings.phiAIEnabled.loadValue(),
+                useNTP: PhiPreferences.GeneralSettings.openNewTabPageOnCmdT.loadValue()
             ),
             page: .init(
                 url: draft.pageURL.isEmpty ? nil : draft.pageURL,

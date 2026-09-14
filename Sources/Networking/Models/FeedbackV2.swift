@@ -85,6 +85,15 @@ struct FeedbackV2Metadata: Codable {
         let version: String
         let channel: String?
         let revision: String?
+        // Optional so feedback queued before these fields were added remains readable.
+        let aiEnabled: Bool?
+        let useNTP: Bool?
+
+        enum CodingKeys: String, CodingKey {
+            case name, version, channel, revision
+            case aiEnabled = "ai_enabled"
+            case useNTP = "use_ntp"
+        }
     }
 
     struct Page: Codable {
