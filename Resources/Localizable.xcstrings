@@ -27215,6 +27215,18 @@
         }
       }
     },
+    "browser.readerView.preparing" : {
+      "comment" : "Reader View - Toast shown while the article is being extracted after the user asked to open Reader View",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Preparing Reader View…"
+          }
+        }
+      }
+    },
     "browser.readerView.unavailable" : {
       "comment" : "Reader View - Toast shown when reader extraction could not run at all",
       "extractionState" : "extracted_with_value",

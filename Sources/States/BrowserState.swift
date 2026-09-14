@@ -3956,6 +3956,12 @@ class BrowserState {
     /// the user has forgotten about (extraction budgets are a few seconds).
     private static let readerOverlayOpenTTLSeconds: TimeInterval = 30
 
+    /// The "preparing" toast standing in for each in-flight reader-open,
+    /// keyed by the origin tab id, so settling the request can take it
+    /// down. Shown the moment the request goes out: the reader surface or
+    /// the refusal toast is what replaces it.
+    private var pendingReaderOverlayToasts: [Int: UUID] = [:]
+
     /// Creation context of each presented reader-surface tab (keyed by the
     /// surface tab's guid), kept so adopting it into the strip (link click
     /// inside the reader) places the tab where a normal arrival would have.
@@ -3987,9 +3993,32 @@ class BrowserState {
     }
 
     /// Records that a reader-open for `originTabId` is on its way to the
-    /// extension, arming the arrival divert below.
+    /// extension, arming the arrival divert below and the "preparing"
+    /// toast that covers the wait.
     func noteReaderOverlayRequested(forOrigin originTabId: Int) {
         pendingReaderOverlayOrigins[originTabId] = Date()
+        showReaderOverlayPreparingToast(forOrigin: originTabId)
+    }
+
+    private func showReaderOverlayPreparingToast(forOrigin originTabId: Int) {
+        dismissReaderOverlayPreparingToast(forOrigin: originTabId)
+        // Lives as long as the request itself: an open the extension never
+        // answers expires with the TTL, and the toast with it.
+        let toastId = OverlayToastCenter.shared.show(
+            title: NSLocalizedString(
+                "browser.readerView.preparing",
+                value: "Preparing Reader View…",
+                comment: "Reader View - Toast shown while the article is being extracted after the user asked to open Reader View"),
+            duration: Self.readerOverlayOpenTTLSeconds,
+            in: .windowId(windowId))
+        pendingReaderOverlayToasts[originTabId] = toastId
+    }
+
+    /// The request settled (answered, refused, expired, or its origin
+    /// closed): the toast has nothing left to cover.
+    private func dismissReaderOverlayPreparingToast(forOrigin originTabId: Int) {
+        guard let toastId = pendingReaderOverlayToasts.removeValue(forKey: originTabId) else { return }
+        OverlayToastCenter.shared.dismiss(id: toastId)
     }
 
     /// Whether a reader-open for `originTabId` is still in flight — lets the
@@ -4004,6 +4033,7 @@ class BrowserState {
     /// a surface tab — disarm the divert.
     func cancelPendingReaderOverlay(forOrigin originTabId: Int) {
         pendingReaderOverlayOrigins.removeValue(forKey: originTabId)
+        dismissReaderOverlayPreparingToast(forOrigin: originTabId)
     }
 
     /// A tab that arrived while a reader-open was in flight but before its
@@ -4096,6 +4126,7 @@ class BrowserState {
             adoptPeekTabIntoStrip(candidate.tab, context: candidate.context, activate: true)
             return
         }
+        dismissReaderOverlayPreparingToast(forOrigin: originTabId)
         guard let requestedAt = pendingReaderOverlayOrigins.removeValue(forKey: originTabId),
               Date().timeIntervalSince(requestedAt) < Self.readerOverlayOpenTTLSeconds,
               tabs.contains(where: { $0.guid == originTabId }) else {
@@ -4241,6 +4272,9 @@ class BrowserState {
     /// wrappers — Chromium tears the strip down with the window.
     func teardownReaderOverlayForWindowClose() {
         finishReaderOverlayCandidate(adopt: false)
+        for originTabId in Array(pendingReaderOverlayToasts.keys) {
+            dismissReaderOverlayPreparingToast(forOrigin: originTabId)
+        }
         pendingReaderOverlayOrigins.removeAll()
         presentedReaderOverlayContexts.removeAll()
         readerOverlayNavigationWatches.removeAll()
