@@ -300,7 +300,7 @@ extension AppController {
             "always_show_full_url": PhiPreferences.GeneralSettings.alwaysShowURLPath.loadValue(),
             "show_tab_previews": PhiPreferences.GeneralSettings.showTabPreviews.loadValue(),
             "show_open_tab_indicators": PhiPreferences.GeneralSettings.showOpenTabIndicators.loadValue(),
-            "dim_unloaded_tab_icons": PhiPreferences.GeneralSettings.dimUnloadedTabIcons.loadValue(),
+            "dim_unloaded_tab_icons": PhiPreferences.GeneralSettings.showUnloadedTabIndicators.loadValue(),
             "restore_last_session_enabled": SessionRestorePreference.isEnabled,
             "short_highlight_links_enabled": PhiPreferences.GeneralSettings.shortHighlightLinksEnabled.loadValue(),
             "auto_picture_in_picture_mode": PhiPreferences.GeneralSettings.loadAutoPictureInPictureMode().rawValue,

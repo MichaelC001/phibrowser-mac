@@ -118,7 +118,7 @@ final class TabStatusTests: XCTestCase {
     @MainActor
     func testFaviconScalingPreservesSlotsAndTracksPaneRebindingAndPreference() throws {
         let defaults = UserDefaults.standard
-        let key = PhiPreferences.GeneralSettings.dimUnloadedTabIcons.rawValue
+        let key = PhiPreferences.GeneralSettings.showUnloadedTabIndicators.rawValue
         let originalValue = defaults.object(forKey: key)
         defaults.set(true, forKey: key)
         defer {

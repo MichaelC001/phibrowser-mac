@@ -37,7 +37,7 @@ enum TabFaviconPresentation {
     static func showsDashedOutline(
         isDiscarded: Bool,
         isUnloaded: Bool,
-        dimmingEnabled: Bool = PhiPreferences.GeneralSettings.dimUnloadedTabIcons.loadValue()
+        dimmingEnabled: Bool = PhiPreferences.GeneralSettings.showUnloadedTabIndicators.loadValue()
     ) -> Bool {
         dimmingEnabled && (isDiscarded || isUnloaded)
     }
@@ -45,7 +45,7 @@ enum TabFaviconPresentation {
     static func scale(
         isDiscarded: Bool,
         isUnloaded: Bool,
-        dimmingEnabled: Bool = PhiPreferences.GeneralSettings.dimUnloadedTabIcons.loadValue()
+        dimmingEnabled: Bool = PhiPreferences.GeneralSettings.showUnloadedTabIndicators.loadValue()
     ) -> CGFloat {
         showsDashedOutline(
             isDiscarded: isDiscarded,
@@ -58,8 +58,8 @@ enum TabFaviconPresentation {
 
     static var dimmingEnabledPublisher: AnyPublisher<Bool, Never> {
         NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
-            .map { _ in PhiPreferences.GeneralSettings.dimUnloadedTabIcons.loadValue() }
-            .prepend(PhiPreferences.GeneralSettings.dimUnloadedTabIcons.loadValue())
+            .map { _ in PhiPreferences.GeneralSettings.showUnloadedTabIndicators.loadValue() }
+            .prepend(PhiPreferences.GeneralSettings.showUnloadedTabIndicators.loadValue())
             .removeDuplicates()
             .eraseToAnyPublisher()
     }
@@ -67,7 +67,7 @@ enum TabFaviconPresentation {
     static func opacity(
         isDiscarded: Bool,
         isUnloaded: Bool,
-        dimmingEnabled: Bool = PhiPreferences.GeneralSettings.dimUnloadedTabIcons.loadValue()
+        dimmingEnabled: Bool = PhiPreferences.GeneralSettings.showUnloadedTabIndicators.loadValue()
     ) -> CGFloat {
         dimmingEnabled && (isDiscarded || isUnloaded) ? reclaimedOpacity : 1
     }
@@ -244,8 +244,8 @@ private struct TabCornerBadgeVisual: View {
 }
 
 struct TabDiscardedFaviconOutline: View {
-    @AppStorage(PhiPreferences.GeneralSettings.dimUnloadedTabIcons.rawValue)
-    private var dimUnloadedTabIcons = PhiPreferences.GeneralSettings.dimUnloadedTabIcons.defaultValue
+    @AppStorage(PhiPreferences.GeneralSettings.showUnloadedTabIndicators.rawValue)
+    private var showUnloadedTabIndicators = PhiPreferences.GeneralSettings.showUnloadedTabIndicators.defaultValue
     @ObservedObject var model: TabStatusModel
     let faviconSize: CGFloat
     let faviconCornerRadius: CGFloat
@@ -264,7 +264,7 @@ struct TabDiscardedFaviconOutline: View {
         if TabFaviconPresentation.showsDashedOutline(
             isDiscarded: model.isDiscarded,
             isUnloaded: model.isUnloaded,
-            dimmingEnabled: dimUnloadedTabIcons
+            dimmingEnabled: showUnloadedTabIndicators
         ) {
             Circle()
                 .stroke(
@@ -470,8 +470,8 @@ private struct TabTitleShimmerMask: View {
 
 struct UnifiedTabFaviconView: View {
     let viewModel: TabViewModel
-    @AppStorage(PhiPreferences.GeneralSettings.dimUnloadedTabIcons.rawValue)
-    private var dimUnloadedTabIcons = PhiPreferences.GeneralSettings.dimUnloadedTabIcons.defaultValue
+    @AppStorage(PhiPreferences.GeneralSettings.showUnloadedTabIndicators.rawValue)
+    private var showUnloadedTabIndicators = PhiPreferences.GeneralSettings.showUnloadedTabIndicators.defaultValue
     @ObservedObject private var statusModel: TabStatusModel
     @Environment(\.phiAppearance) private var phiAppearance
 
@@ -503,7 +503,7 @@ struct UnifiedTabFaviconView: View {
         .scaleEffect(TabFaviconPresentation.scale(
             isDiscarded: statusModel.isDiscarded,
             isUnloaded: statusModel.isUnloaded,
-            dimmingEnabled: dimUnloadedTabIcons
+            dimmingEnabled: showUnloadedTabIndicators
         ))
         .overlay {
             TabDiscardedFaviconOutline(

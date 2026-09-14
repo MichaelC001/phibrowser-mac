@@ -84,7 +84,7 @@ extension PhiPreferences {
         case alwaysShowURLPath // In address bar menu, always show full URL path
         case showTabPreviews // Whether open tabs use custom hover preview cards
         case showOpenTabIndicators // Show dots on inactive open pinned tabs and bookmarks
-        case dimUnloadedTabIcons // Dim icons and open indicators for unloaded or discarded tabs
+        case showUnloadedTabIndicators // Show dashed outlines and smaller icons for unloaded or discarded tabs
         case shortHighlightLinksEnabled // Use the sharing service for Copy Link to Highlight
         case spacesFeatureEnabled // Master gate for Spaces + profile management UI; defaults on, no user-facing toggle
         case suppressCloseIncognitoSpaceWarning // "Do not ask again" on the close-Incognito-Space confirmation
@@ -115,7 +115,7 @@ extension PhiPreferences {
                 return true
             case .showOpenTabIndicators:
                 return false
-            case .dimUnloadedTabIcons:
+            case .showUnloadedTabIndicators:
                 return true
             case .shortHighlightLinksEnabled:
                 return true

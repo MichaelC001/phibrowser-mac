@@ -52464,12 +52464,12 @@
       }
     },
     "settings.advanced.unloadedTabIcons.description" : {
-      "comment" : "Advanced settings - Explains icon dimming for tabs whose pages are unloaded from memory",
+      "comment" : "Advanced settings - Explains the dashed outline on icons of tabs whose pages are unloaded from memory",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Dim tab icons when their pages are unloaded from memory."
+            "value" : "Show a dashed outline around tab icons when their pages are unloaded from memory."
           }
         },
         "zh-Hans" : {
@@ -52522,13 +52522,13 @@
         }
       }
     },
-    "settings.advanced.unloadedTabIcons.dimToggle" : {
-      "comment" : "Advanced settings - Toggle title for dimming icons of tabs whose pages are unloaded from memory",
+    "settings.advanced.unloadedTabIcons.showToggle" : {
+      "comment" : "Advanced settings - Toggle title for marking tabs whose pages are unloaded from memory",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Dim unloaded tab icons"
+            "value" : "Show unloaded tab indicators"
           }
         },
         "zh-Hans" : {

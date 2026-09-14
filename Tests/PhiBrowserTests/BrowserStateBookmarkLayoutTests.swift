@@ -56,7 +56,7 @@ final class BrowserStateBookmarkLayoutTests: XCTestCase {
 
     func testSidebarSplitPairKeepsFaviconsOpaqueAcrossReclaimedStatesAndPreferenceChanges() {
         let defaults = UserDefaults.standard
-        let key = PhiPreferences.GeneralSettings.dimUnloadedTabIcons.rawValue
+        let key = PhiPreferences.GeneralSettings.showUnloadedTabIndicators.rawValue
         let originalValue = defaults.object(forKey: key)
         defaults.removeObject(forKey: key)
         defer {
