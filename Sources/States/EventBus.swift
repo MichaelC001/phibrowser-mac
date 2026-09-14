@@ -53,6 +53,11 @@ struct TabEvent: WindowEvent {
         /// than a state change, so nothing buffers or replays it.
         case openReaderView(tabId: Int)
 
+        /// "Open in Phi Chat" succeeded from the AI Chat panel that is the tab
+        /// `chatTabId`: collapse that panel. A request rather than a state
+        /// change, so nothing buffers or replays it.
+        case collapseAIChat(chatTabId: Int)
+
         /// Right-click "Open Link in Peek View" on a link. A request rather
         /// than a state change, so nothing buffers or replays it.
         case openLinkAsPeek(sourceTabId: Int, url: String)
@@ -245,6 +250,8 @@ class EventBus {
             state.handleTabContentFullscreen(tabId: tabId, isFullscreen: isFullscreen)
         case .openReaderView(let tabId):
             state.handleOpenReaderView(tabId: tabId)
+        case .collapseAIChat(let chatTabId):
+            state.handleCollapseAIChat(chatTabId: chatTabId)
         }
     }
 

@@ -1223,6 +1223,24 @@ class BrowserState {
         partner.toggleAIChat(collapsed)
     }
 
+    /// "Open in Phi Chat" succeeded from the AI Chat panel that is the tab
+    /// `chatTabId` (Chromium names the calling tab as of the request, over
+    /// the bridge): collapse that panel, and only that one. Resolved by the
+    /// chat tab rather than `focusingTab`, so the right panel closes even
+    /// after the user moved to another tab or window meanwhile — the Phi Chat
+    /// window itself takes focus as it opens. Nothing to do when no panel is
+    /// that tab (the new tab page, a Phi Chat window, a panel closed since).
+    /// The global `aiChatCollapsed` is left alone.
+    @MainActor
+    func handleCollapseAIChat(chatTabId: Int) {
+        guard let identifier = aiChatTabs.first(where: { $0.value.guid == chatTabId })?.key,
+              let tab = tab(forChatIdentifier: identifier) else {
+            AppLogDebug("[AIChat] collapse request named no AI Chat panel: \(chatTabId)")
+            return
+        }
+        setAIChatCollapsed(for: tab, collapsed: true)
+    }
+
     // =========================================================================
     // Placeholder mode (last-tab close → chrome://dino shell)
     //

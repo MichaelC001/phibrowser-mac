@@ -1783,6 +1783,14 @@ extension PhiChromiumCoordinator {
             action: .openReaderView(tabId: tabId.intValue)))
     }
 
+    func collapseAIChat(forTabId tabId: Int64, windowId: Int64) {
+        AppLogDebug("[AIChat] openPhiChat asked to collapse its source panel: " +
+                    "tab=\(tabId) window=\(windowId)")
+        EventBus.shared.send(TabEvent(
+            browserId: windowId.intValue,
+            action: .collapseAIChat(chatTabId: tabId.intValue)))
+    }
+
     func openLinkAsSplitPartner(withPartnerTabId partnerTabId: Int64,
                                 url: String,
                                 windowId: Int64) {

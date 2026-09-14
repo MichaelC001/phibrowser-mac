@@ -844,6 +844,17 @@ typedef NS_ENUM(NSInteger, PhiGhostMaterializeOutcome) {
             (NSDictionary<NSString *, NSArray<NSNumber *> *> *)parkedWindowIdsByProfileId
         replayedForProfile:(NSString *)profileBasename
          replayedWindowIds:(NSArray<NSNumber *> *)replayedWindowIds;
+
+/// phinomenonPrivate.openPhiChat has opened its Phi Chat window from the page
+/// in the tab identified by `tabId` — Chromium asks Mac to collapse the AI
+/// Chat panel that tab is, so the conversation is not left on screen twice.
+/// The ids name the calling tab as of the request, not whichever tab or
+/// window has focus by now (the new window takes it), and only that panel:
+/// panels in other tabs and windows stay as they are. Nothing to do when the
+/// tab is no AI Chat panel (the new tab page, a Phi Chat window) or has
+/// closed since. Sent before the request resolves; never on failure. Callers
+/// must guard with respondsToSelector: (skew).
+- (void)collapseAIChatForTabId:(int64_t)tabId windowId:(int64_t)windowId;
 @end
 
 @protocol PhiChromiumBridgeProtocol <NSObject>
@@ -1213,6 +1224,9 @@ typedef NS_ENUM(NSInteger, PhiGhostMaterializeOutcome) {
 - (void)enablePhiExtensions;
 
 /// Disable all three Phi built-in extensions.
+/// This is the AI switch going off: Phi Chat is taken away as well (its window
+/// closes, the app and its shim are uninstalled), and the chat profile is left
+/// out of the disable/clear pass; see phi_ai_switch.h.
 /// @param clearData If YES, also clear all extension storage data
 ///        (IndexedDB, localStorage, cookies, chrome.storage, Cache Storage, etc.)
 /// Mac must update its own state before calling this so that
