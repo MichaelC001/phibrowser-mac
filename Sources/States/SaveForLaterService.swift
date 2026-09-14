@@ -819,6 +819,11 @@ enum SaveForLaterService {
                 "browser.folio.reasonNothingCaptured",
                 value: "Neither the article nor a webpage copy could be captured.",
                 comment: "Folio - Failure toast detail: the page stayed open but yielded no article and no webpage copy, so nothing was kept")
+        case "save_timed_out":
+            return NSLocalizedString(
+                "browser.folio.reasonSaveTimedOut",
+                value: "The page took too long to read.",
+                comment: "Folio - Failure toast detail: reading the page for the save exceeded its time budget, so the save was abandoned")
         default:
             AppLogDebug("[SaveForLater] unworded toast reason: \(code)")
             return ""

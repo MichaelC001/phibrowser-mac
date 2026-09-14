@@ -26399,6 +26399,18 @@
         }
       }
     },
+    "browser.folio.reasonSaveTimedOut" : {
+      "comment" : "Folio - Failure toast detail: reading the page for the save exceeded its time budget, so the save was abandoned",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "The page took too long to read."
+          }
+        }
+      }
+    },
     "browser.folio.reasonWriteFailed" : {
       "comment" : "Folio - Failure toast detail: the destination folder could not be written to",
       "extractionState" : "extracted_with_value",
