@@ -29735,6 +29735,30 @@
         }
       }
     },
+    "common.bookmarkDeletion.nonEmptyFolderMessage" : {
+      "comment" : "Bookmark folder deletion - Confirmation message when deleting a single folder containing items",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "The folder and its contents will be deleted. This action cannot be undone."
+          }
+        }
+      }
+    },
+    "common.bookmarkDeletion.nonEmptyFolderTitle" : {
+      "comment" : "Bookmark folder deletion - Confirmation title when the folder contains items; %@ is the folder name",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Delete %@?"
+          }
+        }
+      }
+    },
     "common.bookmarkDeletion.singleBookmarkDescription" : {
       "comment" : "Bookmark multi-selection delete confirmation phrase for bookmark",
       "extractionState" : "extracted_with_value",
