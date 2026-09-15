@@ -704,7 +704,7 @@ class SidebarHeaderView: NSView, TitlebarAwareHitTestable {
             return
         }
 
-        let tooNarrowForUpgrade = !isFloating && currentWidth <= 225
+        let tooNarrowForUpgrade = currentWidth <= 225
         upgradeButton.isHidden = tooNarrowForUpgrade
         sidebarButton.isHidden = tooNarrowForUpgrade ? false : (layoutMode != .balanced)
         searchTabsButton.isHidden = layoutMode != .balanced || sidebarButton.isHidden
