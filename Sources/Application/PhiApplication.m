@@ -52,6 +52,9 @@
 }
 
 - (void)terminate:(id)sender {
+    if (self.hasModalPresentationBlockingTermination) {
+        return;
+    }
     if ([[ChromiumLauncher sharedInstance].bridge respondsToSelector:@selector(tryToTerminateApplication:)]) {
         [[ChromiumLauncher sharedInstance].bridge tryToTerminateApplication:self];
     }
