@@ -202,7 +202,11 @@ class SidebarViewController: NSViewController {
     
     private lazy var headerView = SidebarHeaderView(state: state)
     private lazy var pinnedTabViewController = PinnedTabViewController(state: state, hostVC: self)
-    private lazy var tabList = SidebarTabListViewController(state: state, hostVC: self)
+    private lazy var tabList: SidebarTabListViewController = {
+        let controller = SidebarTabListViewController(state: state, hostVC: self)
+        controller.setCleanupButtonsVisible(false)
+        return controller
+    }()
     private var state: BrowserState
     /// Guards one-time download manager binding (see `bindDownloadsManagerIfNeeded`).
     private var didBindDownloadsManager = false
@@ -457,7 +461,7 @@ class SidebarViewController: NSViewController {
         CATransaction.setDisableActions(true)
         spaceTintGradientLayer.frame = spaceTintBackgroundView.bounds
         CATransaction.commit()
-        updateAddressBarButtonsForCurrentMouseLocation()
+        updateHoverControlsForCurrentMouseLocation()
     }
     
     override func viewWillAppear() {
@@ -467,12 +471,12 @@ class SidebarViewController: NSViewController {
     override func viewDidAppear() {
         super.viewDidAppear()
         bindDownloadsManagerIfNeeded()
-        updateAddressBarButtonsForCurrentMouseLocation()
+        updateHoverControlsForCurrentMouseLocation()
     }
 
     override func viewDidDisappear() {
         super.viewDidDisappear()
-        headerView.setAddressBarButtonsVisible(false)
+        setHoverControlsVisible(false)
     }
 
     override func mouseEntered(with event: NSEvent) {
@@ -480,7 +484,7 @@ class SidebarViewController: NSViewController {
             super.mouseEntered(with: event)
             return
         }
-        headerView.setAddressBarButtonsVisible(true)
+        setHoverControlsVisible(true)
     }
 
     override func mouseExited(with event: NSEvent) {
@@ -488,16 +492,21 @@ class SidebarViewController: NSViewController {
             super.mouseExited(with: event)
             return
         }
-        headerView.setAddressBarButtonsVisible(false)
+        setHoverControlsVisible(false)
     }
 
-    private func updateAddressBarButtonsForCurrentMouseLocation() {
+    private func setHoverControlsVisible(_ visible: Bool) {
+        headerView.setAddressBarButtonsVisible(visible)
+        tabList.setCleanupButtonsVisible(visible)
+    }
+
+    private func updateHoverControlsForCurrentMouseLocation() {
         guard let window = view.window, !view.isHiddenOrHasHiddenAncestor else {
-            headerView.setAddressBarButtonsVisible(false)
+            setHoverControlsVisible(false)
             return
         }
         let point = view.convert(window.mouseLocationOutsideOfEventStream, from: nil)
-        headerView.setAddressBarButtonsVisible(view.visibleRect.contains(point))
+        setHoverControlsVisible(view.visibleRect.contains(point))
     }
 
     /// Binds the bottom bar's download button to the downloads manager exactly
