@@ -267,10 +267,12 @@ extension LocalStore {
 
     /// Persists bookmarks from one Arc Space into the local store.
     /// `spaceRoot` is the Space's bookmark root; its children are imported
-    /// directly under a Space-named landing folder, or — with `landingFolder`
-    /// false — directly under the Space's own bookmark root. That wrapper is
-    /// there to keep an import apart from the target Space's own bookmarks, so
-    /// in a Space created for exactly this tree it would be pure nesting.
+    /// under a Space-named folder inside an "Imported From Arc" folder, or —
+    /// with `landingFolder` false — directly under the Space's own bookmark
+    /// root. Those landing folders keep an import apart from the target
+    /// Space's own bookmarks, as the Chromium-side imports' "Imported From
+    /// <browser>" folders do, so in a Space created for exactly this tree they
+    /// would be pure nesting.
     /// Nothing is written when `spaceRoot` has no children (avoids empty
     /// folders for empty Spaces).
     ///
@@ -307,27 +309,34 @@ extension LocalStore {
                     }
 
                     let now = Date()
+                    func insertLandingFolder(titled title: String, into parent: TabDataModel) throws -> TabDataModel {
+                        let folder = TabDataModel(
+                            title: title,
+                            guid: UUID().uuidString, index: 0, url: Self.folderPlaceholderURL,
+                            favicon: nil, createdDate: now, updatedDate: now)
+                        folder.dataType = .bookmarkFolder
+                        folder.isCreatedByChromium = false
+                        folder.spaceId = root.spaceId
+                        folder.profileId = profileId
+                        folder.source = 3
+                        folder.profile = profile
+                        context.insert(folder)
+                        try self.insert(node: folder, to: parent, at: nil, in: context)
+                        return folder
+                    }
+
                     let landingRoot: TabDataModel?
                     if landingFolder {
-                        let importRoot = TabDataModel(
+                        let importRoot = try insertLandingFolder(
+                            titled: Self.importedFromArcFolderTitle, into: root)
+                        landingRoot = try insertLandingFolder(
                             // Defensive fallback: the parser already fills every
                             // Space title (the real one, or its localized "Untitled
                             // Space"), so this only matters if a nil-title root ever
                             // reaches here. It uses the parser's own key so the two
-                            // cannot drift apart — not the legacy generic "Imported
-                            // From Arc" name.
-                            title: spaceRoot.title ?? NSLocalizedString("oobe.importBrowserData.arc.untitledSpaceName", value: "Untitled Space", comment: "Arc import - fallback name for an Arc Space with no title"),
-                            guid: UUID().uuidString, index: 0, url: Self.folderPlaceholderURL,
-                            favicon: nil, createdDate: now, updatedDate: now)
-                        importRoot.dataType = .bookmarkFolder
-                        importRoot.isCreatedByChromium = false
-                        importRoot.spaceId = root.spaceId
-                        importRoot.profileId = profileId
-                        importRoot.source = 3
-                        importRoot.profile = profile
-                        context.insert(importRoot)
-                        try self.insert(node: importRoot, to: root, at: nil, in: context)
-                        landingRoot = importRoot
+                            // cannot drift apart.
+                            titled: spaceRoot.title ?? NSLocalizedString("oobe.importBrowserData.arc.untitledSpaceName", value: "Untitled Space", comment: "Arc import - fallback name for an Arc Space with no title"),
+                            into: importRoot)
                     } else {
                         // The tree goes straight to the Space's own root: a Space
                         // created for exactly this tree has nothing to keep it
