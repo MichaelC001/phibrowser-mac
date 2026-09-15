@@ -598,11 +598,6 @@ private final class PhiAlertWindow: NSWindow {
     override var canBecomeKey: Bool { true }
 }
 
-@MainActor
-private final class PhiAlertQuitConfirmationAction {
-    var handler: (() -> Void)?
-}
-
 /// Presents a SwiftUI `PhiAlert` through AppKit as a window-attached sheet, as
 /// a non-modal panel attached to a window, or as a standalone centered panel.
 /// Every entry point shares the same window construction, theme subscription,
@@ -625,6 +620,8 @@ final class PhiAlertPresenter {
     private weak var sourceWindow: NSWindow?
     private var alertWindow: NSWindow?
     private var appearanceSubscription: AnyObject?
+    private var quitShortcutMonitor: Any?
+    private let confirmsQuit: Bool
     private var parentCloseObservation: NSObjectProtocol?
     private var frameObservations: [NSObjectProtocol] = []
     /// Where the alert's top-left corner sits, so a content-driven resize can
@@ -643,8 +640,10 @@ final class PhiAlertPresenter {
 
     private init(
         sourceWindow: NSWindow?,
-        onDismiss: ((NSApplication.ModalResponse) -> Void)?
+        onDismiss: ((NSApplication.ModalResponse) -> Void)?,
+        confirmsQuit: Bool = false
     ) {
+        self.confirmsQuit = confirmsQuit
         self.sourceWindow = sourceWindow
         self.onDismiss = onDismiss
     }
@@ -691,11 +690,13 @@ final class PhiAlertPresenter {
 
     static func runSheetSynchronously<Content: View>(
         over sourceWindow: NSWindow,
+        confirmsQuit: Bool = false,
         @ViewBuilder content: (PhiAlertDismissAction) -> Content
     ) -> NSApplication.ModalResponse {
         let presenter = PhiAlertPresenter(
             sourceWindow: sourceWindow,
-            onDismiss: nil
+            onDismiss: nil,
+            confirmsQuit: confirmsQuit
         )
         let dismiss = PhiAlertDismissAction { [weak presenter] response in
             presenter?.dismiss(response)
@@ -708,11 +709,13 @@ final class PhiAlertPresenter {
     /// closed): the alert floats as its own centered panel, themed from the
     /// shared fallback source.
     static func runStandaloneSynchronously<Content: View>(
+        confirmsQuit: Bool = false,
         @ViewBuilder content: (PhiAlertDismissAction) -> Content
     ) -> NSApplication.ModalResponse {
         let presenter = PhiAlertPresenter(
             sourceWindow: nil,
-            onDismiss: nil
+            onDismiss: nil,
+            confirmsQuit: confirmsQuit
         )
         let dismiss = PhiAlertDismissAction { [weak presenter] response in
             presenter?.dismiss(response)
@@ -766,6 +769,7 @@ final class PhiAlertPresenter {
         )
         presentationStyle = .sheet
         isPresented = true
+        installQuitShortcutMonitor()
         sourceWindow.beginSheet(alertWindow) { [self] response in
             completeDismissal(response)
         }
@@ -778,6 +782,7 @@ final class PhiAlertPresenter {
         )
         presentationStyle = .standalone
         isPresented = true
+        installQuitShortcutMonitor()
         alertWindow.level = .modalPanel
         // Nothing sizes a standalone panel to its content the way AppKit
         // sizes a sheet, and the fitting size measured before the hosting
@@ -1004,9 +1009,33 @@ final class PhiAlertPresenter {
         window.setFrameOrigin(frame.origin)
     }
 
+    /// Modal alerts consume Quit so it cannot reach the application menu.
+    /// Only the quit confirmation opts in to answering the alert with it.
+    private func installQuitShortcutMonitor() {
+        let configuredQuitKey = Shortcuts.key(for: .IDC_EXIT)
+        quitShortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, self.isPresented,
+                  let alertWindow = self.alertWindow,
+                  alertWindow.isKeyWindow || event.window === alertWindow,
+                  let eventKeys = ShortcutsKey.eventKeys(for: event),
+                  PhiAlert.isQuitShortcut(eventKeys, configuredQuitKey: configuredQuitKey)
+            else {
+                return event
+            }
+            if self.confirmsQuit {
+                self.dismiss(.alertFirstButtonReturn)
+            }
+            return nil
+        }
+    }
+
     private func completeDismissal(_ response: NSApplication.ModalResponse) {
         guard isPresented else { return }
         isPresented = false
+        if let quitShortcutMonitor {
+            NSEvent.removeMonitor(quitShortcutMonitor)
+            self.quitShortcutMonitor = nil
+        }
         presentationStyle = .none
         appearanceSubscription = nil
         if let parentCloseObservation {
@@ -1164,37 +1193,21 @@ extension PhiAlert where Icon == EmptyView, AlertContent == EmptyView, Actions =
             )
         )
 
-        let confirmationAction = PhiAlertQuitConfirmationAction()
-        let configuredQuitKey = Shortcuts.key(for: .IDC_EXIT)
-        let quitShortcutMonitor = NSEvent.addLocalMonitorForEvents(
-            matching: .keyDown
-        ) { event in
-            guard let eventKeys = ShortcutsKey.eventKeys(for: event),
-                  isQuitShortcut(eventKeys, configuredQuitKey: configuredQuitKey)
-            else {
-                return event
-            }
-            confirmationAction.handler?()
-            return nil
-        }
-        defer {
-            if let quitShortcutMonitor {
-                NSEvent.removeMonitor(quitShortcutMonitor)
-            }
-        }
-
         let content = { (dismiss: PhiAlertDismissAction) in
-            makeQuitAlertContent(
-                configuration: configuration,
-                dismiss: dismiss,
-                confirmationAction: confirmationAction
-            )
+            PhiAlertAppKitContent(configuration: configuration, dismiss: dismiss)
         }
         let response: NSApplication.ModalResponse
-        if let sourceWindow {
-            response = NSApp.runPhiAlert(relativeTo: sourceWindow, content: content)
+        if let sourceWindow, sourceWindow.isVisible {
+            response = PhiAlertPresenter.runSheetSynchronously(
+                over: sourceWindow,
+                confirmsQuit: true,
+                content: content
+            )
         } else {
-            response = PhiAlertPresenter.runStandaloneSynchronously(content: content)
+            response = PhiAlertPresenter.runStandaloneSynchronously(
+                confirmsQuit: true,
+                content: content
+            )
         }
 
         return response == .alertFirstButtonReturn
@@ -1217,20 +1230,6 @@ extension PhiAlert where Icon == EmptyView, AlertContent == EmptyView, Actions =
         return eventKeys.matchingKeys.contains { key in
             key == quitKey || key.menuKeyEquivalent == quitKey.menuKeyEquivalent
         }
-    }
-
-    private static func makeQuitAlertContent(
-        configuration: PhiAlertAppKitConfiguration,
-        dismiss: PhiAlertDismissAction,
-        confirmationAction: PhiAlertQuitConfirmationAction
-    ) -> some View {
-        confirmationAction.handler = {
-            dismiss(.alertFirstButtonReturn)
-        }
-        return PhiAlertAppKitContent(
-            configuration: configuration,
-            dismiss: dismiss
-        )
     }
 }
 

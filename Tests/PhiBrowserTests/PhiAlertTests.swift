@@ -506,6 +506,16 @@ final class PhiAlertTests: XCTestCase {
         XCTAssertEqual(response, .alertSecondButtonReturn)
     }
 
+    func testCommandQDoesNotConfirmOrdinaryAlert() {
+        let response = runKeyboardShortcutAlert(
+            characters: "q",
+            modifierFlags: .command,
+            keyCode: 12
+        )
+
+        XCTAssertEqual(response, .cancel)
+    }
+
     func testCommandQConfirmsQuitAlert() {
         let expectedResponse = NSApplication.ModalResponse.alertFirstButtonReturn
         let response = runKeyboardShortcutAlert(
