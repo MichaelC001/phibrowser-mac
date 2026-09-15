@@ -188,6 +188,26 @@ final class PhiAlertTests: XCTestCase {
         XCTAssertFalse(NSApp.hasModalPresentationBlockingTermination)
     }
 
+    func testSheetDismissalUnblocksTerminationBeforeCallingCompletion() {
+        let sourceWindow = makeVisibleSourceWindow()
+        defer { sourceWindow.close() }
+        var didComplete = false
+        let presenter = sourceWindow.presentPhiAlert(onDismiss: { response in
+            didComplete = true
+            XCTAssertEqual(response, .alertFirstButtonReturn)
+            // Language changes request a restart directly from this callback.
+            XCTAssertFalse(NSApp.hasModalPresentationBlockingTermination)
+        }) { dismiss in
+            makeAlert(message: "Restart after confirmation.") {
+                dismiss(.alertFirstButtonReturn)
+            }
+        }
+
+        XCTAssertTrue(NSApp.hasModalPresentationBlockingTermination)
+        presenter.dismiss(.alertFirstButtonReturn)
+        XCTAssertTrue(didComplete)
+    }
+
     func testQuitActionIsIgnoredWhileAStandaloneAlertIsPresented() {
         var dismissHandler: ((NSApplication.ModalResponse) -> Void)?
         var didAttemptQuit = false

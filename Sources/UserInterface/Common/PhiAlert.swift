@@ -1122,13 +1122,12 @@ extension NSWindow {
 
 @MainActor
 extension NSApplication {
-    /// Phi's synchronous alerts use an event pump rather than an AppKit modal
-    /// session, so `modalWindow` alone does not cover them. Quit must wait for
-    /// every modal presentation to finish, including one in another window.
+    /// Blocks quit during AppKit modal sessions and active Phi alerts. Phi's
+    /// dismissal state clears before callbacks run; AppKit's `attachedSheet`
+    /// can remain set during a callback that requests a confirmed restart.
     @objc var hasModalPresentationBlockingTermination: Bool {
         modalWindow != nil || windows.contains { window in
-            window.attachedSheet != nil
-                || (window as? PhiAlertWindow)?.blocksApplicationTermination == true
+            (window as? PhiAlertWindow)?.blocksApplicationTermination == true
         }
     }
 
