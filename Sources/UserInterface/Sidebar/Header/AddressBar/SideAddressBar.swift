@@ -16,6 +16,8 @@ class SideAddressBar: NSView {
         static let rightStackSpacing: CGFloat = 6
         static let textFieldLeadingInset: CGFloat = 12
         static let textFieldTrailingSpacing: CGFloat = 8
+        static let textFadeWidth: CGFloat = 24
+        static let accessoryFadeDuration: TimeInterval = 0.1
         static let rightStackTrailingInset: CGFloat = 4
         static let minimumAddressTextWidth: CGFloat = 84
     }
@@ -112,7 +114,17 @@ class SideAddressBar: NSView {
     }()
     
     private var textField: NSTextField!
+    private let textFadeMaskLayer: CAGradientLayer = {
+        let layer = CAGradientLayer()
+        layer.startPoint = CGPoint(x: 0, y: 0.5)
+        layer.endPoint = CGPoint(x: 1, y: 0.5)
+        layer.colors = [NSColor.black.cgColor, NSColor.black.cgColor,
+                        NSColor.clear.cgColor, NSColor.clear.cgColor]
+        return layer
+    }()
     private var rightStackView: CustomStackView!
+    private var areAccessoryButtonsVisible = true
+    private var accessoryVisibilityGeneration = 0
     private var extensionIconsStackView: ExtensionReorderStackView!
     @Published var currentTab: Tab?
     @Published private var isMemoryButtonVisible = false
@@ -126,6 +138,36 @@ class SideAddressBar: NSView {
     var showBackgroundWhenInactive: Bool = true {
         didSet {
             updateBackgroundAppearance()
+        }
+    }
+
+    func setAccessoryButtonsVisible(_ visible: Bool) {
+        // Keep each button's page-specific visibility and the text frame intact.
+        guard areAccessoryButtonsVisible != visible else { return }
+        areAccessoryButtonsVisible = visible
+        accessoryVisibilityGeneration += 1
+        let generation = accessoryVisibilityGeneration
+        let shouldAnimate = window != nil && !isHiddenOrHasHiddenAncestor
+            && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+
+        guard shouldAnimate else {
+            rightStackView.layer?.removeAllAnimations()
+            rightStackView.alphaValue = visible ? 1 : 0
+            rightStackView.isHidden = !visible
+            updateTextFadeMask()
+            return
+        }
+
+        rightStackView.isHidden = false
+        updateTextFadeMask(animationDuration: LayoutMetrics.accessoryFadeDuration)
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = LayoutMetrics.accessoryFadeDuration
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            rightStackView.animator().alphaValue = visible ? 1 : 0
+        }) { [weak self] in
+            // A superseded fade-out must not hide a newer fade-in.
+            guard let self, self.accessoryVisibilityGeneration == generation else { return }
+            self.rightStackView.isHidden = !visible
         }
     }
     
@@ -147,6 +189,52 @@ class SideAddressBar: NSView {
         setupTextField()
         setupRightStackView()
         setupLayout()
+    }
+
+    override func layout() {
+        super.layout()
+        updateTextFadeMask()
+    }
+
+    private func updateTextFadeMask(animationDuration: TimeInterval = 0) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+
+        guard textField.bounds.width > 0, textField.bounds.height > 0 else {
+            textField.layer?.mask = nil
+            return
+        }
+
+        // Fade before visible controls, or at the text field's trailing edge
+        // when the controls are hidden, preserving the translucent background.
+        let controlsFrame = textField.convert(rightStackView.bounds, from: rightStackView)
+        let width = textField.bounds.width
+        let fadeEnd = !areAccessoryButtonsVisible || rightStackView.bounds.width == 0
+            ? width
+            : min(width, max(0, controlsFrame.minX))
+        let fadeStart = max(0, fadeEnd - LayoutMetrics.textFadeWidth)
+        textFadeMaskLayer.frame = textField.bounds
+        let locations: [NSNumber] = [
+            0,
+            NSNumber(value: Double(fadeStart / width)),
+            NSNumber(value: Double(fadeEnd / width)),
+            1
+        ]
+        if textFadeMaskLayer.locations != locations {
+            let previousLocations = textFadeMaskLayer.presentation()?.locations ?? textFadeMaskLayer.locations
+            textFadeMaskLayer.locations = locations
+            textFadeMaskLayer.removeAnimation(forKey: "accessoryVisibility")
+            if animationDuration > 0, let previousLocations {
+                let animation = CABasicAnimation(keyPath: "locations")
+                animation.fromValue = previousLocations
+                animation.toValue = locations
+                animation.duration = animationDuration
+                animation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                textFadeMaskLayer.add(animation, forKey: "accessoryVisibility")
+            }
+        }
+        textField.layer?.mask = textFadeMaskLayer
     }
     
     override func viewDidMoveToWindow() {
@@ -537,6 +625,8 @@ class SideAddressBar: NSView {
     
     private func setupTextField() {
         textField = NSTextField()
+        textField.wantsLayer = true
+        textField.layer?.zPosition = 0
         textField.isBordered = false
         textField.backgroundColor = NSColor.clear
         textField.font = NSFont.systemFont(ofSize: 13)
@@ -555,13 +645,19 @@ class SideAddressBar: NSView {
         textField.maximumNumberOfLines = 1
         textField.isEditable = false
         textField.isSelectable = false
-        textField.lineBreakMode = .byTruncatingTail
+        textField.lineBreakMode = .byClipping
+        textField.cell?.truncatesLastVisibleLine = false
         textField.setAccessibilityIdentifier(Self.addressTextFieldAccessibilityIdentifier)
         containerView.addSubview(textField)
     }
     
     private func setupRightStackView() {
         rightStackView = CustomStackView()
+        rightStackView.wantsLayer = true
+        rightStackView.layer?.zPosition = 1
+        rightStackView.onLayout = { [weak self] in
+            self?.updateTextFadeMask()
+        }
         rightStackView.orientation = .horizontal
         rightStackView.spacing = 2
         rightStackView.alignment = .centerY
@@ -613,7 +709,7 @@ class SideAddressBar: NSView {
         textField.snp.makeConstraints { make in
             make.leading.equalTo(containerView).offset(12)
             make.centerY.equalTo(containerView)
-            make.trailing.equalTo(rightStackView.snp.leading).offset(-8)
+            make.trailing.equalTo(containerView)
         }
     }
     
@@ -717,6 +813,13 @@ struct LottieMenuButtonRepresentable: NSViewRepresentable {
 
 extension SideAddressBar {
     class CustomStackView: NSStackView {
+        var onLayout: (() -> Void)?
+
+        override func layout() {
+            super.layout()
+            onLayout?()
+        }
+
         override func mouseDown(with event: NSEvent) {
         }
     }

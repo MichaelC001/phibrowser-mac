@@ -398,6 +398,7 @@ class SidebarViewController: NSViewController {
     private var hasSetupConfigObserver = false
     private var isSidebarContentActive = false
     private var lastPersistedFavoriteHeight: CGFloat?
+    private var sidebarTrackingArea: NSTrackingArea?
 
     /// Swipe-to-switch-Space gesture state (see `SpaceSwipeTracker`).
     private let spaceSwipe = SpaceSwipeTracker()
@@ -424,6 +425,14 @@ class SidebarViewController: NSViewController {
         }
         view.themedBackgroundColor = .windowOverlayBackground
         view.material = .fullScreenUI
+        let trackingArea = NSTrackingArea(
+            rect: .zero,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        view.addTrackingArea(trackingArea)
+        sidebarTrackingArea = trackingArea
         self.view = view
     }
     
@@ -448,6 +457,7 @@ class SidebarViewController: NSViewController {
         CATransaction.setDisableActions(true)
         spaceTintGradientLayer.frame = spaceTintBackgroundView.bounds
         CATransaction.commit()
+        updateAddressBarButtonsForCurrentMouseLocation()
     }
     
     override func viewWillAppear() {
@@ -457,6 +467,37 @@ class SidebarViewController: NSViewController {
     override func viewDidAppear() {
         super.viewDidAppear()
         bindDownloadsManagerIfNeeded()
+        updateAddressBarButtonsForCurrentMouseLocation()
+    }
+
+    override func viewDidDisappear() {
+        super.viewDidDisappear()
+        headerView.setAddressBarButtonsVisible(false)
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        guard event.trackingArea === sidebarTrackingArea else {
+            super.mouseEntered(with: event)
+            return
+        }
+        headerView.setAddressBarButtonsVisible(true)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        guard event.trackingArea === sidebarTrackingArea else {
+            super.mouseExited(with: event)
+            return
+        }
+        headerView.setAddressBarButtonsVisible(false)
+    }
+
+    private func updateAddressBarButtonsForCurrentMouseLocation() {
+        guard let window = view.window, !view.isHiddenOrHasHiddenAncestor else {
+            headerView.setAddressBarButtonsVisible(false)
+            return
+        }
+        let point = view.convert(window.mouseLocationOutsideOfEventStream, from: nil)
+        headerView.setAddressBarButtonsVisible(view.visibleRect.contains(point))
     }
 
     /// Binds the bottom bar's download button to the downloads manager exactly
