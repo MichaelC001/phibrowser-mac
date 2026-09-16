@@ -193,6 +193,9 @@ class SideAddressBar: NSView {
 
     override func layout() {
         super.layout()
+        // The floating sidebar can resize without relaying out the accessory
+        // stack. Resolve descendant frames before computing the text mask.
+        containerView.layoutSubtreeIfNeeded()
         updateTextFadeMask()
     }
 
