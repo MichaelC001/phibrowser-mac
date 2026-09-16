@@ -19,7 +19,8 @@ class SideAddressBar: NSView {
         static let textFadeWidth: CGFloat = 24
         static let accessoryFadeDuration: TimeInterval = 0.1
         static let rightStackTrailingInset: CGFloat = 4
-        static let minimumAddressTextWidth: CGFloat = 84
+        // Allow Reader View and Memory to consume part of the original text budget.
+        static let minimumAddressTextWidth: CGFloat = 84 - 2 * (extensionButtonWidth + extensionButtonSpacing)
     }
 
     private var containerView: HoverableView!
@@ -127,7 +128,7 @@ class SideAddressBar: NSView {
     private var accessoryVisibilityGeneration = 0
     private var extensionIconsStackView: ExtensionReorderStackView!
     @Published var currentTab: Tab?
-    @Published private var isMemoryButtonVisible = false
+    private let isFloating: Bool
     
     private var cancellables = Set<AnyCancellable>()
     // The last (unfiltered) pinned set handed to updateExtensionIcons, so a
@@ -171,12 +172,14 @@ class SideAddressBar: NSView {
         }
     }
     
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
+    init(isFloating: Bool = false) {
+        self.isFloating = isFloating
+        super.init(frame: .zero)
         setupUI()
     }
     
     required init?(coder: NSCoder) {
+        isFloating = false
         super.init(coder: coder)
         setupUI()
     }
@@ -249,9 +252,9 @@ class SideAddressBar: NSView {
     }
     
     private func setupObservers() {
-        guard let browserState = unsafeBrowserState else { return }
         cancellables.forEach { $0.cancel() }
         cancellables.removeAll()
+        guard let browserState = unsafeBrowserState else { return }
         extensionMenuHostingView.rootView = ExtensionPopoverButton(
             extensionManager: browserState.extensionManager,
             browserState: browserState
@@ -338,7 +341,6 @@ class SideAddressBar: NSView {
                     isPhiAIEnabled: isPhiAIEnabled, service: nil
                 ) != nil
                 self.memoryMenuButton.isHidden = !visible
-                self.isMemoryButtonVisible = visible
             }
             .store(in: &cancellables)
 
@@ -350,19 +352,21 @@ class SideAddressBar: NSView {
             .eraseToAnyPublisher()
         
         browserState.extensionManager.$pinedExtensions
-            .combineLatest(widthPublisher, browserState.$layoutMode, $isMemoryButtonVisible.removeDuplicates())
-            .map { exts, width, layoutMode, isMemoryButtonVisible in
-                guard layoutMode == .performance else { return false }
-                return Self.shouldDisplayPinnedExtensionsWithinSidebar(
-                    pinnedExtensionCount: exts.count,
-                    containerWidth: width,
-                    isMemoryButtonVisible: isMemoryButtonVisible
-                )
-            }
-            .removeDuplicates()
+            .combineLatest(widthPublisher, browserState.$layoutMode, browserState.$sidebarCollapsed)
             .receive(on: DispatchQueue.main)
-            .sink { shouldDisplay in
-                browserState.extensionManager.shouldDisplayExtensionsWithinSidebar = shouldDisplay
+            .sink { [weak self] exts, width, layoutMode, _ in
+                guard let self,
+                      self.isFloating == browserState.sidebarCollapsed else { return }
+                // Only the current sidebar host may publish its width decision.
+                // Recheck the shared value on activation: the other host may
+                // have changed it while this host's inputs stayed the same.
+                let shouldDisplay = layoutMode == .performance && Self.shouldDisplayPinnedExtensionsWithinSidebar(
+                    pinnedExtensionCount: exts.count,
+                    containerWidth: width
+                )
+                if browserState.extensionManager.shouldDisplayExtensionsWithinSidebar != shouldDisplay {
+                    browserState.extensionManager.shouldDisplayExtensionsWithinSidebar = shouldDisplay
+                }
             }
             .store(in: &cancellables)
 
@@ -462,18 +466,20 @@ class SideAddressBar: NSView {
 
     static func shouldDisplayPinnedExtensionsWithinSidebar(
         pinnedExtensionCount: Int,
-        containerWidth: CGFloat,
-        isMemoryButtonVisible: Bool
+        containerWidth: CGFloat
     ) -> Bool {
         guard pinnedExtensionCount > 0 else { return false }
 
         let pinnedIconsWidth = CGFloat(pinnedExtensionCount) * LayoutMetrics.extensionButtonWidth
         let pinnedIconsSpacing = CGFloat(max(0, pinnedExtensionCount - 1)) * LayoutMetrics.extensionButtonSpacing
+        // Reserve Reader View and Memory regardless of the current page so
+        // their visibility never changes where pinned extensions are displayed.
+        let optionalControlsWidth = 2 * (LayoutMetrics.extensionButtonWidth + LayoutMetrics.extensionButtonSpacing)
         let rightControlsWidth = pinnedIconsWidth
             + pinnedIconsSpacing
             + LayoutMetrics.rightStackSpacing
             + LayoutMetrics.extensionButtonWidth
-            + (isMemoryButtonVisible ? LayoutMetrics.extensionButtonWidth + LayoutMetrics.extensionButtonSpacing : 0)
+            + optionalControlsWidth
         let reservedHorizontalInsets = LayoutMetrics.textFieldLeadingInset
             + LayoutMetrics.textFieldTrailingSpacing
             + LayoutMetrics.rightStackTrailingInset
