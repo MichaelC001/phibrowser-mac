@@ -63,6 +63,15 @@ final class TabItemViewSplitLayoutTests: XCTestCase {
     }
 
     func test_openPinnedSplitPlacesIndicatorBelowCenteredFaviconPair() throws {
+        let defaults = UserDefaults.standard
+        let key = PhiPreferences.GeneralSettings.showUnloadedTabIndicators.rawValue
+        let originalValue = defaults.object(forKey: key)
+        defaults.removeObject(forKey: key)
+        defer {
+            defaults.set(originalValue, forKey: key)
+            NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: defaults)
+        }
+
         let primaryWrapper = BookmarkLayoutTestWebContentWrapper(
             urlString: "https://primary.example"
         )
@@ -123,6 +132,49 @@ final class TabItemViewSplitLayoutTests: XCTestCase {
                 - TabOpenIndicatorMetrics.comfortablePinnedSpacing
                 - TabOpenIndicatorMetrics.diameter
         XCTAssertEqual(indicator.frame.minY, expectedIndicatorY)
+
+        func faviconGap() -> CGFloat {
+            let frames = view.subviews
+                .filter { !$0.isHidden && $0.frame.size == faviconSize }
+                .map(\.frame)
+                .sorted { $0.minX < $1.minX }
+            guard frames.count == 2 else { return -1 }
+            return frames[1].minX - frames[0].maxX
+        }
+
+        primaryWrapper.isUnloaded = true
+        let separated = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in faviconGap() == 7 },
+            object: nil
+        )
+        wait(for: [separated], timeout: 2)
+        XCTAssertEqual(indicator.frame.midX, view.bounds.midX)
+
+        defaults.set(false, forKey: key)
+        NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: defaults)
+        let undimmed = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in indicator.alphaValue == 1 && faviconGap() == 2 },
+            object: nil
+        )
+        wait(for: [undimmed], timeout: 2)
+
+        defaults.set(true, forKey: key)
+        NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: defaults)
+        let dimmed = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in
+                indicator.alphaValue == TabFaviconPresentation.reclaimedOpacity && faviconGap() == 7
+            },
+            object: nil
+        )
+        wait(for: [dimmed], timeout: 2)
+
+        partnerWrapper.isDiscarded = false
+        let singleOutline = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in faviconGap() == 2 },
+            object: nil
+        )
+        wait(for: [singleOutline], timeout: 2)
+        XCTAssertEqual(indicator.frame.midX, view.bounds.midX)
     }
 
     func test_mergedSplitCellAboveSplitThresholdRendersPerPaneLayout() {

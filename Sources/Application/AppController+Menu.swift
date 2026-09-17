@@ -8,21 +8,44 @@ import Cocoa
 import SwiftUI
 import UniformTypeIdentifiers
 
-// chrome/app/chrome_command_ids.h
+// chrome/app/chrome_command_ids.h. Chromium 152 moved the structural menu
+// containers to the "Centralized Placeholder Command IDs" block at the bottom
+// of that file (kEditMenuId, kMacViewMenuId, ...); 150 tags the same menus
+// with the legacy IDC_*_MENU values. Both sets are hand-copied and both are
+// accepted while the client ships against either framework, so re-check
+// them on every major.
 enum ChromiumMainMenuRole: Int {
-    case edit = 36004
-    case bookmarks = 40029
-    case help = 40244
-    case window = 34045
-    case view = 44000
-    case file = 44001
-    case app = 44002
-    case history = 46000
-    case tab = 46001
-    case profiles = 46100
+    case edit = 57343       // kEditMenuId
+    case bookmarks = 57333  // kBookmarksMenuId (AppMenuModel::kBookmarksMenuPlaceholder)
+    case help = 57330       // kHelpMenuId
+    case window = 57321     // kMacWindowMenuId
+    case view = 57327       // kMacViewMenuId
+    case file = 57326       // kMacFileMenuId
+    case app = 57325        // kMacChromeMenuId
+    case history = 57324    // kMacHistoryMenuId
+    case tab = 57323        // kMacTabMenuId
+    case profiles = 57322   // kMacProfileMainMenuId
+
+    private static let legacyTags: [Int: Self] = [
+        36004: .edit,       // IDC_EDIT_MENU
+        40029: .bookmarks,  // IDC_BOOKMARKS_MENU
+        40244: .help,       // IDC_HELP_MENU
+        34045: .window,     // IDC_WINDOW_MENU
+        44000: .view,       // IDC_VIEW_MENU
+        44001: .file,       // IDC_FILE_MENU
+        44002: .app,        // IDC_CHROME_MENU
+        46000: .history,    // IDC_HISTORY_MENU
+        46001: .tab,        // IDC_TAB_MENU
+        46100: .profiles,   // IDC_PROFILE_MAIN_MENU
+    ]
+
+    init?(tag: Int) {
+        guard let role = Self(rawValue: tag) ?? Self.legacyTags[tag] else { return nil }
+        self = role
+    }
 
     static func resolve(_ item: NSMenuItem, helpMenu: NSMenu?) -> Self? {
-        if let role = Self(rawValue: item.tag) {
+        if let role = Self(tag: item.tag) {
             return role
         }
         // Chromium currently assigns IDC_HELP_MENU to no AppKit item. Its
@@ -34,11 +57,11 @@ enum ChromiumMainMenuRole: Int {
     }
 
     func item(in menu: NSMenu) -> NSMenuItem? {
-        menu.items.first { $0.tag == rawValue }
+        menu.items.first { Self(tag: $0.tag) == self }
     }
 
     func index(in menu: NSMenu) -> Int? {
-        menu.items.firstIndex { $0.tag == rawValue }
+        menu.items.firstIndex { Self(tag: $0.tag) == self }
     }
 }
 
@@ -277,6 +300,7 @@ extension AppController {
     static let agentTranscriptItemTag = 500025
     static let uninstallPhiItemTag = 500026
     static let browserMigrationItemTag = 500038
+    static let fileSaveForLaterLibraryItemTag = 500039
     static let debugMenuItemTag = 500027
     static let spacesProfileSeparatorTag = 500020
     static let deleteProfileSubmenuIdentifier = NSUserInterfaceItemIdentifier("phi.spaces.deleteProfile")
@@ -325,7 +349,7 @@ extension AppController {
             if let submenu = menuItem.submenu, menuRole == .view {
                 submenu.items.forEach {
                     let tag = $0.tag
-                    if [40009, 40250, 40259, 40282, 40296, 40251].contains(tag) {
+                    if [40009, 40250, 40259, 40282, 40296, 40299, 40251].contains(tag) {
                         $0.isHidden = true
                     }
                 }
@@ -717,8 +741,13 @@ extension AppController {
         // themselves — so tag 0 + no action + not a separator is the row.
         // Removal (not isHidden) so a Chromium-side menu refresh cannot
         // resurface it without rebuilding the menu, which re-runs this hook.
+        // A row Chromium has hidden is not it: while no tabbed browser window
+        // is key, the Close Window/Close Tab swap (PhiAppController
+        // -updateMenuItemKeyEquivalents) parks the Shift-Cmd-W row hidden with
+        // tag 0 and no action. This hook also re-runs on the live menu, and
+        // deleting that row ends the swap: Cmd-W stays on Close Window.
         subMenu.items.removeAll { item in
-            !item.isSeparatorItem && item.tag == 0
+            !item.isSeparatorItem && !item.isHidden && item.tag == 0
                 && (item.action == nil || item.submenu != nil)
         }
 
@@ -740,6 +769,8 @@ extension AppController {
             item.tag == CommandWrapper.PHI_NEW_KIOSK_WINDOW.rawValue
                 || item.tag == CommandWrapper.PHI_NEW_INCOGNITO_SPACE.rawValue
                 || item.tag == CommandWrapper.PHI_SHARE_PAGE.rawValue
+                || item.tag == CommandWrapper.PHI_SAVE_FOR_LATER.rawValue
+                || item.tag == AppController.fileSaveForLaterLibraryItemTag
         }
 
         let newKioskWindowItem = NSMenuItem(
@@ -798,6 +829,58 @@ extension AppController {
         } else {
             subMenu.addItem(sharePageItem)
         }
+
+        // Folio disabled: the rows above were already removed and nothing is
+        // reinserted — the feature leaves no trace in the menu.
+        guard SaveForLaterService.featureEnabled else { return }
+
+        let saveForLaterItem = NSMenuItem(
+            title: NSLocalizedString(
+                "app.fileMenu.saveToFolio",
+                value: "Save to Folio",
+                comment: "File menu - Saves the current page into the Folio folder as a markdown article plus a webpage copy"
+            ),
+            action: #selector(AppController.saveTabForLater(_:)),
+            keyEquivalent: "s"
+        )
+        saveForLaterItem.keyEquivalentModifierMask = [.command, .option]
+        saveForLaterItem.tag = CommandWrapper.PHI_SAVE_FOR_LATER.rawValue
+        Shortcuts.updateShortcut(for: saveForLaterItem)
+        saveForLaterItem.target = target
+
+        let libraryItem = NSMenuItem(
+            title: NSLocalizedString(
+                "app.fileMenu.openFolio",
+                value: "Open Folio",
+                comment: "File menu - Opens the library page listing the pages saved with Folio"
+            ),
+            action: #selector(AppController.openSaveForLaterLibrary(_:)),
+            keyEquivalent: ""
+        )
+        libraryItem.tag = AppController.fileSaveForLaterLibraryItemTag
+        libraryItem.target = target
+
+        // Next to Chromium's own Save Page, where a save action is looked
+        // for.
+        let savePageIndex = subMenu.items.firstIndex(where: {
+            $0.tag == CommandWrapper.IDC_SAVE_PAGE.rawValue
+        })
+        if let savePageIndex {
+            subMenu.insertItem(saveForLaterItem, at: savePageIndex + 1)
+        } else {
+            subMenu.addItem(saveForLaterItem)
+        }
+
+        // The library opens a place rather than saving one: it lives right
+        // under Open Location…, not among the save rows.
+        let openLocationIndex = subMenu.items.firstIndex(where: {
+            $0.tag == CommandWrapper.IDC_FOCUS_LOCATION.rawValue
+        }).map { $0 + 1 }
+        if let openLocationIndex {
+            subMenu.insertItem(libraryItem, at: openLocationIndex)
+        } else {
+            subMenu.addItem(libraryItem)
+        }
     }
 
     fileprivate func rebuildDeleteProfileSubmenu(_ menu: NSMenu) {
@@ -840,7 +923,7 @@ extension AppController {
         ProfileManager.shared.createProfile(displayName: name) { _ in }
     }
 
-    @objc func deleteSelectedProfile(_ sender: Any?) {
+    @MainActor @objc func deleteSelectedProfile(_ sender: Any?) {
         guard let menuItem = sender as? NSMenuItem,
               let profile = menuItem.representedObject as? PhiBrowserProfile else {
             return
@@ -1067,6 +1150,20 @@ extension AppController {
             return
         }
         state.toggleReaderView(for: tab, from: .viewMenu)
+    }
+
+    @MainActor
+    @objc func saveTabForLater(_ sender: Any?) {
+        guard let state = MainBrowserWindowControllersManager.shared.activeWindowController?.browserState,
+              let tab = state.focusingTab else {
+            return
+        }
+        SaveForLaterService.save(tab: tab, in: state)
+    }
+
+    @MainActor
+    @objc func openSaveForLaterLibrary(_ sender: Any?) {
+        SaveForLaterService.openLibrary()
     }
 
     @MainActor
@@ -1857,7 +1954,7 @@ extension AppController {
         menu.removeAllItems()
         let activeSpaceId = currentActiveSpace()?.spaceId
 
-        for (index, space) in SpaceManager.shared.spaces.enumerated() {
+        for (index, space) in currentPresentedSpaces().enumerated() {
             let item = NSMenuItem(
                 title: space.name,
                 action: #selector(activateSpaceFromMenu(_:)),
@@ -1921,7 +2018,7 @@ extension AppController {
     /// this synchronous menu-build path isn't `@MainActor`-isolated, so assume
     /// the isolation the helpers require rather than ripple the annotation
     /// through it.
-    private func spaceMenuIcon(for space: SpaceModel) -> NSImage? {
+    private func spaceMenuIcon(for space: Space) -> NSImage? {
         MainActor.assumeIsolated {
             guard let task = AgentSpaceManager.shared.tasksBySpaceId[space.spaceId] else {
                 return SpaceIconView.menuImage(for: space.iconName)
@@ -2056,7 +2153,7 @@ extension AppController {
         prevItem.target = self
         menu.addItem(prevItem)
 
-        let spaces = SpaceManager.shared.spaces
+        let spaces = currentPresentedSpaces()
         if !spaces.isEmpty {
             menu.addItem(.separator())
             for (index, space) in spaces.enumerated() {
@@ -2117,7 +2214,7 @@ extension AppController {
         rebuildDeleteProfileSubmenu(deleteSubmenu)
     }
 
-    private func makeSpacesProfileSubmenu(for space: SpaceModel?) -> NSMenu {
+    private func makeSpacesProfileSubmenu(for space: Space?) -> NSMenu {
         let menu = NSMenu(title: NSLocalizedString("app.spacesMenu.profileSubmenu.title", value: "Change Profile", comment: "Spaces menu - Profile submenu title for the active Space"))
         // The agent's fallback profile belongs to the agent — the user can't
         // re-bind a normal Space to it (matches the create-Space pickers).
@@ -2144,11 +2241,19 @@ extension AppController {
             ?? SpaceManager.shared.keySlot
     }
 
-    fileprivate func currentActiveSpace() -> SpaceModel? {
+    fileprivate func currentActiveSpace() -> Space? {
         let slot = currentSpacesSlot()
         let id = slot?.activeSpaceId ?? SpaceManager.shared.activeSpaceId
         guard let id else { return nil }
         return SpaceManager.shared.spaces.first(where: { $0.spaceId == id })
+    }
+
+    /// The Spaces the menus offer for the targeted slot — its own list, so
+    /// an agent Space hosted by another window is neither listed nor cycled
+    /// through from here (`SpaceWindowSlot.presents`). The full list stands in
+    /// when no slot resolves, matching `currentActiveSpace`'s fallback.
+    fileprivate func currentPresentedSpaces() -> [Space] {
+        currentSpacesSlot()?.presentedSpaces ?? SpaceManager.shared.spaces
     }
 
     /// True when the focused window is showing an agent Space that the agent
@@ -2190,8 +2295,9 @@ extension AppController {
     }
 
     private func cycleActiveSpace(by step: Int) {
-        let spaces = SpaceManager.shared.spaces
-        guard !spaces.isEmpty, let slot = currentSpacesSlot() else { return }
+        guard let slot = currentSpacesSlot() else { return }
+        let spaces = slot.presentedSpaces
+        guard !spaces.isEmpty else { return }
         guard let currentId = slot.activeSpaceId,
               let currentIdx = spaces.firstIndex(where: { $0.spaceId == currentId }) else {
             slot.activate(spaceId: spaces[0].spaceId, userInitiated: true)
@@ -2224,7 +2330,7 @@ extension AppController {
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         let trimmed = textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, trimmed != space.name else { return }
-        SpaceManager.shared.renameSpace(spaceId: space.spaceId, to: trimmed)
+        SpaceManager.shared.renameSpace(spaceId: space.spaceId, to: trimmed, expectedStoreIdentifier: space.storeIdentifier)
     }
 
     /// Opens the icon/emoji picker for the active Space, anchored below its icon
@@ -2289,7 +2395,7 @@ extension AppController {
         alert.addButton(withTitle: NSLocalizedString("app.changeSpaceProfileConfirmation.confirmButton", value: "Change Profile", comment: "Confirm button of the change-Space-profile confirmation"))
         alert.addButton(withTitle: NSLocalizedString("app.changeSpaceProfileConfirmation.cancelButton", value: "Cancel", comment: "Cancel button"))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
-        SpaceManager.shared.changeProfile(spaceId: space.spaceId, toProfileId: profileId)
+        SpaceManager.shared.changeProfile(spaceId: space.spaceId, toProfileId: profileId, expectedStoreIdentifier: space.storeIdentifier)
     }
 
     @objc func deleteActiveSpace(_ sender: Any?) {
@@ -2316,7 +2422,7 @@ extension AppController {
         alert.addButton(withTitle: NSLocalizedString("app.deleteSpaceConfirmation.deleteButton", value: "Delete", comment: "Destructive button"))
         alert.addButton(withTitle: NSLocalizedString("app.deleteSpaceConfirmation.cancelButton", value: "Cancel", comment: "Cancel button"))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
-        SpaceManager.shared.deleteSpace(spaceId: space.spaceId)
+        SpaceManager.shared.deleteSpace(spaceId: space.spaceId, expectedStoreIdentifier: space.storeIdentifier)
     }
 
     /// Closes the active Incognito Space: its windows across all slots go,
@@ -2923,6 +3029,23 @@ extension AppController {
             }
         }
 
+        if item.action == #selector(saveTabForLater(_:)) {
+            let canSave = MainActor.assumeIsolated {
+                SaveForLaterService.canSave(
+                    MainBrowserWindowControllersManager.shared
+                        .activeWindowController?.browserState.focusingTab)
+            }
+            return canSave && ApplicationState.shared.canUseBrowser
+        }
+
+        if item.action == #selector(openSaveForLaterLibrary(_:)) {
+            // The library is the permanent folder's face; Guest Mode gets
+            // neither its writes nor its reads.
+            return SaveForLaterService.featureEnabled
+                && ApplicationState.shared.canUseBrowser
+                && !ApplicationState.shared.isGuest
+        }
+
         if item.action == #selector(toggleAgentTranscript(_:)) {
             if let menuItem = item as? NSMenuItem {
                 menuItem.state = MainActor.assumeIsolated {
@@ -3054,7 +3177,7 @@ extension AppController {
                 // the window between the change and the rebuild.
                 guard let menuItem = item as? NSMenuItem,
                       let spaceId = menuItem.representedObject as? String,
-                      SpaceManager.shared.spaces
+                      currentPresentedSpaces()
                           .contains(where: { $0.spaceId == spaceId }) else {
                     return false
                 }

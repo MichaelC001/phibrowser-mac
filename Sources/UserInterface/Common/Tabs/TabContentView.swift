@@ -4,6 +4,7 @@
 // found in the LICENSE file.
 
 import SwiftUI
+import Combine
 import Lottie
 
 // MARK: - Atomic Components
@@ -11,17 +12,127 @@ import Lottie
 enum TabCornerBadgeMetrics {
     static let visualSize: CGFloat = 12
     static let overhang: CGFloat = 2
+    static let discardedOutlineInset: CGFloat = 1
+    static let discardedOutlineLineWidth: CGFloat = 1
+
+    /// Insets the circle around the rounded-square favicon's circumradius
+    /// to leave room for the adjacent open indicator.
+    static func discardedOutlineSize(
+        for faviconSize: CGFloat,
+        cornerRadius: CGFloat
+    ) -> CGFloat {
+        let normalizedCornerRadius = min(max(cornerRadius, 0), faviconSize / 2)
+        let cornerCenterOffset = faviconSize / 2 - normalizedCornerRadius
+        let faviconCircumradius = hypot(cornerCenterOffset, cornerCenterOffset)
+            + normalizedCornerRadius
+        let outlineRadius = faviconCircumradius
+            - discardedOutlineInset
+            + discardedOutlineLineWidth / 2
+
+        return ceil(outlineRadius * 2)
+    }
 }
 
 enum TabFaviconPresentation {
+    static func showsDashedOutline(
+        isDiscarded: Bool,
+        isUnloaded: Bool,
+        dimmingEnabled: Bool = PhiPreferences.GeneralSettings.showUnloadedTabIndicators.loadValue()
+    ) -> Bool {
+        dimmingEnabled && (isDiscarded || isUnloaded)
+    }
+
+    static func scale(
+        isDiscarded: Bool,
+        isUnloaded: Bool,
+        dimmingEnabled: Bool = PhiPreferences.GeneralSettings.showUnloadedTabIndicators.loadValue()
+    ) -> CGFloat {
+        showsDashedOutline(
+            isDiscarded: isDiscarded,
+            isUnloaded: isUnloaded,
+            dimmingEnabled: dimmingEnabled
+        ) ? 0.8 : 1
+    }
+
     static let reclaimedOpacity: CGFloat = 0.3
 
-    static func opacity(isDiscarded: Bool, isUnloaded: Bool) -> CGFloat {
-        isDiscarded || isUnloaded ? reclaimedOpacity : 1
+    static var dimmingEnabledPublisher: AnyPublisher<Bool, Never> {
+        NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
+            .map { _ in PhiPreferences.GeneralSettings.showUnloadedTabIndicators.loadValue() }
+            .prepend(PhiPreferences.GeneralSettings.showUnloadedTabIndicators.loadValue())
+            .removeDuplicates()
+            .eraseToAnyPublisher()
+    }
+
+    static func opacity(
+        isDiscarded: Bool,
+        isUnloaded: Bool,
+        dimmingEnabled: Bool = PhiPreferences.GeneralSettings.showUnloadedTabIndicators.loadValue()
+    ) -> CGFloat {
+        dimmingEnabled && (isDiscarded || isUnloaded) ? reclaimedOpacity : 1
     }
 
     static func showsOpenIndicator(isOpened: Bool, isActive: Bool) -> Bool {
         isOpened && !isActive
+    }
+}
+
+/// Keeps the favicon slot stable while scaling only its image and rounded corners.
+final class TabFaviconImageView: NSView {
+    private let imageView = NSImageView()
+    private let cornerRadius: CGFloat
+    private var imageScale: CGFloat = 1
+    private var scaleSubscription: AnyCancellable?
+
+    var image: NSImage? {
+        get { imageView.image }
+        set { imageView.image = newValue }
+    }
+
+    init(model: TabStatusModel, cornerRadius: CGFloat) {
+        self.cornerRadius = cornerRadius
+        super.init(frame: .zero)
+        imageView.imageScaling = .scaleProportionallyUpOrDown
+        imageView.wantsLayer = true
+        imageView.layer?.cornerCurve = .continuous
+        imageView.layer?.masksToBounds = true
+        addSubview(imageView)
+        imageScale = TabFaviconPresentation.scale(
+            isDiscarded: model.isDiscarded,
+            isUnloaded: model.isUnloaded
+        )
+
+        scaleSubscription = Publishers.CombineLatest3(
+            model.$isDiscarded,
+            model.$isUnloaded,
+            TabFaviconPresentation.dimmingEnabledPublisher
+        )
+        .map { isDiscarded, isUnloaded, dimmingEnabled in
+            TabFaviconPresentation.scale(
+                isDiscarded: isDiscarded,
+                isUnloaded: isUnloaded,
+                dimmingEnabled: dimmingEnabled
+            )
+        }
+        .removeDuplicates()
+        .receive(on: DispatchQueue.main)
+        .sink { [weak self] scale in
+            self?.imageScale = scale
+            self?.needsLayout = true
+        }
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func layout() {
+        super.layout()
+        imageView.frame = bounds.insetBy(
+            dx: bounds.width * (1 - imageScale) / 2,
+            dy: bounds.height * (1 - imageScale) / 2
+        )
+        imageView.layer?.cornerRadius = cornerRadius * imageScale
     }
 }
 
@@ -88,17 +199,22 @@ private struct TabCornerBadgeVisual: View {
         case .inputting:
             lottieBadge(named: "inputting", fallbackSystemName: "ellipsis")
         case .chat:
-            Image("chat-mini")
-                .renderingMode(.template)
-                .resizable()
-                .scaledToFit()
-                .frame(width: 10, height: 10)
-                .foregroundStyle(Color(nsColor: badgeColor))
+            lottieBadge(
+                named: "inputting",
+                fallbackSystemName: "ellipsis",
+                playbackMode: .paused(at: .progress(0))
+            )
         }
     }
 
     @ViewBuilder
-    private func lottieBadge(named name: String, fallbackSystemName: String) -> some View {
+    private func lottieBadge(
+        named name: String,
+        fallbackSystemName: String,
+        playbackMode: LottiePlaybackMode = .playing(
+            .fromProgress(0, toProgress: 1, loopMode: .loop)
+        )
+    ) -> some View {
         if let animation = LottieAnimation.named(
             name,
             bundle: .main,
@@ -106,9 +222,7 @@ private struct TabCornerBadgeVisual: View {
         ) {
             LottieView(animation: animation)
                 .configuration(LottieConfiguration(renderingEngine: .mainThread))
-                .playbackMode(.playing(
-                    .fromProgress(0, toProgress: 1, loopMode: .loop)
-                ))
+                .playbackMode(playbackMode)
                 .configure { animationView in
                     animationView.setValueProvider(
                         ColorValueProvider(badgeColor.lottieColor),
@@ -126,6 +240,54 @@ private struct TabCornerBadgeVisual: View {
 
     private var badgeColor: NSColor {
         BookmarkFolderIcon.strokeColor(theme: theme, appearance: appearance)
+    }
+}
+
+struct TabDiscardedFaviconOutline: View {
+    @AppStorage(PhiPreferences.GeneralSettings.showUnloadedTabIndicators.rawValue)
+    private var showUnloadedTabIndicators = PhiPreferences.GeneralSettings.showUnloadedTabIndicators.defaultValue
+    @ObservedObject var model: TabStatusModel
+    let faviconSize: CGFloat
+    let faviconCornerRadius: CGFloat
+
+    @Environment(\.phiTheme) private var theme
+    @Environment(\.phiAppearance) private var appearance
+
+    private var strokeColor: NSColor {
+        appearance.isLight
+            ? BookmarkFolderIcon.strokeColor(theme: theme, appearance: appearance)
+                .withAlphaComponent(0.13)
+            : NSColor.white.withAlphaComponent(0.06)
+    }
+
+    var body: some View {
+        if TabFaviconPresentation.showsDashedOutline(
+            isDiscarded: model.isDiscarded,
+            isUnloaded: model.isUnloaded,
+            dimmingEnabled: showUnloadedTabIndicators
+        ) {
+            Circle()
+                .stroke(
+                    Color(nsColor: strokeColor),
+                    style: StrokeStyle(
+                        lineWidth: TabCornerBadgeMetrics.discardedOutlineLineWidth,
+                        lineCap: .round,
+                        dash: [3, 3]
+                    )
+                )
+                .frame(
+                    width: TabCornerBadgeMetrics.discardedOutlineSize(
+                        for: faviconSize,
+                        cornerRadius: faviconCornerRadius
+                    ),
+                    height: TabCornerBadgeMetrics.discardedOutlineSize(
+                        for: faviconSize,
+                        cornerRadius: faviconCornerRadius
+                    )
+                )
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
     }
 }
 
@@ -308,6 +470,8 @@ private struct TabTitleShimmerMask: View {
 
 struct UnifiedTabFaviconView: View {
     let viewModel: TabViewModel
+    @AppStorage(PhiPreferences.GeneralSettings.showUnloadedTabIndicators.rawValue)
+    private var showUnloadedTabIndicators = PhiPreferences.GeneralSettings.showUnloadedTabIndicators.defaultValue
     @ObservedObject private var statusModel: TabStatusModel
     @Environment(\.phiAppearance) private var phiAppearance
 
@@ -336,10 +500,18 @@ struct UnifiedTabFaviconView: View {
         }
         .frame(width: Self.faviconSize, height: Self.faviconSize)
         .clipShape(RoundedRectangle(cornerRadius: Self.faviconCornerRadius, style: .continuous))
-        .opacity(TabFaviconPresentation.opacity(
+        .scaleEffect(TabFaviconPresentation.scale(
             isDiscarded: statusModel.isDiscarded,
-            isUnloaded: statusModel.isUnloaded
+            isUnloaded: statusModel.isUnloaded,
+            dimmingEnabled: showUnloadedTabIndicators
         ))
+        .overlay {
+            TabDiscardedFaviconOutline(
+                model: viewModel.status,
+                faviconSize: Self.faviconSize,
+                faviconCornerRadius: Self.faviconCornerRadius
+            )
+        }
         .overlay(alignment: .topTrailing) {
             if viewModel.isCapturingMedia {
                 UnifiedTabRecordingIcon()

@@ -84,6 +84,7 @@ extension PhiPreferences {
         case alwaysShowURLPath // In address bar menu, always show full URL path
         case showTabPreviews // Whether open tabs use custom hover preview cards
         case showOpenTabIndicators // Show dots on inactive open pinned tabs and bookmarks
+        case showUnloadedTabIndicators // Show dashed outlines and smaller icons for unloaded or discarded tabs
         case shortHighlightLinksEnabled // Use the sharing service for Copy Link to Highlight
         case spacesFeatureEnabled // Master gate for Spaces + profile management UI; defaults on, no user-facing toggle
         case suppressCloseIncognitoSpaceWarning // "Do not ask again" on the close-Incognito-Space confirmation
@@ -114,6 +115,8 @@ extension PhiPreferences {
                 return true
             case .showOpenTabIndicators:
                 return false
+            case .showUnloadedTabIndicators:
+                return true
             case .shortHighlightLinksEnabled:
                 return true
             case .spacesFeatureEnabled:
@@ -569,6 +572,83 @@ extension PhiPreferences {
 
         private static func readFlag(_ key: String) -> Bool? {
             UserDefaults.standard.object(forKey: key) as? Bool
+        }
+    }
+
+    // MARK: - Folio
+
+    enum SaveForLater {
+        private static let globalFolderKey = "PhiSaveForLaterFolder"
+        private static let profileFolderOverridesKey = "PhiSaveForLaterProfileFolders"
+        private static let autoSaveOnSiteActionsKey = "PhiSaveForLaterAutoSaveOnSiteActions"
+
+        /// The user's opt-in for site-action auto-save (liking/bookmarking on
+        /// supported sites triggers a save). Default off: auto-writing files
+        /// to disk on a like is delightful when asked for and alarming when
+        /// not. Effective only while the `save-for-later-auto-trigger`
+        /// feature flag is on — see `SaveForLaterService.autoTriggerArmed`.
+        static var autoSaveOnSiteActions: Bool {
+            get { UserDefaults.standard.bool(forKey: autoSaveOnSiteActionsKey) }
+            set { UserDefaults.standard.set(newValue, forKey: autoSaveOnSiteActionsKey) }
+        }
+
+        /// The out-of-the-box destination. Created on first save, not at
+        /// launch, so an untouched feature leaves no folder behind.
+        static var defaultFolderPath: String {
+            let documents = FileManager.default.urls(
+                for: .documentDirectory, in: .userDomainMask).first
+                ?? URL(fileURLWithPath: NSHomeDirectory())
+                    .appendingPathComponent("Documents", isDirectory: true)
+            return documents.appendingPathComponent("PhiFolio", isDirectory: true).path
+        }
+
+        /// The app-wide destination folder. The app is not sandboxed, so a
+        /// plain path is enough. Empty storage reads as the default.
+        static var globalFolderPath: String {
+            get {
+                let stored = UserDefaults.standard.string(forKey: globalFolderKey) ?? ""
+                return stored.isEmpty ? defaultFolderPath : stored
+            }
+            set {
+                if newValue.isEmpty || newValue == defaultFolderPath {
+                    UserDefaults.standard.removeObject(forKey: globalFolderKey)
+                } else {
+                    UserDefaults.standard.set(newValue, forKey: globalFolderKey)
+                }
+            }
+        }
+
+        /// Per-profile destination overrides, keyed by profileId. A profile
+        /// without an entry follows the global folder. Stored Swift-side:
+        /// unlike the download location this is a client concept, not a
+        /// Chromium pref.
+        static func folderOverride(forProfile profileId: String) -> String? {
+            guard !profileId.isEmpty else { return nil }
+            let overrides = UserDefaults.standard
+                .dictionary(forKey: profileFolderOverridesKey) as? [String: String]
+            guard let path = overrides?[profileId], !path.isEmpty else { return nil }
+            return path
+        }
+
+        static func setFolderOverride(_ path: String?, forProfile profileId: String) {
+            guard !profileId.isEmpty else { return }
+            var overrides = (UserDefaults.standard
+                .dictionary(forKey: profileFolderOverridesKey) as? [String: String]) ?? [:]
+            if let path, !path.isEmpty {
+                overrides[profileId] = path
+            } else {
+                overrides.removeValue(forKey: profileId)
+            }
+            if overrides.isEmpty {
+                UserDefaults.standard.removeObject(forKey: profileFolderOverridesKey)
+            } else {
+                UserDefaults.standard.set(overrides, forKey: profileFolderOverridesKey)
+            }
+        }
+
+        /// The folder a save from this profile writes into.
+        static func effectiveFolderPath(forProfile profileId: String) -> String {
+            folderOverride(forProfile: profileId) ?? globalFolderPath
         }
     }
 

@@ -56,13 +56,35 @@ final class ExtensionMessageRouter {
             if let denied = AgentSpaceRouter.userSpaceOperationsRefusal() {
                 return denied
             }
-            PostHogSDK.shared.capture("agent_user_space_command", properties: [
-                "command": context.type,
-                "agent_name": AgentDriverBadge.telemetryName(context.agentName),
-            ])
+            if !Self.untrackedUserSpaceCommands.contains(context.type) {
+                PostHogSDK.shared.capture("agent_user_space_command", properties: [
+                    "command": context.type,
+                    "agent_name": AgentDriverBadge.telemetryName(context.agentName),
+                ])
+            }
             return handler(context)
         }
     }
+
+    /// Managed types that read state or probe liveness rather than change
+    /// anything. They are not counted as `agent_user_space_command`: the
+    /// metric is meant to say "an agent touched the user's browsing data",
+    /// and these ride machine loops — the browser-use-sonic CDP connection
+    /// heartbeats with `agentSpace.spaces.list` every 30s for as long as the
+    /// browser is up, and the shadow-window keep-alive pings every 45s — so
+    /// they were 98.7% of a 2.2M-event week with no user action behind them.
+    /// `credentials.get` / `credentials.getTotp` stay tracked: reading a
+    /// secret is consequential even though it mutates nothing.
+    static let untrackedUserSpaceCommands: Set<String> = [
+        "agentSpace.bookmarks.list",
+        "agentSpace.pinnedTabs.list",
+        "agentSpace.shadow.list",
+        "agentSpace.shadow.ping",
+        "agentSpace.spaces.list",
+        "agentSpace.spaces.listTabs",
+        "agentSpace.urlRules.list",
+        "credentials.status",
+    ]
 
     func register(type: String, handler: @escaping ExtensionMessageHandler) {
         handlers[type] = handler
@@ -84,6 +106,15 @@ final class ExtensionMessageRouter {
         guard !configured else { return }
         configured = true
 
+        // The bridge refuses any single message over 1 MiB, and some replies
+        // are legitimately bigger (a reader article with its pictures
+        // inlined). A sender splits such a payload into `bridge.chunk`
+        // messages; the last one is answered with whatever the original
+        // type's handler returns, so the sender sees one round trip.
+        register(type: "bridge.chunk") { [weak self] context in
+            self?.handleChunk(context) ?? #"{"error":"invalid"}"#
+        }
+
         register(type: "notification") { context in
             NotificationCardManager.shared.handleRequest(context: context)
             return nil
@@ -96,6 +127,11 @@ final class ExtensionMessageRouter {
 
         register(type: "showDialog") { context in
             ExtensionDialogManager.shared.handleRequest(context: context)
+            return nil
+        }
+
+        register(type: SiteMemoryMessageRouter.queryType) { context in
+            SiteMemoryMessageRouter.handle(context)
             return nil
         }
 
@@ -144,11 +180,93 @@ final class ExtensionMessageRouter {
             return "{}"
         }
 
+        for type in TravelBackMessageHandler.messageTypes {
+            register(type: type) { context in
+                Task { @MainActor in
+                    let reply = await TravelBackMessageHandler.handle(context)
+                    ExtensionMessaging.shared.sendResponse(reply, requestId: context.requestId)
+                }
+                return nil
+            }
+        }
+
         register(type: "sidecar.aiOutputState") { context in
             MainActor.assumeIsolated {
                 SidecarAIOutputStateStore.shared.handle(context)
             }
             return "{}"
+        }
+
+        // Save for Later's site-action auto-save (SaveForLaterService): the
+        // extension pulls the armed state on boot and reports trigger
+        // activations; the service re-checks arming on every trigger.
+        register(type: "saveForLater.getArmed") { context in
+            return SaveForLaterService.handleGetArmed(context)
+        }
+        register(type: "saveForLater.trigger") { context in
+            SaveForLaterService.handleTrigger(context)
+            return "{}"
+        }
+        // The Save for Later library page's folder access; replies are async
+        // (file IO) via ExtensionMessaging.
+        // An older Mirage still asks the app to do the highlight; answer
+        // with a visible message rather than dropping it (see
+        // handleLegacyHighlight).
+        register(type: "saveForLater.highlight") { context in
+            SaveForLaterService.handleLegacyHighlight(context)
+            return "{}"
+        }
+        register(type: "saveForLater.delete") { context in
+            SaveForLaterService.handleLibraryDelete(context)
+            return nil
+        }
+        register(type: "saveForLater.reveal") { context in
+            SaveForLaterService.handleLibraryReveal(context)
+            return "{}"
+        }
+        // The capture RPC's report leg and the file broker's chunked write
+        // path (Mirage streams MHTML archives through it).
+        register(type: "saveForLater.fs.writeBegin") { context in
+            SaveForLaterService.handleFSWriteBegin(context)
+            return nil
+        }
+        register(type: "saveForLater.fs.writeChunk") { context in
+            SaveForLaterService.handleFSWriteChunk(context)
+            return nil
+        }
+        register(type: "saveForLater.fs.writeEnd") { context in
+            SaveForLaterService.handleFSWriteEnd(context)
+            return nil
+        }
+        register(type: "saveForLater.fs.list") { context in
+            SaveForLaterService.handleFSList(context)
+            return nil
+        }
+        register(type: "saveForLater.fs.read") { context in
+            SaveForLaterService.handleFSRead(context)
+            return nil
+        }
+        register(type: "saveForLater.fs.writeText") { context in
+            SaveForLaterService.handleFSWriteText(context)
+            return nil
+        }
+        register(type: "saveForLater.fs.rename") { context in
+            SaveForLaterService.handleFSRename(context)
+            return nil
+        }
+        // Mirage runs the save itself and reports back; the app keeps the
+        // toast (window chrome) and the authenticated video-gist call.
+        register(type: "saveForLater.saveResult") { context in
+            SaveForLaterService.handleSaveResult(context)
+            return "{}"
+        }
+        register(type: "saveForLater.toast") { context in
+            SaveForLaterService.handleToast(context)
+            return "{}"
+        }
+        register(type: "saveForLater.videoGist") { context in
+            SaveForLaterService.handleVideoGist(context)
+            return nil
         }
 
         register(type: "agentSpace.create") { context in
@@ -395,5 +513,73 @@ final class ExtensionMessageRouter {
             }
             return #"{"ok":true}"#
         }
+    }
+
+    // MARK: - Chunked messages
+
+    /// One `bridge.chunk`: piece `seq` of `total` for message `id`, carrying
+    /// a base64 slice of the original payload's UTF-8 bytes.
+    private struct ChunkPayload: Decodable {
+        let id: String
+        let seq: Int
+        let total: Int
+        let type: String
+        let data: String
+    }
+
+    private struct PendingChunks {
+        var type: String
+        var parts: [Data?]
+        var touched: Date
+    }
+
+    /// Bounds on a reassembly: 64 pieces of at most 1 MiB is far above any
+    /// article, and a sender that never finishes is swept after a minute.
+    private static let maxChunks = 64
+    private static let maxChunkBytes = 1024 * 1024
+    private static let chunkIdleTimeout: TimeInterval = 60
+
+    private var pendingChunks: [String: PendingChunks] = [:]
+
+    private func handleChunk(_ context: ExtensionMessageContext) -> String? {
+        guard let data = context.payload.data(using: .utf8),
+              let chunk = try? JSONDecoder().decode(ChunkPayload.self, from: data),
+              chunk.total >= 1, chunk.total <= Self.maxChunks,
+              chunk.seq >= 0, chunk.seq < chunk.total,
+              chunk.data.utf8.count <= Self.maxChunkBytes,
+              let bytes = Data(base64Encoded: chunk.data) else {
+            return #"{"error":"invalid"}"#
+        }
+        let now = Date()
+        pendingChunks = pendingChunks.filter {
+            now.timeIntervalSince($0.value.touched) < Self.chunkIdleTimeout
+        }
+        var pending = pendingChunks[chunk.id]
+            ?? PendingChunks(type: chunk.type,
+                             parts: Array(repeating: nil, count: chunk.total),
+                             touched: now)
+        guard pending.type == chunk.type, pending.parts.count == chunk.total else {
+            pendingChunks.removeValue(forKey: chunk.id)
+            return #"{"error":"invalid"}"#
+        }
+        pending.parts[chunk.seq] = bytes
+        pending.touched = now
+        if pending.parts.contains(where: { $0 == nil }) {
+            pendingChunks[chunk.id] = pending
+            return #"{"ok":true}"#
+        }
+        pendingChunks.removeValue(forKey: chunk.id)
+        var joined = Data()
+        for part in pending.parts { joined.append(part ?? Data()) }
+        guard let payload = String(data: joined, encoding: .utf8) else {
+            return #"{"error":"invalid"}"#
+        }
+        // Dispatched under the last chunk's request id, so the handler's
+        // reply — sync here, or async through ExtensionMessaging — answers
+        // the sender's final send.
+        return handle(type: chunk.type, payload: payload,
+                      requestId: context.requestId, senderId: context.senderId,
+                      agentName: context.agentName,
+                      driverPrincipalId: context.driverPrincipalId)
     }
 }

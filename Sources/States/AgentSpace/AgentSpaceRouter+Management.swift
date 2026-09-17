@@ -372,7 +372,7 @@ extension AgentSpaceRouter {
 
     // MARK: - URL rules
 
-    private static func draft(from rule: SpaceURLRule) -> LocalStore.URLRuleDraft {
+    private static func draft(from rule: SpaceRoutingRule) -> LocalStore.URLRuleDraft {
         LocalStore.URLRuleDraft(host: rule.host,
                                 pathPrefix: rule.pathPrefix,
                                 askBeforeRouting: rule.askBeforeRouting,
@@ -384,7 +384,7 @@ extension AgentSpaceRouter {
     /// round-trips, so a mutation based on it could silently drop a change
     /// a client made moments earlier; the store fetch is authoritative.
     @MainActor
-    private static func storedRules() -> [SpaceURLRule] {
+    private static func storedRules() -> [SpaceRoutingRule] {
         AccountController.shared.localDataAccount?.localStorage.getAllURLRules() ?? []
     }
 

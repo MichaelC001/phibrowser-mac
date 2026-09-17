@@ -31,6 +31,7 @@ struct CommandDispatcher {
         .PHI_NEW_KIOSK_WINDOW,
         .PHI_NEW_INCOGNITO_SPACE,
         .PHI_SHARE_PAGE,
+        .PHI_SAVE_FOR_LATER,
     ] + CommandWrapper.spaceSelectionCommands
 
     /// Commands swallowed while the focused tab shows the native NTP — it has no
@@ -225,6 +226,13 @@ struct CommandDispatcher {
             }
             state.toggleReaderView(for: tab, from: .shortcut)
             return true
+        case .PHI_SAVE_FOR_LATER:
+            let state = windowController.browserState
+            guard let tab = state.focusingTab, SaveForLaterService.canSave(tab) else {
+                return false
+            }
+            SaveForLaterService.save(tab: tab, in: state)
+            return true
         case let c where c.spaceSelectionIndex != nil:
             guard let index = c.spaceSelectionIndex else { return false }
             return activateSpace(at: index, from: windowController)
@@ -275,10 +283,11 @@ struct CommandDispatcher {
     @MainActor
     private static func activateSpace(by step: Int, from windowController: MainBrowserWindowController) -> Bool {
         guard spacesShortcutsEnabled else { return false }
-        let spaces = SpaceManager.shared.spaces
-        guard spaces.count > 1, let slot = windowController.slot else {
-            return true
-        }
+        // The slot's own list: agent Spaces hosted by other windows are not
+        // cycled through here (`SpaceWindowSlot.presents`).
+        guard let slot = windowController.slot else { return true }
+        let spaces = slot.presentedSpaces
+        guard spaces.count > 1 else { return true }
         guard let currentId = slot.activeSpaceId,
               let currentIdx = spaces.firstIndex(where: { $0.spaceId == currentId }) else {
             slot.activate(spaceId: spaces[0].spaceId, userInitiated: true)
@@ -292,11 +301,11 @@ struct CommandDispatcher {
     @MainActor
     private static func activateSpace(at index: Int, from windowController: MainBrowserWindowController) -> Bool {
         guard spacesShortcutsEnabled else { return false }
-        let spaces = SpaceManager.shared.spaces
-        guard spaces.indices.contains(index),
-              let slot = windowController.slot else {
-            return false
-        }
+        guard let slot = windowController.slot else { return false }
+        // Indexed into the slot's own list, matching the Spaces menu's
+        // ⌃-number rows for this window (`AppController.rebuildSpacesMenu`).
+        let spaces = slot.presentedSpaces
+        guard spaces.indices.contains(index) else { return false }
         slot.activate(spaceId: spaces[index].spaceId, userInitiated: true)
         return true
     }

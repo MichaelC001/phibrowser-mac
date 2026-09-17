@@ -21,6 +21,9 @@ import PostHog
     @objc static private(set)var shared: AppController!
     
     var settingsWindowController: SettingsWindowController?
+    /// The application the settings window took the foreground from, so
+    /// closing the window can hand activation back to it.
+    var settingsActivationSource: NSRunningApplication?
     /// Whether `settingsWindowController` was built with the Developer pane.
     /// The pane list is fixed at window creation, so this goes stale when the
     /// General-tab "Developer mode" toggle changes while the window is open;
@@ -42,6 +45,12 @@ import PostHog
     #endif
     
     var menuObservation: NSKeyValueObservation?
+    /// Rebuilds flag-gated menu rows once PostHog's flags land — they arrive
+    /// after setup, over the network, and every menu built before then read
+    /// each flag as off.
+    var featureFlagObservation: NSObjectProtocol?
+    var applicationActivationObservation: NSObjectProtocol?
+    let applicationOpenedThrottle = ApplicationOpenedThrottle()
 
     // MARK: - Auth0 login gating
     private var pendingLaunchAfterLogin: Bool = true
@@ -68,6 +77,7 @@ import PostHog
     private var pendingHotKioskPresentationInFlight = false
     private var pendingHotKioskPresentationWorkItem: DispatchWorkItem?
     private var hasFinishedLaunching = false
+    private var crashFeedbackCoordinator: CrashFeedbackCoordinator?
     /// Cached in `applicationWillFinishLaunching`; weak — owned by `ChromiumLauncher`, not AppController.
     private weak var chromiumBridge: (any PhiChromiumBridgeProtocol)?
     private lazy var kioskGlobalShortcutRegistrar =
@@ -142,7 +152,14 @@ import PostHog
         setupKinfisherCache()
         
         #if !PHI_OSS_BUILD
-        SentryService.setup()
+        let crashFeedbackCoordinator = CrashFeedbackCoordinator()
+        self.crashFeedbackCoordinator = crashFeedbackCoordinator
+        SentryService.setup { [weak crashFeedbackCoordinator] context in
+            // Delivery resumes after this launch callback has finished.
+            DispatchQueue.main.async {
+                crashFeedbackCoordinator?.enqueue(context)
+            }
+        }
         #endif
         
         MemoryUsageMonitor.shared.start()
@@ -159,6 +176,10 @@ import PostHog
         NotificationCenter.default.addObserver(self,
                                                selector: #selector(phiWillTryToTerminateApplicationNotification(_:)),
                                                name: Notification.Name("PhiWillTryToTerminateApplicationNotification"),
+                                               object: nil)
+        NotificationCenter.default.addObserver(self,
+                                               selector: #selector(phiDidCancelTerminateApplicationNotification(_:)),
+                                               name: Notification.Name("PhiDidCancelTerminateApplicationNotification"),
                                                object: nil)
         NotificationCenter.default.addObserver(self,
                                                selector: #selector(loginStatusRefreshCompleted(_:)),
@@ -189,6 +210,13 @@ import PostHog
         NotificationCenter.default.addObserver(self,
                                                selector: #selector(spaceListDidChange),
                                                name: .spaceListDidChange,
+                                               object: nil)
+        // The Spaces menu lists the focused window's own Spaces (an agent
+        // Space is listed only by the window hosting it), so its position →
+        // Space mapping has to follow the focused window, not just the list.
+        NotificationCenter.default.addObserver(self,
+                                               selector: #selector(spaceListDidChange),
+                                               name: .activeBrowserWindowDidChange,
                                                object: nil)
         NotificationCenter.default.addObserver(self,
                                                selector: #selector(refreshBookmarksMenuVisibility),
@@ -239,14 +267,18 @@ import PostHog
         // main() (UserDataRemovalBootstrap), before Chromium reads any state.
 
         #if !PHI_OSS_BUILD
-        // Set up PostHog before `didFinishLaunchingNotification` fires so the
-        // SDK can observe the app-opened lifecycle event. If either value is
-        // missing the app runs without analytics.
+        // Set up PostHog before `didFinishLaunchingNotification` fires. If
+        // either value is missing the app runs without analytics.
         if let token = PostHogEnv.projectToken.value,
            let host = PostHogEnv.host.value {
             let isMetricsReportingEnabled = chromiumBridge?.isMetricsReportingEnabled() ?? false
             let postHogConfig = PostHogConfig(apiKey: token, host: host)
-            postHogConfig.captureApplicationLifecycleEvents = true
+            // The SDK's lifecycle integration maps `Application Opened` /
+            // `Application Backgrounded` to `didBecomeActive` / `didResignActive`,
+            // which on macOS is every Cmd-Tab in and out — ~35 pairs per user
+            // per day, 265k events a week, none of them a launch. Off; the one
+            // launch event we want is captured by hand below.
+            postHogConfig.captureApplicationLifecycleEvents = false
             postHogConfig.reuseAnonymousId = false
             #if DEBUG
             postHogConfig.debug = true
@@ -268,9 +300,24 @@ import PostHog
                 return event
             }
             PostHogSDK.shared.setup(postHogConfig)
+            // Flags arrive after setup, over the network. Menus built
+            // before then read every flag as off, so a flag-gated row
+            // (Folio's File menu entries) would stay missing for the whole
+            // session even once the flag was known. The hook is
+            // remove-then-insert idempotent, so re-running it costs nothing
+            // when nothing moved.
+            featureFlagObservation = NotificationCenter.default.addObserver(
+                forName: PostHogSDK.didReceiveFeatureFlags,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.refreshPrefGatedMenuItems() }
+            }
             AccountController.shared.reconcilePostHogIdentityForAnonymousLaunchIfNeeded(
                 isMetricsReportingEnabled: isMetricsReportingEnabled
             )
+            captureApplicationOpened()
+            observeApplicationActivationForAnalytics()
             captureUserDefaultsSnapshot()
         } else {
             AppLogInfo("PostHog: project token or host not set in PostHogConfig.generated.swift; skipping init")
@@ -290,6 +337,7 @@ import PostHog
     }
     
     func applicationWillTerminate(_ notification: Notification) {
+        crashFeedbackCoordinator?.stop()
         coldOpenURLForwardWorkItem?.cancel()
         coldOpenURLForwardWorkItem = nil
         pendingHotKioskPresentationWorkItem?.cancel()
@@ -855,14 +903,31 @@ import PostHog
     
     @MainActor
     @objc func phiWillTryToTerminateApplicationNotification(_ notification: Notification) {
+        crashFeedbackCoordinator?.suspendForTermination()
         // Posted (synchronously, main thread) by phi_app_controller_mac.mm's
-        // -tryToTerminateApplication: BEFORE chrome::CloseAllBrowsers() tears the
-        // windows down. This is the only quit signal that fires ahead of that
-        // teardown cascade (the AppKit applicationWillTerminate hook runs after
-        // it). Freeze the restore snapshot here so the closing windows can't
-        // drain it — the next launch then regroups restored windows into their
-        // slots and re-enters fullscreen.
+        // -tryToTerminateApplication once the quit is past the confirm sheet and
+        // the in-progress-downloads prompt, BEFORE chrome::CloseAllBrowsers()
+        // tears the windows down. This is the only quit signal that fires ahead
+        // of that teardown cascade (the AppKit applicationWillTerminate hook runs
+        // after it). Freeze the restore snapshot here so the closing windows
+        // can't drain it — the next launch then regroups restored windows into
+        // their slots and re-enters fullscreen. One refusal is still ahead of
+        // the teardown, a page's beforeunload prompt; it lifts the freeze again
+        // through phiDidCancelTerminateApplicationNotification below.
         SpaceManager.shared.markTerminating()
+    }
+
+    @MainActor
+    @objc func phiDidCancelTerminateApplicationNotification(_ notification: Notification) {
+        // Posted (synchronously, main thread) by phi_app_controller_mac.mm when a
+        // beforeunload prompt answered "stay" calls off a quit it had announced
+        // above. No window has closed by then — Chromium asks every window's
+        // handlers before it closes the first — so the frozen layout is still
+        // the live one: lift the freeze and let layout changes persist again.
+        // Nothing is written here; a change refused during the freeze is still
+        // pending and lands with the next write.
+        SpaceManager.shared.clearTerminating()
+        crashFeedbackCoordinator?.resumeAfterCancelledTermination()
     }
 
     @objc private func loginStatusRefreshCompleted(_ notification: Notification) {

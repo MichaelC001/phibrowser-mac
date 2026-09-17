@@ -45,6 +45,47 @@ final class FeedbackOutboxArchiveTests: XCTestCase {
         })
     }
 
+    func testCrashSnapshotSurvivesLogRotationAndArchiveRetry() throws {
+        let log = root.appendingPathComponent("current.log")
+        try Data("before crash".utf8).write(to: log)
+        let context = PreviousSessionCrashContext(
+            eventID: "crash-event", timestamp: nil,
+            logSnapshot: PhiLogging.logSnapshot(paths: [log.path], maxBytes: 1024)
+        )
+        let jobRoot = try makeJobDirectory()
+        let saved = try XCTUnwrap(FeedbackOutbox.savePreviousSessionCrashLog(context, jobRoot: jobRoot))
+        try Data("after relaunch".utf8).write(to: log)
+        let preparedDir = try makePreparedDirectory(in: jobRoot)
+        for _ in 0..<2 {
+            let attachments = try FeedbackOutbox.prepareLogZipAttachments(
+                jobRoot: jobRoot, preparedDir: preparedDir, chromiumSystemLogs: nil,
+                previousSessionCrashLog: saved,
+                phiLogsURL: root.appendingPathComponent("missing-phi"),
+                sentinelLogsURL: root.appendingPathComponent("missing-sentinel")
+            )
+            let archive = try XCTUnwrap(attachments.first { $0.filename == "logs.zip" })
+            XCTAssertEqual(
+                try zipEntryText("PreviousSessionCrash/logs.txt", in: jobRoot.appendingPathComponent(archive.relativePath)),
+                "before crash"
+            )
+            try FileManager.default.removeItem(at: jobRoot.appendingPathComponent(archive.relativePath))
+        }
+    }
+
+    func testMissingQueuedCrashSnapshotFailsInsteadOfSendingOnlyCurrentLogs() throws {
+        let jobRoot = try makeJobDirectory()
+        let preparedDir = try makePreparedDirectory(in: jobRoot)
+        let missing = FeedbackOutboxSourceAttachment(
+            relativePath: "logs/missing.log", filename: "missing.log", mimeType: "text/plain", size: 10
+        )
+        XCTAssertThrowsError(try FeedbackOutbox.prepareLogZipAttachments(
+            jobRoot: jobRoot, preparedDir: preparedDir, chromiumSystemLogs: nil,
+            previousSessionCrashLog: missing,
+            phiLogsURL: root.appendingPathComponent("missing-phi"),
+            sentinelLogsURL: root.appendingPathComponent("missing-sentinel")
+        ))
+    }
+
     func testCollectLogArchiveItemsSplitsOversizedLogFiles() throws {
         let logsRoot = root.appendingPathComponent("PhiLogs", isDirectory: true)
         try FileManager.default.createDirectory(at: logsRoot, withIntermediateDirectories: true)

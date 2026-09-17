@@ -211,7 +211,7 @@ final class LocalStoreProfileTests: XCTestCase {
         try context.save()
 
         XCTAssertEqual(
-            store.fetchBookmarkTabs(in: [selectedSpace]).map(\.guid),
+            store.fetchBookmarkTabs(in: store.getAllSpaces().filter { $0.spaceId == selectedSpace.spaceId }).map(\.guid),
             ["recent", "older", "never"]
         )
     }
@@ -420,10 +420,14 @@ final class LocalStoreProfileTests: XCTestCase {
         XCTAssertEqual(targetRootChildren.count, 1, "Exactly one import folder should be created in the target Space.")
         let importFolder = try XCTUnwrap(targetRootChildren.first)
         XCTAssertEqual(importFolder.spaceId, targetSpaceId)
-        XCTAssertEqual(importFolder.title, "Work")
+        let spaceFolder = try XCTUnwrap(store.fetchBookmarks(
+            parentId: importFolder.guid,
+            profileId: LocalStore.defaultProfileId,
+            spaceId: targetSpaceId
+        ).first)
 
         let importedBookmarks = store.fetchBookmarks(
-            parentId: importFolder.guid,
+            parentId: spaceFolder.guid,
             profileId: LocalStore.defaultProfileId,
             spaceId: targetSpaceId
         )
@@ -502,7 +506,11 @@ final class LocalStoreProfileTests: XCTestCase {
         XCTAssertEqual(bookmark.layout, "vertical")
     }
 
-    func testSaveArcBookmarksLandsInSpaceNamedFolder() async throws {
+    /// An import lands the way the Chromium-side imports do: an "Imported From
+    /// Arc" folder at the Space root keeps it apart from the Space's own
+    /// bookmarks, and the Space-named folder inside it says which Arc Space
+    /// the tree came from.
+    func testSaveArcBookmarksLandsInSpaceNamedFolderUnderImportedFromArc() async throws {
         let store = try makeStore()
         let context = try XCTUnwrap(store.getMainContext())
         let space = SpaceModel(spaceId: "space-a", profileId: LocalStore.defaultProfileId,
@@ -519,9 +527,18 @@ final class LocalStoreProfileTests: XCTestCase {
         await store.saveArcBookmarksToLocalStore(root,
             profileId: LocalStore.defaultProfileId, spaceId: "space-a")
 
+        let arcFolderTitle = NSLocalizedString(
+            "localData.bookmarks.importedFromArcFolderTitle", value: "Imported From Arc",
+            comment: "Arc bookmarks import folder title")
         let top = store.fetchBookmarks(parentId: nil,
             profileId: LocalStore.defaultProfileId, spaceId: "space-a")
-        let folder = try XCTUnwrap(top.first { $0.title == "Work" })
+        XCTAssertEqual(top.map { $0.title }, [arcFolderTitle])
+        let importFolder = try XCTUnwrap(top.first)
+        XCTAssertEqual(importFolder.source, 3)
+        let spaceFolders = store.fetchBookmarks(parentId: importFolder.guid,
+            profileId: LocalStore.defaultProfileId, spaceId: "space-a")
+        XCTAssertEqual(spaceFolders.map { $0.title }, ["Work"])
+        let folder = try XCTUnwrap(spaceFolders.first)
         XCTAssertEqual(folder.source, 3)
         let children = store.fetchBookmarks(parentId: folder.guid,
             profileId: LocalStore.defaultProfileId, spaceId: "space-a")
@@ -544,11 +561,11 @@ final class LocalStoreProfileTests: XCTestCase {
         XCTAssertEqual(written, 0, "A Space with nothing to import is not a failed write.")
         let top = store.fetchBookmarks(parentId: nil,
             profileId: LocalStore.defaultProfileId, spaceId: "space-a")
-        XCTAssertNil(top.first { $0.title == "Empty" })
+        XCTAssertTrue(top.isEmpty, "No landing folder is left behind for an empty Space.")
     }
 
     /// A Migration creates each Space for exactly one source tree, so the tree
-    /// goes to that Space's bookmark root: the Space-named folder is there to
+    /// goes to that Space's bookmark root: the landing folders are there to
     /// keep an import apart from bookmarks the target Space already had, and a
     /// freshly created Space has none.
     func testSaveArcBookmarksWithoutLandingFolderLandsAtTheSpaceRoot() async throws {
@@ -578,7 +595,7 @@ final class LocalStoreProfileTests: XCTestCase {
         let top = store.fetchBookmarks(parentId: nil,
             profileId: LocalStore.defaultProfileId, spaceId: "space-a")
         XCTAssertEqual(top.map { $0.title }, ["Linear", "Design"],
-                       "No folder named after the Space wraps the tree, and source order holds.")
+                       "No landing folder wraps the tree, and source order holds.")
         let design = try XCTUnwrap(top.last)
         XCTAssertEqual(design.dataType, .bookmarkFolder)
         XCTAssertNil(design.favicon, "Favicons are not carried over; icons arrive on first load.")

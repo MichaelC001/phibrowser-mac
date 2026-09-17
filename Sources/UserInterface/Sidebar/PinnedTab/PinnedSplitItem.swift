@@ -18,12 +18,17 @@ class PinnedSplitItem: NSCollectionViewItem, NSMenuDelegate {
     private static let faviconSize: CGFloat = 16
     private static let faviconCornerRadius: CGFloat = 3
     private static let defaultFaviconCenterOffset: CGFloat = 10
+    private static let separatedFaviconCenterOffset: CGFloat = 11
 
-    private var leftIconView: NSImageView!
-    private var rightIconView: NSImageView!
+    private var leftIconView: TabFaviconImageView!
+    private var rightIconView: TabFaviconImageView!
     private var backgroundView: HoverableView!
     private var openIndicatorHost: TabDecorativeHostingView!
+    private var leftDiscardedOutlineHost: TabDecorativeHostingView!
+    private var rightDiscardedOutlineHost: TabDecorativeHostingView!
     private var statusBadgeHost: TabDecorativeHostingView!
+    private var leftIconCenterXConstraint: Constraint?
+    private var rightIconCenterXConstraint: Constraint?
     private let leftStatusModel = TabStatusModel()
     private let rightStatusModel = TabStatusModel()
     private var leftTab: Tab?
@@ -63,6 +68,7 @@ class PinnedSplitItem: NSCollectionViewItem, NSMenuDelegate {
         rightIconView.alphaValue = 1
         leftStatusModel.prepareForReuse()
         rightStatusModel.prepareForReuse()
+        updateFaviconCenterOffset(separatesDashedOutlines: false)
         openIndicatorHost.isHidden = true
         openIndicatorHost.alphaValue = 1
         splitTabPreviewRegistration.invalidate()
@@ -100,8 +106,8 @@ class PinnedSplitItem: NSCollectionViewItem, NSMenuDelegate {
             self?.updateToolTip()
         }
 
-        leftIconView = makeIconView()
-        rightIconView = makeIconView()
+        leftIconView = TabFaviconImageView(model: leftStatusModel, cornerRadius: Self.faviconCornerRadius)
+        rightIconView = TabFaviconImageView(model: rightStatusModel, cornerRadius: Self.faviconCornerRadius)
 
         view.addSubview(backgroundView)
         backgroundView.addSubview(leftIconView)
@@ -111,13 +117,31 @@ class PinnedSplitItem: NSCollectionViewItem, NSMenuDelegate {
         openIndicatorHost.isHidden = true
         backgroundView.addSubview(openIndicatorHost)
 
+        leftDiscardedOutlineHost = TabDecorativeHostingView(
+            rootView: TabDiscardedFaviconOutline(
+                model: leftStatusModel,
+                faviconSize: Self.faviconSize,
+                faviconCornerRadius: Self.faviconCornerRadius
+            )
+        )
+        rightDiscardedOutlineHost = TabDecorativeHostingView(
+            rootView: TabDiscardedFaviconOutline(
+                model: rightStatusModel,
+                faviconSize: Self.faviconSize,
+                faviconCornerRadius: Self.faviconCornerRadius
+            )
+        )
+        backgroundView.addSubview(leftDiscardedOutlineHost)
+        backgroundView.addSubview(rightDiscardedOutlineHost)
+
         backgroundView.snp.makeConstraints { make in
             make.edges.equalToSuperview()
         }
 
         leftIconView.snp.makeConstraints { make in
             make.centerY.equalToSuperview()
-            make.centerX.equalToSuperview().offset(-Self.defaultFaviconCenterOffset)
+            leftIconCenterXConstraint = make.centerX.equalToSuperview()
+                .offset(-Self.defaultFaviconCenterOffset).constraint
             make.size.equalTo(CGSize(
                 width: Self.faviconSize,
                 height: Self.faviconSize
@@ -125,7 +149,8 @@ class PinnedSplitItem: NSCollectionViewItem, NSMenuDelegate {
         }
         rightIconView.snp.makeConstraints { make in
             make.centerY.equalToSuperview()
-            make.centerX.equalToSuperview().offset(Self.defaultFaviconCenterOffset)
+            rightIconCenterXConstraint = make.centerX.equalToSuperview()
+                .offset(Self.defaultFaviconCenterOffset).constraint
             make.size.equalTo(CGSize(
                 width: Self.faviconSize,
                 height: Self.faviconSize
@@ -139,6 +164,33 @@ class PinnedSplitItem: NSCollectionViewItem, NSMenuDelegate {
             make.size.equalTo(CGSize(
                 width: TabOpenIndicatorMetrics.diameter,
                 height: TabOpenIndicatorMetrics.diameter
+            ))
+        }
+
+        leftDiscardedOutlineHost.snp.makeConstraints { make in
+            make.center.equalTo(leftIconView)
+            make.size.equalTo(CGSize(
+                width: TabCornerBadgeMetrics.discardedOutlineSize(
+                    for: Self.faviconSize,
+                    cornerRadius: Self.faviconCornerRadius
+                ),
+                height: TabCornerBadgeMetrics.discardedOutlineSize(
+                    for: Self.faviconSize,
+                    cornerRadius: Self.faviconCornerRadius
+                )
+            ))
+        }
+        rightDiscardedOutlineHost.snp.makeConstraints { make in
+            make.center.equalTo(rightIconView)
+            make.size.equalTo(CGSize(
+                width: TabCornerBadgeMetrics.discardedOutlineSize(
+                    for: Self.faviconSize,
+                    cornerRadius: Self.faviconCornerRadius
+                ),
+                height: TabCornerBadgeMetrics.discardedOutlineSize(
+                    for: Self.faviconSize,
+                    cornerRadius: Self.faviconCornerRadius
+                )
             ))
         }
 
@@ -159,16 +211,6 @@ class PinnedSplitItem: NSCollectionViewItem, NSMenuDelegate {
         }
 
         view.menu = contextMenu
-    }
-
-    private func makeIconView() -> NSImageView {
-        let iv = NSImageView()
-        iv.imageScaling = .scaleProportionallyUpOrDown
-        iv.wantsLayer = true
-        iv.layer?.cornerCurve = .continuous
-        iv.layer?.cornerRadius = Self.faviconCornerRadius
-        iv.layer?.masksToBounds = true
-        return iv
     }
 
     func configure(
@@ -196,10 +238,33 @@ class PinnedSplitItem: NSCollectionViewItem, NSMenuDelegate {
         }
         .store(in: &cancellables)
 
+        updateFaviconCenterOffset(
+            separatesDashedOutlines: bothFaviconsShowDashedOutline
+        )
+
+        Publishers.CombineLatest(
+            Publishers.CombineLatest4(
+                leftStatusModel.$isDiscarded,
+                leftStatusModel.$isUnloaded,
+                rightStatusModel.$isDiscarded,
+                rightStatusModel.$isUnloaded
+            ),
+            TabFaviconPresentation.dimmingEnabledPublisher
+        )
+        .map { states, dimmingEnabled in
+            dimmingEnabled && (states.0 || states.1) && (states.2 || states.3)
+        }
+        .removeDuplicates()
+        .receive(on: DispatchQueue.main)
+        .sink { [weak self] separatesDashedOutlines in
+            self?.updateFaviconCenterOffset(
+                separatesDashedOutlines: separatesDashedOutlines
+            )
+        }
+        .store(in: &cancellables)
+
         refreshFavicon(for: leftTab)
         refreshFavicon(for: rightTab)
-        updateFaviconOpacity(for: leftTab)
-        updateFaviconOpacity(for: rightTab)
         updateOpenIndicatorOpacity()
         if let browserState,
            let target = SplitTabPreviewTarget.make(representing: leftTab, in: browserState) {
@@ -242,6 +307,24 @@ class PinnedSplitItem: NSCollectionViewItem, NSMenuDelegate {
 
     }
 
+    private var bothFaviconsShowDashedOutline: Bool {
+        TabFaviconPresentation.showsDashedOutline(
+            isDiscarded: leftStatusModel.isDiscarded,
+            isUnloaded: leftStatusModel.isUnloaded
+        ) && TabFaviconPresentation.showsDashedOutline(
+            isDiscarded: rightStatusModel.isDiscarded,
+            isUnloaded: rightStatusModel.isUnloaded
+        )
+    }
+
+    private func updateFaviconCenterOffset(separatesDashedOutlines: Bool) {
+        let offset = separatesDashedOutlines
+            ? Self.separatedFaviconCenterOffset
+            : Self.defaultFaviconCenterOffset
+        leftIconCenterXConstraint?.update(offset: -offset)
+        rightIconCenterXConstraint?.update(offset: offset)
+    }
+
     override var isSelected: Bool {
         didSet { updateSelectedState() }
     }
@@ -270,19 +353,22 @@ class PinnedSplitItem: NSCollectionViewItem, NSMenuDelegate {
     }
 
     private func subscribeFaviconUpdates(for tab: Tab) {
-        Publishers.CombineLatest(tab.$isDiscarded, tab.$isUnloaded)
-            .map { isDiscarded, isUnloaded in
+        Publishers.CombineLatest3(
+            tab.$isDiscarded,
+            tab.$isUnloaded,
+            TabFaviconPresentation.dimmingEnabledPublisher
+        )
+            .map { isDiscarded, isUnloaded, dimmingEnabled in
                 TabFaviconPresentation.opacity(
                     isDiscarded: isDiscarded,
-                    isUnloaded: isUnloaded
+                    isUnloaded: isUnloaded,
+                    dimmingEnabled: dimmingEnabled
                 )
             }
             .removeDuplicates()
             .receive(on: DispatchQueue.main)
-            .sink { [weak self, weak tab] _ in
-                guard let self, let tab else { return }
-                self.updateFaviconOpacity(for: tab)
-                self.updateOpenIndicatorOpacity()
+            .sink { [weak self] _ in
+                self?.updateOpenIndicatorOpacity()
             }
             .store(in: &cancellables)
 
@@ -320,18 +406,6 @@ class PinnedSplitItem: NSCollectionViewItem, NSMenuDelegate {
         }
     }
 
-    private func updateFaviconOpacity(for tab: Tab) {
-        let opacity = TabFaviconPresentation.opacity(
-            isDiscarded: tab.isDiscarded,
-            isUnloaded: tab.isUnloaded
-        )
-        if tab === leftTab {
-            leftIconView.alphaValue = opacity
-        } else if tab === rightTab {
-            rightIconView.alphaValue = opacity
-        }
-    }
-
     private func updateOpenIndicatorOpacity() {
         openIndicatorHost.alphaValue = TabFaviconPresentation.opacity(
             isDiscarded: leftTab?.isDiscarded == true || rightTab?.isDiscarded == true,
@@ -340,7 +414,7 @@ class PinnedSplitItem: NSCollectionViewItem, NSMenuDelegate {
     }
 
     private func setupFavicon(for tab: Tab,
-                              into imageView: NSImageView,
+                              into imageView: TabFaviconImageView,
                               handle: inout ProfileScopedFaviconLoadHandle?) {
         handle?.cancel()
         handle = nil

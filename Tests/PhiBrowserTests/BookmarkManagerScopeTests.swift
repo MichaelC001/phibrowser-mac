@@ -111,7 +111,7 @@ final class BookmarkManagerScopeTests: XCTestCase {
 
     func testExplicitBatchSpaceMoveDetachesLiveBookmarkBindings() throws {
         let state = try makeState()
-        let targetSpace = SpaceModel(
+        let targetModel = SpaceModel(
             spaceId: "batch-target",
             profileId: state.profileId,
             name: "Target",
@@ -120,8 +120,11 @@ final class BookmarkManagerScopeTests: XCTestCase {
             sortOrder: 1
         )
         let context = try XCTUnwrap(state.localStore.getMainContext())
-        context.insert(targetSpace)
+        context.insert(targetModel)
         try context.save()
+        let targetSpace = try XCTUnwrap(state.localStore.getAllSpaces().first {
+            $0.spaceId == targetModel.spaceId
+        })
 
         let normalGuid = "live-normal-bookmark"
         let splitGuid = "live-split-bookmark"
@@ -192,7 +195,7 @@ final class BookmarkManagerScopeTests: XCTestCase {
 
     func testExplicitBatchSpaceClonePreservesLiveBindingsAndSplitMetadata() throws {
         let state = try makeState()
-        let targetSpace = SpaceModel(
+        let targetModel = SpaceModel(
             spaceId: "batch-clone-target",
             profileId: state.profileId,
             name: "Target",
@@ -201,8 +204,11 @@ final class BookmarkManagerScopeTests: XCTestCase {
             sortOrder: 1
         )
         let context = try XCTUnwrap(state.localStore.getMainContext())
-        context.insert(targetSpace)
+        context.insert(targetModel)
         try context.save()
+        let targetSpace = try XCTUnwrap(state.localStore.getAllSpaces().first {
+            $0.spaceId == targetModel.spaceId
+        })
 
         let normalGuid = "clone-live-normal-bookmark"
         let splitGuid = "clone-live-split-bookmark"
@@ -315,7 +321,7 @@ final class BookmarkManagerScopeTests: XCTestCase {
             state.bookmarkManager.bookmark(withGuid: bookmarkGuid) != nil
         }) else { return }
 
-        let validTarget = SpaceModel(
+        let validTarget = Space(
             spaceId: "batch-valid-target",
             profileId: state.profileId,
             name: "Target",
@@ -323,7 +329,7 @@ final class BookmarkManagerScopeTests: XCTestCase {
             iconName: "circle",
             sortOrder: 1
         )
-        let sameSpace = SpaceModel(
+        let sameSpace = Space(
             spaceId: state.spaceId,
             profileId: state.profileId,
             name: "Current",
@@ -331,7 +337,7 @@ final class BookmarkManagerScopeTests: XCTestCase {
             iconName: "circle",
             sortOrder: 0
         )
-        let incognitoTarget = SpaceModel(
+        let incognitoTarget = Space(
             spaceId: "\(SpaceManager.incognitoSpaceIdPrefix).test",
             profileId: SpaceManager.incognitoProfileId,
             name: "Incognito",

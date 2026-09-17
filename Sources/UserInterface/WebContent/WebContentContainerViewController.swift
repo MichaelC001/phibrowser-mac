@@ -194,8 +194,14 @@ class WebContentContainerViewController: NSViewController {
     /// Status URL view model for SwiftUI
     private let statusURLViewModel = StatusURLViewModel()
 
-    /// Status URL hosting controller for displaying link hover information
-    private var statusURLHostingController: ThemedHostingController<StatusURLView>?
+    private var statusURLHostingView: StatusURLHostingView?
+    private var statusURLLeadingConstraint: Constraint?
+    private var statusURLTrailingConstraint: Constraint?
+    private var statusURLWidthConstraint: Constraint?
+    private var statusURLPreferredWidth: CGFloat = 0
+    private var statusURLMouseMonitor: Any?
+    private var statusURLMouseLocationInWindow: NSPoint?
+    private var statusURLUsesTrailingEdge = false
 
     /// Global TabStrip bar controller - only visible in traditional layout mode
     /// Contains TabStrip and right-side buttons (CardEntryButton, etc.)
@@ -388,6 +394,9 @@ class WebContentContainerViewController: NSViewController {
     }
 
     deinit {
+        if let statusURLMouseMonitor {
+            NSEvent.removeMonitor(statusURLMouseMonitor)
+        }
         if let hostController = sharedBookmarkBarHostController {
             hostController.detachBookmarkBarIfAttached()
         }
@@ -498,17 +507,33 @@ class WebContentContainerViewController: NSViewController {
     }
 
     private func setupStatusURLView() {
-        let hostingController = StatusURLView.makeHostingController(viewModel: statusURLViewModel, themeSource: browserState?.themeContext)
-        statusURLHostingController = hostingController
-        let hostingView = hostingController.view
+        let hostingView = StatusURLView.makeHostingView(viewModel: statusURLViewModel, themeSource: browserState?.themeContext)
+        statusURLHostingView = hostingView
 
         contentContainer.addSubview(hostingView)
 
-        // Position: bottom-left corner, max width 50% of container
+        // Keep the default corner and width limit; move right near the pointer.
         hostingView.snp.makeConstraints { make in
-            make.leading.equalToSuperview().offset(12)
-            make.bottom.equalToSuperview().offset(-12)
+            statusURLLeadingConstraint = make.leading.equalToSuperview().offset(StatusURLView.edgeInset).constraint
+            make.bottom.equalToSuperview().offset(-StatusURLView.edgeInset)
             make.width.lessThanOrEqualToSuperview().multipliedBy(0.5)
+        }
+        _ = hostingView.snp.prepareConstraints { make in
+            statusURLTrailingConstraint = make.trailing.equalToSuperview().offset(-StatusURLView.edgeInset).constraint
+        }
+        hostingView.onLayout = { [weak self] in
+            self?.updateStatusURLPosition()
+        }
+        statusURLMouseMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged]
+        ) { [weak self] event in
+            guard let self, let window = self.view.window,
+                  event.window === window else { return event }
+            // Capture the event before Chromium publishes its target URL. The
+            // global pointer can differ from a window-directed input event.
+            self.statusURLMouseLocationInWindow = event.locationInWindow
+            self.updateStatusURLPosition()
+            return event
         }
     }
 
@@ -548,7 +573,8 @@ class WebContentContainerViewController: NSViewController {
 
     /// The visible address bar owns page-color eligibility, compositing,
     /// contrast, and fallback. The horizontal tab strip mirrors that resolved
-    /// presentation unless AI Chat separates the page into its own card.
+    /// presentation unless AI Chat separates the page into its own card or
+    /// Reader View covers the focused page.
     private func bindCurrentHeaderPageColorPresentation() {
         currentHeaderPageColorCancellable = nil
         guard let controller = currentWebContentController else {
@@ -900,6 +926,7 @@ class WebContentContainerViewController: NSViewController {
     override func viewDidLayout() {
         super.viewDidLayout()
         updateContentOuterBorder()
+        updateStatusURLPosition()
     }
 
     /// Computes and applies the unified content border path for comfortable
@@ -1236,8 +1263,10 @@ class WebContentContainerViewController: NSViewController {
         } ?? false
         let enteringSplit = state.splitGroup(forTabId: tab.guid) != nil
 
-        if tab.hasFirstPaint {
-            // Scenario 1: Tab has already painted, switch immediately (bring to front)
+        if tab.isReadyToDisplay {
+            // Scenario 1: Tab has already painted (or paints natively — the
+            // incognito NTP, see `Tab.isReadyToDisplay`), switch immediately
+            // (bring to front)
             // AppLogDebug("[FlickerFix][Mac] Tab has first paint, using immediate switch (scenario 1)")
             switchToWebContentController(controller)
             currentTabIdentifier = identifier
@@ -1991,6 +2020,20 @@ class WebContentContainerViewController: NSViewController {
         // Settled successor is now painted on top — drop the close snapshot (if any).
         clearClosePlaceholder()
 
+        // A cold Space reveal waiting on this window's content is answered by
+        // a ready tab landing on top — the spawned Incognito Space's native
+        // NTP mounts here under the cold-reveal mask, and no first-paint
+        // promotion will ever follow to lift it. Same one-turn deferral as
+        // the promotion path: the content reaches the WindowServer on this
+        // turn's commit.
+        if let ready = onColdContentReady {
+            onColdContentReady = nil
+            ready()
+        }
+        DispatchQueue.main.async { [weak self] in
+            self?.clearColdRevealMask()
+        }
+
         cleanUpPendingSplitPartnerViewIfNeeded(incoming: controller)
     }
 
@@ -2423,5 +2466,43 @@ class WebContentContainerViewController: NSViewController {
 
     private func updateStatusURL(_ url: String) {
         statusURLViewModel.url = url
+        guard !url.isEmpty else { return }
+
+        statusURLPreferredWidth = StatusURLView.preferredWidth(for: url)
+        updateStatusURLPosition()
+    }
+
+    private func updateStatusURLPosition() {
+        guard !statusURLViewModel.url.isEmpty,
+              let hostingView = statusURLHostingView,
+              let window = contentContainer.window else { return }
+
+        let mouseLocation = contentContainer.convert(
+            statusURLMouseLocationInWindow ?? window.mouseLocationOutsideOfEventStream,
+            from: nil
+        )
+        let placement = StatusURLView.placement(
+            preferredWidth: statusURLPreferredWidth,
+            containerBounds: contentContainer.bounds,
+            bubbleFrame: hostingView.frame,
+            mouseLocation: mouseLocation
+        )
+        if let statusURLWidthConstraint {
+            statusURLWidthConstraint.update(offset: placement.maximumWidth)
+        } else {
+            hostingView.snp.makeConstraints { make in
+                statusURLWidthConstraint = make.width.lessThanOrEqualTo(placement.maximumWidth).constraint
+            }
+        }
+        guard placement.usesTrailingEdge != statusURLUsesTrailingEdge else { return }
+        statusURLUsesTrailingEdge = placement.usesTrailingEdge
+
+        if placement.usesTrailingEdge {
+            statusURLLeadingConstraint?.deactivate()
+            statusURLTrailingConstraint?.activate()
+        } else {
+            statusURLTrailingConstraint?.deactivate()
+            statusURLLeadingConstraint?.activate()
+        }
     }
 }

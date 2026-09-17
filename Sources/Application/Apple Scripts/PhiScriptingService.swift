@@ -617,7 +617,7 @@ extension PhiScriptingDependencies {
         }
 
         let allSpaces = SpaceManager.shared.userSpaces
-        let selectedSpaces: [SpaceModel]
+        let selectedSpaces: [Space]
         if let targetSpaceId {
             selectedSpaces = allSpaces.filter { $0.spaceId == targetSpaceId }
         } else {
@@ -638,8 +638,8 @@ extension PhiScriptingDependencies {
 
     private static func makeLivePinnedTabSnapshots(
         store: LocalStore,
-        selectedSpaces: [SpaceModel],
-        allSpaces: [SpaceModel]
+        selectedSpaces: [Space],
+        allSpaces: [Space]
     ) -> [PhiScriptingPinnedTabSnapshot] {
         guard !selectedSpaces.isEmpty else { return [] }
 
@@ -734,7 +734,7 @@ extension PhiScriptingDependencies {
 
     private static func makeLiveBookmarkSnapshots(
         store: LocalStore,
-        spaces: [SpaceModel]
+        spaces: [Space]
     ) -> [PhiScriptingBookmarkSnapshot] {
         store.fetchBookmarkTabs(in: spaces).compactMap { bookmark in
             guard let spaceId = bookmark.spaceId else { return nil }

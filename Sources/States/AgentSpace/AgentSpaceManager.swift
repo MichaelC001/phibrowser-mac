@@ -38,7 +38,7 @@ enum AgentTaskStatus: Equatable {
 
 /// Runtime record for one agent task. Durable task state lives with the task's
 /// driver (phi-agent, or the CDP client); the only persisted artifact on the
-/// Swift side is the SpaceModel row, which is an ordinary user Space.
+/// Swift side is the Space row, which is an ordinary user Space.
 struct AgentTask {
     let taskId: String
     let spaceId: String
@@ -1540,7 +1540,7 @@ final class AgentSpaceManager: ObservableObject {
     }
 }
 
-extension SpaceModel {
+extension Space {
     /// True when this Space is an agent Space created by `AgentSpaceManager`,
     /// matched by its visual signature. Used to hide agent Spaces from the
     /// settings surfaces they don't belong in (the Space list, URL-rule routing

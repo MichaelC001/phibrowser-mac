@@ -531,7 +531,11 @@ extension MainBrowserWindowController: NSMenuItemValidation {
     }
     
     
-    func showFeedbackWindow(crashContextTab: Tab? = nil) {
+    @discardableResult
+    func showFeedbackWindow(
+        crashContextTab: Tab? = nil,
+        previousSessionCrash: PreviousSessionCrashContext? = nil
+    ) -> Bool {
         let identifier = NSUserInterfaceItemIdentifier("Phi Feedback Window")
         // Check if about window already exists
         if let existingWindow = NSApp.windows.first(where: { $0.identifier == identifier }) {
@@ -540,14 +544,21 @@ extension MainBrowserWindowController: NSMenuItemValidation {
             // logs, focusingTab fallback) follows the current window, then refresh
             // the crash context (else it keeps the previously-shown tab's url/title).
             if let fvc = existingWindow.contentViewController as? FeedbackViewController {
+                if let previousSessionCrash {
+                    guard !existingWindow.isVisible, !existingWindow.isMiniaturized,
+                          fvc.setPreviousSessionCrash(previousSessionCrash) else { return false }
+                }
                 fvc.rebindHost(self)
                 fvc.setCrashContextTab(crashContextTab)
             }
             existingWindow.makeKeyAndOrderFront(nil)
-            return
+            return true
         }
 
         let vc = FeedbackViewController(host: self)
+        if let previousSessionCrash {
+            vc.setPreviousSessionCrash(previousSessionCrash)
+        }
         vc.setCrashContextTab(crashContextTab)
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 520, height: 580),
@@ -560,7 +571,9 @@ extension MainBrowserWindowController: NSMenuItemValidation {
         window.isReleasedWhenClosed = false
         window.title = NSLocalizedString("app.feedback.windowTitle", value: "Send Feedback to Phi", comment: "Feedback window - Window title for feedback submission")
         window.contentViewController = vc
+        window.delegate = vc
         window.makeKeyAndOrderFront(nil)
+        return true
     }
     
     /// The import window is a singleton and is not released when it closes, so

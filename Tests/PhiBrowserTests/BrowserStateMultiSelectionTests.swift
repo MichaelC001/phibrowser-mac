@@ -75,8 +75,8 @@ final class BrowserStateMultiSelectionTests: XCTestCase {
 
     private func makeSpace(id: String = "space-target",
                            profileId: String = "Default",
-                           iconName: String = "circle") -> SpaceModel {
-        SpaceModel(spaceId: id,
+                           iconName: String = "circle") -> Space {
+        Space(spaceId: id,
                    profileId: profileId,
                    name: "Target",
                    colorHex: "#000000",
@@ -1665,7 +1665,9 @@ final class BrowserStateMultiSelectionTests: XCTestCase {
         let state = try makeState()
         let targetSpace = makeSpace()
         let context = try XCTUnwrap(state.localStore.getMainContext())
-        context.insert(targetSpace)
+        context.insert(SpaceModel(spaceId: targetSpace.spaceId, profileId: targetSpace.profileId,
+                                  name: targetSpace.name, colorHex: targetSpace.colorHex,
+                                  iconName: targetSpace.iconName, sortOrder: targetSpace.sortOrder))
         try context.save()
         let bookmarkGuid = "single-bookmark-space-transfer"
         state.localStore.createBookmark(url: "https://bookmark.example",

@@ -159,10 +159,11 @@ class PinnedTabItem: NSCollectionViewItem, NSMenuDelegate {
     static let accessibilityIdentifier = "sidebarPinnedTab"
     private static let faviconSize: CGFloat = 18
     private static let faviconCornerRadius: CGFloat = 4
-    private var iconImageView: NSImageView!
+    private var iconImageView: TabFaviconImageView!
     private var backgroundView: HoverableView!
     private var openIndicatorHost: TabDecorativeHostingView!
     private var peekBadge: PinnedPeekBadgeView!
+    private var discardedOutlineHost: TabDecorativeHostingView!
     private var statusBadgeHost: TabDecorativeHostingView!
     private let statusModel = TabStatusModel()
     private var tab: Tab?
@@ -241,13 +242,10 @@ class PinnedTabItem: NSCollectionViewItem, NSMenuDelegate {
         }
         
         // Favicon image view.
-        iconImageView = NSImageView()
-        iconImageView.imageScaling = .scaleProportionallyUpOrDown
-        iconImageView.wantsLayer = true
-        iconImageView.layer?.cornerCurve = .continuous
-        iconImageView.layer?.cornerRadius = Self.faviconCornerRadius
-        iconImageView.layer?.cornerCurve = .continuous
-        iconImageView.layer?.masksToBounds = true
+        iconImageView = TabFaviconImageView(
+            model: statusModel,
+            cornerRadius: Self.faviconCornerRadius
+        )
 
         view.addSubview(backgroundView)
         backgroundView.addSubview(iconImageView)
@@ -255,6 +253,15 @@ class PinnedTabItem: NSCollectionViewItem, NSMenuDelegate {
         openIndicatorHost = TabDecorativeHostingView(rootView: TabOpenIndicatorView())
         openIndicatorHost.isHidden = true
         backgroundView.addSubview(openIndicatorHost)
+
+        discardedOutlineHost = TabDecorativeHostingView(
+            rootView: TabDiscardedFaviconOutline(
+                model: statusModel,
+                faviconSize: Self.faviconSize,
+                faviconCornerRadius: Self.faviconCornerRadius
+            )
+        )
+        backgroundView.addSubview(discardedOutlineHost)
 
         // Layout.
         backgroundView.snp.makeConstraints { make in
@@ -276,6 +283,20 @@ class PinnedTabItem: NSCollectionViewItem, NSMenuDelegate {
             make.size.equalTo(CGSize(
                 width: TabOpenIndicatorMetrics.diameter,
                 height: TabOpenIndicatorMetrics.diameter
+            ))
+        }
+
+        discardedOutlineHost.snp.makeConstraints { make in
+            make.center.equalTo(iconImageView)
+            make.size.equalTo(CGSize(
+                width: TabCornerBadgeMetrics.discardedOutlineSize(
+                    for: Self.faviconSize,
+                    cornerRadius: Self.faviconCornerRadius
+                ),
+                height: TabCornerBadgeMetrics.discardedOutlineSize(
+                    for: Self.faviconSize,
+                    cornerRadius: Self.faviconCornerRadius
+                )
             ))
         }
 
@@ -327,7 +348,7 @@ class PinnedTabItem: NSCollectionViewItem, NSMenuDelegate {
         updateStatusBadge(isSuppressed: false)
 
         setupFavicon()
-        updateFaviconOpacity()
+        updateOpenIndicatorOpacity()
         if let browserState {
             tabPreviewRegistration.configure(
                 anchorView: view,
@@ -400,17 +421,21 @@ class PinnedTabItem: NSCollectionViewItem, NSMenuDelegate {
             }
             .store(in: &cancellables)
 
-        Publishers.CombineLatest(tab.$isDiscarded, tab.$isUnloaded)
-            .map { isDiscarded, isUnloaded in
+        Publishers.CombineLatest3(
+            tab.$isDiscarded,
+            tab.$isUnloaded,
+            TabFaviconPresentation.dimmingEnabledPublisher
+        )
+            .map { isDiscarded, isUnloaded, dimmingEnabled in
                 TabFaviconPresentation.opacity(
                     isDiscarded: isDiscarded,
-                    isUnloaded: isUnloaded
+                    isUnloaded: isUnloaded,
+                    dimmingEnabled: dimmingEnabled
                 )
             }
             .removeDuplicates()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] opacity in
-                self?.iconImageView.alphaValue = opacity
                 self?.openIndicatorHost.alphaValue = opacity
             }
             .store(in: &cancellables)
@@ -473,12 +498,11 @@ class PinnedTabItem: NSCollectionViewItem, NSMenuDelegate {
         )
     }
 
-    private func updateFaviconOpacity() {
+    private func updateOpenIndicatorOpacity() {
         let opacity = TabFaviconPresentation.opacity(
             isDiscarded: tab?.isDiscarded == true,
             isUnloaded: tab?.isUnloaded == true
         )
-        iconImageView.alphaValue = opacity
         openIndicatorHost.alphaValue = opacity
     }
 

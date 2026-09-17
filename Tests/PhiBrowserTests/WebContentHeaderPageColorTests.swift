@@ -48,6 +48,12 @@ final class WebContentHeaderPageColorTests: XCTestCase {
         let header = try XCTUnwrap(controller.leftContainerViewForTesting.subviews
             .compactMap { $0 as? WebContentHeader }.first)
         header.currentTab = tab
+        let bookmarkBar = BookmarkBar(browserState: state)
+        controller.attachBookmarkBar(bookmarkBar)
+        let bookmarkLabel = NSTextField(labelWithString: "Bookmark")
+        bookmarkBar.addSubview(bookmarkLabel)
+        assertBackground(bookmarkBar, .black)
+        XCTAssertEqual(bookmarkLabel.effectiveAppearance.phiAppearance, .dark)
         let split = try XCTUnwrap(controller.children.compactMap { $0 as? NSSplitViewController }.first)
         let chat = try XCTUnwrap(split.splitViewItems.last)
         XCTAssertEqual(split.splitViewItems.count, 2)
@@ -62,11 +68,15 @@ final class WebContentHeaderPageColorTests: XCTestCase {
         XCTAssertEqual(presentation, .inherited)
         XCTAssertEqual(controller.tabStripPageColorPresentation, .inherited)
         assertBackground(header, .black)
+        assertBackground(bookmarkBar, .black)
+        XCTAssertEqual(bookmarkBar.appearance?.phiAppearance, .dark)
 
         wrapper.pageColor = .white
         drainPageColorUpdates()
         XCTAssertEqual(presentation, .inherited)
         assertBackground(header, .white)
+        assertBackground(bookmarkBar, .white)
+        XCTAssertEqual(bookmarkLabel.effectiveAppearance.phiAppearance, .light)
         var restoredPresentation: WebContentHeaderPageColorPresentation?
         let restoredSubscription = controller.tabStripPageColorPresentationPublisher
             .sink { restoredPresentation = $0 }
@@ -77,6 +87,114 @@ final class WebContentHeaderPageColorTests: XCTestCase {
         XCTAssertEqual(presentation, header.pageColorPresentation)
         XCTAssertEqual(controller.tabStripPageColorPresentation, presentation)
         XCTAssertEqual(presentation.appearance, .light)
+        assertBackground(bookmarkBar, .white)
+    }
+
+    func testTabStripInheritsWhileReaderIsPresentedAndRestoresLatestPageColor() throws {
+        let key = PhiPreferences.GeneralSettings.layoutModeKey
+        let originalMode = UserDefaults.standard.object(forKey: key)
+        UserDefaults.standard.set(LayoutMode.comfortable.rawValue, forKey: key)
+        defer { UserDefaults.standard.set(originalMode, forKey: key) }
+
+        let state = try makeState()
+        let (tab, wrapper) = makeTab(guid: 1, color: .black)
+        let (otherTab, _) = makeTab(guid: 2, color: .black)
+        let (reader, _) = makeTab(guid: 3, color: .white)
+        state.tabs = [tab, otherTab]
+        state.focusingTab = tab
+        let controller = WebContentViewController(state: state, tab: tab)
+        controller.view.frame = NSRect(x: 0, y: 0, width: 1000, height: 700)
+        let header = try XCTUnwrap(controller.leftContainerViewForTesting.subviews
+            .compactMap { $0 as? WebContentHeader }.first)
+        header.currentTab = tab
+
+        var presentation = WebContentHeaderPageColorPresentation.inherited
+        let subscription = controller.tabStripPageColorPresentationPublisher.sink { presentation = $0 }
+        defer { subscription.cancel() }
+        XCTAssertEqual(presentation, header.pageColorPresentation)
+
+        state.readerOverlayState.present(reader, originTabId: tab.guid)
+        XCTAssertEqual(presentation, .inherited)
+        XCTAssertEqual(controller.tabStripPageColorPresentation, .inherited)
+        assertBackground(header, .black)
+
+        // Switching between equally colored pages must still update Reader suppression.
+        state.focusingTab = otherTab
+        XCTAssertEqual(presentation, header.pageColorPresentation)
+        XCTAssertEqual(controller.tabStripPageColorPresentation, presentation)
+        state.focusingTab = tab
+        XCTAssertEqual(presentation, .inherited)
+
+        wrapper.pageColor = .white
+        drainPageColorUpdates()
+        XCTAssertEqual(presentation, .inherited)
+        assertBackground(header, .white)
+        var initialPresentation: WebContentHeaderPageColorPresentation?
+        let initialSubscription = controller.tabStripPageColorPresentationPublisher
+            .sink { initialPresentation = $0 }
+        defer { initialSubscription.cancel() }
+        XCTAssertEqual(initialPresentation, .inherited)
+
+        state.readerOverlayState.removeReader(forOrigin: tab.guid)
+        XCTAssertEqual(presentation, header.pageColorPresentation)
+        XCTAssertEqual(controller.tabStripPageColorPresentation, presentation)
+        XCTAssertEqual(presentation.appearance, .light)
+
+        // A background tab's reader must not suppress the focused page's color.
+        state.readerOverlayState.present(reader, originTabId: otherTab.guid)
+        XCTAssertEqual(presentation, header.pageColorPresentation)
+        XCTAssertEqual(controller.tabStripPageColorPresentation, presentation)
+    }
+
+    func testSharedBookmarkBarSwitchesPageSubscriptionAndRestoresThemeFallback() throws {
+        let layoutKey = PhiPreferences.GeneralSettings.layoutModeKey
+        let bookmarkKey = PhiPreferences.GeneralSettings.alwaysShowBookmarkBar.rawValue
+        let originalLayout = UserDefaults.standard.object(forKey: layoutKey)
+        let originalBookmarkSetting = UserDefaults.standard.object(forKey: bookmarkKey)
+        UserDefaults.standard.set(LayoutMode.comfortable.rawValue, forKey: layoutKey)
+        UserDefaults.standard.set(true, forKey: bookmarkKey)
+        defer {
+            UserDefaults.standard.set(originalLayout, forKey: layoutKey)
+            UserDefaults.standard.set(originalBookmarkSetting, forKey: bookmarkKey)
+        }
+
+        let state = try makeState()
+        let (oldTab, oldWrapper) = makeTab(guid: 1, color: .black)
+        let (newTab, newWrapper) = makeTab(guid: 2, color: .white)
+        let oldController = WebContentViewController(state: state, tab: oldTab)
+        let newController = WebContentViewController(state: state, tab: newTab)
+        for (controller, tab) in [(oldController, oldTab), (newController, newTab)] {
+            controller.view.frame = NSRect(x: 0, y: 0, width: 1000, height: 700)
+            let header = try XCTUnwrap(controller.leftContainerViewForTesting.subviews
+                .compactMap { $0 as? WebContentHeader }.first)
+            header.currentTab = tab
+        }
+        let bar = BookmarkBar(browserState: state)
+        oldController.attachBookmarkBar(bar)
+        assertBackground(bar, .black)
+        oldController.detachBookmarkBarIfAttached()
+        newController.attachBookmarkBar(bar)
+        assertBackground(bar, .white)
+        XCTAssertEqual(bar.appearance?.phiAppearance, .light)
+
+        oldWrapper.pageColor = .red
+        state.themeContext.setUserAppearanceChoice(.dark)
+        drainPageColorUpdates()
+        assertBackground(bar, .white)
+        XCTAssertEqual(bar.appearance?.phiAppearance, .light)
+
+        newWrapper.pageColor = nil
+        drainPageColorUpdates()
+        assertBackground(bar, ThemedColor.contentOverlayBackground.resolve(
+            theme: state.themeContext.currentTheme, appearance: .dark
+        ))
+        XCTAssertNil(bar.appearance)
+
+        state.themeContext.setUserAppearanceChoice(.light)
+        drainPageColorUpdates()
+        assertBackground(bar, ThemedColor.contentOverlayBackground.resolve(
+            theme: state.themeContext.currentTheme, appearance: .light
+        ))
     }
 
     func testLightPageOverridesDarkWindowAndNilRestoresInheritance() throws {
@@ -230,7 +348,7 @@ final class WebContentHeaderPageColorTests: XCTestCase {
                                             appearance: state.themeContext.currentAppearance)
     }
 
-    private func assertBackground(_ header: WebContentHeader, _ expected: NSColor,
+    private func assertBackground(_ header: NSView, _ expected: NSColor,
                                   file: StaticString = #filePath, line: UInt = #line) {
         guard let cgColor = header.layer?.backgroundColor,
               let actual = NSColor(cgColor: cgColor)?.usingColorSpace(.sRGB),

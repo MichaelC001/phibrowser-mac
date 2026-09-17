@@ -4,6 +4,7 @@
 // found in the LICENSE file.
 
 import AppKit
+import Carbon.HIToolbox
 import Foundation
 import UniformTypeIdentifiers
 
@@ -15,12 +16,37 @@ final class FeedbackViewModel: ObservableObject {
     @Published var localSaveError: String?
     @Published var attachmentError: String?
     @Published var isSubmitting: Bool = false
+    @Published private(set) var previousSessionCrash: PreviousSessionCrashContext?
 
     var pageTitle: String?
     var componentVersions: [String: String] = [:]
 
     var canSend: Bool {
         !isSubmitting && !descriptionText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var hasUserDraft: Bool {
+        !descriptionText.isEmpty || !attachments.isEmpty
+    }
+
+    @discardableResult
+    func setPreviousSessionCrash(_ context: PreviousSessionCrashContext) -> Bool {
+        guard !isSubmitting, !hasUserDraft else { return false }
+        previousSessionCrash = context
+        urlString = ""
+        pageTitle = nil
+        return true
+    }
+
+    func clearPreviousSessionCrash() {
+        guard previousSessionCrash != nil else { return }
+        previousSessionCrash = nil
+        descriptionText = ""
+        urlString = ""
+        pageTitle = nil
+        attachments = []
+        localSaveError = nil
+        attachmentError = nil
     }
 
     func addFileURLs(_ urls: [URL]) {
@@ -72,7 +98,10 @@ final class FeedbackViewModel: ObservableObject {
         attachments.removeAll { $0.id == id }
     }
 
-    func enqueueFeedback(chromiumSystemLogsText: String? = nil) throws {
+    func enqueueFeedback(
+        chromiumSystemLogsText: String? = nil,
+        inputSourceMetadata: [String: String]
+    ) throws {
         guard ApplicationState.shared.isAuthenticated,
               let account = AccountController.shared.account else {
             throw FeedbackOutboxError.missingAccount
@@ -90,7 +119,9 @@ final class FeedbackViewModel: ObservableObject {
             contactEmail: account.userInfo?.email,
             components: FeedbackOutbox.feedbackComponents(extensionVersions: componentVersions),
             chromiumSystemLogsText: chromiumSystemLogsText,
-            attachments: attachments
+            attachments: attachments,
+            previousSessionCrash: previousSessionCrash,
+            inputSourceMetadata: inputSourceMetadata
         )
 
         try FeedbackOutbox.enqueue(draft, account: account)
@@ -124,6 +155,8 @@ struct FeedbackDraft {
     let components: [FeedbackV2Metadata.Component]
     let chromiumSystemLogsText: String?
     let attachments: [FeedbackDraftAttachment]
+    var previousSessionCrash: PreviousSessionCrashContext? = nil
+    var inputSourceMetadata: [String: String] = [:]
 }
 
 struct FeedbackSelectedAttachmentInfo {
@@ -279,6 +312,7 @@ enum FeedbackOutbox {
         var imageSources: [FeedbackOutboxSourceAttachment] = []
         var fileSources: [FeedbackOutboxSourceAttachment] = []
         var chromiumSystemLogs: FeedbackOutboxSourceAttachment?
+        let previousSessionCrashLog = try savePreviousSessionCrashLog(draft.previousSessionCrash, jobRoot: jobRoot)
 
         for attachment in draft.attachments {
             switch attachment.source {
@@ -342,6 +376,7 @@ enum FeedbackOutbox {
             sourceImages: imageSources,
             sourceFiles: fileSources,
             chromiumSystemLogs: chromiumSystemLogs,
+            previousSessionCrashLog: previousSessionCrashLog,
             preparedAttachments: [],
             archiveStrategyVersion: archiveStrategyVersion,
             status: .queued,
@@ -358,6 +393,17 @@ enum FeedbackOutbox {
             chromiumSystemLogs: chromiumSystemLogs
         )
         AppLogInfo("Feedback V2 outbox job enqueued: \(jobID)")
+    }
+
+    static func savePreviousSessionCrashLog(
+        _ context: PreviousSessionCrashContext?, jobRoot: URL
+    ) throws -> FeedbackOutboxSourceAttachment? {
+        guard let data = context?.logSnapshot else { return nil }
+        let directory = jobRoot.appendingPathComponent("logs", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let url = directory.appendingPathComponent("previous-session-crash.log")
+        try data.write(to: url, options: .atomic)
+        return sourceAttachment(filename: url.lastPathComponent, fileURL: url, jobRoot: jobRoot, mimeType: "text/plain")
     }
 
     fileprivate static func manifestURL(for jobRoot: URL) -> URL {
@@ -391,7 +437,8 @@ enum FeedbackOutbox {
         let logAttachments = try prepareLogZipAttachments(
             jobRoot: jobRoot,
             preparedDir: preparedDir,
-            chromiumSystemLogs: manifest.chromiumSystemLogs
+            chromiumSystemLogs: manifest.chromiumSystemLogs,
+            previousSessionCrashLog: manifest.previousSessionCrashLog
         )
         let slotsAfterLogs = max(maxSubmitAttachments - logAttachments.count, 0)
         let reserveOtherSlot = !manifest.sourceFiles.isEmpty && slotsAfterLogs > 1
@@ -527,15 +574,29 @@ enum FeedbackOutbox {
         jobRoot: URL,
         preparedDir: URL,
         chromiumSystemLogs: FeedbackOutboxSourceAttachment?,
+        previousSessionCrashLog: FeedbackOutboxSourceAttachment? = nil,
         phiLogsURL: URL = URL(fileURLWithPath: FileSystemUtils.phiBrowserDataDirectory(), isDirectory: true)
             .appendingPathComponent("PhiLogs", isDirectory: true),
         sentinelLogsURL: URL = SentinelHelper.sentinelLogsDirectoryURL()
     ) throws -> [FeedbackOutboxUploadAttachment] {
-        let primaryItems = try collectPrimaryLogArchiveItems(
+        var primaryItems = try collectPrimaryLogArchiveItems(
             jobRoot: jobRoot,
             chromiumSystemLogs: chromiumSystemLogs,
             phiLogsURL: phiLogsURL
         )
+        if let previousSessionCrashLog {
+            let url = jobRoot.appendingPathComponent(previousSessionCrashLog.relativePath)
+            // A queued crash snapshot must survive retries; never silently replace
+            // a missing snapshot with the next session's logs.
+            let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+            primaryItems.insert(ArchiveItem(
+                sourceURL: url,
+                inlineData: nil,
+                offset: 0,
+                length: UInt64(size),
+                archivePath: "PreviousSessionCrash/logs.txt"
+            ), at: 0)
+        }
         let sentinelItems = try collectLatestLogArchiveItems(
             root: sentinelLogsURL,
             archiveRoot: "SentinelLogs",
@@ -1074,20 +1135,40 @@ enum FeedbackOutbox {
         }
     }
 
-    private static func makeMetadata(jobID: String, draft: FeedbackDraft) -> FeedbackV2Metadata {
+    @MainActor
+    static func currentInputSourceMetadata() -> [String: String] {
+        guard let inputSource = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue() else {
+            return [:]
+        }
+
+        let properties: [(String, CFString)] = [
+            ("input_source_id", kTISPropertyInputSourceID),
+            ("input_source_name", kTISPropertyLocalizedName)
+        ]
+        var metadata: [String: String] = [:]
+        for (key, property) in properties {
+            guard let value = TISGetInputSourceProperty(inputSource, property) else { continue }
+            metadata[key] = Unmanaged<CFString>.fromOpaque(value).takeUnretainedValue() as String
+        }
+        return metadata
+    }
+
+    static func makeMetadata(jobID: String, draft: FeedbackDraft) -> FeedbackV2Metadata {
         FeedbackV2Metadata(
             browser: .init(
                 name: "Phi Browser",
                 version: SystemUtils.appVersion,
                 channel: channelName,
-                revision: SystemUtils.buildNumber
+                revision: SystemUtils.buildNumber,
+                aiEnabled: PhiPreferences.AISettings.phiAIEnabled.loadValue(),
+                useNTP: PhiPreferences.GeneralSettings.openNewTabPageOnCmdT.loadValue()
             ),
             page: .init(
                 url: draft.pageURL.isEmpty ? nil : draft.pageURL,
                 title: draft.pageTitle
             ),
             clientContext: .init(
-                category: "issue-report",
+                category: draft.previousSessionCrash == nil ? "issue-report" : "previous_session_crash",
                 userAgent: nil,
                 locale: Locale.current.identifier,
                 traceID: jobID
@@ -1098,6 +1179,8 @@ enum FeedbackOutbox {
                 "model_identifier": SystemUtils.modelIdentifier,
                 "os_version": SystemUtils.osVersionString
             ]
+                .merging(draft.inputSourceMetadata) { _, inputSourceValue in inputSourceValue }
+                .merging(draft.previousSessionCrash?.metadata ?? [:]) { _, crashValue in crashValue }
         )
     }
 
@@ -1599,6 +1682,7 @@ struct FeedbackOutboxManifest: Codable {
     var sourceImages: [FeedbackOutboxSourceAttachment]
     var sourceFiles: [FeedbackOutboxSourceAttachment]
     var chromiumSystemLogs: FeedbackOutboxSourceAttachment?
+    var previousSessionCrashLog: FeedbackOutboxSourceAttachment? = nil
     var preparedAttachments: [FeedbackOutboxUploadAttachment]
     var archiveStrategyVersion: Int?
     var status: Status

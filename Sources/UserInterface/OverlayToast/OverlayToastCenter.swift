@@ -67,7 +67,9 @@ final class OverlayToastCenter: ObservableObject {
         duration: TimeInterval = OverlayToastCenter.defaultDuration,
         placement: OverlayToastPlacement = .topCenter,
         shareURLs: [URL] = [],
-        in target: OverlayToastTarget = .activeWindow
+        in target: OverlayToastTarget = .activeWindow,
+        action: OverlayToastAction? = nil,
+        id: UUID? = nil
     ) -> UUID? {
         performOnMainQueue {
             showOnMainQueue(
@@ -76,7 +78,9 @@ final class OverlayToastCenter: ObservableObject {
                 duration: duration,
                 placement: placement,
                 shareURLs: shareURLs,
-                in: target
+                in: target,
+                action: action,
+                id: id
             )
         }
     }
@@ -128,7 +132,9 @@ final class OverlayToastCenter: ObservableObject {
         duration: TimeInterval,
         placement: OverlayToastPlacement,
         shareURLs: [URL],
-        in target: OverlayToastTarget
+        in target: OverlayToastTarget,
+        action: OverlayToastAction? = nil,
+        id: UUID? = nil
     ) -> UUID? {
         guard let windowId = targetResolver(target) else {
             AppLogWarn("[OverlayToast] Drop toast without target window: title=\(title)")
@@ -136,12 +142,13 @@ final class OverlayToastCenter: ObservableObject {
         }
 
         let toast = OverlayToastItem(
-            id: idFactory(),
+            id: id ?? idFactory(),
             title: title,
             message: message,
             duration: duration > 0 ? duration : Self.defaultDuration,
             placement: placement,
-            shareURLs: shareURLs
+            shareURLs: shareURLs,
+            action: action
         )
         enqueueOnMainQueue(toast, for: windowId)
         return toast.id

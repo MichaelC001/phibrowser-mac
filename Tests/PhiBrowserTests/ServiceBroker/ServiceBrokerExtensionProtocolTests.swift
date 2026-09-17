@@ -1629,6 +1629,459 @@ final class ServiceBrokerExtensionProtocolTests: XCTestCase {
         )
     }
 
+    private static let siteRemovalBody = Data(#"""
+    {
+        "ok": true, "dryRun": false, "scope": {"kind": "host", "host": "example.com"},
+        "deleted": {
+            "observations": 2, "browserMemoryEntries": 3, "agentMemoryEntries": 4,
+            "ingestEvents": 1, "galaxyNodes": 1, "galaxyEdges": 2,
+            "journeyEvents": 5, "journeySessions": 6, "journeyIntents": 7,
+            "turnLinks": 8, "profiles": 0
+        },
+        "updated": {
+            "galaxyNodes": 1, "galaxyEdges": 0, "journeySessions": 2,
+            "journeyIntents": 3, "turnLinks": 4, "agentMemoryEntries": 5
+        }
+    }
+    """#.utf8)
+    private static let siteMemoryExportsJSON = #"{"phi-memory":{"api_base":"http://127.0.0.1:28792/"},"phi-agent":{"api_base":"http://127.0.0.1:28788"}}"#
+
+    func testNativeSiteRemovalUsesLegacyHTTPWithoutBrokerRuntime() async throws {
+        let broker = BrokerRequestRecorder()
+        let loopback = BrokerRequestRecorder()
+        let handler = makeHandler(
+            recorder: broker, transportMode: .legacy, runtimeAccountID: nil,
+            siteMemoryLoopbackExecutor: { request, exportsJSON in
+                await loopback.record(request)
+                let http = try APIClient.siteMemoryLoopbackRequest(request, exportsJSON: exportsJSON)
+                XCTAssertEqual(http.url?.absoluteString, "http://127.0.0.1:28792/v1/cleanup")
+                XCTAssertEqual(http.httpMethod, "POST")
+                XCTAssertEqual(http.value(forHTTPHeaderField: "Authorization"), "Bearer test-access-token")
+                XCTAssertEqual(http.value(forHTTPHeaderField: "x-profile-id"), "Profile 2")
+                XCTAssertEqual(http.value(forHTTPHeaderField: "Content-Type"), "application/json")
+                XCTAssertNil(http.value(forHTTPHeaderField: "X-Phi-Extension-ID"))
+                XCTAssertNil(http.value(forHTTPHeaderField: "x-memory-scope"))
+                let body = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(http.httpBody)) as? [String: Any])
+                XCTAssertEqual(Set(body.keys), ["scope", "dryRun"])
+                XCTAssertEqual(body["scope"] as? [String: String], ["kind": "host", "host": "example.com"])
+                XCTAssertEqual(body["dryRun"] as? Bool, false)
+                return BrokerHTTPResponse(statusCode: 200, headers: [], body: Self.siteRemovalBody)
+            })
+
+        let result = try await handler.removeSiteMemories(
+            host: "EXAMPLE.COM.", profileID: "Profile 2", accountID: "auth0|test-account")
+
+        XCTAssertEqual(result.deleted.observations, 2)
+        let brokerCount = await broker.count()
+        let loopbackCount = await loopback.count()
+        XCTAssertEqual(brokerCount, 0)
+        XCTAssertEqual(loopbackCount, 1)
+    }
+
+    func testNativeSiteRemovalKeepsUDSForBrokerModesAndFailedExports() async throws {
+        let providers: [@Sendable () async throws -> SentinelComponentExports] = [
+            { SentinelComponentExports(exportsJSON: "{}", transportMode: .uds) },
+            { SentinelComponentExports(exportsJSON: "{}", transportMode: .fullUDS) },
+            { SentinelComponentExports(exportsJSON: "{}", transportMode: .fallback) },
+            { throw TestUpstreamError() }
+        ]
+        for provider in providers {
+            let broker = BrokerRequestRecorder()
+            let handler = makeHandler(
+                response: BrokerHTTPResponse(statusCode: 200, headers: [], body: Self.siteRemovalBody),
+                recorder: broker, siteMemoryExportsProvider: provider,
+                siteMemoryLoopbackExecutor: { _, _ in
+                    XCTFail("Only explicit legacy mode may send local HTTP")
+                    throw TestUpstreamError()
+                })
+            _ = try await handler.removeSiteMemories(
+                host: "example.com", profileID: "Default", accountID: "auth0|test-account")
+            let count = await broker.count()
+            XCTAssertEqual(count, 1)
+        }
+    }
+
+    func testNativeSiteRemovalUsesUDSWhenExportsHangAndIgnoresLateLegacyResult() async throws {
+        let releaseLookup = AsyncTestSignal()
+        let lookupReturned = expectation(description: "Blocked lookup eventually returns")
+        let removalFinished = expectation(description: "Deletion finishes before the lookup returns")
+        let broker = BrokerRequestRecorder()
+        let loopback = BrokerRequestRecorder()
+        let handler = makeHandler(
+            response: BrokerHTTPResponse(statusCode: 200, headers: [], body: Self.siteRemovalBody),
+            recorder: broker, transportModeBudgetMilliseconds: 20,
+            siteMemoryExportsProvider: {
+                // This continuation does not observe cancellation, like Sentinel IPC.
+                await releaseLookup.wait()
+                lookupReturned.fulfill()
+                return SentinelComponentExports(exportsJSON: Self.siteMemoryExportsJSON, transportMode: .legacy)
+            },
+            siteMemoryLoopbackExecutor: { request, _ in
+                await loopback.record(request)
+                return BrokerHTTPResponse(statusCode: 200, headers: [], body: Self.siteRemovalBody)
+            })
+        let removal = Task {
+            defer { removalFinished.fulfill() }
+            return try await handler.removeSiteMemories(
+                host: "example.com", profileID: "Default", accountID: "auth0|test-account")
+        }
+
+        // Bound the test itself so a regression fails without hanging the suite.
+        await fulfillment(of: [removalFinished], timeout: 1.5)
+        let brokerCountBeforeRelease = await broker.count()
+        await releaseLookup.signal()
+        await fulfillment(of: [lookupReturned], timeout: 1.5)
+        let result = try await removal.value
+
+        XCTAssertEqual(brokerCountBeforeRelease, 1)
+        XCTAssertEqual(result.deleted.observations, 2)
+        let brokerCount = await broker.count()
+        let loopbackCount = await loopback.count()
+        XCTAssertEqual(brokerCount, 1)
+        XCTAssertEqual(loopbackCount, 0, "A late legacy result must not send another deletion")
+    }
+
+    func testCancelledSiteRemovalDoesNotSendAfterExportsTimeout() async {
+        let lookupStarted = expectation(description: "Exports lookup starts")
+        let removalFinished = expectation(description: "Cancelled deletion finishes")
+        let releaseLookup = AsyncTestSignal()
+        let recorder = BrokerRequestRecorder()
+        let handler = makeHandler(
+            recorder: recorder, transportModeBudgetMilliseconds: 100,
+            siteMemoryExportsProvider: {
+                lookupStarted.fulfill()
+                await releaseLookup.wait()
+                return SentinelComponentExports(exportsJSON: Self.siteMemoryExportsJSON, transportMode: .legacy)
+            })
+        let removal = Task {
+            defer { removalFinished.fulfill() }
+            return try await handler.removeSiteMemories(
+                host: "example.com", profileID: "Default", accountID: "auth0|test-account")
+        }
+        await fulfillment(of: [lookupStarted], timeout: 1.5)
+        removal.cancel()
+        await fulfillment(of: [removalFinished], timeout: 1.5)
+        await releaseLookup.signal()
+
+        do {
+            _ = try await removal.value
+            XCTFail("A cancelled deletion must not send a request")
+        } catch is CancellationError {
+        } catch {
+            XCTFail("Expected cancellation, got \(error)")
+        }
+        let count = await recorder.count()
+        XCTAssertEqual(count, 0)
+    }
+
+    func testNativeSiteRemovalRereadsModeForEachRequest() async throws {
+        let probe = TransportModeProbe([.uds, .legacy, .uds])
+        let broker = BrokerRequestRecorder()
+        let loopback = BrokerRequestRecorder()
+        let handler = makeHandler(
+            response: BrokerHTTPResponse(statusCode: 200, headers: [], body: Self.siteRemovalBody),
+            recorder: broker,
+            siteMemoryExportsProvider: {
+                SentinelComponentExports(exportsJSON: Self.siteMemoryExportsJSON, transportMode: await probe.next())
+            },
+            siteMemoryLoopbackExecutor: { request, _ in
+                await loopback.record(request)
+                return BrokerHTTPResponse(statusCode: 200, headers: [], body: Self.siteRemovalBody)
+            })
+        for _ in 0..<3 {
+            _ = try await handler.removeSiteMemories(
+                host: "example.com", profileID: "Default", accountID: "auth0|test-account")
+        }
+        let brokerCount = await broker.count()
+        let loopbackCount = await loopback.count()
+        XCTAssertEqual(brokerCount, 2)
+        XCTAssertEqual(loopbackCount, 1)
+    }
+
+    func testNativeSiteRemovalRejectsAuthChangeDuringExportsLookup() async {
+        for mode in [SentinelTransportMode.uds, .legacy] {
+            let state = ImagePreviewAuthSnapshotBox(SharedAuthTokenSnapshot(
+                scope: SharedAuthScope(accountID: "auth0|test-account", revisionID: UUID()),
+                accessToken: "test-access-token"))
+            let recorder = BrokerRequestRecorder()
+            let handler = makeHandler(
+                recorder: recorder, authSnapshotProvider: { state.current() },
+                siteMemoryExportsProvider: {
+                    state.set(nil)
+                    return SentinelComponentExports(exportsJSON: Self.siteMemoryExportsJSON, transportMode: mode)
+                })
+            do {
+                _ = try await handler.removeSiteMemories(
+                    host: "example.com", profileID: "Default", accountID: "auth0|test-account")
+                XCTFail("An auth change while resolving must prevent deletion")
+            } catch { }
+            let count = await recorder.count()
+            XCTAssertEqual(count, 0)
+        }
+    }
+
+    func testSiteMemoryLoopbackRequestRequiresLocalMemoryExport() throws {
+        let request = BrokerHTTPRequest(service: .phiMemory, path: "/v1/cleanup", method: "POST")
+        for baseURL in ["http://127.0.0.1:28792", "http://localhost:28792/", "http://[::1]:28792/"] {
+            let exports = try JSONSerialization.data(withJSONObject: ["phi-memory": ["api_base": baseURL]])
+            let http = try APIClient.siteMemoryLoopbackRequest(request, exportsJSON: String(decoding: exports, as: UTF8.self))
+            XCTAssertEqual(http.url?.path, "/v1/cleanup")
+            XCTAssertEqual(http.url?.port, 28792)
+        }
+        for exportsJSON in [
+            "{}", "invalid json", #"{"phi-agent":{"api_base":"http://127.0.0.1:8788"}}"#,
+            #"{"phi-memory":{"api_base":"https://example.com"}}"#,
+            #"{"phi-memory":{"api_base":"http://example.com"}}"#,
+            #"{"phi-memory":{"api_base":"http://127.0.0.1:28792/wrong-service"}}"#,
+            #"{"phi-memory":{"api_base":"http://user:password@localhost:28792"}}"#,
+            #"{"phi-memory":{"api_base":"http://localhost:28792?query=value"}}"#
+        ] {
+            XCTAssertThrowsError(try APIClient.siteMemoryLoopbackRequest(request, exportsJSON: exportsJSON))
+        }
+    }
+
+    func testNativeSiteRemovalUsesAuthenticatedProfileScopedBrokerRequest() async throws {
+        let recorder = BrokerRequestRecorder()
+        let handler = makeHandler(response: BrokerHTTPResponse(
+            statusCode: 200, headers: [], body: Self.siteRemovalBody), recorder: recorder)
+        let result = try await handler.removeSiteMemories(
+            host: "EXAMPLE.COM.", profileID: "Profile 2", accountID: "auth0|test-account")
+        XCTAssertEqual(result.deleted.observations, 2)
+        XCTAssertEqual(result.updated.galaxyNodes, 1)
+        let recorded = await recorder.lastRequest()
+        let request = try XCTUnwrap(recorded)
+        XCTAssertEqual(request.service, .phiMemory)
+        XCTAssertEqual(request.path, "/v1/cleanup")
+        XCTAssertEqual(request.method, "POST")
+        XCTAssertEqual(request.headers["x-profile-id"], "Profile 2")
+        XCTAssertEqual(request.headers["Authorization"], "Bearer test-access-token")
+        XCTAssertNil(request.headers["X-Phi-Extension-ID"])
+        let body = try XCTUnwrap(request.body)
+        let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        XCTAssertEqual(Set(payload.keys), ["scope", "dryRun"])
+        XCTAssertEqual(payload["scope"] as? [String: String], ["kind": "host", "host": "example.com"])
+        XCTAssertEqual(payload["dryRun"] as? Bool, false)
+        XCTAssertNil(request.headers["x-memory-scope"])
+    }
+
+    func testNativeSiteRemovalUsesSiteScopeForSubdomainsOverBothTransports() async throws {
+        let expectedScope = ["kind": "site", "site": "example.com"]
+        var responseBody = try XCTUnwrap(JSONSerialization.jsonObject(with: Self.siteRemovalBody) as? [String: Any])
+        responseBody["scope"] = expectedScope
+        let body = try JSONSerialization.data(withJSONObject: responseBody)
+
+        for mode in [SentinelTransportMode.uds, .legacy] {
+            let recorder = BrokerRequestRecorder()
+            let handler = makeHandler(
+                response: BrokerHTTPResponse(statusCode: 200, headers: [], body: body),
+                recorder: recorder, transportMode: mode)
+            let result = try await handler.removeSiteMemories(
+                host: "EXAMPLE.COM.", profileID: "Profile 2", accountID: "auth0|test-account",
+                includeSubdomains: true)
+
+            let recorded = await recorder.lastRequest()
+            let request = try XCTUnwrap(recorded)
+            let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(request.body)) as? [String: Any])
+            XCTAssertEqual(request.path, "/v1/cleanup")
+            XCTAssertEqual(request.method, "POST")
+            XCTAssertEqual(request.headers["x-profile-id"], "Profile 2")
+            XCTAssertNil(request.headers["x-memory-scope"])
+            XCTAssertEqual(Set(payload.keys), ["scope", "dryRun"])
+            XCTAssertEqual(payload["scope"] as? [String: String], expectedScope)
+            XCTAssertEqual(payload["dryRun"] as? Bool, false)
+            XCTAssertEqual(result.scope.kind, .site)
+            XCTAssertEqual(result.scope.site, "example.com")
+            XCTAssertFalse(result.dryRun)
+            XCTAssertEqual(result.deleted.agentMemoryEntries, 4)
+            XCTAssertEqual(result.deleted.journeyEvents, 5)
+            XCTAssertEqual(result.deleted.journeySessions, 6)
+            XCTAssertEqual(result.deleted.journeyIntents, 7)
+            XCTAssertEqual(result.deleted.turnLinks, 8)
+            XCTAssertEqual(result.deleted.profiles, 0)
+            XCTAssertEqual(result.updated.journeySessions, 2)
+            XCTAssertEqual(result.updated.journeyIntents, 3)
+            XCTAssertEqual(result.updated.turnLinks, 4)
+            XCTAssertEqual(result.updated.agentMemoryEntries, 5)
+        }
+    }
+
+    func testNativeProfileRemovalPurgesOnlyTheRequestedProfileOverBothTransports() async throws {
+        let scope: [String: Any] = ["kind": "profile", "profiles": ["Profile 2"], "purge": true]
+        var responseBody = try XCTUnwrap(JSONSerialization.jsonObject(with: Self.siteRemovalBody) as? [String: Any])
+        responseBody["scope"] = scope
+        let body = try JSONSerialization.data(withJSONObject: responseBody)
+
+        for mode in [SentinelTransportMode.uds, .legacy] {
+            let recorder = BrokerRequestRecorder()
+            let handler = makeHandler(
+                response: BrokerHTTPResponse(statusCode: 200, headers: [], body: body),
+                recorder: recorder, transportMode: mode)
+            let result = try await handler.removeProfileMemories(
+                profileID: "Profile 2", accountID: "auth0|test-account")
+
+            let recorded = await recorder.lastRequest()
+            let request = try XCTUnwrap(recorded)
+            XCTAssertEqual(request.service, .phiMemory)
+            XCTAssertEqual(request.path, "/v1/cleanup")
+            XCTAssertEqual(request.method, "POST")
+            XCTAssertEqual(request.headers["Authorization"], "Bearer test-access-token")
+            XCTAssertEqual(request.headers["x-profile-id"], "Profile 2")
+            XCTAssertNil(request.headers["x-memory-scope"])
+            XCTAssertNil(request.headers["X-Phi-Extension-ID"])
+            let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(request.body)) as? [String: Any])
+            XCTAssertEqual(Set(payload.keys), ["scope", "dryRun"])
+            XCTAssertEqual(payload["scope"] as? NSDictionary, scope as NSDictionary)
+            XCTAssertEqual(payload["dryRun"] as? Bool, false)
+            XCTAssertEqual(result.scope, SiteMemoryRemovalScope(profileID: "Profile 2"))
+        }
+    }
+
+    func testNativeProfileRemovalRejectsDryRunsAndWrongTargets() async throws {
+        let scope: [String: Any] = ["kind": "profile", "profiles": ["Profile 2"], "purge": true]
+        let overrides: [[String: Any]] = [
+            ["dryRun": true],
+            ["ok": false],
+            ["scope": ["kind": "profile", "profiles": ["Profile 3"], "purge": true]],
+            ["scope": ["kind": "profile", "profiles": ["Profile 2", "Profile 3"], "purge": true]],
+            ["scope": ["kind": "profile", "profiles": ["Profile 2"], "purge": false]],
+            ["scope": ["kind": "profile"]],
+            ["scope": ["kind": "user"]]
+        ]
+        for mode in [SentinelTransportMode.uds, .legacy] {
+            for override in overrides {
+                var responseBody = try XCTUnwrap(JSONSerialization.jsonObject(with: Self.siteRemovalBody) as? [String: Any])
+                responseBody["scope"] = scope
+                responseBody.merge(override) { _, new in new }
+                let handler = makeHandler(response: BrokerHTTPResponse(
+                    statusCode: 200, headers: [], body: try JSONSerialization.data(withJSONObject: responseBody)),
+                    transportMode: mode)
+                do {
+                    _ = try await handler.removeProfileMemories(profileID: "Profile 2", accountID: "auth0|test-account")
+                    XCTFail("A dry run or mismatched profile purge must not report success")
+                } catch { }
+            }
+        }
+    }
+
+    func testNativeProfileRemovalRejectsInvalidAccountAndProfileBeforeSending() async {
+        for mode in [SentinelTransportMode.uds, .legacy] {
+            let recorder = BrokerRequestRecorder()
+            let handler = makeHandler(recorder: recorder, transportMode: mode)
+            for (profileID, accountID) in [("Profile 2", "another-account"), ("", "auth0|test-account")] {
+                do {
+                    _ = try await handler.removeProfileMemories(profileID: profileID, accountID: accountID)
+                    XCTFail("Invalid account or profile must not delete memory")
+                } catch { }
+            }
+            let unauthenticated = makeHandler(recorder: recorder, authSnapshot: nil, transportMode: mode)
+            do {
+                _ = try await unauthenticated.removeProfileMemories(profileID: "Profile 2", accountID: "auth0|test-account")
+                XCTFail("Authentication is required")
+            } catch { }
+            let count = await recorder.count()
+            XCTAssertEqual(count, 0)
+        }
+    }
+
+    func testNativeSiteRemovalRejectsDryRunsAndMismatchedScopes() async throws {
+        for mode in [SentinelTransportMode.uds, .legacy] {
+            for includeSubdomains in [false, true] {
+                let scope = includeSubdomains
+                    ? ["kind": "site", "site": "example.com"]
+                    : ["kind": "host", "host": "example.com"]
+                let otherScope = includeSubdomains
+                    ? ["kind": "host", "host": "example.com"]
+                    : ["kind": "site", "site": "example.com"]
+                let overrides: [[String: Any]] = [
+                    ["dryRun": true],
+                    ["dryRun": NSNull()],
+                    ["scope": otherScope],
+                    ["scope": ["kind": "user"]],
+                    ["scope": ["kind": scope["kind"]!]],
+                    ["scope": ["kind": scope["kind"]!, "host": "example.com", "site": "example.com"]]
+                ]
+                for override in overrides {
+                    var responseBody = try XCTUnwrap(JSONSerialization.jsonObject(with: Self.siteRemovalBody) as? [String: Any])
+                    responseBody["scope"] = scope
+                    responseBody.merge(override) { _, new in new }
+                    let body = try JSONSerialization.data(withJSONObject: responseBody)
+                    let handler = makeHandler(
+                        response: BrokerHTTPResponse(statusCode: 200, headers: [], body: body),
+                        transportMode: mode)
+                    do {
+                        _ = try await handler.removeSiteMemories(
+                            host: "example.com", profileID: "Default", accountID: "auth0|test-account",
+                            includeSubdomains: includeSubdomains)
+                        XCTFail("Dry runs and mismatched cleanup scopes must not report a successful deletion")
+                    } catch { }
+                }
+            }
+        }
+    }
+
+    func testNativeSiteRemovalRejectsWrongAccountMissingAuthAndInvalidScopeBeforeSending() async {
+        for mode in [SentinelTransportMode.uds, .legacy] {
+            let recorder = BrokerRequestRecorder()
+            let handler = makeHandler(recorder: recorder, transportMode: mode)
+            for (host, profile, account) in [
+                ("example.com", "Default", "another-account"),
+                ("*.example.com", "Default", "auth0|test-account"),
+                ("example.com", "", "auth0|test-account")
+            ] {
+                do {
+                    _ = try await handler.removeSiteMemories(host: host, profileID: profile, accountID: account)
+                    XCTFail("Invalid scope should not delete memory")
+                } catch { }
+            }
+            let unauthenticated = makeHandler(recorder: recorder, authSnapshot: nil, transportMode: mode)
+            do {
+                _ = try await unauthenticated.removeSiteMemories(
+                    host: "example.com", profileID: "Default", accountID: "auth0|test-account")
+                XCTFail("Authentication is required")
+            } catch { }
+            let count = await recorder.count()
+            XCTAssertEqual(count, 0)
+        }
+    }
+
+    func testNativeSiteRemovalRejectsHTTPFailureFalseSuccessAndWrongHost() async {
+        for mode in [SentinelTransportMode.uds, .legacy] {
+            for (status, body) in [
+                (503, Self.siteRemovalBody),
+                (200, Data("{}".utf8)),
+                (200, Data(String(decoding: Self.siteRemovalBody, as: UTF8.self)
+                    .replacingOccurrences(of: "true", with: "false").utf8)),
+                (200, Data(String(decoding: Self.siteRemovalBody, as: UTF8.self)
+                    .replacingOccurrences(of: "example.com", with: "other.test").utf8))
+            ] {
+                let handler = makeHandler(response: BrokerHTTPResponse(statusCode: status, headers: [], body: body), transportMode: mode)
+                do {
+                    _ = try await handler.removeSiteMemories(
+                        host: "example.com", profileID: "Default", accountID: "auth0|test-account")
+                    XCTFail("Invalid response must not report a successful deletion")
+                } catch { }
+            }
+        }
+    }
+
+    func testNativeSiteRemovalRejectsAuthChangeDuringRequest() async {
+        for mode in [SentinelTransportMode.uds, .legacy] {
+            let snapshot = SharedAuthTokenSnapshot(
+                scope: SharedAuthScope(accountID: "auth0|test-account", revisionID: UUID()),
+                accessToken: "test-access-token")
+            let state = ImagePreviewAuthSnapshotBox(snapshot)
+            let handler = makeHandler(requestExecutor: { _ in
+                state.set(nil)
+                return BrokerHTTPResponse(statusCode: 200, headers: [], body: Self.siteRemovalBody)
+            }, authSnapshotProvider: { state.current() }, transportMode: mode)
+            do {
+                _ = try await handler.removeSiteMemories(
+                    host: "example.com", profileID: "Default", accountID: "auth0|test-account")
+                XCTFail("An account change must invalidate the result")
+            } catch { }
+        }
+    }
+
     private func makeHandler(
         limits: ServiceBrokerLimits? = nil,
         response: BrokerHTTPResponse = BrokerHTTPResponse(
@@ -1654,7 +2107,9 @@ final class ServiceBrokerExtensionProtocolTests: XCTestCase {
             ServiceBrokerExtensionProtocol.transportModeLookupBudgetMilliseconds,
         transportModeCoolDownMilliseconds: Int =
             ServiceBrokerExtensionProtocol.transportModeLookupCoolDownMilliseconds,
-        runtimeAccountID: String? = "auth0|test-account"
+        runtimeAccountID: String? = "auth0|test-account",
+        siteMemoryExportsProvider: (@Sendable () async throws -> SentinelComponentExports)? = nil,
+        siteMemoryLoopbackExecutor: (@Sendable (BrokerHTTPRequest, String) async throws -> BrokerHTTPResponse)? = nil
     ) -> ServiceBrokerExtensionProtocol {
         let resolvedLimits = limits ?? self.limits()
         let resolvedStore = channelStore ?? makeStore(httpReader: HTTPChunkReader([nil]))
@@ -1685,7 +2140,13 @@ final class ServiceBrokerExtensionProtocolTests: XCTestCase {
             authSnapshotProvider: resolvedAuthSnapshotProvider,
             transportModeProvider: resolvedTransportModeProvider,
             transportModeBudgetMilliseconds: transportModeBudgetMilliseconds,
-            transportModeCoolDownMilliseconds: transportModeCoolDownMilliseconds
+            transportModeCoolDownMilliseconds: transportModeCoolDownMilliseconds,
+            siteMemoryExportsProvider: siteMemoryExportsProvider ?? {
+                SentinelComponentExports(exportsJSON: Self.siteMemoryExportsJSON, transportMode: transportMode)
+            },
+            siteMemoryLoopbackExecutor: siteMemoryLoopbackExecutor ?? { request, _ in
+                try await resolvedExecutor(request)
+            }
         )
     }
 

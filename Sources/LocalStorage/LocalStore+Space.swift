@@ -292,7 +292,7 @@ extension LocalStore {
     /// result to that profile (used by callers that genuinely care about a
     /// single profile's scope, e.g. seed-on-first-run checks).
     @MainActor
-    func getAllSpaces(profileId: String? = nil) -> [SpaceModel] {
+    func getAllSpaces(profileId: String? = nil) -> [Space] {
         guard let context = mainContext else { return [] }
         do {
             // A manual reorder assigns globally-unique sortOrders and
@@ -319,7 +319,13 @@ extension LocalStore {
                     sortBy: tiebreaks
                 )
             }
-            return try context.fetch(descriptor)
+            return try context.fetch(descriptor).map { model in
+                Space(spaceId: model.spaceId, profileId: model.profileId,
+                      name: model.name, colorHex: model.colorHex,
+                      iconName: model.iconName, sortOrder: model.sortOrder,
+                      createdDate: model.createdDate, updatedDate: model.updatedDate,
+                      storeIdentifier: identifier)
+            }
         } catch {
             AppLogError("[LocalStore] getAllSpaces failed: \(error)")
             return []
@@ -327,12 +333,12 @@ extension LocalStore {
     }
 
     @MainActor
-    func spacesPublisher(profileId: String? = nil) -> AnyPublisher<[SpaceModel], Never> {
+    func spacesPublisher(profileId: String? = nil) -> AnyPublisher<[Space], Never> {
         guard mainContext != nil else {
             return Just([]).eraseToAnyPublisher()
         }
 
-        let subject = CurrentValueSubject<[SpaceModel], Never>([])
+        let subject = CurrentValueSubject<[Space], Never>([])
         let fetch = { self.getAllSpaces(profileId: profileId) }
         subject.send(fetch())
 
@@ -347,41 +353,18 @@ extension LocalStore {
             .receive(on: DispatchQueue.main)
             .sink { _ in subject.send(fetch()) }
 
-        // Dedup on VALUE snapshots taken at emission time — never on the
-        // models themselves. `SpaceModel`s are reference types that the
-        // context refreshes IN PLACE on save, so the previous emission's
-        // array aliases the very objects a new fetch returns: comparing
-        // them field-by-field is always trivially equal and every
-        // update-only save would be suppressed (inserts/deletes still
-        // emitted via the count check, which long masked this).
-        return subject
-            .map { spaces in (models: spaces, snapshot: spaces.map(SpaceSnapshot.init)) }
-            .removeDuplicates { $0.snapshot == $1.snapshot }
-            .map(\.models)
+        // Snapshot before downstream consumers reconcile observable objects.
+        let snapshots = subject.map { spaces -> (spaces: [Space], ids: [String], content: [Space.Content]) in
+            (spaces: spaces, ids: spaces.map(\.spaceId), content: spaces.map(\.content))
+        }
+        let changes = snapshots.removeDuplicates { lhs, rhs in
+            lhs.ids == rhs.ids && lhs.content == rhs.content
+        }
+        return changes
+            .map { $0.spaces }
             .handleEvents(receiveCancel: { cancellable.cancel() })
+            .prefix(untilOutputFrom: NotificationCenter.default.publisher(
+                for: Self.willCloseNotification, object: self))
             .eraseToAnyPublisher()
-    }
-}
-
-/// Value copy of the `SpaceModel` fields the spaces publisher dedups on.
-/// Captured eagerly per emission so later in-place refreshes of the model
-/// objects cannot retroactively equalize past and present.
-private struct SpaceSnapshot: Equatable {
-    let spaceId: String
-    let profileId: String
-    let name: String
-    let colorHex: String
-    let iconName: String
-    let sortOrder: Int
-    let updatedDate: Date
-
-    init(_ model: SpaceModel) {
-        spaceId = model.spaceId
-        profileId = model.profileId
-        name = model.name
-        colorHex = model.colorHex
-        iconName = model.iconName
-        sortOrder = model.sortOrder
-        updatedDate = model.updatedDate
     }
 }

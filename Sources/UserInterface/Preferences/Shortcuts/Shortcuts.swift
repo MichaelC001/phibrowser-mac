@@ -12,7 +12,9 @@ struct Shortcuts {
     let key: ShortcutsKey
 }
 
-// chrome/app/chrome_command_ids.h
+// chrome/app/chrome_command_ids.h. The IDC_* raw values are transcribed by
+// hand and upstream renumbers commands between Chromium majors; verify them
+// with scripts/check_command_ids.py after every version bump.
 enum CommandWrapper: Int, Equatable {
     // App
     case IDC_OPTIONS                 = 40015
@@ -79,7 +81,6 @@ enum CommandWrapper: Int, Equatable {
     case IDC_SHOW_DOWNLOADS          = 40012
     case IDC_MANAGE_EXTENSIONS       = 40022
     case IDC_TASK_MANAGER            = 40006
-    case IDC_ALL_WINDOWS_FRONT       = 34048
 
     // Tab
     case IDC_NEW_TAB_TO_RIGHT        = 35024
@@ -100,7 +101,7 @@ enum CommandWrapper: Int, Equatable {
     case IDC_WINDOW_GROUP_TAB        = 35014
     case IDC_WINDOW_CLOSE_OTHER_TABS = 35023
     case IDC_WINDOW_CLOSE_TABS_TO_RIGHT = 35022
-    case IDC_MOVE_TAB_TO_NEW_WINDOW  = 34054
+    case IDC_MOVE_TAB_TO_NEW_WINDOW  = 34056
     case IDC_TAB_SEARCH              = 52500
 
     // Help
@@ -133,6 +134,7 @@ enum CommandWrapper: Int, Equatable {
     case PHI_SHARE_PAGE              = 90024
     case PHI_KIOSK_OPEN_IN_SPACE     = 90025
     case PHI_KIOSK_CHOOSE_SPACE      = 90026
+    case PHI_SAVE_FOR_LATER          = 90027
 
     // System Preserved
     case IDS_HIDE_OTHERS_MAC         = 110
@@ -605,6 +607,9 @@ extension Shortcuts {
         .PHI_SHARE_PAGE: .init(characters: "s", modifiers: [.control, .option]),
         .PHI_KIOSK_OPEN_IN_SPACE: .init(characters: "o", modifiers: .command),
         .PHI_KIOSK_CHOOSE_SPACE: .init(characters: "o", modifiers: [.command, .shift]),
+        // Cmd-S is the sidebar and Cmd-Shift-S the chatbar; Cmd-Opt-S keeps
+        // the save family together without displacing either.
+        .PHI_SAVE_FOR_LATER: .init(characters: "s", modifiers: [.command, .option]),
 
         // System Preserved Shortcuts
         .IDS_HIDE_OTHERS_MAC: .init(characters: "h", modifiers: [.command, .option]),

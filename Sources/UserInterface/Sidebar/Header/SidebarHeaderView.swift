@@ -220,9 +220,14 @@ class SidebarHeaderView: NSView, TitlebarAwareHitTestable {
     
     
     private lazy var addressView: SideAddressBar = {
-        let addressView = SideAddressBar()
+        let addressView = SideAddressBar(isFloating: isFloating)
+        addressView.setAccessoryButtonsVisible(isFloating)
         return addressView
     }()
+
+    func setAddressBarButtonsVisible(_ visible: Bool) {
+        addressView.setAccessoryButtonsVisible(isFloating || visible)
+    }
     
     private weak var browserState: BrowserState?
     
@@ -704,7 +709,7 @@ class SidebarHeaderView: NSView, TitlebarAwareHitTestable {
             return
         }
 
-        let tooNarrowForUpgrade = !isFloating && currentWidth <= 225
+        let tooNarrowForUpgrade = currentWidth <= 225
         upgradeButton.isHidden = tooNarrowForUpgrade
         sidebarButton.isHidden = tooNarrowForUpgrade ? false : (layoutMode != .balanced)
         searchTabsButton.isHidden = layoutMode != .balanced || sidebarButton.isHidden

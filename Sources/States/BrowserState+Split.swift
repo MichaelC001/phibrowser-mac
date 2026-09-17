@@ -510,6 +510,7 @@ extension BrowserState {
 
         reconcileSplitChatBinding(group)
         syncSplitAIChatCollapsed(group)
+        notifyTravelBackSceneChanged(tabIds: [group.primaryTabId, group.secondaryTabId])
     }
 
     /// Sync both panes of a freshly-created split to one AI Chat collapse
@@ -561,6 +562,7 @@ extension BrowserState {
         guard let index = splits.firstIndex(where: { $0.id == splitId }) else { return }
         splits[index].layout = layout
         splits[index].ratio = ratio
+        notifyTravelBackSceneChanged(tabIds: [splits[index].primaryTabId, splits[index].secondaryTabId])
         persistRepresentedSplitLayout(splitId: splitId, layout: layout)
     }
 
@@ -571,6 +573,7 @@ extension BrowserState {
         guard let index = splits.firstIndex(where: { $0.id == splitId }) else { return }
         splits[index].primaryTabId = primaryTabId
         splits[index].secondaryTabId = secondaryTabId
+        notifyTravelBackSceneChanged(tabIds: [primaryTabId, secondaryTabId])
         // The accompanying `TabMoved` event lands first via `reorderTabs` →
         // `updateNormalTabs` → `enforceSplitAdjacency`, which runs against
         // the stale primary/secondary on this SplitGroup and undoes the
@@ -610,6 +613,9 @@ extension BrowserState {
             SidecarAIOutputStateStore.shared.splitDidDissolve(removedSplit, in: self)
         }
         splits.removeAll { $0.id == splitId }
+        if let removedSplit {
+            notifyTravelBackSceneChanged(tabIds: [removedSplit.primaryTabId, removedSplit.secondaryTabId])
+        }
         // Drop any split-bookmark bindings that pointed at this split so the
         // bookmark cell stops claiming "opened" and a fresh click re-opens
         // the split. Capture all keys, clear them in a single pass, then

@@ -16,6 +16,9 @@ struct AdvancedSettingsView: View {
     @AppStorage(PhiPreferences.GeneralSettings.showOpenTabIndicators.rawValue)
     private var showOpenTabIndicators = PhiPreferences.GeneralSettings.showOpenTabIndicators.defaultValue
 
+    @AppStorage(PhiPreferences.GeneralSettings.showUnloadedTabIndicators.rawValue)
+    private var showUnloadedTabIndicators = PhiPreferences.GeneralSettings.showUnloadedTabIndicators.defaultValue
+
     @AppStorage(PhiPreferences.GeneralSettings.shortHighlightLinksEnabled.rawValue)
     private var shortHighlightLinksEnabled: Bool = PhiPreferences.GeneralSettings.shortHighlightLinksEnabled.defaultValue
 
@@ -95,6 +98,28 @@ struct AdvancedSettingsView: View {
                 }
                 Spacer(minLength: 12)
                 Toggle("", isOn: $showOpenTabIndicators)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .controlSize(.mini)
+                    .themedTint(.themeColor)
+            }
+            .padding(.vertical, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Divider()
+
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(NSLocalizedString("settings.advanced.unloadedTabIcons.showToggle", value: "Show unloaded tab indicators", comment: "Advanced settings - Toggle title for marking tabs whose pages are unloaded from memory"))
+                        .font(.system(size: 13))
+                        .themedForeground(.textPrimary)
+                    Text(NSLocalizedString("settings.advanced.unloadedTabIcons.description", value: "Show a dashed outline around tab icons when their pages are unloaded from memory.", comment: "Advanced settings - Explains the dashed outline on icons of tabs whose pages are unloaded from memory"))
+                        .font(.system(size: 11))
+                        .themedForeground(.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 12)
+                Toggle("", isOn: $showUnloadedTabIndicators)
                     .labelsHidden()
                     .toggleStyle(.switch)
                     .controlSize(.mini)

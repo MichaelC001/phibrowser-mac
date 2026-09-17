@@ -570,6 +570,47 @@ final class PhiBrowserTests: XCTestCase {
         )
     }
 
+    func testFileMenuKeepsTheCloseRowChromiumHidesWhileNoTabbedWindowIsKey() {
+        // The live File menu as Chromium lays it out while no tabbed browser
+        // window is key: the Shift-Cmd-W row is parked hidden with tag 0 and
+        // no action, and the Cmd-W row acts as Close Window. The hook re-runs
+        // on this menu (PostHog flags, the agent CDP switch); deleting the
+        // parked row leaves Chromium nothing to swap Close Tab back onto.
+        let menu = NSMenu(title: "File")
+        menu.addItem(.separator())
+        let parkedCloseItem = NSMenuItem(title: "Close Window", action: nil, keyEquivalent: "W")
+        parkedCloseItem.keyEquivalentModifierMask = .command
+        parkedCloseItem.isHidden = true
+        menu.addItem(parkedCloseItem)
+        let closeAllItem = NSMenuItem(
+            title: "Close All",
+            action: NSSelectorFromString("closeAll:"),
+            keyEquivalent: "W"
+        )
+        closeAllItem.keyEquivalentModifierMask = [.command, .option]
+        closeAllItem.isAlternate = true
+        menu.addItem(closeAllItem)
+        let cmdWItem = NSMenuItem(
+            title: "Close Window",
+            action: #selector(NSWindow.performClose(_:)),
+            keyEquivalent: "w"
+        )
+        cmdWItem.tag = CommandWrapper.IDC_CLOSE_WINDOW.rawValue
+        menu.addItem(cmdWItem)
+        menu.addItem(.separator())
+        let chromiumShareItem = NSMenuItem(title: "Share", action: nil, keyEquivalent: "")
+        menu.addItem(chromiumShareItem)
+        menu.addItem(.separator())
+        let printItem = NSMenuItem(title: "Print…", action: nil, keyEquivalent: "")
+        printItem.tag = CommandWrapper.IDC_PRINT.rawValue
+        menu.addItem(printItem)
+
+        AppController.installOrUpdateFileMenuItems(in: menu, target: nil)
+
+        XCTAssertTrue(menu.items.contains(parkedCloseItem))
+        XCTAssertFalse(menu.items.contains(chromiumShareItem))
+    }
+
     func testInputSourceIdentifierSelectionPrefersTextContextAndUsesSystemFallback() {
         var systemLookupCount = 0
         XCTAssertEqual(
@@ -663,6 +704,94 @@ final class PhiBrowserTests: XCTestCase {
         let existingKey = ShortcutsKey(characters: "+", modifiers: [.command])
 
         XCTAssertEqual(recordedKey.menuKeyEquivalent, existingKey.menuKeyEquivalent)
+    }
+
+    func testQuitShortcutMatchesConfiguredKeyOrCommandQ() {
+        let commandQ = ShortcutsKey(characters: "q", modifiers: .command)
+        let controlOptionQ = ShortcutsKey(
+            characters: "q",
+            modifiers: [.control, .option]
+        )
+        let commandW = ShortcutsKey(characters: "w", modifiers: .command)
+        let cyrillicCommandQ = ShortcutsKey(
+            characters: "\u{0439}",
+            modifiers: .command
+        )
+        let cases: [(
+            name: String,
+            eventKeys: ShortcutsKey.EventKeys,
+            configuredQuitKey: ShortcutsKey?,
+            confirms: Bool
+        )] = [
+            (
+                "default ⌘Q",
+                .init(canonical: commandQ, legacy: nil),
+                nil,
+                true
+            ),
+            (
+                "custom ⌃⌥Q hit",
+                .init(canonical: controlOptionQ, legacy: nil),
+                controlOptionQ,
+                true
+            ),
+            (
+                "custom ⌃⌥Q rejects ⌘Q",
+                .init(canonical: commandQ, legacy: nil),
+                controlOptionQ,
+                false
+            ),
+            // Recording lowercases characters, so an uppercase stored key only
+            // arrives through legacy data; the row is here to exercise the
+            // menu-equivalent leg, which no recorded key reaches for Quit.
+            (
+                "shifted key shares the menu equivalent",
+                .init(
+                    canonical: ShortcutsKey(
+                        characters: "q",
+                        modifiers: [.command, .shift]
+                    ),
+                    legacy: nil
+                ),
+                ShortcutsKey(characters: "Q", modifiers: .command),
+                true
+            ),
+            (
+                "legacy non-Latin key",
+                .init(canonical: commandQ, legacy: cyrillicCommandQ),
+                cyrillicCommandQ,
+                true
+            ),
+            (
+                "⌘W is not Quit",
+                .init(canonical: commandW, legacy: nil),
+                nil,
+                false
+            ),
+            (
+                "⌘Q with extra modifier is not Quit",
+                .init(
+                    canonical: ShortcutsKey(
+                        characters: "q",
+                        modifiers: [.command, .option]
+                    ),
+                    legacy: nil
+                ),
+                nil,
+                false
+            ),
+        ]
+
+        for testCase in cases {
+            XCTAssertEqual(
+                PhiAlert.isQuitShortcut(
+                    testCase.eventKeys,
+                    configuredQuitKey: testCase.configuredQuitKey
+                ),
+                testCase.confirms,
+                testCase.name
+            )
+        }
     }
 
     func testShortcutViewModelReportsMenuEquivalentConflict() throws {
@@ -1764,6 +1893,25 @@ final class PhiBrowserTests: XCTestCase {
         )
         XCTAssertTrue(ChromiumMainMenuRole.app.item(in: mainMenu) === appItem)
         XCTAssertEqual(ChromiumMainMenuRole.history.index(in: mainMenu), 2)
+    }
+
+    func testChromiumMainMenuRoleAcceptsLegacyAndCurrentChromiumTags() {
+        // Chromium 150 tags the View menu IDC_VIEW_MENU; 152 tags it kMacViewMenuId.
+        XCTAssertEqual(ChromiumMainMenuRole(tag: 44000), .view)
+        XCTAssertEqual(ChromiumMainMenuRole(tag: 57327), .view)
+        XCTAssertEqual(ChromiumMainMenuRole(tag: 40029), .bookmarks)
+        XCTAssertEqual(ChromiumMainMenuRole(tag: 57333), .bookmarks)
+        XCTAssertNil(ChromiumMainMenuRole(tag: 0))
+
+        let mainMenu = NSMenu(title: "")
+        let legacyHistoryItem = NSMenuItem(title: "History", action: nil, keyEquivalent: "")
+        legacyHistoryItem.tag = 46000  // IDC_HISTORY_MENU
+        mainMenu.addItem(legacyHistoryItem)
+
+        XCTAssertEqual(ChromiumMainMenuRole.resolve(legacyHistoryItem, helpMenu: nil), .history)
+        XCTAssertTrue(ChromiumMainMenuRole.history.item(in: mainMenu) === legacyHistoryItem)
+        XCTAssertEqual(ChromiumMainMenuRole.history.index(in: mainMenu), 0)
+        XCTAssertEqual(BookmarkMainMenuItemRouting.action(tag: 40029), .hideSystemItem)
     }
 
     func testChromiumMainMenuRoleRecognizesAppKitHelpMenuByIdentity() {

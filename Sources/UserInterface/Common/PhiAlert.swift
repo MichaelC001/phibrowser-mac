@@ -595,12 +595,9 @@ struct PhiAlertDismissAction {
 }
 
 private final class PhiAlertWindow: NSWindow {
-    override var canBecomeKey: Bool { true }
-}
+    var blocksApplicationTermination = false
 
-@MainActor
-private final class PhiAlertQuitConfirmationAction {
-    var handler: (() -> Void)?
+    override var canBecomeKey: Bool { true }
 }
 
 /// Presents a SwiftUI `PhiAlert` through AppKit as a window-attached sheet, as
@@ -625,6 +622,8 @@ final class PhiAlertPresenter {
     private weak var sourceWindow: NSWindow?
     private var alertWindow: NSWindow?
     private var appearanceSubscription: AnyObject?
+    private var quitShortcutMonitor: Any?
+    private let confirmsQuit: Bool
     private var parentCloseObservation: NSObjectProtocol?
     private var frameObservations: [NSObjectProtocol] = []
     /// Where the alert's top-left corner sits, so a content-driven resize can
@@ -643,8 +642,10 @@ final class PhiAlertPresenter {
 
     private init(
         sourceWindow: NSWindow?,
-        onDismiss: ((NSApplication.ModalResponse) -> Void)?
+        onDismiss: ((NSApplication.ModalResponse) -> Void)?,
+        confirmsQuit: Bool = false
     ) {
+        self.confirmsQuit = confirmsQuit
         self.sourceWindow = sourceWindow
         self.onDismiss = onDismiss
     }
@@ -691,11 +692,13 @@ final class PhiAlertPresenter {
 
     static func runSheetSynchronously<Content: View>(
         over sourceWindow: NSWindow,
+        confirmsQuit: Bool = false,
         @ViewBuilder content: (PhiAlertDismissAction) -> Content
     ) -> NSApplication.ModalResponse {
         let presenter = PhiAlertPresenter(
             sourceWindow: sourceWindow,
-            onDismiss: nil
+            onDismiss: nil,
+            confirmsQuit: confirmsQuit
         )
         let dismiss = PhiAlertDismissAction { [weak presenter] response in
             presenter?.dismiss(response)
@@ -708,11 +711,13 @@ final class PhiAlertPresenter {
     /// closed): the alert floats as its own centered panel, themed from the
     /// shared fallback source.
     static func runStandaloneSynchronously<Content: View>(
+        confirmsQuit: Bool = false,
         @ViewBuilder content: (PhiAlertDismissAction) -> Content
     ) -> NSApplication.ModalResponse {
         let presenter = PhiAlertPresenter(
             sourceWindow: nil,
-            onDismiss: nil
+            onDismiss: nil,
+            confirmsQuit: confirmsQuit
         )
         let dismiss = PhiAlertDismissAction { [weak presenter] response in
             presenter?.dismiss(response)
@@ -766,6 +771,8 @@ final class PhiAlertPresenter {
         )
         presentationStyle = .sheet
         isPresented = true
+        alertWindow.blocksApplicationTermination = true
+        installQuitShortcutMonitor()
         sourceWindow.beginSheet(alertWindow) { [self] response in
             completeDismissal(response)
         }
@@ -778,7 +785,16 @@ final class PhiAlertPresenter {
         )
         presentationStyle = .standalone
         isPresented = true
+        alertWindow.blocksApplicationTermination = true
+        installQuitShortcutMonitor()
         alertWindow.level = .modalPanel
+        // Nothing sizes a standalone panel to its content the way AppKit
+        // sizes a sheet, and the fitting size measured before the hosting
+        // view lays out can still be zero; centering that would put the
+        // panel's corner, not its middle, at the center of the screen.
+        if let contentView = alertWindow.contentViewController?.view {
+            alertWindow.setContentSize(contentView.fittingSize)
+        }
         alertWindow.center()
         NSApp.activate(ignoringOtherApps: false)
         alertWindow.makeKeyAndOrderFront(nil)
@@ -891,7 +907,7 @@ final class PhiAlertPresenter {
     private func makeAlertWindow<Content: View>(
         content: Content,
         themeProvider: ThemeStateProvider
-    ) -> NSWindow {
+    ) -> PhiAlertWindow {
         let hostingController = ThemedHostingController(
             rootView: content,
             themeSource: themeProvider
@@ -997,9 +1013,32 @@ final class PhiAlertPresenter {
         window.setFrameOrigin(frame.origin)
     }
 
+    /// Modal alerts consume Quit so it cannot reach the application menu.
+    /// Only the quit confirmation opts in to answering the alert with it.
+    private func installQuitShortcutMonitor() {
+        let configuredQuitKey = Shortcuts.key(for: .IDC_EXIT)
+        quitShortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, self.isPresented,
+                  let eventKeys = ShortcutsKey.eventKeys(for: event),
+                  PhiAlert.isQuitShortcut(eventKeys, configuredQuitKey: configuredQuitKey)
+            else {
+                return event
+            }
+            if self.confirmsQuit {
+                self.dismiss(.alertFirstButtonReturn)
+            }
+            return nil
+        }
+    }
+
     private func completeDismissal(_ response: NSApplication.ModalResponse) {
         guard isPresented else { return }
         isPresented = false
+        (alertWindow as? PhiAlertWindow)?.blocksApplicationTermination = false
+        if let quitShortcutMonitor {
+            NSEvent.removeMonitor(quitShortcutMonitor)
+            self.quitShortcutMonitor = nil
+        }
         presentationStyle = .none
         appearanceSubscription = nil
         if let parentCloseObservation {
@@ -1083,6 +1122,15 @@ extension NSWindow {
 
 @MainActor
 extension NSApplication {
+    /// Blocks quit during AppKit modal sessions and active Phi alerts. Phi's
+    /// dismissal state clears before callbacks run; AppKit's `attachedSheet`
+    /// can remain set during a callback that requests a confirmed restart.
+    @objc var hasModalPresentationBlockingTermination: Bool {
+        modalWindow != nil || windows.contains { window in
+            (window as? PhiAlertWindow)?.blocksApplicationTermination == true
+        }
+    }
+
     /// Presents the standard alert as a sheet and returns the selected response
     /// synchronously, matching `NSAlert.runModal()` call-site semantics.
     func runPhiAlert(
@@ -1131,7 +1179,14 @@ extension NSApplication {
 extension PhiAlert where Icon == EmptyView, AlertContent == EmptyView, Actions == EmptyView {
     /// Presents the standard quit confirmation alert and returns whether the
     /// user confirmed termination.
-    static func runQuitAlert(relativeTo sourceWindow: NSWindow? = nil) -> Bool {
+    ///
+    /// Quit is an application-level question, so the caller decides whether a
+    /// window should host it: a browser window hosts the alert as its sheet,
+    /// while `nil` presents it standalone, centered on screen. Passing `nil`
+    /// deliberately skips the key-window fallback the other alerts use, so a
+    /// picture-in-picture or tool window that happens to be key never hosts
+    /// the sheet.
+    static func runQuitAlert(relativeTo sourceWindow: NSWindow?) -> Bool {
         let configuration = PhiAlertAppKitConfiguration(
             title:  NSLocalizedString("common.quitConfirmation.title", value: "Are you sure you want to quit Phi?",
                 comment: "Quit confirmation title"
@@ -1150,57 +1205,43 @@ extension PhiAlert where Icon == EmptyView, AlertContent == EmptyView, Actions =
             )
         )
 
-        let confirmationAction = PhiAlertQuitConfirmationAction()
-        let commandQMonitor = NSEvent.addLocalMonitorForEvents(
-            matching: .keyDown
-        ) { event in
-            guard isCommandQ(event) else { return event }
-            confirmationAction.handler?()
-            return nil
+        let content = { (dismiss: PhiAlertDismissAction) in
+            PhiAlertAppKitContent(configuration: configuration, dismiss: dismiss)
         }
-        defer {
-            if let commandQMonitor {
-                NSEvent.removeMonitor(commandQMonitor)
-            }
-        }
-
-        let response = NSApp.runPhiAlert(relativeTo: sourceWindow) { dismiss in
-            makeQuitAlertContent(
-                configuration: configuration,
-                dismiss: dismiss,
-                confirmationAction: confirmationAction
+        let response: NSApplication.ModalResponse
+        if let sourceWindow, sourceWindow.isVisible {
+            response = PhiAlertPresenter.runSheetSynchronously(
+                over: sourceWindow,
+                confirmsQuit: true,
+                content: content
+            )
+        } else {
+            response = PhiAlertPresenter.runStandaloneSynchronously(
+                confirmsQuit: true,
+                content: content
             )
         }
 
         return response == .alertFirstButtonReturn
     }
 
-    private static func isCommandQ(_ event: NSEvent) -> Bool {
-        let modifiers = event.modifierFlags.intersection(
-            .deviceIndependentFlagsMask
-        )
-        let unsupportedModifiers: NSEvent.ModifierFlags = [
-            .control,
-            .option,
-            .shift,
-        ]
-        return modifiers.contains(.command)
-            && modifiers.intersection(unsupportedModifiers).isEmpty
-            && event.charactersIgnoringModifiers?.lowercased() == "q"
-    }
-
-    private static func makeQuitAlertContent(
-        configuration: PhiAlertAppKitConfiguration,
-        dismiss: PhiAlertDismissAction,
-        confirmationAction: PhiAlertQuitConfirmationAction
-    ) -> some View {
-        confirmationAction.handler = {
-            dismiss(.alertFirstButtonReturn)
+    /// Pressing the Quit shortcut again while the sheet is up confirms it.
+    /// The shortcut is the user's configured "Quit Phi" key, or ⌘Q when none
+    /// is configured (`IDC_EXIT` has no default entry, and an explicitly
+    /// disabled key only leaves the menu and Dock quit paths, which never
+    /// show the sheet). An event matches when any of its resolved identities
+    /// equals the key or shares its menu key equivalent — the same two-step
+    /// comparison native shortcut dispatch uses, so recording and confirming
+    /// agree on every keyboard layout.
+    nonisolated static func isQuitShortcut(
+        _ eventKeys: ShortcutsKey.EventKeys,
+        configuredQuitKey: ShortcutsKey?
+    ) -> Bool {
+        let quitKey = configuredQuitKey
+            ?? ShortcutsKey(characters: "q", modifiers: .command)
+        return eventKeys.matchingKeys.contains { key in
+            key == quitKey || key.menuKeyEquivalent == quitKey.menuKeyEquivalent
         }
-        return PhiAlertAppKitContent(
-            configuration: configuration,
-            dismiss: dismiss
-        )
     }
 }
 

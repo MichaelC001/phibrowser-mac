@@ -28,6 +28,7 @@ struct URLRulesEditor: View {
     /// Snapshot of the persisted rules taken when the sheet opened, so we
     /// can detect a no-op save and skip the LocalStore round-trip.
     @State private var initialFingerprint: String = ""
+    @State private var editingStoreIdentifier: UUID?
 
     /// Sentinel selection in a row's target-Space picker meaning "don't route
     /// to a fixed Space — prompt every time". Distinct from any real
@@ -43,7 +44,11 @@ struct URLRulesEditor: View {
             footer
         }
         .frame(minWidth: 620, idealWidth: 700, minHeight: 380, idealHeight: 460)
-        .onAppear { load() }
+        .onAppear {
+            editingStoreIdentifier = manager.storeIdentifier
+            load()
+        }
+        .onChange(of: manager.storeIdentifier) { _, _ in onClose() }
     }
 
     private var header: some View {
@@ -70,7 +75,7 @@ struct URLRulesEditor: View {
     /// reserved id that Chromium resolves to a new ephemeral Kiosk window.
     /// Agent Spaces are ephemeral background workspaces and must never appear
     /// as a routing target.
-    private var ruleTargetSpaces: [SpaceModel] {
+    private var ruleTargetSpaces: [Space] {
         manager.spaces.filter { !SpaceManager.isIncognitoSpaceId($0.spaceId) && !$0.isAgentSpace }
             + [manager.incognitoRuleTargetSpace(), manager.kioskRuleTargetSpace()]
     }
@@ -121,7 +126,9 @@ struct URLRulesEditor: View {
     }
 
     private func save() {
-        guard fingerprint(of: rows) != initialFingerprint else { return }
+        guard let editingStoreIdentifier,
+              manager.acceptsStoreAction(from: editingStoreIdentifier),
+              fingerprint(of: rows) != initialFingerprint else { return }
         let validSpaceIds = Set(ruleTargetSpaces.map(\.spaceId))
         let validPromptSpaceIds = validSpaceIds.subtracting([SpaceManager.kioskRuleTargetId])
         var byTarget: [String: [LocalStore.URLRuleDraft]] = [:]
@@ -157,7 +164,7 @@ struct URLRulesEditor: View {
             )
             byTarget[targetSpaceId, default: []].append(draft)
         }
-        manager.setAllRules(byTarget)
+        manager.setAllRules(byTarget, expectedStoreIdentifier: editingStoreIdentifier)
     }
 
     private func fingerprint(of rows: [Row]) -> String {
@@ -312,7 +319,7 @@ struct URLRulesEditor: View {
             self.createdDate = Date()
         }
 
-        init(from rule: SpaceURLRule) {
+        init(from rule: SpaceRoutingRule) {
             self.id = UUID(uuidString: rule.id) ?? UUID()
             self.targetSpaceId = rule.spaceId
             let (matchType, value) = MatchType.decode(
@@ -336,7 +343,7 @@ struct URLRulesEditor: View {
 /// focus resigns. The SwiftUI shell (header / footer / save) is unchanged.
 private struct RuleTableView: NSViewRepresentable {
     @Binding var rows: [URLRulesEditor.Row]
-    let spaces: [SpaceModel]
+    let spaces: [Space]
 
     /// Captures every Space field shown in the target popup, so a rename / icon
     /// / profile change (same `spaceId`) still triggers a reload — comparing ids
@@ -668,7 +675,7 @@ private final class RuleCellView: NSTableCellView, NSTextFieldDelegate {
         ])
     }
 
-    func configure(row: URLRulesEditor.Row, spaces: [SpaceModel], askSpaceTag: String) {
+    func configure(row: URLRulesEditor.Row, spaces: [Space], askSpaceTag: String) {
         if let index = Self.matchTypes.firstIndex(of: row.matchType) {
             matchTypePopup.selectItem(at: index)
         }
@@ -740,7 +747,7 @@ private final class RuleCellView: NSTableCellView, NSTextFieldDelegate {
 
     /// "Space name — Profile" so each Space entry shows which profile it
     /// routes into. Special destinations use their plain names.
-    private static func spaceMenuTitle(_ space: SpaceModel) -> String {
+    private static func spaceMenuTitle(_ space: Space) -> String {
         // The generic Incognito target's synthetic profileId is not one of
         // ProfileManager's, and Kiosk has no profile until route time — show
         // their plain names, not raw wire ids.

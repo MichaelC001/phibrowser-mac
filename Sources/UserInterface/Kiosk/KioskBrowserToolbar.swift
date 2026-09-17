@@ -513,10 +513,10 @@ private struct KioskCopyURLButtonView: View {
 
 enum KioskSpaceMenuTargetResolver {
     static func primarySpace(
-        in spaces: [SpaceModel],
+        in spaces: [Space],
         preferredSpaceId: String? = nil,
         activeSpaceId: String?
-    ) -> SpaceModel? {
+    ) -> Space? {
         if let preferredSpaceId,
            let preferredSpace = spaces.first(where: {
                $0.spaceId == preferredSpaceId
@@ -566,7 +566,7 @@ private struct KioskSpaceMenu: View {
         self.onSelect = onSelect
     }
 
-    private var availableSpaces: [SpaceModel] {
+    private var availableSpaces: [Space] {
         guard !state.isIncognito,
               PhiPreferences.GeneralSettings.spacesFeatureEnabled.loadValue() else {
             return []
@@ -574,7 +574,7 @@ private struct KioskSpaceMenu: View {
         return spaceManager.spaces
     }
 
-    private var primarySpace: SpaceModel? {
+    private var primarySpace: Space? {
         KioskSpaceMenuTargetResolver.primarySpace(
             in: availableSpaces,
             preferredSpaceId: preferredSpaceId,
@@ -705,14 +705,15 @@ private struct KioskSpaceMenu: View {
         select(primarySpace)
     }
 
-    private func select(_ space: SpaceModel) {
+    private func select(_ space: Space) {
+        guard SpaceManager.shared.acceptsStoreAction(from: space.storeIdentifier) else { return }
         onSelect(space.spaceId)
     }
 }
 
 /// Shares the dropdown's native anchor between mouse and keyboard opening.
 private struct KioskSpaceMenuAnchor: NSViewRepresentable {
-    let spaces: [SpaceModel]
+    let spaces: [Space]
     let primarySpaceId: String?
     let onSelect: (String) -> Void
     let onResolve: (KioskSpaceMenuAnchorView) -> Void
@@ -731,7 +732,7 @@ private struct KioskSpaceMenuAnchor: NSViewRepresentable {
 }
 
 private final class KioskSpaceMenuAnchorView: NSView {
-    var spaces: [SpaceModel] = []
+    var spaces: [Space] = []
     var primarySpaceId: String?
     var onSelect: ((String) -> Void)?
     private var isShowingMenu = false
@@ -746,7 +747,7 @@ private final class KioskSpaceMenuAnchorView: NSView {
                 keyEquivalent: ""
             )
             item.target = self
-            item.representedObject = space.spaceId
+            item.representedObject = space
             item.image = SpaceIconView.menuImage(for: space.iconName, size: 12)
             item.state = space.spaceId == primarySpaceId ? .on : .off
             menu.addItem(item)
@@ -761,8 +762,9 @@ private final class KioskSpaceMenuAnchorView: NSView {
     }
 
     @objc private func selectSpace(_ sender: NSMenuItem) {
-        guard let spaceId = sender.representedObject as? String else { return }
-        onSelect?(spaceId)
+        guard let space = sender.representedObject as? Space,
+              SpaceManager.shared.acceptsStoreAction(from: space.storeIdentifier) else { return }
+        onSelect?(space.spaceId)
     }
 }
 

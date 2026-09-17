@@ -16,8 +16,11 @@ class SideAddressBar: NSView {
         static let rightStackSpacing: CGFloat = 6
         static let textFieldLeadingInset: CGFloat = 12
         static let textFieldTrailingSpacing: CGFloat = 8
+        static let textFadeWidth: CGFloat = 24
+        static let accessoryFadeDuration: TimeInterval = 0.1
         static let rightStackTrailingInset: CGFloat = 4
-        static let minimumAddressTextWidth: CGFloat = 84
+        // Allow Reader View and Memory to consume part of the original text budget.
+        static let minimumAddressTextWidth: CGFloat = 84 - 2 * (extensionButtonWidth + extensionButtonSpacing)
     }
 
     private var containerView: HoverableView!
@@ -47,6 +50,33 @@ class SideAddressBar: NSView {
         button.snp.makeConstraints { make in
             make.size.equalTo(CGSize(width: 24, height: 24))
         }
+        return button
+    }()
+
+    private lazy var memoryMenuButton: HoverableButtonNSView = {
+        let title = NSLocalizedString("browser.webContentAddressBar.manageSiteMemoriesTooltip", value: "Manage Site Memories", comment: "Address bar - Button tooltip for opening memory controls for the current website")
+        let config = HoverableButtonConfig(
+            image: NSImage(named: "memory-manage-icon"),
+            imageSize: .init(width: 16, height: 16),
+            hoverBackgroundColor: .hover,
+            imageTintColor: .textPrimary,
+            cornerRadius: 4
+        )
+        let button = HoverableButtonNSView(config: config) { [weak self] in
+            guard let self else { return }
+            self.window?.customTooltipController.dismissAll()
+            WebContentAddressBarMenuPresenter.presentMemoryMenu(
+                browserState: self.unsafeBrowserState,
+                currentTab: self.currentTab,
+                anchorView: self.memoryMenuButton,
+                onPresentationChanged: { _ in }
+            )
+        }
+        button.setAccessibilityLabel(title)
+        button.snp.makeConstraints { make in
+            make.size.equalTo(CGSize(width: 24, height: 24))
+        }
+        button.isHidden = true
         return button
     }()
 
@@ -85,9 +115,20 @@ class SideAddressBar: NSView {
     }()
     
     private var textField: NSTextField!
+    private let textFadeMaskLayer: CAGradientLayer = {
+        let layer = CAGradientLayer()
+        layer.startPoint = CGPoint(x: 0, y: 0.5)
+        layer.endPoint = CGPoint(x: 1, y: 0.5)
+        layer.colors = [NSColor.black.cgColor, NSColor.black.cgColor,
+                        NSColor.clear.cgColor, NSColor.clear.cgColor]
+        return layer
+    }()
     private var rightStackView: CustomStackView!
+    private var areAccessoryButtonsVisible = true
+    private var accessoryVisibilityGeneration = 0
     private var extensionIconsStackView: ExtensionReorderStackView!
     @Published var currentTab: Tab?
+    private let isFloating: Bool
     
     private var cancellables = Set<AnyCancellable>()
     // The last (unfiltered) pinned set handed to updateExtensionIcons, so a
@@ -100,13 +141,45 @@ class SideAddressBar: NSView {
             updateBackgroundAppearance()
         }
     }
+
+    func setAccessoryButtonsVisible(_ visible: Bool) {
+        // Keep each button's page-specific visibility and the text frame intact.
+        guard areAccessoryButtonsVisible != visible else { return }
+        areAccessoryButtonsVisible = visible
+        accessoryVisibilityGeneration += 1
+        let generation = accessoryVisibilityGeneration
+        let shouldAnimate = window != nil && !isHiddenOrHasHiddenAncestor
+            && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+
+        guard shouldAnimate else {
+            rightStackView.layer?.removeAllAnimations()
+            rightStackView.alphaValue = visible ? 1 : 0
+            rightStackView.isHidden = !visible
+            updateTextFadeMask()
+            return
+        }
+
+        rightStackView.isHidden = false
+        updateTextFadeMask(animationDuration: LayoutMetrics.accessoryFadeDuration)
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = LayoutMetrics.accessoryFadeDuration
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            rightStackView.animator().alphaValue = visible ? 1 : 0
+        }) { [weak self] in
+            // A superseded fade-out must not hide a newer fade-in.
+            guard let self, self.accessoryVisibilityGeneration == generation else { return }
+            self.rightStackView.isHidden = !visible
+        }
+    }
     
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
+    init(isFloating: Bool = false) {
+        self.isFloating = isFloating
+        super.init(frame: .zero)
         setupUI()
     }
     
     required init?(coder: NSCoder) {
+        isFloating = false
         super.init(coder: coder)
         setupUI()
     }
@@ -120,6 +193,55 @@ class SideAddressBar: NSView {
         setupRightStackView()
         setupLayout()
     }
+
+    override func layout() {
+        super.layout()
+        // The floating sidebar can resize without relaying out the accessory
+        // stack. Resolve descendant frames before computing the text mask.
+        containerView.layoutSubtreeIfNeeded()
+        updateTextFadeMask()
+    }
+
+    private func updateTextFadeMask(animationDuration: TimeInterval = 0) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+
+        guard textField.bounds.width > 0, textField.bounds.height > 0 else {
+            textField.layer?.mask = nil
+            return
+        }
+
+        // Fade before visible controls, or at the text field's trailing edge
+        // when the controls are hidden, preserving the translucent background.
+        let controlsFrame = textField.convert(rightStackView.bounds, from: rightStackView)
+        let width = textField.bounds.width
+        let fadeEnd = !areAccessoryButtonsVisible || rightStackView.bounds.width == 0
+            ? width
+            : min(width, max(0, controlsFrame.minX))
+        let fadeStart = max(0, fadeEnd - LayoutMetrics.textFadeWidth)
+        textFadeMaskLayer.frame = textField.bounds
+        let locations: [NSNumber] = [
+            0,
+            NSNumber(value: Double(fadeStart / width)),
+            NSNumber(value: Double(fadeEnd / width)),
+            1
+        ]
+        if textFadeMaskLayer.locations != locations {
+            let previousLocations = textFadeMaskLayer.presentation()?.locations ?? textFadeMaskLayer.locations
+            textFadeMaskLayer.locations = locations
+            textFadeMaskLayer.removeAnimation(forKey: "accessoryVisibility")
+            if animationDuration > 0, let previousLocations {
+                let animation = CABasicAnimation(keyPath: "locations")
+                animation.fromValue = previousLocations
+                animation.toValue = locations
+                animation.duration = animationDuration
+                animation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                textFadeMaskLayer.add(animation, forKey: "accessoryVisibility")
+            }
+        }
+        textField.layer?.mask = textFadeMaskLayer
+    }
     
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
@@ -130,9 +252,9 @@ class SideAddressBar: NSView {
     }
     
     private func setupObservers() {
-        guard let browserState = unsafeBrowserState else { return }
         cancellables.forEach { $0.cancel() }
         cancellables.removeAll()
+        guard let browserState = unsafeBrowserState else { return }
         extensionMenuHostingView.rootView = ExtensionPopoverButton(
             extensionManager: browserState.extensionManager,
             browserState: browserState
@@ -198,6 +320,30 @@ class SideAddressBar: NSView {
             }
             .store(in: &cancellables)
 
+        $currentTab
+            .map { tab -> AnyPublisher<String?, Never> in
+                tab?.$url.eraseToAnyPublisher() ?? Just(nil).eraseToAnyPublisher()
+            }
+            .switchToLatest()
+            .combineLatest(
+                browserState.$isInPlaceholderMode,
+                NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
+                    .map { _ in PhiPreferences.AISettings.phiAIEnabled.loadValue() }
+                    .prepend(PhiPreferences.AISettings.phiAIEnabled.loadValue())
+                    .removeDuplicates()
+            )
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] url, isPlaceholder, isPhiAIEnabled in
+                guard let self else { return }
+                let visible = !isPlaceholder && SiteMemoryMenuActions(
+                    urlString: url ?? "", profileID: browserState.profileId,
+                    isIncognito: browserState.isIncognito,
+                    isPhiAIEnabled: isPhiAIEnabled, service: nil
+                ) != nil
+                self.memoryMenuButton.isHidden = !visible
+            }
+            .store(in: &cancellables)
+
         let widthPublisher = NotificationCenter.default
             .publisher(for: NSView.frameDidChangeNotification, object: containerView)
             .map { [weak self] _ in self?.containerView.bounds.width ?? 0 }
@@ -206,18 +352,21 @@ class SideAddressBar: NSView {
             .eraseToAnyPublisher()
         
         browserState.extensionManager.$pinedExtensions
-            .combineLatest(widthPublisher, browserState.$layoutMode)
-            .map { [weak self] exts, width, layoutMode in
-                guard layoutMode == .performance else { return false }
-                return self?.shouldDisplayPinnedExtensionsWithinSidebar(
+            .combineLatest(widthPublisher, browserState.$layoutMode, browserState.$sidebarCollapsed)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] exts, width, layoutMode, _ in
+                guard let self,
+                      self.isFloating == browserState.sidebarCollapsed else { return }
+                // Only the current sidebar host may publish its width decision.
+                // Recheck the shared value on activation: the other host may
+                // have changed it while this host's inputs stayed the same.
+                let shouldDisplay = layoutMode == .performance && Self.shouldDisplayPinnedExtensionsWithinSidebar(
                     pinnedExtensionCount: exts.count,
                     containerWidth: width
-                ) ?? false
-            }
-            .removeDuplicates()
-            .receive(on: DispatchQueue.main)
-            .sink { shouldDisplay in
-                browserState.extensionManager.shouldDisplayExtensionsWithinSidebar = shouldDisplay
+                )
+                if browserState.extensionManager.shouldDisplayExtensionsWithinSidebar != shouldDisplay {
+                    browserState.extensionManager.shouldDisplayExtensionsWithinSidebar = shouldDisplay
+                }
             }
             .store(in: &cancellables)
 
@@ -315,7 +464,7 @@ class SideAddressBar: NSView {
         textField.stringValue = URLProcessor.displayName(for: displayURL)
     }
 
-    private func shouldDisplayPinnedExtensionsWithinSidebar(
+    static func shouldDisplayPinnedExtensionsWithinSidebar(
         pinnedExtensionCount: Int,
         containerWidth: CGFloat
     ) -> Bool {
@@ -323,10 +472,14 @@ class SideAddressBar: NSView {
 
         let pinnedIconsWidth = CGFloat(pinnedExtensionCount) * LayoutMetrics.extensionButtonWidth
         let pinnedIconsSpacing = CGFloat(max(0, pinnedExtensionCount - 1)) * LayoutMetrics.extensionButtonSpacing
+        // Reserve Reader View and Memory regardless of the current page so
+        // their visibility never changes where pinned extensions are displayed.
+        let optionalControlsWidth = 2 * (LayoutMetrics.extensionButtonWidth + LayoutMetrics.extensionButtonSpacing)
         let rightControlsWidth = pinnedIconsWidth
             + pinnedIconsSpacing
             + LayoutMetrics.rightStackSpacing
             + LayoutMetrics.extensionButtonWidth
+            + optionalControlsWidth
         let reservedHorizontalInsets = LayoutMetrics.textFieldLeadingInset
             + LayoutMetrics.textFieldTrailingSpacing
             + LayoutMetrics.rightStackTrailingInset
@@ -481,6 +634,8 @@ class SideAddressBar: NSView {
     
     private func setupTextField() {
         textField = NSTextField()
+        textField.wantsLayer = true
+        textField.layer?.zPosition = 0
         textField.isBordered = false
         textField.backgroundColor = NSColor.clear
         textField.font = NSFont.systemFont(ofSize: 13)
@@ -499,13 +654,19 @@ class SideAddressBar: NSView {
         textField.maximumNumberOfLines = 1
         textField.isEditable = false
         textField.isSelectable = false
-        textField.lineBreakMode = .byTruncatingTail
+        textField.lineBreakMode = .byClipping
+        textField.cell?.truncatesLastVisibleLine = false
         textField.setAccessibilityIdentifier(Self.addressTextFieldAccessibilityIdentifier)
         containerView.addSubview(textField)
     }
     
     private func setupRightStackView() {
         rightStackView = CustomStackView()
+        rightStackView.wantsLayer = true
+        rightStackView.layer?.zPosition = 1
+        rightStackView.onLayout = { [weak self] in
+            self?.updateTextFadeMask()
+        }
         rightStackView.orientation = .horizontal
         rightStackView.spacing = 2
         rightStackView.alignment = .centerY
@@ -529,6 +690,7 @@ class SideAddressBar: NSView {
         
         rightStackView.addArrangedSubview(extensionIconsStackView)
         rightStackView.addArrangedSubview(readerButton)
+        rightStackView.addArrangedSubview(memoryMenuButton)
         rightStackView.addArrangedSubview(copyURLButton)
         rightStackView.addArrangedSubview(extensionMenuHostingView)
         extensionMenuHostingView.snp.makeConstraints { make in
@@ -556,7 +718,7 @@ class SideAddressBar: NSView {
         textField.snp.makeConstraints { make in
             make.leading.equalTo(containerView).offset(12)
             make.centerY.equalTo(containerView)
-            make.trailing.equalTo(rightStackView.snp.leading).offset(-8)
+            make.trailing.equalTo(containerView)
         }
     }
     
@@ -660,6 +822,13 @@ struct LottieMenuButtonRepresentable: NSViewRepresentable {
 
 extension SideAddressBar {
     class CustomStackView: NSStackView {
+        var onLayout: (() -> Void)?
+
+        override func layout() {
+            super.layout()
+            onLayout?()
+        }
+
         override func mouseDown(with event: NSEvent) {
         }
     }

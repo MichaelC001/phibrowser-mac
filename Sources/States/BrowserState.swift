@@ -279,6 +279,9 @@ class BrowserState {
     /// multiple chat view controllers (e.g. sidebar + traditional layout)
     /// before `aiChatTabs` is populated.
     private var aiChatTabsBeingCreated: Set<String> = []
+    // Request lifetime only; not a second sidebar ownership registry.
+    var travelBackRunning = false
+    let travelBackTabCreated = PassthroughSubject<(marker: String, tab: Tab), Never>()
     
     @Published var sidebarCollapsed = false
     @Published var sidebarWidth: CGFloat = 0
@@ -373,7 +376,7 @@ class BrowserState {
     let localStore: LocalStore
     let profileId: String
     /// Identifies which Space this window renders. Persisted pinned tabs and
-    /// bookmarks under the same Space share this id; see `SpaceModel`.
+    /// bookmarks under the same Space share this id; see `Space`.
     let spaceId: String
     /// True for every off-the-record window — standalone incognito windows
     /// AND the Incognito Space's window — so all data-privacy guards
@@ -481,6 +484,8 @@ class BrowserState {
         let secondaryId = getTabIdentifier(for: secondary)
         if aiChatTabs[primaryId] != nil { return primaryId }
         if aiChatTabs[secondaryId] != nil { return secondaryId }
+        if aiChatTabsBeingCreated.contains(primaryId) { return primaryId }
+        if aiChatTabsBeingCreated.contains(secondaryId) { return secondaryId }
         // Neither pane has a chat yet: bind to the caller's tab so the chat
         // follows the pane the user invoked from, not whichever pane happens
         // to be focused at split-creation time. Keyed by tab.guid, so
@@ -1218,6 +1223,24 @@ class BrowserState {
         partner.toggleAIChat(collapsed)
     }
 
+    /// "Open in Phi Chat" succeeded from the AI Chat panel that is the tab
+    /// `chatTabId` (Chromium names the calling tab as of the request, over
+    /// the bridge): collapse that panel, and only that one. Resolved by the
+    /// chat tab rather than `focusingTab`, so the right panel closes even
+    /// after the user moved to another tab or window meanwhile — the Phi Chat
+    /// window itself takes focus as it opens. Nothing to do when no panel is
+    /// that tab (the new tab page, a Phi Chat window, a panel closed since).
+    /// The global `aiChatCollapsed` is left alone.
+    @MainActor
+    func handleCollapseAIChat(chatTabId: Int) {
+        guard let identifier = aiChatTabs.first(where: { $0.value.guid == chatTabId })?.key,
+              let tab = tab(forChatIdentifier: identifier) else {
+            AppLogDebug("[AIChat] collapse request named no AI Chat panel: \(chatTabId)")
+            return
+        }
+        setAIChatCollapsed(for: tab, collapsed: true)
+    }
+
     // =========================================================================
     // Placeholder mode (last-tab close → chrome://dino shell)
     //
@@ -1384,6 +1407,7 @@ class BrowserState {
         }
         tabSwitchManager.handleExternalFocusChange()
         focusingTab = tab
+        notifyTravelBackSceneChanged(tabIds: [tab.guid])
         tabSwitchManager.recordActiveTab(tab)
         // Agent Space: the tab the agent just switched to is its operating tab
         // (kept as the active tab). Mask it like AI chat masks a tab it drives.
@@ -1761,13 +1785,13 @@ class BrowserState {
     }
 
     @MainActor
-    private func canMoveMultiSelection(to targetSpace: SpaceModel) -> Bool {
+    private func canMoveMultiSelection(to targetSpace: Space) -> Bool {
         canMoveMultiSelection(to: targetSpace,
                               sourceHasSpaceSlot: SpaceManager.shared.slot(forWindowId: windowId) != nil)
     }
 
     @MainActor
-    func canMoveMultiSelection(to targetSpace: SpaceModel,
+    func canMoveMultiSelection(to targetSpace: Space,
                                sourceHasSpaceSlot: Bool) -> Bool {
         guard multiSelection.isActive,
               let plan = multiSelectionSpaceTransferPlan() else {
@@ -1779,7 +1803,7 @@ class BrowserState {
     }
 
     @MainActor
-    func canMoveBookmark(_ bookmark: Bookmark, to targetSpace: SpaceModel) -> Bool {
+    func canMoveBookmark(_ bookmark: Bookmark, to targetSpace: Space) -> Bool {
         guard let plan = spaceTransferPlan(tabs: [], bookmarkGuids: [bookmark.guid]) else {
             return false
         }
@@ -1787,7 +1811,7 @@ class BrowserState {
     }
 
     @MainActor
-    func canMoveBookmarks(bookmarkGuids: [String], to targetSpace: SpaceModel) -> Bool {
+    func canMoveBookmarks(bookmarkGuids: [String], to targetSpace: Space) -> Bool {
         guard let plan = spaceTransferPlan(tabs: [], bookmarkGuids: Set(bookmarkGuids)) else {
             return false
         }
@@ -1795,7 +1819,7 @@ class BrowserState {
     }
 
     private func canMoveSpaceTransfer(_ plan: MultiSelectionSpaceTransferPlan,
-                                      to targetSpace: SpaceModel,
+                                      to targetSpace: Space,
                                       sourceHasSpaceSlot: Bool) -> Bool {
         guard PhiPreferences.GeneralSettings.spacesFeatureEnabled.loadValue(),
               !isIncognito,
@@ -1854,7 +1878,7 @@ class BrowserState {
 
     @discardableResult
     @MainActor
-    func moveBookmark(_ bookmark: Bookmark, to targetSpace: SpaceModel) -> Bool {
+    func moveBookmark(_ bookmark: Bookmark, to targetSpace: Space) -> Bool {
         guard let plan = spaceTransferPlan(tabs: [], bookmarkGuids: [bookmark.guid]),
               canMoveSpaceTransfer(plan, to: targetSpace, sourceHasSpaceSlot: false) else {
             return false
@@ -1879,7 +1903,7 @@ class BrowserState {
     /// cleanup and the existing cross-Space persistence semantics.
     @discardableResult
     @MainActor
-    func moveBookmarks(bookmarkGuids: [String], to targetSpace: SpaceModel) -> Bool {
+    func moveBookmarks(bookmarkGuids: [String], to targetSpace: Space) -> Bool {
         guard let plan = spaceTransferPlan(tabs: [], bookmarkGuids: Set(bookmarkGuids)),
               canMoveSpaceTransfer(plan, to: targetSpace, sourceHasSpaceSlot: false) else {
             return false
@@ -1899,7 +1923,7 @@ class BrowserState {
     }
 
     @MainActor
-    func canCloneMultiSelection(to targetSpace: SpaceModel,
+    func canCloneMultiSelection(to targetSpace: Space,
                                 sourceHasSpaceSlot: Bool) -> Bool {
         guard multiSelection.isActive,
               let plan = multiSelectionSpaceTransferPlan() else {
@@ -1911,7 +1935,7 @@ class BrowserState {
     }
 
     @MainActor
-    func canCloneBookmark(_ bookmark: Bookmark, to targetSpace: SpaceModel) -> Bool {
+    func canCloneBookmark(_ bookmark: Bookmark, to targetSpace: Space) -> Bool {
         guard let plan = spaceTransferPlan(tabs: [], bookmarkGuids: [bookmark.guid]) else {
             return false
         }
@@ -1919,7 +1943,7 @@ class BrowserState {
     }
 
     @MainActor
-    func canCloneBookmarks(bookmarkGuids: [String], to targetSpace: SpaceModel) -> Bool {
+    func canCloneBookmarks(bookmarkGuids: [String], to targetSpace: Space) -> Bool {
         guard let plan = spaceTransferPlan(tabs: [], bookmarkGuids: Set(bookmarkGuids)) else {
             return false
         }
@@ -1927,7 +1951,7 @@ class BrowserState {
     }
 
     private func canCloneSpaceTransfer(_ plan: MultiSelectionSpaceTransferPlan,
-                                       to targetSpace: SpaceModel,
+                                       to targetSpace: Space,
                                        sourceHasSpaceSlot: Bool) -> Bool {
         guard PhiPreferences.GeneralSettings.spacesFeatureEnabled.loadValue(),
               !isIncognito,
@@ -1982,7 +2006,7 @@ class BrowserState {
 
     @discardableResult
     @MainActor
-    func cloneBookmark(_ bookmark: Bookmark, to targetSpace: SpaceModel) -> Bool {
+    func cloneBookmark(_ bookmark: Bookmark, to targetSpace: Space) -> Bool {
         guard let plan = spaceTransferPlan(tabs: [], bookmarkGuids: [bookmark.guid]),
               canCloneSpaceTransfer(plan, to: targetSpace, sourceHasSpaceSlot: false) else {
             return false
@@ -2007,7 +2031,7 @@ class BrowserState {
     /// bindings and the existing cross-Space persistence semantics.
     @discardableResult
     @MainActor
-    func cloneBookmarks(bookmarkGuids: [String], to targetSpace: SpaceModel) -> Bool {
+    func cloneBookmarks(bookmarkGuids: [String], to targetSpace: Space) -> Bool {
         guard let plan = spaceTransferPlan(tabs: [], bookmarkGuids: Set(bookmarkGuids)),
               canCloneSpaceTransfer(plan, to: targetSpace, sourceHasSpaceSlot: false) else {
             return false
@@ -2026,7 +2050,7 @@ class BrowserState {
 
     @MainActor
     private func commitBookmarkSpaceMove(_ plan: MultiSelectionSpaceTransferPlan,
-                                         to targetSpace: SpaceModel) {
+                                         to targetSpace: Space) {
         if !plan.detachedBookmarkGuids.isEmpty {
             detachBookmarkTabsForComfortableLayout(bookmarkGuids: plan.detachedBookmarkGuids)
         }
@@ -2040,7 +2064,7 @@ class BrowserState {
 
     @MainActor
     private func commitBookmarkSpaceClone(_ plan: MultiSelectionSpaceTransferPlan,
-                                          to targetSpace: SpaceModel) {
+                                          to targetSpace: Space) {
         guard !plan.bookmarkGuids.isEmpty else { return }
         localStore.cloneBookmarks(plan.bookmarkGuids,
                                   sourceProfileId: profileId,
@@ -3098,6 +3122,13 @@ class BrowserState {
             return  // Don't add to regular tabs
         }
 
+        let travelBackMarker = MainActor.assumeIsolated { consumeTravelBackTabMarker(tab) }
+        defer {
+            if let travelBackMarker {
+                travelBackTabCreated.send((marker: travelBackMarker, tab: tab))
+            }
+        }
+
         // Strip the transient seed identity before persisted pinned/bookmark
         // reattachment runs below. A late arrival belongs to a request that
         // already failed, so close it instead of leaving a stray NTP behind.
@@ -3956,6 +3987,12 @@ class BrowserState {
     /// the user has forgotten about (extraction budgets are a few seconds).
     private static let readerOverlayOpenTTLSeconds: TimeInterval = 30
 
+    /// The "preparing" toast standing in for each in-flight reader-open,
+    /// keyed by the origin tab id, so settling the request can take it
+    /// down. Shown the moment the request goes out: the reader surface or
+    /// the refusal toast is what replaces it.
+    private var pendingReaderOverlayToasts: [Int: UUID] = [:]
+
     /// Creation context of each presented reader-surface tab (keyed by the
     /// surface tab's guid), kept so adopting it into the strip (link click
     /// inside the reader) places the tab where a normal arrival would have.
@@ -3987,9 +4024,32 @@ class BrowserState {
     }
 
     /// Records that a reader-open for `originTabId` is on its way to the
-    /// extension, arming the arrival divert below.
+    /// extension, arming the arrival divert below and the "preparing"
+    /// toast that covers the wait.
     func noteReaderOverlayRequested(forOrigin originTabId: Int) {
         pendingReaderOverlayOrigins[originTabId] = Date()
+        showReaderOverlayPreparingToast(forOrigin: originTabId)
+    }
+
+    private func showReaderOverlayPreparingToast(forOrigin originTabId: Int) {
+        dismissReaderOverlayPreparingToast(forOrigin: originTabId)
+        // Lives as long as the request itself: an open the extension never
+        // answers expires with the TTL, and the toast with it.
+        let toastId = OverlayToastCenter.shared.show(
+            title: NSLocalizedString(
+                "browser.readerView.preparing",
+                value: "Preparing Reader View…",
+                comment: "Reader View - Toast shown while the article is being extracted after the user asked to open Reader View"),
+            duration: Self.readerOverlayOpenTTLSeconds,
+            in: .windowId(windowId))
+        pendingReaderOverlayToasts[originTabId] = toastId
+    }
+
+    /// The request settled (answered, refused, expired, or its origin
+    /// closed): the toast has nothing left to cover.
+    private func dismissReaderOverlayPreparingToast(forOrigin originTabId: Int) {
+        guard let toastId = pendingReaderOverlayToasts.removeValue(forKey: originTabId) else { return }
+        OverlayToastCenter.shared.dismiss(id: toastId)
     }
 
     /// Whether a reader-open for `originTabId` is still in flight — lets the
@@ -4004,6 +4064,7 @@ class BrowserState {
     /// a surface tab — disarm the divert.
     func cancelPendingReaderOverlay(forOrigin originTabId: Int) {
         pendingReaderOverlayOrigins.removeValue(forKey: originTabId)
+        dismissReaderOverlayPreparingToast(forOrigin: originTabId)
     }
 
     /// A tab that arrived while a reader-open was in flight but before its
@@ -4096,6 +4157,7 @@ class BrowserState {
             adoptPeekTabIntoStrip(candidate.tab, context: candidate.context, activate: true)
             return
         }
+        dismissReaderOverlayPreparingToast(forOrigin: originTabId)
         guard let requestedAt = pendingReaderOverlayOrigins.removeValue(forKey: originTabId),
               Date().timeIntervalSince(requestedAt) < Self.readerOverlayOpenTTLSeconds,
               tabs.contains(where: { $0.guid == originTabId }) else {
@@ -4241,6 +4303,9 @@ class BrowserState {
     /// wrappers — Chromium tears the strip down with the window.
     func teardownReaderOverlayForWindowClose() {
         finishReaderOverlayCandidate(adopt: false)
+        for originTabId in Array(pendingReaderOverlayToasts.keys) {
+            dismissReaderOverlayPreparingToast(forOrigin: originTabId)
+        }
         pendingReaderOverlayOrigins.removeAll()
         presentedReaderOverlayContexts.removeAll()
         readerOverlayNavigationWatches.removeAll()

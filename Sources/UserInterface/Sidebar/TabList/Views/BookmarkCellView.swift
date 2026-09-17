@@ -892,6 +892,9 @@ private struct SidebarBookmarkCellContentView: View {
     @State private var primaryFaviconHoverAction: BookmarkFaviconHoverAction?
     @State private var secondaryFaviconHoverAction: BookmarkFaviconHoverAction?
 
+    @AppStorage(PhiPreferences.GeneralSettings.showUnloadedTabIndicators.rawValue)
+    private var showUnloadedTabIndicators = PhiPreferences.GeneralSettings.showUnloadedTabIndicators.defaultValue
+
     @Environment(\.phiTheme) private var theme
     @Environment(\.phiAppearance) private var appearance
 
@@ -943,7 +946,8 @@ private struct SidebarBookmarkCellContentView: View {
     private var openIndicatorOpacity: CGFloat {
         TabFaviconPresentation.opacity(
             isDiscarded: primaryStatusModel.isDiscarded || secondaryStatusModel.isDiscarded,
-            isUnloaded: primaryStatusModel.isUnloaded || secondaryStatusModel.isUnloaded
+            isUnloaded: primaryStatusModel.isUnloaded || secondaryStatusModel.isUnloaded,
+            dimmingEnabled: showUnloadedTabIndicators
         )
     }
 

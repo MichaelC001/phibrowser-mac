@@ -163,6 +163,83 @@ final class PhiAlertTests: XCTestCase {
         presenter.dismiss(.cancel)
     }
 
+    func testQuitActionIsIgnoredWhileAnOrdinarySheetIsPresented() {
+        let sourceWindow = makeVisibleSourceWindow()
+        let otherWindow = makeVisibleSourceWindow()
+        defer {
+            sourceWindow.close()
+            otherWindow.close()
+        }
+        let presenter = sourceWindow.presentPhiAlert { dismiss in
+            makeAlert(message: "Quit must wait for this sheet.") {
+                dismiss(.OK)
+            }
+        }
+
+        // Switching windows must not let the application Quit action bypass
+        // a modal presentation belonging to another window.
+        otherWindow.makeKeyAndOrderFront(nil)
+        XCTAssertTrue(NSApp.hasModalPresentationBlockingTermination)
+        XCTAssertTrue(NSApp.sendAction(#selector(NSApplication.terminate(_:)), to: NSApp, from: nil))
+        XCTAssertTrue(presenter.isPresented)
+        XCTAssertNotNil(sourceWindow.attachedSheet)
+
+        presenter.dismiss(.cancel)
+        XCTAssertFalse(NSApp.hasModalPresentationBlockingTermination)
+    }
+
+    func testSheetDismissalUnblocksTerminationBeforeCallingCompletion() {
+        let sourceWindow = makeVisibleSourceWindow()
+        defer { sourceWindow.close() }
+        var didComplete = false
+        let presenter = sourceWindow.presentPhiAlert(onDismiss: { response in
+            didComplete = true
+            XCTAssertEqual(response, .alertFirstButtonReturn)
+            // Language changes request a restart directly from this callback.
+            XCTAssertFalse(NSApp.hasModalPresentationBlockingTermination)
+        }) { dismiss in
+            makeAlert(message: "Restart after confirmation.") {
+                dismiss(.alertFirstButtonReturn)
+            }
+        }
+
+        XCTAssertTrue(NSApp.hasModalPresentationBlockingTermination)
+        presenter.dismiss(.alertFirstButtonReturn)
+        XCTAssertTrue(didComplete)
+    }
+
+    func testQuitActionIsIgnoredWhileAStandaloneAlertIsPresented() {
+        var dismissHandler: ((NSApplication.ModalResponse) -> Void)?
+        var didAttemptQuit = false
+        RunLoop.current.perform(inModes: [.eventTracking]) {
+            XCTAssertTrue(NSApp.hasModalPresentationBlockingTermination)
+            didAttemptQuit = true
+            XCTAssertTrue(NSApp.sendAction(#selector(NSApplication.terminate(_:)), to: NSApp, from: nil))
+            XCTAssertTrue(NSApp.hasModalPresentationBlockingTermination)
+            dismissHandler?(.cancel)
+        }
+
+        let response = PhiAlertPresenter.runStandaloneSynchronously { dismiss in
+            makeAppKitEventDismissAlert(
+                dismiss: dismiss,
+                installDismissHandler: { dismissHandler = $0 }
+            )
+        }
+
+        XCTAssertTrue(didAttemptQuit)
+        XCTAssertEqual(response, .cancel)
+        XCTAssertFalse(NSApp.hasModalPresentationBlockingTermination)
+    }
+
+    func testNonModalPresentationDoesNotBlockTermination() {
+        let sourceWindow = makeVisibleSourceWindow()
+        defer { sourceWindow.close() }
+        let presenter = presentNonModalAlert(over: sourceWindow)
+        defer { presenter.dismiss(.cancel) }
+
+        XCTAssertFalse(NSApp.hasModalPresentationBlockingTermination)
+    }
+
     func testNonModalPresentationLeavesTheParentWindowUnblocked() {
         let parentWindow = makeParentWindow()
 
@@ -358,12 +435,8 @@ final class PhiAlertTests: XCTestCase {
     }
 
     func testRunModalBridgeUsesSheetAndReturnsResponseSynchronously() {
-        let sourceWindow = NSWindow(
-            contentRect: CGRect(x: 100, y: 100, width: 800, height: 600),
-            styleMask: [.titled],
-            backing: .buffered,
-            defer: false
-        )
+        let sourceWindow = makeVisibleSourceWindow()
+        defer { sourceWindow.close() }
         let expectedResponse = NSApplication.ModalResponse.alertSecondButtonReturn
         let configuration = PhiAlertAppKitConfiguration(
             title: "Synchronous alert",
@@ -406,12 +479,8 @@ final class PhiAlertTests: XCTestCase {
     }
 
     func testSynchronousSheetDispatchesAppKitEvents() {
-        let sourceWindow = NSWindow(
-            contentRect: CGRect(x: 100, y: 100, width: 800, height: 600),
-            styleMask: [.titled],
-            backing: .buffered,
-            defer: false
-        )
+        let sourceWindow = makeVisibleSourceWindow()
+        defer { sourceWindow.close() }
         let expectedResponse = NSApplication.ModalResponse.alertFirstButtonReturn
         var dismissHandler: ((NSApplication.ModalResponse) -> Void)?
         var didDispatchEvent = false
@@ -514,6 +583,16 @@ final class PhiAlertTests: XCTestCase {
         XCTAssertEqual(response, .alertSecondButtonReturn)
     }
 
+    func testCommandQDoesNotConfirmOrdinaryAlert() {
+        let response = runKeyboardShortcutAlert(
+            characters: "q",
+            modifierFlags: .command,
+            keyCode: 12
+        )
+
+        XCTAssertEqual(response, .cancel)
+    }
+
     func testCommandQConfirmsQuitAlert() {
         let expectedResponse = NSApplication.ModalResponse.alertFirstButtonReturn
         let response = runKeyboardShortcutAlert(
@@ -528,6 +607,15 @@ final class PhiAlertTests: XCTestCase {
         )
 
         XCTAssertEqual(response, expectedResponse)
+    }
+
+    /// The synchronous bridge hosts a sheet only on a visible window and
+    /// floats a standalone panel otherwise, so a sheet test has to put its
+    /// source window on screen first.
+    private func makeVisibleSourceWindow() -> NSWindow {
+        let window = makeParentWindow()
+        window.orderFront(nil)
+        return window
     }
 
     private func makeParentWindow() -> NSWindow {
@@ -574,12 +662,8 @@ final class PhiAlertTests: XCTestCase {
         keyCode: UInt16,
         runAlert: ((NSWindow) -> NSApplication.ModalResponse)? = nil
     ) -> NSApplication.ModalResponse {
-        let sourceWindow = NSWindow(
-            contentRect: CGRect(x: 100, y: 100, width: 800, height: 600),
-            styleMask: [.titled],
-            backing: .buffered,
-            defer: false
-        )
+        let sourceWindow = makeVisibleSourceWindow()
+        defer { sourceWindow.close() }
         let configuration = PhiAlertAppKitConfiguration(
             title: "Keyboard shortcut",
             message: "The alert should handle its standard keyboard shortcuts.",

@@ -8,6 +8,37 @@ import CocoaLumberjack
 import CocoaLumberjackSwift
 
 struct PhiLogging {
+    /// Reads only the retained log tails needed for a bounded startup snapshot.
+    static func applicationLogSnapshot(maxBytes: Int) -> Data? {
+        guard let logger = DDLog.sharedInstance.allLoggers.first(where: { $0 is DDFileLogger }) as? DDFileLogger else {
+            return nil
+        }
+        return logSnapshot(paths: logger.logFileManager.sortedLogFilePaths, maxBytes: maxBytes)
+    }
+
+    static func logSnapshot(paths: [String], maxBytes: Int) -> Data? {
+        guard maxBytes > 0 else { return nil }
+        var chunks: [Data] = []
+        var remaining = maxBytes
+        for path in paths {
+            guard remaining > 0 else { break }
+            do {
+                let file = try FileHandle(forReadingFrom: URL(fileURLWithPath: path))
+                defer { try? file.close() }
+                let size = try file.seekToEnd()
+                try file.seek(toOffset: size > UInt64(remaining) ? size - UInt64(remaining) : 0)
+                let data = try file.read(upToCount: remaining) ?? Data()
+                chunks.append(data)
+                remaining -= data.count
+            } catch {
+                // Log rotation may remove a file between listing and reading it.
+                continue
+            }
+        }
+        let data = chunks.reversed().reduce(into: Data()) { $0.append($1) }
+        return data.isEmpty ? nil : data
+    }
+
     /// Snapshots every retained log file without truncating or removing its contents.
     static func applicationLogFiles(log: DDLog = .sharedInstance) -> [(filename: String, data: Data)] {
         // Include queued messages, especially the reauthentication-required trace.

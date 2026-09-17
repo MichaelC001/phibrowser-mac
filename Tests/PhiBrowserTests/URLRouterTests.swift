@@ -4,7 +4,6 @@
 // found in the LICENSE file.
 
 import XCTest
-import SwiftData
 @testable import Phi
 
 /// Pins the Swift-side URL routing semantics that `URLRouter` shares with the
@@ -13,40 +12,22 @@ import SwiftData
 @MainActor
 final class URLRouterTests: XCTestCase {
 
-    // SpaceURLRule is a SwiftData @Model; host it in an in-memory store so the
-    // rows behave exactly as the ones `URLRouter` reads in production.
-    private var container: ModelContainer!
-    private var context: ModelContext!
-
-    override func setUpWithError() throws {
-        let schema = Schema([SpaceURLRule.self])
-        let config = ModelConfiguration(isStoredInMemoryOnly: true)
-        container = try ModelContainer(for: schema, configurations: [config])
-        context = ModelContext(container)
-    }
-
-    override func tearDownWithError() throws {
-        context = nil
-        container = nil
-    }
-
     private func rule(space: String,
                       host: String,
                       path: String? = nil,
                       askBeforeRouting: Bool = false,
-                      sortOrder: Int = 0) -> SpaceURLRule {
-        let r = SpaceURLRule(
+                      sortOrder: Int = 0) -> SpaceRoutingRule {
+        let r = SpaceRoutingRule(
             spaceId: space,
             host: host,
             pathPrefix: path,
             askBeforeRouting: askBeforeRouting,
             sortOrder: sortOrder
         )
-        context.insert(r)
         return r
     }
 
-    private func resolve(_ urlString: String, _ rules: [SpaceURLRule]) -> String? {
+    private func resolve(_ urlString: String, _ rules: [SpaceRoutingRule]) -> String? {
         URLRouter.resolve(url: URL(string: urlString)!, rules: rules)
     }
 
