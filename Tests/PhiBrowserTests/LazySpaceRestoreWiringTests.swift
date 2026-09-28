@@ -1434,4 +1434,46 @@ final class LazySpaceRestoreWiringTests: XCTestCase {
             restoredFromWindowId: 563375266, withinLaunchGrace: true,
             reportedReplayedByProfile: false))
     }
+
+    // MARK: - Which record a launch reads and writes
+
+    /// The slot snapshot maps Chromium's previous-session window ids to
+    /// Spaces, and those ids only mean anything inside the Chromium user data
+    /// directory that issued them. Chromium's directory follows the bundle
+    /// while this record follows the account, so a launch pointed at another
+    /// directory (`--user-data-dir`, the QA and XCTest shape) rewrote the
+    /// real profile's record with ids from a session it never had — and the
+    /// next real launch found every saved window unplaceable. The key carries
+    /// the explicit directory so each directory keeps its own record.
+
+    func testTheSnapshotKeyIsUnchangedWithoutAnExplicitUserDataDir() {
+        XCTAssertEqual(
+            SpaceManager.slotsRestoreSnapshotKey(
+                arguments: ["Phi", "--enable-features=TabStripUnification"]),
+            "slotsRestoreSnapshot")
+    }
+
+    func testAnExplicitUserDataDirScopesTheSnapshotKey() {
+        XCTAssertEqual(
+            SpaceManager.slotsRestoreSnapshotKey(
+                arguments: ["Phi", "--user-data-dir=/tmp/r11-fresh"]),
+            "slotsRestoreSnapshot@/tmp/r11-fresh")
+    }
+
+    func testTheLastUserDataDirSwitchWins() {
+        // Chromium's command line keeps the last value of a repeated switch;
+        // the key follows the directory Chromium actually opens.
+        XCTAssertEqual(
+            SpaceManager.slotsRestoreSnapshotKey(
+                arguments: ["Phi", "--user-data-dir=/a", "--user-data-dir=/b"]),
+            "slotsRestoreSnapshot@/b")
+    }
+
+    func testAnEmptyUserDataDirSwitchLeavesTheKeyUnscoped() {
+        // Chromium treats an empty value as "use the default directory".
+        XCTAssertEqual(
+            SpaceManager.slotsRestoreSnapshotKey(
+                arguments: ["Phi", "--user-data-dir="]),
+            "slotsRestoreSnapshot")
+    }
 }

@@ -3348,7 +3348,8 @@ final class SpaceManager: ObservableObject {
                 forKey: Self.lastBoundAccountUserIDKey)
             let snapshot = userID.flatMap {
                 AccountUserDefaults.storedObject(
-                    forKey: .slotsRestoreSnapshot, ofAccountWithUserID: $0)
+                    forKey: Self.slotsRestoreSnapshotDefaultsKey,
+                    ofAccountWithUserID: $0)
                     as? [[String: Any]]
             } ?? []
             guard let preferred = Self.earlyColdStartPreferredProfiles(
@@ -3396,6 +3397,36 @@ final class SpaceManager: ObservableObject {
     /// Cleared on sign-out (`unbind`). Only a userID: the answer stays in the
     /// account's own snapshot, so there is no second copy that can go stale.
     static let lastBoundAccountUserIDKey = "PhiLastBoundAccountUserID"
+
+    /// The account-defaults key the slot snapshot is read from and written
+    /// to, given the process arguments — Chromium is launched with this very
+    /// argv, so the two sides read the same switch.
+    ///
+    /// The snapshot maps Chromium's previous-session window ids to Spaces,
+    /// and those ids only mean anything inside the Chromium user data
+    /// directory that issued them. Chromium's directory follows the bundle
+    /// while this record follows the account, so a launch pointed at another
+    /// directory (`--user-data-dir`, the shape every QA and XCTest run has)
+    /// used to rewrite the real profile's record with ids from a session it
+    /// never had — and the next real launch found every saved window
+    /// unplaceable and came back as one window per saved window. With the
+    /// switch present the key carries the directory, so each directory keeps
+    /// a record of its own and the real one is never touched.
+    ///
+    /// The last occurrence wins and an empty value counts as absent, which
+    /// is how Chromium's own command line reads the switch. Pure and static
+    /// so the rule is pinned by table (`LazySpaceRestoreWiringTests`).
+    static func slotsRestoreSnapshotKey(arguments: [String]) -> String {
+        let base = AccountUserDefaults.DefaultsKey.slotsRestoreSnapshot.rawValue
+        let prefix = "--user-data-dir="
+        guard let dir = arguments.last(where: { $0.hasPrefix(prefix) })?
+                .dropFirst(prefix.count), !dir.isEmpty else { return base }
+        return "\(base)@\(dir)"
+    }
+
+    /// `slotsRestoreSnapshotKey` for this process, computed once.
+    static let slotsRestoreSnapshotDefaultsKey =
+        slotsRestoreSnapshotKey(arguments: ProcessInfo.processInfo.arguments)
 
     /// The owner map a snapshot entry stores under
     /// `snapshotSpaceProfileIdsKey`. Agent Spaces are left out: the launch
@@ -5114,7 +5145,7 @@ final class SpaceManager: ObservableObject {
         AppLogInfo(
             "[SpaceManager] slot snapshot persisted: \(dicts.count - parkedOnlyCount) slot(s)"
                 + (parkedOnlyCount > 0 ? ", \(parkedOnlyCount) parked-only entry(ies)" : ""))
-        userDefaults.set(dicts, forKey: AccountUserDefaults.DefaultsKey.slotsRestoreSnapshot.rawValue)
+        userDefaults.set(dicts, forKey: Self.slotsRestoreSnapshotDefaultsKey)
         return true
     }
 
@@ -5182,7 +5213,7 @@ final class SpaceManager: ObservableObject {
     /// restores from.
     fileprivate func amendPersistedSnapshotActiveSpaceId(windowId: Int, to spaceId: String) {
         guard !isTerminating, let userDefaults = boundAccount?.userDefaults else { return }
-        let key = AccountUserDefaults.DefaultsKey.slotsRestoreSnapshot.rawValue
+        let key = Self.slotsRestoreSnapshotDefaultsKey
         guard var dicts = userDefaults.object(forKey: key) as? [[String: Any]] else { return }
         for index in dicts.indices {
             guard let map = dicts[index]["windowMap"] as? [String: String],
@@ -5218,7 +5249,7 @@ final class SpaceManager: ObservableObject {
         coldStartRepairedEntryIndices.removeAll()
         pendingColdStartRepairEntryIndices.removeAll()
         guard let raw = boundAccount?.userDefaults.object(
-            forKey: AccountUserDefaults.DefaultsKey.slotsRestoreSnapshot.rawValue
+            forKey: Self.slotsRestoreSnapshotDefaultsKey
         ) as? [[String: Any]] else { return }
         // Clamp against the layout in front of the user NOW, not the one the
         // frames were recorded against — the display a slot was saved on may be
