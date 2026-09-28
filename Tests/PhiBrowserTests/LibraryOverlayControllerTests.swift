@@ -251,33 +251,6 @@ final class LibraryOverlayControllerTests: XCTestCase {
         return view.subviews.lazy.compactMap { self.nativeSplit(in: $0) }.first
     }
 
-    func testHoverFilteringBlocksOnlyConfirmedBackgroundAreas() {
-        let content = NSView()
-        let tab = NSView()
-        let overlay = NSView()
-        let libraryButton = NSView()
-        content.addSubview(tab)
-        content.addSubview(overlay)
-        overlay.addSubview(libraryButton)
-        let privateOwner = NSObject()
-        let backgroundArea = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways], owner: privateOwner)
-        let libraryArea = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways], owner: privateOwner)
-        tab.addTrackingArea(backgroundArea)
-        libraryButton.addTrackingArea(libraryArea)
-
-        XCTAssertTrue(LibraryOverlayController.isBackgroundTrackingArea(backgroundArea, in: content, overlay: overlay))
-        XCTAssertFalse(LibraryOverlayController.isBackgroundTrackingArea(libraryArea, in: content, overlay: overlay))
-        XCTAssertFalse(LibraryOverlayController.isBackgroundTrackingArea(nil, in: content, overlay: overlay))
-
-        // Private SwiftUI tracking events need not appear in a view's area list.
-        let privateArea = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways], owner: privateOwner)
-        XCTAssertFalse(LibraryOverlayController.isBackgroundTrackingArea(privateArea, in: content, overlay: overlay))
-        content.addTrackingArea(privateArea)
-        XCTAssertFalse(LibraryOverlayController.isBackgroundTrackingArea(privateArea, in: content, overlay: overlay))
-        libraryButton.removeFromSuperview()
-        XCTAssertFalse(LibraryOverlayController.isBackgroundTrackingArea(libraryArea, in: content, overlay: overlay))
-    }
-
     func testFlightStartsAtAvatarForBothLayerAnchorsAndLayoutPositions() {
         let card = CGRect(x: 32, y: 32, width: 1100, height: 740)
         for origin in [CGRect(x: 24, y: 20, width: 24, height: 24),
@@ -293,7 +266,7 @@ final class LibraryOverlayControllerTests: XCTestCase {
         }
     }
 
-    func testOverlayUsesParentViewAndRestoresFocusWithoutChildWindows() throws {
+    func testOverlayUsesAttachedPanelAndRestoresFocus() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         self.directory = directory
@@ -314,18 +287,28 @@ final class LibraryOverlayControllerTests: XCTestCase {
         controller.show(from: source, animated: false)
         controller.show(from: source, animated: false)
         XCTAssertTrue(controller.isVisible)
-        XCTAssertTrue(parent.childWindows?.isEmpty ?? true)
-        XCTAssertEqual(content.subviews.count, 2)
-        let overlay = try XCTUnwrap(content.subviews.last)
-        XCTAssertEqual(overlay.frame, content.bounds)
+        let panel = try XCTUnwrap(parent.childWindows?.first)
+        XCTAssertEqual(parent.childWindows?.count, 1)
+        XCTAssertTrue(panel is NSPanel)
+        XCTAssertTrue(panel.canBecomeKey)
+        XCTAssertFalse(panel.ignoresMouseEvents)
+        XCTAssertEqual(content.subviews.count, 1)
+        let overlay = try XCTUnwrap(panel.contentView)
+        XCTAssertEqual(panel.frame, parent.convertToScreen(content.convert(content.bounds, to: nil)))
+        XCTAssertEqual(overlay.bounds.size, content.bounds.size)
         RunLoop.main.run(until: Date().addingTimeInterval(0.3))
         XCTAssertNil(nativeSplit(in: overlay), "Embedded Library must not expose a draggable sidebar")
         XCTAssertNil(parent.toolbar, "Embedded Library must not add a sidebar toggle to the browser toolbar")
         parent.setContentSize(NSSize(width: 1100, height: 750))
         content.layoutSubtreeIfNeeded()
-        XCTAssertEqual(overlay.frame, content.bounds)
+        XCTAssertEqual(panel.frame, parent.convertToScreen(content.convert(content.bounds, to: nil)))
+        XCTAssertEqual(overlay.bounds.size, content.bounds.size)
+        parent.setFrameOrigin(NSPoint(x: 180, y: 140))
+        XCTAssertEqual(panel.frame, parent.convertToScreen(content.convert(content.bounds, to: nil)))
         controller.dismiss(animated: false)
         XCTAssertFalse(controller.isVisible)
+        XCTAssertTrue(parent.childWindows?.isEmpty ?? true)
+        XCTAssertNil(panel.contentView)
         XCTAssertTrue(parent.firstResponder === previousResponder)
         XCTAssertEqual(content.subviews.count, 1)
         controller.show(from: source, animated: false)
@@ -350,13 +333,14 @@ final class LibraryOverlayControllerTests: XCTestCase {
         parent.makeKeyAndOrderFront(nil)
         let controller = LibraryOverlayController(parent: parent, browserState: state)
         controller.show(from: source, animated: false)
-        let overlay = try XCTUnwrap(content.subviews.last)
+        let panel = try XCTUnwrap(parent.childWindows?.first)
+        let overlay = try XCTUnwrap(panel.contentView)
         let card = try XCTUnwrap(overlay.subviews.first)
 
         func click(_ point: NSPoint) throws {
             let event = try XCTUnwrap(NSEvent.mouseEvent(
                 with: .leftMouseDown, location: overlay.convert(point, to: nil),
-                modifierFlags: [], timestamp: 0, windowNumber: parent.windowNumber,
+                modifierFlags: [], timestamp: 0, windowNumber: panel.windowNumber,
                 context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
             // Reproduce an unhandled hosting-view click reaching the overlay.
             overlay.mouseDown(with: event)
@@ -389,11 +373,12 @@ final class LibraryOverlayControllerTests: XCTestCase {
         XCTAssertTrue(parent.makeFirstResponder(source))
         let controller = LibraryOverlayController(parent: parent, browserState: state)
         controller.show(from: source, animated: false)
-        let overlay = try XCTUnwrap(content.subviews.last)
+        let panel = try XCTUnwrap(parent.childWindows?.first)
+        let overlay = try XCTUnwrap(panel.contentView)
         let search = NSSearchField(frame: NSRect(x: 50, y: 50, width: 240, height: 32))
         overlay.addSubview(search)
         search.stringValue = "report"
-        XCTAssertTrue(parent.makeFirstResponder(search))
+        XCTAssertTrue(panel.makeFirstResponder(search))
         XCTAssertNotNil(search.currentEditor())
 
         controller.dismiss()
@@ -401,14 +386,15 @@ final class LibraryOverlayControllerTests: XCTestCase {
         XCTAssertTrue(controller.isVisible, "The card stays mounted during its exit animation")
         XCTAssertNil(search.currentEditor(), "Search editing must end before the exit animation")
         XCTAssertEqual(search.stringValue, "report")
-        XCTAssertTrue(parent.firstResponder === overlay)
+        XCTAssertTrue(panel.firstResponder === overlay)
         RunLoop.main.run(until: Date().addingTimeInterval(0.3))
         XCTAssertFalse(controller.isVisible)
         XCTAssertTrue(parent.firstResponder === source)
 
         controller.show(from: source, animated: false)
-        XCTAssertTrue(parent.makeFirstResponder(search))
+        XCTAssertTrue(panel.makeFirstResponder(search))
         controller.dismiss()
+        parent.makeKey()
         XCTAssertTrue(parent.makeFirstResponder(otherControl))
         RunLoop.main.run(until: Date().addingTimeInterval(0.3))
         XCTAssertFalse(controller.isVisible)
@@ -431,10 +417,13 @@ final class LibraryOverlayControllerTests: XCTestCase {
         parent.makeKeyAndOrderFront(nil)
         let controller = LibraryOverlayController(parent: parent, browserState: state)
         controller.show(from: source, animated: false)
+        let panel = try XCTUnwrap(parent.childWindows?.first)
         controller.dismiss()
         controller.show(from: source, animated: false)
         RunLoop.main.run(until: Date().addingTimeInterval(0.3))
         XCTAssertTrue(controller.isVisible)
+        XCTAssertEqual(parent.childWindows?.count, 1)
+        XCTAssertTrue(parent.childWindows?.first === panel)
         controller.dismiss(animated: false)
     }
 }
