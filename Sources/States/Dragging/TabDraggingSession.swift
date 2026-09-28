@@ -59,6 +59,41 @@ final class TabDraggingSession {
     private(set) weak var state: BrowserState?
     private weak var dragBoundaryContainerView: NSView?
     private var lastIsInsideDragBoundary: Bool?
+    private var mouseEventMonitor: Any?
+    private var mouseDownFocusedTabId: Int?
+    private(set) var previousFocusedTabId: Int?
+
+    /// Capture before tab views handle mouseDown and activate the pressed tab.
+    private func observeMouseDownFocus() {
+        mouseEventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp]) { [weak self] event in
+            guard let self else { return event }
+            self.mouseDownFocusedTabId = nil
+            if event.type == .leftMouseDown,
+               let sourceWindow = self.sourceWindow,
+               event.window === sourceWindow {
+                self.recordFocusBeforeMouseDown()
+            }
+            return event
+        }
+    }
+
+    func recordFocusBeforeMouseDown() {
+        mouseDownFocusedTabId = state?.focusingTab?.guid
+    }
+
+    /// Consume once, before activation can re-enter drag/layout callbacks.
+    func restorePreviousFocusForSplitDrop(draggedTabId: Int) {
+        guard snapshot.isDragging, let state,
+              state.focusingTab?.guid == draggedTabId,
+              let previousFocusedTabId,
+              previousFocusedTabId != draggedTabId,
+              let tab = state.tabs.first(where: { $0.guid == previousFocusedTabId }) else { return }
+        self.previousFocusedTabId = nil
+        // Chromium reports activation asynchronously. Keep this drop's mode and
+        // partner deterministic even if the mouse is released before that echo.
+        state.focuseTab(tab)
+        tab.makeSelfActive()
+    }
     
     /// Strongly held reference to the current dragging item.
     /// This ensures the item is not deallocated during the drag session.
@@ -130,9 +165,13 @@ final class TabDraggingSession {
         self.snapshot = Snapshot(phase: .idle, draggingItem: nil, screenLocation: nil, updatedAt: Date())
         self.state = state
         registerMainWindowCreatedObserver()
+        observeMouseDownFocus()
     }
     
     deinit {
+        if let mouseEventMonitor {
+            NSEvent.removeMonitor(mouseEventMonitor)
+        }
         if let mainWindowCreatedObserver {
             NotificationCenter.default.removeObserver(mainWindowCreatedObserver)
         }
@@ -199,6 +238,8 @@ final class TabDraggingSession {
     }
 
     func begin(draggingItem: Any?, screenLocation: CGPoint?, containerView: NSView? = nil) {
+        previousFocusedTabId = mouseDownFocusedTabId
+        mouseDownFocusedTabId = nil
         snapshot.phase = .dragging
         snapshot.draggingItem = draggingItem
         snapshot.screenLocation = screenLocation
@@ -302,6 +343,8 @@ final class TabDraggingSession {
     
     /// Resets all dragging state after end or cancel.
     private func resetDraggingState() {
+        mouseDownFocusedTabId = nil
+        previousFocusedTabId = nil
         snapshot.phase = .idle
         snapshot.draggingItem = nil
         snapshot.screenLocation = nil
