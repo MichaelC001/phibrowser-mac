@@ -52,6 +52,7 @@ final class LibraryOverlayController {
     private var observers: [NSObjectProtocol] = []
     private var eventMonitor: Any?
     private var themeSubscription: AnyCancellable?
+    private var focusedTabSubscription: AnyCancellable?
     private var generation = 0
     private var isClosing = false
     var isVisible: Bool { panel.isVisible }
@@ -94,6 +95,14 @@ final class LibraryOverlayController {
         overlay.layoutCard = { [weak self] in self?.layoutContent() }
         module.onDismiss = { [weak self] in self?.dismiss() }
         panel.dismiss = { [weak self] in self?.dismiss() }
+        focusedTabSubscription = browserState.$focusingTab
+            .map { $0?.guid }
+            .removeDuplicates()
+            .dropFirst()
+            .sink { [weak self] _ in
+                // Let the tab switch own focus instead of restoring the previous tab's responder.
+                self?.dismiss(animated: false, restoreFocus: false)
+            }
         for name in [NSWindow.willCloseNotification, NSWindow.willMiniaturizeNotification] {
             observers.append(NotificationCenter.default.addObserver(forName: name, object: parent, queue: .main) { [weak self] _ in
                 self?.dismiss(animated: false, restoreFocus: false)

@@ -316,6 +316,47 @@ final class LibraryOverlayControllerTests: XCTestCase {
         XCTAssertFalse(controller.isVisible)
     }
 
+    func testTabChangeDismissesOverlayWithoutRestoringPreviousFocus() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        self.directory = directory
+        let store = LocalStore(account: Account(userID: UUID().uuidString), storeDirectoryURL: directory)
+        self.store = store
+        let state = BrowserState(windowId: UUID().hashValue, localStore: store, profileId: "Default")
+        let firstTab = Tab(guid: 1, url: "https://one.example", isActive: true, index: 0)
+        let secondTab = Tab(guid: 2, url: "https://two.example", isActive: false, index: 1)
+        state.focusingTab = firstTab
+        let parent = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 900, height: 650),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        parent.isReleasedWhenClosed = false
+        defer { parent.close() }
+        let content = try XCTUnwrap(parent.contentView)
+        let source = NSButton(frame: NSRect(x: 20, y: 20, width: 24, height: 24))
+        let nextResponder = NSButton(frame: NSRect(x: 60, y: 20, width: 24, height: 24))
+        content.addSubview(source)
+        content.addSubview(nextResponder)
+        parent.makeKeyAndOrderFront(nil)
+        XCTAssertTrue(parent.makeFirstResponder(source))
+        let controller = LibraryOverlayController(parent: parent, browserState: state)
+        controller.show(from: source, animated: false)
+        let panel = try XCTUnwrap(parent.childWindows?.first)
+        state.focusingTab = firstTab
+        XCTAssertTrue(controller.isVisible, "Republishing the same tab must keep Library open")
+
+        XCTAssertTrue(parent.makeFirstResponder(nextResponder))
+        state.focusingTab = secondTab
+
+        XCTAssertFalse(controller.isVisible)
+        XCTAssertTrue(parent.childWindows?.isEmpty ?? true)
+        XCTAssertNil(panel.contentView)
+        XCTAssertTrue(parent.firstResponder === nextResponder)
+
+        controller.show(from: source, animated: false)
+        XCTAssertTrue(controller.isVisible)
+        state.focusingTab = nil
+        XCTAssertFalse(controller.isVisible, "Closing the last tab must also dismiss Library")
+    }
+
     func testBlankContentClickKeepsLibraryOpenButScrimClickDismisses() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
