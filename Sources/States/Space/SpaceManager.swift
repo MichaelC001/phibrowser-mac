@@ -458,6 +458,10 @@ final class SpaceManager: ObservableObject {
     /// persisted property on models whose container may since be gone.
     private var publishedSpaceIds: [String] = []
 
+    /// Hide retiring pips without invalidating the Space or its live sidebar
+    /// while the slot's normal switch animation still uses them.
+    @Published private(set) var pendingDeletionSpaceIds: Set<String> = []
+
     /// Whether a `spaces` write invalidates every cached POSITION → Space
     /// mapping. Deliberately order-sensitive rather than set-sensitive: the
     /// agent group re-partitions (`handleSpacesUpdate`) and a reorder commit
@@ -6064,8 +6068,8 @@ final class SpaceManager: ObservableObject {
     }
 
     func deleteSpace(spaceId: String, expectedStoreIdentifier: UUID? = nil) {
-        guard acceptsStoreAction(from: expectedStoreIdentifier) else { return }
-        discardClaimedSpaceContent(spaceId: spaceId)
+        guard acceptsStoreAction(from: expectedStoreIdentifier),
+              !pendingDeletionSpaceIds.contains(spaceId) else { return }
         // Incognito Spaces have no store rows to delete — "delete" for them
         // is closing the Space. No UI offers delete for them; this redirect
         // is a safety net for stray callers.
@@ -6078,7 +6082,7 @@ final class SpaceManager: ObservableObject {
         // one persisted regular Space to land on. Only user Spaces are
         // guarded: agent-Space cleanup (orphan sweep, task teardown) must
         // never be blocked by the count.
-        let remainingUserSpaces = userSpaces.filter { $0.spaceId != spaceId }
+        let remainingUserSpaces = userSpaces.filter { $0.spaceId != spaceId && !pendingDeletionSpaceIds.contains($0.spaceId) }
         if remainingUserSpaces.isEmpty,
            userSpaces.contains(where: { $0.spaceId == spaceId }) {
             AppLogWarn("[SpaceManager] refusing to delete the last Space")
@@ -6087,7 +6091,6 @@ final class SpaceManager: ObservableObject {
         // An import currently writing into this Space must finish first, or its
         // pending bookmark snapshot would be stranded under a root whose Space
         // we just deleted. Refuse and tell the user rather than racing the write.
-        SpaceBandSnapshotCache.shared.remove(spaceId: spaceId)
         guard !ImportTargetLock.shared.isImporting(into: spaceId) else {
             AppLogWarn("[SpaceManager] refusing to delete space \(spaceId): import in progress")
             let alert = NSAlert()
@@ -6100,6 +6103,25 @@ final class SpaceManager: ObservableObject {
             alert.addButton(withTitle: NSLocalizedString("spaces.importProgress.deleteSpaceBlocked.dismissButton", value: "OK", comment: "Dismiss button"))
             alert.runModal()
             return
+        }
+        let deletionStoreIdentifier = storeIdentifier
+        pendingDeletionSpaceIds.insert(spaceId)
+        closeSpaceWindows(spaceId: spaceId) { [weak self] succeeded in
+            guard let self, self.storeIdentifier == deletionStoreIdentifier else { return }
+            guard succeeded, self.acceptsStoreAction(from: deletionStoreIdentifier) else {
+                self.pendingDeletionSpaceIds.remove(spaceId)
+                return
+            }
+            self.finishDeletingSpace(spaceId: spaceId)
+        }
+    }
+
+    /// Called only after every slot has finished presenting its replacement.
+    private func finishDeletingSpace(spaceId: String) {
+        discardClaimedSpaceContent(spaceId: spaceId)
+        SpaceBandSnapshotCache.shared.remove(spaceId: spaceId)
+        let remainingUserSpaces = userSpaces.filter {
+            $0.spaceId != spaceId && !pendingDeletionSpaceIds.contains($0.spaceId)
         }
         // A parked ghost of this Space dies with it: deleting the Space is
         // the window close its parked window never got, so the record leaves
@@ -6123,9 +6145,9 @@ final class SpaceManager: ObservableObject {
         // Space itself goes away.
         pendingProfileChangeReopens.removeValue(forKey: spaceId)
         // Deleting the current default Space hands the role to the first
-        // remaining user Space, persisted so it survives relaunches. Done
-        // before the window teardown so the retreat below already lands on
-        // the successor, and the app-chrome theme republishes from it.
+        // remaining user Space, persisted so it survives relaunches. The
+        // retreat has already landed; now publish the successor's role and
+        // app-chrome theme along with the deletion.
         if spaceId == currentDefaultSpaceId,
            let successor = remainingUserSpaces.first {
             boundAccount?.userDefaults.set(
@@ -6148,7 +6170,6 @@ final class SpaceManager: ObservableObject {
         // helper marks ONLY a uuid with an entityId, which is what makes the
         // orphan sweep silent: agent Spaces never get one.
         MainActor.assumeIsolated { PhiSpaceSyncState.shared.recordLocalDeletion(spaceId: spaceId) }
-        closeSpaceWindows(spaceId: spaceId)
         // Cascade-delete the Space, tagged tabs/bookmarks and rules in one transaction to prevent ghost
         // Spaces/orphan rows after a crash and inconsistent intermediate UI publications.
         // LocalStore.deleteSpace leaves the cascade decision to callers. Rules must be removed too, or remain
@@ -6156,20 +6177,29 @@ final class SpaceManager: ObservableObject {
         //
         // After cascade commit, reread routing (§6.6 row 5 / ruling 6): it soft-deletes this Space's rules,
         // but urlRulesPublisher deduplication can swallow the change (R-M3-4a-34).
-        if let account = boundAccount {
-            Task { @MainActor [weak self] in
-                do {
-                    try await account.localStorage.deleteSpaceCascadeThrowing(
-                        spaceId: spaceId, origin: .userIntent)
-                    self?.reloadURLRulesFromStore()
-                } catch {
-                    AppLogError("[SpaceManager] deleteSpaceCascade failed: \(PhiSyncLog.describe(error))")
+        guard let account = boundAccount else {
+            pendingDeletionSpaceIds.remove(spaceId)
+            return
+        }
+        let deletionStoreIdentifier = storeIdentifier
+        Task { @MainActor [weak self] in
+            do {
+                try await account.localStorage.deleteSpaceCascadeThrowing(
+                    spaceId: spaceId, origin: .userIntent)
+                guard let self, self.storeIdentifier == deletionStoreIdentifier else { return }
+                self.clearThemeRecords(forSpaceId: spaceId)
+                // Publish the committed list before revealing pips again, even
+                // if the store publisher's delivery is still queued.
+                self.handleSpacesUpdate(account.localStorage.getAllSpaces())
+                self.pendingDeletionSpaceIds.remove(spaceId)
+                self.reloadURLRulesFromStore()
+            } catch {
+                if self?.storeIdentifier == deletionStoreIdentifier {
+                    self?.pendingDeletionSpaceIds.remove(spaceId)
                 }
+                AppLogError("[SpaceManager] deleteSpaceCascade failed: \(PhiSyncLog.describe(error))")
             }
         }
-        // The per-Space theme records live in userDefaults, outside the
-        // cascade; prune them here or they linger forever.
-        clearThemeRecords(forSpaceId: spaceId)
     }
 
     /// Closes every live window this Space has, across all slots — the
@@ -6177,76 +6207,63 @@ final class SpaceManager: ObservableObject {
     /// PERSISTENT agent task completes: the task's window must go, but the
     /// Space row (and its tagged rows) stays in the switcher for the user,
     /// and for a later task to re-bind to.
-    func closeSpaceWindows(spaceId: String) {
-        // Any slot currently active on this Space retreats — back to the last
-        // regular Space it surfaced (so a completed agent task lands the user
-        // on the Space they came from, not the global default), falling back
-        // to the default Space when that Space is the one being deleted or no
-        // longer exists — with the usual switch animation, then closes the
-        // deleted Space's window, but only once the slide settles
-        // (`onSwapSettled`). By then the retreat has fronted the target Space
-        // and ordered the leaving window out, so the close lands on an
-        // already off-screen window and the browser never blinks. Closing it
-        // synchronously here would race the in-flight slide and tear down the
-        // still-front window mid-animation, which is why the retreat used to
-        // be instant.
-        let retreatingSlots = slots.filter { $0.activeSpaceId == spaceId }
-        for slot in retreatingSlots {
-            let retreatTarget: String = {
-                if let last = slot.lastRegularSpaceId, last != spaceId,
-                   spaces.contains(where: { $0.spaceId == last }) {
-                    return last
-                }
-                return currentDefaultSpaceId
-            }()
-            slot.activate(spaceId: retreatTarget, onSwapSettled: { [weak slot] in
-                guard let slot,
-                      let controller = slot.windowController(for: spaceId) else { return }
-                // If the retreat never completed (e.g. its window spawn failed
-                // on a profile-load error) the deleted Space's window is still
-                // the slot's visible one. Closing it now would be classified as
-                // a window-driven close and cascade the entire slot shut —
-                // worst case terminating the app over a Space delete. Leave it
-                // open instead; the Space row is still removed below.
-                guard slot.visibleController !== controller else {
-                    AppLogWarn("[SpaceManager] deleteSpace: not closing \(spaceId)'s window — it is still visible (retreat did not complete)")
-                    return
-                }
-                // Evict before closing (as `changeProfile` does) so the window
-                // teardown's late `unregisterWindow` fails its identity check and
-                // skips the visible-close side effects. Without this the close is
-                // classified as window-driven and cascades the whole slot shut —
-                // the user-perceived window vanishes on a Space delete.
-                // `closeRetiredWindow` parks key on the visible window first:
-                // the deleted Space's window can still hold key (the user was
-                // just watching it), and closing a key window lets AppKit
-                // promote a hidden sibling that would then be adopted as a
-                // Space switch.
-                slot.evictWindow(for: spaceId)
-                slot.closeRetiredWindow(controller)
-            })
+    func closeSpaceWindows(spaceId: String, completion: ((Bool) -> Void)? = nil) {
+        let closingSlots = slots
+        let deletionStoreIdentifier = storeIdentifier
+        // Visible can lag active during a cold/failed switch. Both must leave
+        // before teardown is safe, including deletion during another switch.
+        let retreatingSlots = closingSlots.filter {
+            $0.activeSpaceId == spaceId || $0.visibleController?.spaceId == spaceId
         }
-        // Background windows of this Space in slots that weren't showing it are
-        // already off-screen — close them immediately. Excludes the retreating
-        // slots: their `activeSpaceId` has already flipped to the default Space,
-        // so a plain `activeSpaceId != spaceId` filter would wrongly match them
-        // and double-close ahead of the deferred handler above. Each close
-        // routes through `windowWillClose` → slot.unregisterWindow → cleanup.
-        for slot in slots where !retreatingSlots.contains(where: { $0 === slot }) {
-            guard let controller = slot.windowController(for: spaceId) else { continue }
-            // Defensive parity with the retreating closure above and
-            // `changeProfile`: if a slot's visible window lags its activeSpaceId
-            // (e.g. a failed cross-profile switch left it on the deleted Space's
-            // still-visible window), don't close it — that would drop the
-            // user-perceived window. The Space row is removed regardless.
-            guard slot.visibleController !== controller else { continue }
-            // Evict before closing for the same reason as the retreating slots
-            // above: a late window-driven unregister would otherwise cascade the
-            // slot shut. `closeRetiredWindow` also parks key on the slot's
-            // visible window first so the close can't hand key to a hidden
-            // sibling.
-            slot.evictWindow(for: spaceId)
-            slot.closeRetiredWindow(controller)
+        var outstanding = Set(retreatingSlots.map(ObjectIdentifier.init))
+        var retreatFailed = false
+        let closeAfterRetreat: () -> Void = { [weak self] in
+            guard let self, self.storeIdentifier == deletionStoreIdentifier else {
+                completion?(false)
+                return
+            }
+            guard !retreatFailed,
+                  !self.slots.contains(where: {
+                      $0.activeSpaceId == spaceId || $0.visibleController?.spaceId == spaceId
+                  }) else {
+                completion?(false)
+                return
+            }
+            // Evict first so the late unregister cannot cascade the slot shut.
+            // Keep all windows alive until all retreats have settled.
+            for slot in self.slots {
+                if let controller = slot.evictWindow(for: spaceId) {
+                    slot.closeRetiredWindow(controller)
+                }
+            }
+            completion?(true)
+        }
+        guard !retreatingSlots.isEmpty else {
+            closeAfterRetreat()
+            return
+        }
+        for slot in retreatingSlots {
+            let slotID = ObjectIdentifier(slot)
+            let finish: (Bool) -> Void = { succeeded in
+                // Some failed/cancelled switches also settle their animation.
+                guard outstanding.remove(slotID) != nil else { return }
+                retreatFailed = retreatFailed || !succeeded
+                if outstanding.isEmpty { closeAfterRetreat() }
+            }
+            let candidates = userSpaces.filter {
+                $0.spaceId != spaceId && !pendingDeletionSpaceIds.contains($0.spaceId)
+            }
+            let preferred = Self.isIncognitoSpaceId(spaceId)
+                ? currentDefaultSpaceId : (slot.lastRegularSpaceId ?? currentDefaultSpaceId)
+            guard let target = candidates.first(where: { $0.spaceId == preferred })
+                ?? candidates.first(where: { $0.spaceId == currentDefaultSpaceId })
+                ?? candidates.first else {
+                finish(false)
+                continue
+            }
+            slot.activate(spaceId: target.spaceId,
+                          onActivationFailed: { finish(false) },
+                          onSwapSettled: { finish(true) })
         }
     }
 
@@ -7547,6 +7564,7 @@ final class SpaceManager: ObservableObject {
         guard boundAccount !== account || isStoreBindingSuspended else { return }
         guard MainActor.assumeIsolated({ !account.localStorage.isClosedForAccountDirectoryRemoval }) else { return }
         suspendStoreBinding()
+        pendingDeletionSpaceIds.removeAll()
         boundAccount = account
         storeIdentifier = account.localStorage.identifier
         let generation = storeBindingGeneration
@@ -7740,16 +7758,22 @@ final class SpaceManager: ObservableObject {
     }
 
     /// Tears down the Incognito Space `spaceId`: closes its windows in every
-    /// slot (retreat-first for slots currently showing it), then removes it
-    /// from the strip. Closing the last Incognito Space window overall is
+    /// slot after their retreat animations settle. The pip disappears at
+    /// the start; the runtime descriptor survives until teardown. Closing the last Incognito Space window overall is
     /// what makes Chromium destroy the shared OTR profile and clear the
     /// private session — with another Incognito Space still open, the session
     /// data lives on in it.
     @MainActor
     func closeIncognitoSpace(spaceId: String) {
-        guard Self.isIncognitoSpaceId(spaceId) else { return }
-        closeIncognitoSpaceWindows(spaceId: spaceId)
-        removeIncognitoSpaceDescriptor(spaceId)
+        guard incognitoSpaces.contains(where: { $0.spaceId == spaceId }),
+              !pendingDeletionSpaceIds.contains(spaceId) else { return }
+        let deletionStoreIdentifier = storeIdentifier
+        pendingDeletionSpaceIds.insert(spaceId)
+        closeSpaceWindows(spaceId: spaceId) { [weak self] succeeded in
+            guard let self, self.storeIdentifier == deletionStoreIdentifier else { return }
+            if succeeded { self.removeIncognitoSpaceDescriptor(spaceId) }
+            self.pendingDeletionSpaceIds.remove(spaceId)
+        }
     }
 
     /// Retires the Incognito Space `spaceId` once no slot holds a window for
@@ -7759,7 +7783,8 @@ final class SpaceManager: ObservableObject {
     /// window.close, the tab-driven hand-off — still take the Space with
     /// them instead of stranding an empty pip in the strip.
     fileprivate func reapIncognitoSpaceIfWindowless(_ spaceId: String) {
-        guard incognitoSpaces.contains(where: { $0.spaceId == spaceId }),
+        guard !pendingDeletionSpaceIds.contains(spaceId),
+              incognitoSpaces.contains(where: { $0.spaceId == spaceId }),
               !slots.contains(where: { $0.windowController(for: spaceId) != nil }) else { return }
         removeIncognitoSpaceDescriptor(spaceId)
     }
@@ -7779,39 +7804,11 @@ final class SpaceManager: ObservableObject {
         pushSpaceStateToChromium()
     }
 
-    /// Closes every slot's window for the Incognito Space `spaceId`,
-    /// retreat-first for slots currently showing it. The mechanics mirror
-    /// `deleteSpace`'s two loops — see the comments there for why the
-    /// visible window's close must wait for the retreat to settle
-    /// (`onSwapSettled`) and why windows are evicted before closing (a
-    /// window-driven close would cascade the whole slot shut).
-    @MainActor
-    private func closeIncognitoSpaceWindows(spaceId: String) {
-        let retreatingSlots = slots.filter { $0.activeSpaceId == spaceId }
-        for slot in retreatingSlots {
-            slot.activate(spaceId: currentDefaultSpaceId, onSwapSettled: { [weak slot] in
-                guard let slot,
-                      let controller = slot.windowController(for: spaceId) else { return }
-                guard slot.visibleController !== controller else {
-                    AppLogWarn("[SpaceManager] close Incognito: not closing its window — still visible (retreat did not complete)")
-                    return
-                }
-                slot.evictWindow(for: spaceId)
-                controller.closeChromiumWindow()
-            })
-        }
-        for slot in slots where !retreatingSlots.contains(where: { $0 === slot }) {
-            guard let controller = slot.windowController(for: spaceId) else { continue }
-            guard slot.visibleController !== controller else { continue }
-            slot.evictWindow(for: spaceId)
-            controller.closeChromiumWindow()
-        }
-    }
-
     private func unbind() {
         discardSpacePrewarm()
         suspendStoreBinding()
         storeIdentifier = nil
+        pendingDeletionSpaceIds.removeAll()
         let hadBoundAccount = boundAccount != nil
         boundAccount = nil
         if hadBoundAccount {
@@ -8819,6 +8816,7 @@ final class SpaceWindowSlot: ObservableObject {
             return
         }
         guard let manager,
+              !manager.pendingDeletionSpaceIds.contains(spaceId),
               manager.spaces.contains(where: { $0.spaceId == spaceId }) else {
             AppLogWarn("[SpaceWindowSlot] activate ignored: unknown spaceId \(spaceId)")
             onActivationFailed?()
@@ -12141,7 +12139,10 @@ final class SpaceWindowSlot: ObservableObject {
 
     /// `manager.spaces` — strip order — reduced to what this slot presents.
     var presentedSpaces: [Space] {
-        manager?.spaces.filter { presents($0) } ?? []
+        guard let manager else { return [] }
+        return manager.spaces.filter {
+            !manager.pendingDeletionSpaceIds.contains($0.spaceId) && presents($0)
+        }
     }
 
     /// The Spaces this slot currently hosts a window for. Read by
