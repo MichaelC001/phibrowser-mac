@@ -956,16 +956,16 @@ extension TabDraggingSession {
             if let split = makeSplitSnapshotImage(forTab: tab) {
                 return split
             }
-            return makeTabSnapshotImage(tab) ?? makeTabPlaceholderImage(url: tab.url, title: tab.title)
+            // Foreground and background drags share Chromium's cached thumbnail.
+            // A live AppKit capture can omit the foreground page's remote surface.
+            return requestChromiumThumbnail(for: tab) ?? makeTabPlaceholderImage(url: tab.url, title: tab.title)
         } else if let bookmark = item as? Bookmark, !bookmark.isFolder {
             if let split = makeSplitSnapshotImage(forSplitBookmark: bookmark) {
                 return split
             }
-            if bookmark.isActive,
-               let nativeView = bookmark.webContentWrapper?.nativeView,
-               let live = makeTabSnapshotImage(nativeView)
-            {
-                return live
+            if let tab = state?.tabs.first(where: { $0.guidInLocalDB == bookmark.guid }),
+               let image = requestChromiumThumbnail(for: tab) {
+                return image
             }
             return makeTabPlaceholderImage(url: bookmark.url, title: bookmark.title)
         }
@@ -1160,15 +1160,6 @@ extension TabDraggingSession {
         if let jpegData = ChromiumLauncher.sharedInstance().bridge?.thumbnail(forTab: Int64(tab.guid)),
            let image = NSImage(data: jpegData) {
             return image.drawnAsRoundedSnapshot(targetSize: size, cornerRadius: 0)
-        }
-        // No cached thumbnail yet (common right after opening a pinned/bookmark
-        // split). Both panes of a visible split are simultaneously laid out
-        // and painted, so capturing from `webContentView` is safe regardless
-        // of which pane currently holds focus — `snapshotImage(of:)` rejects
-        // degenerate bounds itself.
-        if let view = tab.webContentView,
-           let live = snapshotImage(of: view, targetSize: size, cornerRadius: 0) {
-            return live
         }
         return makeTabPlaceholderImage(url: tab.url, title: tab.title)
             .drawnAsRoundedSnapshot(targetSize: size, cornerRadius: 0)
