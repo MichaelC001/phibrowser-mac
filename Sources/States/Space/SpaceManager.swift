@@ -8789,13 +8789,16 @@ final class SpaceWindowSlot: ObservableObject {
         timing.target = SpaceManager.isIncognitoSpaceId(spaceId) ? "incognito" : "regular"
         timing.mark("activate.begin")
         defer { timing.mark("activate.return") }
+        weak var preparedStrip: SpacesStripHostingView?
         let onActivationFailed: (() -> Void)? = {
+            preparedStrip?.cancelSpacesChipFlight(toSpaceId: spaceId)
             timing.mark("activation.failed_or_dropped")
             timing.presentationFinished = true
             timing.flush()
             failure?()
         }
         let onSwapSettled: (() -> Void)? = {
+            preparedStrip?.cancelSpacesChipFlight(toSpaceId: spaceId)
             timing.mark("switch.settled")
             timing.presentationFinished = true
             timing.flush()
@@ -8909,8 +8912,12 @@ final class SpaceWindowSlot: ObservableObject {
 
         timing.mark("leaving_agent_hook.end")
         if spaceId != activeSpaceId {
-            activeSpaceId = spaceId
             if animated, let previousSpaceId {
+                preparedStrip = prepareNewIncognitoSelection(fromSpaceId: previousSpaceId,
+                                                             toSpaceId: spaceId)
+            }
+            activeSpaceId = spaceId
+            if animated, preparedStrip == nil, let previousSpaceId {
                 beginChipFlight(fromSpaceId: previousSpaceId, toSpaceId: spaceId)
             }
             timing.mark("active_space.publish.end")
@@ -11039,6 +11046,28 @@ final class SpaceWindowSlot: ObservableObject {
                                           duration: Self.swapAnimationDuration)
     }
 
+    /// New Incognito Spaces have neither a rendered pip nor a ready Browser.
+    /// Render their icon first and hold selection until the content slide
+    /// starts. Existing Spaces keep the normal immediate-selection path.
+    private func prepareNewIncognitoSelection(fromSpaceId: String,
+                                              toSpaceId: String) -> SpacesStripHostingView? {
+        guard SpaceManager.isIncognitoSpaceId(toSpaceId),
+              windowsBySpaceId[toSpaceId] == nil, dormantSessionsBySpaceId[toSpaceId] == nil,
+              !PhiPreferences.GeneralSettings.loadLayoutMode().isTraditional,
+              !isCreatingSpace, Self.swapAnimationDuration > 0,
+              let shell, shell.window.isVisible,
+              let leaving = visibleController, leaving.spaceId == fromSpaceId,
+              leaving.mainSplitViewController.isViewLoaded else { return nil }
+        let surface = spaceSwitchSurface(of: leaving)
+        guard surface.view.window === shell.window,
+              !surface.view.isHiddenOrHasHiddenAncestor,
+              !surface.spaceSwitchBandFrame.isEmpty,
+              let strip = surface.spacesStripRowView as? SpacesStripHostingView,
+              strip.stripGeometry != nil else { return nil }
+        strip.prepareSpacesSelection(fromSpaceId: fromSpaceId, toSpaceId: toSpaceId)
+        return strip
+    }
+
     /// Starts the band slide on the leaving session's sidebar. Returns nil
     /// when nothing can animate (no band, zero duration, shell not on
     /// screen), in which case the caller presents instantly.
@@ -11091,6 +11120,10 @@ final class SpaceWindowSlot: ObservableObject {
             direction: direction,
             duration: duration,
             startLeavingChrome: { [weak self, weak prevSurface] in
+                (prevSurface?.spacesStripRowView as? SpacesStripHostingView)?
+                    .beginPreparedSpacesChipFlight(toSpaceId: enteringSpaceId,
+                                                   pipCount: self?.presentedSpaces.count ?? 0,
+                                                   duration: duration)
                 self?.rampWindowTheme(prevThemeContext, from: sourceTheme, to: targetTheme, duration: duration)
                 prevSurface?.rampSpaceTint(fromHex: sourceColorHex, toHex: targetColorHex, duration: duration)
             },
