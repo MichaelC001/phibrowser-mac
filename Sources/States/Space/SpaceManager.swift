@@ -3582,11 +3582,46 @@ final class SpaceManager: ObservableObject {
     /// with nothing predicted, nothing can be retired for being absent from a
     /// receipt that later profiles are still adding to.
     func applyColdStartParkedGhostReceipt(windowIdsByProfileId: [String: [Int]]) {
+        let recordedBefore = parkedGhostSpaceIdsByWindowId
         applyParkedGhostReceipt(ChromiumParkedGhostReceipt(
             windowIdsByProfileId: windowIdsByProfileId,
             // A cold start never arms through ArmForReopen, so the stale-set
             // tally this reports is never about it.
             eagerFilterMatchedNothing: false))
+        if Self.coldStartReceiptWritesSnapshot(
+            recordedBefore: recordedBefore,
+            recordedAfter: parkedGhostSpaceIdsByWindowId) {
+            persistSlotsSnapshot()
+        }
+    }
+
+    /// Whether a cold-start park receipt must be followed by a snapshot write:
+    /// whenever it changed what is recorded as parked.
+    ///
+    /// A write folds in only the parked windows already recorded
+    /// (`plannedSnapshotEntries`), and a cold start records none before the
+    /// owning profile's receipt. The head profile's eager window registers,
+    /// and writes, before any later profile's receipt arrives — that order is
+    /// what the replay head is for — so every window a later profile parks is
+    /// missing from that write. A reopen writes once every profile has settled
+    /// (`endSessionRestoreTransaction`); a cold start has no such point, and a
+    /// run that happened to write nothing else before quitting left those
+    /// Spaces out of the record for good: the next cold start could not place
+    /// their windows and rebuilt each one as a window of its own.
+    ///
+    /// The write lands inside the reporting profile's replay, before its own
+    /// windows are built. An entry of that profile it records as parked-only
+    /// is rewritten live when those windows register, later in the same
+    /// replay. One whose window never comes back stays parked-only until the
+    /// cold-start repair's window registers (`performColdStartRepair`), and
+    /// for good when no repair lands, so the next launch treats that group as
+    /// closed. That is the record any later write in the run produced
+    /// already; without this write, a run that wrote nothing else left the
+    /// entry out entirely and its windows came back loose. Pure and static so
+    /// the rule is pinned by table (`LazySpaceRestoreWiringTests`).
+    static func coldStartReceiptWritesSnapshot(recordedBefore: [Int: String],
+                                               recordedAfter: [Int: String]) -> Bool {
+        recordedBefore != recordedAfter
     }
 
     /// One launch's cold-start replay receipts, retained until the snapshot
@@ -4331,7 +4366,9 @@ final class SpaceManager: ObservableObject {
     ///   half-restored group. The reopen writes once itself, from the
     ///   completion that reports every profile settled. Covers that reopen
     ///   ONLY: a cold launch replays the same way but has no settle signal on
-    ///   this side, so it still writes once per restored window. Gating that
+    ///   this side, so it still writes once per restored window, plus once per
+    ///   park receipt that changes what is recorded as parked
+    ///   (`coldStartReceiptWritesSnapshot`). Gating that
     ///   on a wall clock instead would fire the batch write whether or not the
     ///   restore aborted — buying the write count by giving up the guarantee
     ///   that matters more.

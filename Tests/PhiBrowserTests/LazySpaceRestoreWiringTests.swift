@@ -1279,6 +1279,39 @@ final class LazySpaceRestoreWiringTests: XCTestCase {
         XCTAssertEqual(reconciliation.unmapped, [20, 30])
     }
 
+    // MARK: - Whether a cold-start receipt writes the snapshot
+
+    /// A cold start predicts no park set, so the record learns a profile's
+    /// parked windows only from that profile's receipt — and the head
+    /// profile's eager window registers, and writes, before any later
+    /// profile's receipt arrives. A run that wrote nothing after that receipt
+    /// quit with those windows missing from the record, and the next cold
+    /// start rebuilt each one as a window of its own.
+
+    func testAReceiptThatRecordsALaterProfilesParkedWindowWritesTheSnapshot() {
+        XCTAssertTrue(SpaceManager.coldStartReceiptWritesSnapshot(
+            recordedBefore: [10: "space-a"],
+            recordedAfter: [10: "space-a", 20: "space-p1"]))
+    }
+
+    func testAReceiptThatRecordsNothingNewWritesNothing() {
+        // The head profile parking nothing, and a later receipt repeating the
+        // whole registry: the record already says this.
+        XCTAssertFalse(SpaceManager.coldStartReceiptWritesSnapshot(
+            recordedBefore: [:], recordedAfter: [:]))
+        XCTAssertFalse(SpaceManager.coldStartReceiptWritesSnapshot(
+            recordedBefore: [10: "space-a", 20: "space-p1"],
+            recordedAfter: [10: "space-a", 20: "space-p1"]))
+    }
+
+    func testAReceiptThatStopsNamingAParkedWindowWritesTheSnapshot() {
+        // A closed-group candidate the registry shed once it retired to the
+        // undo stack: the record must stop naming it too.
+        XCTAssertTrue(SpaceManager.coldStartReceiptWritesSnapshot(
+            recordedBefore: [10: "space-a", 20: "space-p1"],
+            recordedAfter: [20: "space-p1"]))
+    }
+
     // MARK: - Cold-start repair (what an entry does with a replay receipt)
 
     /// The default inputs describe the repairable shape: an unclaimed,
