@@ -1041,8 +1041,8 @@ class SpaceSessionController: NSWindowController {
     }
 
     /// The page tree alone, into the shell's page area, above whatever is
-    /// there (the band slide brings the entering page tree in at its start
-    /// and cross-fades it over the leaving one).
+    /// there (the band slide mounts the entering page tree at its start,
+    /// keeping it transparent until the sidebar animation lands).
     func installPageTreeInShell() {
         guard isHosted, let split = shellSplit else { return }
         let t0 = CACurrentMediaTime()

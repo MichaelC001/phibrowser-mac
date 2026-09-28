@@ -10468,9 +10468,8 @@ final class SpaceWindowSlot: ObservableObject {
         /// Chromium window. A timer-driven slide froze through that block
         /// and jumped to its end when the thread came back, which read as no
         /// animation at all. `startTime` is set after target preparation and
-        /// is the shared clock for both bands, backgrounds and page fade.
+        /// is the shared clock for both bands and backgrounds.
         private static let slideAnimationKey = "phi.hostedBandSlide"
-        private static let pageFadeAnimationKey = "phi.hostedBandSlide.page"
         private var startTime: CFTimeInterval = 0
         var timing: SpaceSwitchTiming?
         private var fallbackTimer: Timer?
@@ -10709,6 +10708,8 @@ final class SpaceWindowSlot: ObservableObject {
             for view in enteringHeldViews { view.alphaValue = 0 }
             let pageTree = controller.mainSplitViewController.view
             pageTree.wantsLayer = true
+            // Mount the target page for layout, but keep the leaving page
+            // visible until `finishIfReady` reveals the target at landing.
             pageTree.layer?.opacity = 0
             controller.installPageTreeInShell()
             timing?.mark("page.install.end")
@@ -10724,15 +10725,14 @@ final class SpaceWindowSlot: ObservableObject {
             // landing cut the strip's slide short.
             DispatchQueue.main.async { [weak self, weak controller] in
                 guard let self, let controller, !self.finished else { return }
-                self.startMotion(controller, pageTree: pageTree)
+                self.startMotion(controller)
             }
             AppLogDebug("[SpaceWindowSlot] band slide entering attached, standIn=\(enteringStandIn != nil)")
         }
 
         /// Puts every side of the slide in motion on one clock: the leaving
-        /// band out, the entering band (or its stand-in) in, the backdrops
-        /// and the page fade.
-        private func startMotion(_ controller: SpaceSessionController, pageTree: NSView) {
+        /// band out, the entering band (or its stand-in) in, and the backdrops.
+        private func startMotion(_ controller: SpaceSessionController) {
             CATransaction.begin()
             CATransaction.setDisableActions(true)
             startTime = CACurrentMediaTime()
@@ -10764,21 +10764,6 @@ final class SpaceWindowSlot: ObservableObject {
                 animate(view, from: enteringStartDx, to: 0)
             }
             releaseEnteringHeldViews()
-            // The entering page tree comes in now, above the leaving one,
-            // and fades in on the slide's clock: its toolbar row, page frame
-            // and margins are already in the entering theme, so the page
-            // area changes in step with the backdrops instead of showing
-            // the leaving tree's chrome until the landing.
-            if let layer = pageTree.layer {
-                layer.opacity = 1
-                let fade = CABasicAnimation(keyPath: "opacity")
-                fade.fromValue = 0
-                fade.toValue = 1
-                fade.duration = duration
-                fade.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-                fade.beginTime = layer.convertTime(startTime, from: nil)
-                layer.add(fade, forKey: Self.pageFadeAnimationKey)
-            }
             CATransaction.commit()
             // Nested in the run loop's implicit transaction, the commit
             // above only reaches the render server when this turn ends, and
@@ -10991,9 +10976,8 @@ final class SpaceWindowSlot: ObservableObject {
             CATransaction.setDisableActions(true)
             restoreEnteringChrome()
             if let pageLayer = entering.mainSplitViewController.view.layer {
-                pageLayer.removeAnimation(forKey: Self.pageFadeAnimationKey)
-                // Settled before `startMotion` ran: the page is still held
-                // transparent from `beginEntering`.
+                // Reveal the target page instantly when the sidebar lands,
+                // including when a new switch forces this one to settle.
                 pageLayer.opacity = 1
             }
             leaving?.concealSidebarViewInShell()
