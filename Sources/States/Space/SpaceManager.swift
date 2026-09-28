@@ -2561,6 +2561,12 @@ final class SpaceManager: ObservableObject {
         // must NOT be reattached by profile to some stale closed slot — that
         // would surface it as a closed Space (and force fullscreen). Returning
         // nil lets the coordinator mint a fresh slot on the resolved Space.
+        // The one positive id that does claim by profile is a saved window
+        // the cold-start plan could not place, which Chromium rebuilds
+        // instead of parking and names in the profile's receipt ahead of its
+        // arrival (`restoredWindowClaimsByProfile`): its id is unknown to the
+        // record by definition, and minting it is what turned a lost record
+        // into one loose window per saved window.
         // With the restore switch off there are no restored windows to
         // reattach: the only zero-id window a cold launch produces is its
         // plain NTP window, and profile-matching it against a stale snapshot
@@ -2568,12 +2574,12 @@ final class SpaceManager: ObservableObject {
         // that entry's fullscreen marker. Checked here rather than when the
         // snapshot loads: `bind(to:)` runs before Chromium is up, where the
         // preference read falls back to its enabled default.
-        let claimsByProfile: Bool = {
-            if restoredFromWindowId == Self.restoreFallbackWindowId { return true }
-            guard restoredFromWindowId == 0,
-                  let deadline = restoreReattachDeadline else { return false }
-            return Date() < deadline
-        }()
+        let claimsByProfile = Self.restoredWindowClaimsByProfile(
+            restoredFromWindowId: restoredFromWindowId,
+            withinLaunchGrace: restoreReattachDeadline.map { Date() < $0 } ?? false,
+            reportedReplayedByProfile:
+                coldStartReplayedWindowIdsByProfileId[profileId]?
+                    .contains(restoredFromWindowId) ?? false)
         guard claimsByProfile,
               SessionRestorePreference.isEnabled,
               !profileId.isEmpty else { return nil }
@@ -2590,10 +2596,12 @@ final class SpaceManager: ObservableObject {
         // snapshot windows: anything else that has to pick among a saved slot's
         // windows uses this one rather than inventing a near-synonym.
         let persistedActive = persistedActiveSpaceId
-        // Windows this reopen parked are not candidates — see
+        // Windows this reopen parked are not candidates, nor are windows a
+        // cold-start receipt says are coming back by id — see
         // `fallbackClaimIndex`.
         let claimIndex = Self.fallbackClaimIndex(
-            restoreIndexByWindowId, parkedGhosts: parkedGhostSpaceIdsByWindowId)
+            restoreIndexByWindowId, parkedGhosts: parkedGhostSpaceIdsByWindowId,
+            reportedReplayed: coldStartReportedReplayedWindowIds)
         var candidates: [(key: (Int, Int, Int, Int),
                           index: Int, windowId: Int, spaceId: String)] = []
         for index in restoreEntries.indices {
@@ -2640,8 +2648,42 @@ final class SpaceManager: ObservableObject {
         return RestoredWindowClaim(
             slot: slot,
             spaceId: pick.spaceId,
-            matchedBy: .profile,
+            matchedBy: restoredFromWindowId > 0 ? .unplaceableReplay : .profile,
             entryActiveSpaceId: entryActiveSpaceId)
+    }
+
+    /// Which arriving restored windows may fall back to the by-profile claim
+    /// once the id lookup has missed. Three shapes, pinned by table
+    /// (`LazySpaceRestoreWiringTests`):
+    ///
+    ///   * `restoreFallbackWindowId` — restore's own stand-in window for a
+    ///     profile whose session held nothing restorable. Self-identifying,
+    ///     so no grace period is consulted.
+    ///   * `0` within the launch grace period — Chromium's multi-profile
+    ///     startup opens one fresh window per last-open profile.
+    ///   * A positive id the profile's cold-start receipt named among the
+    ///     windows it is rebuilding, yet the record does not know: a saved
+    ///     window the plan could not place, rebuilt instead of parked
+    ///     (`session_restore.cc`). Every other positive miss keeps minting —
+    ///     nothing vouches for it, and seating it on a stale entry surfaces a
+    ///     closed Space — but this one arrives with real tabs and a receipt,
+    ///     and minting it is what made a lost record come back as one loose
+    ///     window per saved window.
+    static func restoredWindowClaimsByProfile(restoredFromWindowId: Int,
+                                              withinLaunchGrace: Bool,
+                                              reportedReplayedByProfile: Bool) -> Bool {
+        if restoredFromWindowId == restoreFallbackWindowId { return true }
+        if restoredFromWindowId == 0 { return withinLaunchGrace }
+        return restoredFromWindowId > 0 && reportedReplayedByProfile
+    }
+
+    /// Every previous-session window id the cold-start receipts so far say is
+    /// being rebuilt by id, across profiles — what the by-profile claim must
+    /// leave alone (`fallbackClaimIndex`).
+    private var coldStartReportedReplayedWindowIds: Set<Int> {
+        coldStartReplayedWindowIdsByProfileId.values.reduce(into: Set<Int>()) {
+            $0.formUnion($1)
+        }
     }
 
     /// The rect an arriving window that claimed a saved entry must be placed
@@ -2701,6 +2743,10 @@ final class SpaceManager: ObservableObject {
         enum Match: String {
             case previousSessionWindowId = "previous-session windowId"
             case profile = "profile"
+            /// A saved window the cold-start plan could not place, vouched
+            /// for by the receipt and seated by profile
+            /// (`restoredWindowClaimsByProfile`).
+            case unplaceableReplay = "profile, for an unplaceable saved window the receipt named"
         }
     }
 
@@ -2722,11 +2768,20 @@ final class SpaceManager: ObservableObject {
     /// above reads. A materialization needs nothing from it: it retires both
     /// records itself (`consumeParkedGhost`) before asking the bridge, and
     /// its window arrives through the pending-spawn claim rather than through
-    /// any lookup here. Pure and static so the rule is pinned by table
-    /// (`LazySpaceRestoreWiringTests`).
+    /// any lookup here.
+    ///
+    /// `reportedReplayed` narrows it once more, by the ids a cold-start
+    /// receipt says are being rebuilt by id right now. An unplaceable window
+    /// claiming by profile (`restoredWindowClaimsByProfile`) can arrive before
+    /// the eager window of the same group, and must not take the record that
+    /// window comes back on — the two would swap Spaces. Pure and static so
+    /// the rule is pinned by table (`LazySpaceRestoreWiringTests`).
     static func fallbackClaimIndex(_ restoreIndexByWindowId: [Int: Int],
-                                   parkedGhosts: [Int: String]) -> [Int: Int] {
-        restoreIndexByWindowId.filter { parkedGhosts[$0.key] == nil }
+                                   parkedGhosts: [Int: String],
+                                   reportedReplayed: Set<Int> = []) -> [Int: Int] {
+        restoreIndexByWindowId.filter {
+            parkedGhosts[$0.key] == nil && !reportedReplayed.contains($0.key)
+        }
     }
 
     /// Resolves (and reuses for later siblings) the live slot for a saved
@@ -3293,7 +3348,8 @@ final class SpaceManager: ObservableObject {
                 forKey: Self.lastBoundAccountUserIDKey)
             let snapshot = userID.flatMap {
                 AccountUserDefaults.storedObject(
-                    forKey: .slotsRestoreSnapshot, ofAccountWithUserID: $0)
+                    forKey: Self.slotsRestoreSnapshotDefaultsKey,
+                    ofAccountWithUserID: $0)
                     as? [[String: Any]]
             } ?? []
             guard let preferred = Self.earlyColdStartPreferredProfiles(
@@ -3341,6 +3397,36 @@ final class SpaceManager: ObservableObject {
     /// Cleared on sign-out (`unbind`). Only a userID: the answer stays in the
     /// account's own snapshot, so there is no second copy that can go stale.
     static let lastBoundAccountUserIDKey = "PhiLastBoundAccountUserID"
+
+    /// The account-defaults key the slot snapshot is read from and written
+    /// to, given the process arguments — Chromium is launched with this very
+    /// argv, so the two sides read the same switch.
+    ///
+    /// The snapshot maps Chromium's previous-session window ids to Spaces,
+    /// and those ids only mean anything inside the Chromium user data
+    /// directory that issued them. Chromium's directory follows the bundle
+    /// while this record follows the account, so a launch pointed at another
+    /// directory (`--user-data-dir`, the shape every QA and XCTest run has)
+    /// used to rewrite the real profile's record with ids from a session it
+    /// never had — and the next real launch found every saved window
+    /// unplaceable and came back as one window per saved window. With the
+    /// switch present the key carries the directory, so each directory keeps
+    /// a record of its own and the real one is never touched.
+    ///
+    /// The last occurrence wins and an empty value counts as absent, which
+    /// is how Chromium's own command line reads the switch. Pure and static
+    /// so the rule is pinned by table (`LazySpaceRestoreWiringTests`).
+    static func slotsRestoreSnapshotKey(arguments: [String]) -> String {
+        let base = AccountUserDefaults.DefaultsKey.slotsRestoreSnapshot.rawValue
+        let prefix = "--user-data-dir="
+        guard let dir = arguments.last(where: { $0.hasPrefix(prefix) })?
+                .dropFirst(prefix.count), !dir.isEmpty else { return base }
+        return "\(base)@\(dir)"
+    }
+
+    /// `slotsRestoreSnapshotKey` for this process, computed once.
+    static let slotsRestoreSnapshotDefaultsKey =
+        slotsRestoreSnapshotKey(arguments: ProcessInfo.processInfo.arguments)
 
     /// The owner map a snapshot entry stores under
     /// `snapshotSpaceProfileIdsKey`. Agent Spaces are left out: the launch
@@ -3550,7 +3636,8 @@ final class SpaceManager: ObservableObject {
         isRepaired: Bool,
         boundProfileId: String?,
         replayedWindowIdsByProfileId: [String: Set<Int>],
-        receiptWindowIds: Set<Int>
+        receiptWindowIds: Set<Int>,
+        recordWindowIds: Set<Int>
     ) -> ColdStartRepairDecision {
         guard !isParkedOnlyEntry, !isClaimed, !isRepaired,
               let activeSpaceId, activeSpaceEligible else { return .none }
@@ -3567,6 +3654,14 @@ final class SpaceManager: ObservableObject {
             // `.pending`, which waits on the binding, not the receipt.
             return .none
         }
+        // The profile is rebuilding a saved window the record does not know
+        // (`recordWindowIds` is every id of every entry): a window the plan
+        // could not place. It claims this profile's entry by profile when it
+        // arrives (`restoredWindowClaimsByProfile`), so a repair spawned now
+        // would put an empty window on the very Space it is about to fill —
+        // and whichever of the two registers second replaces, and closes,
+        // the first, which can be the one carrying the user's tabs.
+        guard replayed.isSubset(of: recordWindowIds) else { return .none }
         guard replayed.isDisjoint(with: eagerIds) else { return .none }
         guard receiptWindowIds.isDisjoint(with: eagerIds) else { return .none }
         return .repair
@@ -3583,6 +3678,14 @@ final class SpaceManager: ObservableObject {
     func applyColdStartReplayReceipt(windowIdsByProfileId: [String: [Int]],
                                      reportingProfileId: String,
                                      replayedWindowIds: [Int]) {
+        let unplaceable = Set(replayedWindowIds)
+            .subtracting(restoreEntries.flatMap { $0.windowMap.keys })
+        if !unplaceable.isEmpty {
+            // Permanent instrumentation: the one Mac-side trace that the
+            // record and the session file disagree, and the branch that
+            // decides the window count (`restoredWindowClaimsByProfile`).
+            AppLogWarn("[SpaceManager] cold start receipt: profile \(reportingProfileId) is rebuilding \(unplaceable.count) saved window(s) the record does not know \(unplaceable.sorted()) — they claim its entries by profile on arrival and no repair is spawned for it")
+        }
         coldStartReplayedWindowIdsByProfileId[reportingProfileId, default: []]
             .formUnion(replayedWindowIds)
         coldStartReceiptWindowIds.formUnion(replayedWindowIds)
@@ -3613,6 +3716,7 @@ final class SpaceManager: ObservableObject {
             }
         }.map(\.spaceId))
         var stillPending: Set<Int> = []
+        let recordWindowIds = Set(restoreEntries.flatMap { $0.windowMap.keys })
         for index in restoreEntries.indices {
             let entry = restoreEntries[index]
             let eligible = entry.activeSpaceId.map { active in
@@ -3631,7 +3735,8 @@ final class SpaceManager: ObservableObject {
                 },
                 replayedWindowIdsByProfileId:
                     coldStartReplayedWindowIdsByProfileId,
-                receiptWindowIds: coldStartReceiptWindowIds)
+                receiptWindowIds: coldStartReceiptWindowIds,
+                recordWindowIds: recordWindowIds)
             switch decision {
             case .none:
                 continue
@@ -5040,7 +5145,7 @@ final class SpaceManager: ObservableObject {
         AppLogInfo(
             "[SpaceManager] slot snapshot persisted: \(dicts.count - parkedOnlyCount) slot(s)"
                 + (parkedOnlyCount > 0 ? ", \(parkedOnlyCount) parked-only entry(ies)" : ""))
-        userDefaults.set(dicts, forKey: AccountUserDefaults.DefaultsKey.slotsRestoreSnapshot.rawValue)
+        userDefaults.set(dicts, forKey: Self.slotsRestoreSnapshotDefaultsKey)
         return true
     }
 
@@ -5108,7 +5213,7 @@ final class SpaceManager: ObservableObject {
     /// restores from.
     fileprivate func amendPersistedSnapshotActiveSpaceId(windowId: Int, to spaceId: String) {
         guard !isTerminating, let userDefaults = boundAccount?.userDefaults else { return }
-        let key = AccountUserDefaults.DefaultsKey.slotsRestoreSnapshot.rawValue
+        let key = Self.slotsRestoreSnapshotDefaultsKey
         guard var dicts = userDefaults.object(forKey: key) as? [[String: Any]] else { return }
         for index in dicts.indices {
             guard let map = dicts[index]["windowMap"] as? [String: String],
@@ -5144,7 +5249,7 @@ final class SpaceManager: ObservableObject {
         coldStartRepairedEntryIndices.removeAll()
         pendingColdStartRepairEntryIndices.removeAll()
         guard let raw = boundAccount?.userDefaults.object(
-            forKey: AccountUserDefaults.DefaultsKey.slotsRestoreSnapshot.rawValue
+            forKey: Self.slotsRestoreSnapshotDefaultsKey
         ) as? [[String: Any]] else { return }
         // Clamp against the layout in front of the user NOW, not the one the
         // frames were recorded against — the display a slot was saved on may be

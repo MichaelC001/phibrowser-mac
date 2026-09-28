@@ -950,14 +950,20 @@ typedef NS_ENUM(NSInteger, PhiGhostMaterializeOutcome) {
 /// parked registry, same per-profile timing and growth contract.
 ///
 /// `profileBasename` names the profile whose replay this receipt settles;
-/// `replayedWindowIds` are the previous-session window ids that replay
-/// matched from the eager set — the windows being rebuilt right now. The
-/// replay scanned that profile's WHOLE session file before reporting, so an
-/// eager id whose window belongs to this profile and which is absent from
-/// `replayedWindowIds` names a window the file no longer holds: no window
-/// will ever arrive for it, this launch or any later one. That is the
-/// settlement signal the client's cold-start repair hangs on — per profile,
-/// with no timer and no all-profiles barrier.
+/// `replayedWindowIds` are the previous-session window ids of every saved
+/// normal window that replay is rebuilding right now: the eager matches,
+/// plus — when the plan carried a ghost set — the windows the plan could not
+/// place. The replay scanned that profile's WHOLE session file before
+/// reporting, so an eager id whose window belongs to this profile and which
+/// is absent from `replayedWindowIds` names a window the file no longer
+/// holds: no window will ever arrive for it, this launch or any later one.
+/// That is the settlement signal the client's cold-start repair hangs on —
+/// per profile, with no timer and no all-profiles barrier. Conversely an id
+/// in `replayedWindowIds` that the client's record does not know is an
+/// unplaceable window about to arrive: the client seats it in the saved
+/// window group by profile, the way it seats restore's stand-in window,
+/// instead of minting a window of its own — and leaves that group's repair
+/// to it.
 - (void)coldStartParkedGhostWindows:
             (NSDictionary<NSString *, NSArray<NSNumber *> *> *)parkedWindowIdsByProfileId
         replayedForProfile:(NSString *)profileBasename

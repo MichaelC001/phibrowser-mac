@@ -199,7 +199,13 @@ final class AccountUserDefaults {
     /// the launch-time read that runs before any account is bound
     /// (`SpaceManager.coldStartPreferredProfiles`).
     static func storedObject(forKey key: DefaultsKey, ofAccountWithUserID userID: String) -> Any? {
-        loadStore(from: storeURL(for: Account(userID: userID)))[key.rawValue]
+        storedObject(forKey: key.rawValue, ofAccountWithUserID: userID)
+    }
+
+    /// The raw-key form, for a key derived from a `DefaultsKey` rather than
+    /// one of them (`SpaceManager.slotsRestoreSnapshotDefaultsKey`).
+    static func storedObject(forKey key: String, ofAccountWithUserID userID: String) -> Any? {
+        loadStore(from: storeURL(for: Account(userID: userID)))[key]
     }
 
     private static func loadStore(from url: URL) -> [String: Any] {
@@ -339,7 +345,10 @@ extension AccountUserDefaults {
         /// `SpaceWindowSlot.registerWindow`. Read on the next launch by
         /// `SpaceManager` so Chromium-restored windows reattach to the
         /// Space they had when the snapshot was saved, instead of all
-        /// piling into the persisted-active Space.
+        /// piling into the persisted-active Space. Under an explicit
+        /// `--user-data-dir` the stored key carries that directory
+        /// (`SpaceManager.slotsRestoreSnapshotKey`): the ids it maps belong
+        /// to one Chromium data directory only.
         case slotsRestoreSnapshot
         /// The Migration Sources this account has already completed a
         /// Migration from, held as their source identifiers. A source listed

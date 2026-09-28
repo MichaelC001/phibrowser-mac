@@ -1030,6 +1030,18 @@ final class LazySpaceRestoreWiringTests: XCTestCase {
         )
     }
 
+    func testAWindowAReceiptSaysIsBeingRebuiltIsNotAvailableToAByProfileClaim() {
+        // An unplaceable window claims by profile, and it can arrive before
+        // the eager window of the same group. The eager window comes back by
+        // id, so its record must stay put for it; only the windows nothing
+        // is rebuilding are by-profile candidates.
+        XCTAssertEqual(
+            SpaceManager.fallbackClaimIndex(
+                [55: 0, 7: 0], parkedGhosts: [:], reportedReplayed: [7]),
+            [55: 0]
+        )
+    }
+
     // MARK: - What the reopen does once its restore settles
 
     /// `restoredAnyWindow` answers whether a profile STARTED a replay, not
@@ -1281,7 +1293,8 @@ final class LazySpaceRestoreWiringTests: XCTestCase {
         isRepaired: Bool = false,
         boundProfileId: String? = "profile-1",
         replayedWindowIdsByProfileId: [String: Set<Int>] = ["profile-1": []],
-        receiptWindowIds: Set<Int> = [11]
+        receiptWindowIds: Set<Int> = [11],
+        recordWindowIds: Set<Int> = [10, 11]
     ) -> SpaceManager.ColdStartRepairDecision {
         SpaceManager.coldStartRepairDecision(
             activeSpaceId: activeSpaceId,
@@ -1292,7 +1305,8 @@ final class LazySpaceRestoreWiringTests: XCTestCase {
             isRepaired: isRepaired,
             boundProfileId: boundProfileId,
             replayedWindowIdsByProfileId: replayedWindowIdsByProfileId,
-            receiptWindowIds: receiptWindowIds)
+            receiptWindowIds: receiptWindowIds,
+            recordWindowIds: recordWindowIds)
     }
 
     func testRepairsAnEntryWhoseEagerWindowTheFileNoLongerHolds() {
@@ -1363,5 +1377,103 @@ final class LazySpaceRestoreWiringTests: XCTestCase {
         XCTAssertEqual(Self.repairDecision(
             entryWindowMap: [11: "space-b"]
         ), .none)
+    }
+
+    func testAProfileThatRebuiltAWindowTheRecordDoesNotKnowIsNotRepaired() {
+        // Chromium rebuilt a saved window the plan could not place: its id
+        // is in no entry of the record. That window claims this profile's
+        // entry by profile when it arrives, so a repair spawned here would
+        // put an empty window on the very Space it is about to fill — and
+        // whichever of the two registers second replaces, and closes, the
+        // first, which can be the one carrying the user's tabs.
+        XCTAssertEqual(Self.repairDecision(
+            replayedWindowIdsByProfileId: ["profile-1": [99]],
+            recordWindowIds: [10, 11]
+        ), .none)
+    }
+
+    // MARK: - Which arriving restored windows may claim by profile
+
+    /// `claimRestoredWindow` matches a restored window on its previous-session
+    /// id first; this rule decides which of the misses may fall back to the
+    /// by-profile claim. The stand-in and the launch-grace zero id are the
+    /// two shapes it always had. The third is a window Chromium rebuilt
+    /// because the cold-start plan could not place it: its id is unknown to
+    /// the record by definition, and the receipt names it ahead of its
+    /// arrival. Without it every such window minted a slot of its own, and a
+    /// window group whose record was lost came back as one window per saved
+    /// window.
+
+    func testTheStandInClaimsByProfileRegardlessOfGrace() {
+        XCTAssertTrue(SpaceManager.restoredWindowClaimsByProfile(
+            restoredFromWindowId: -1, withinLaunchGrace: false,
+            reportedReplayedByProfile: false))
+    }
+
+    func testAZeroIdClaimsByProfileOnlyWithinTheLaunchGrace() {
+        XCTAssertTrue(SpaceManager.restoredWindowClaimsByProfile(
+            restoredFromWindowId: 0, withinLaunchGrace: true,
+            reportedReplayedByProfile: false))
+        XCTAssertFalse(SpaceManager.restoredWindowClaimsByProfile(
+            restoredFromWindowId: 0, withinLaunchGrace: false,
+            reportedReplayedByProfile: false))
+    }
+
+    func testAnUnplaceableWindowTheReceiptNamedClaimsByProfile() {
+        XCTAssertTrue(SpaceManager.restoredWindowClaimsByProfile(
+            restoredFromWindowId: 563375266, withinLaunchGrace: false,
+            reportedReplayedByProfile: true))
+    }
+
+    func testAnUnknownPositiveIdNoReceiptVouchesForNeverClaimsByProfile() {
+        // A saved window the record has no entry for and no receipt names
+        // (an unarmed full replay, or an older framework whose receipt has
+        // no replay half) must not be seated on a stale entry: that surfaces
+        // a closed Space. It mints, exactly as before.
+        XCTAssertFalse(SpaceManager.restoredWindowClaimsByProfile(
+            restoredFromWindowId: 563375266, withinLaunchGrace: true,
+            reportedReplayedByProfile: false))
+    }
+
+    // MARK: - Which record a launch reads and writes
+
+    /// The slot snapshot maps Chromium's previous-session window ids to
+    /// Spaces, and those ids only mean anything inside the Chromium user data
+    /// directory that issued them. Chromium's directory follows the bundle
+    /// while this record follows the account, so a launch pointed at another
+    /// directory (`--user-data-dir`, the QA and XCTest shape) rewrote the
+    /// real profile's record with ids from a session it never had — and the
+    /// next real launch found every saved window unplaceable. The key carries
+    /// the explicit directory so each directory keeps its own record.
+
+    func testTheSnapshotKeyIsUnchangedWithoutAnExplicitUserDataDir() {
+        XCTAssertEqual(
+            SpaceManager.slotsRestoreSnapshotKey(
+                arguments: ["Phi", "--enable-features=TabStripUnification"]),
+            "slotsRestoreSnapshot")
+    }
+
+    func testAnExplicitUserDataDirScopesTheSnapshotKey() {
+        XCTAssertEqual(
+            SpaceManager.slotsRestoreSnapshotKey(
+                arguments: ["Phi", "--user-data-dir=/tmp/r11-fresh"]),
+            "slotsRestoreSnapshot@/tmp/r11-fresh")
+    }
+
+    func testTheLastUserDataDirSwitchWins() {
+        // Chromium's command line keeps the last value of a repeated switch;
+        // the key follows the directory Chromium actually opens.
+        XCTAssertEqual(
+            SpaceManager.slotsRestoreSnapshotKey(
+                arguments: ["Phi", "--user-data-dir=/a", "--user-data-dir=/b"]),
+            "slotsRestoreSnapshot@/b")
+    }
+
+    func testAnEmptyUserDataDirSwitchLeavesTheKeyUnscoped() {
+        // Chromium treats an empty value as "use the default directory".
+        XCTAssertEqual(
+            SpaceManager.slotsRestoreSnapshotKey(
+                arguments: ["Phi", "--user-data-dir="]),
+            "slotsRestoreSnapshot")
     }
 }
