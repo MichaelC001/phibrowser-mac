@@ -9,7 +9,52 @@ import Foundation
     static let groupId = "group.com.phibrowser.shared"
     static let teamId = "87DQ3HMK5G"
     static let bundleId = Bundle.main.infoDictionary?[kCFBundleIdentifierKey as String] as? String ?? defaultBundleId
+
+    /// Resolve before logging, account binding, or Chromium startup. Both sides
+    /// must use the same root: a temporary Chromium profile paired with the real
+    /// native account overwrites that account's Space/window restore mapping.
+    @objc static let launchUserDataDirectory: String? = resolveLaunchUserDataDirectory(
+        arguments: ProcessInfo.processInfo.arguments,
+        environment: ProcessInfo.processInfo.environment,
+        temporaryDirectory: NSTemporaryDirectory(),
+        launchIdentifier: UUID().uuidString)
+
+    static func resolveLaunchUserDataDirectory(
+        arguments: [String],
+        environment: [String: String],
+        temporaryDirectory: String,
+        launchIdentifier: String
+    ) -> String? {
+        var override: String?
+        var index = 1
+        while index < arguments.count {
+            let argument = arguments[index]
+            if argument == "--" { break }
+            if argument.hasPrefix("--user-data-dir=") {
+                override = String(argument.dropFirst("--user-data-dir=".count))
+            } else if argument == "--user-data-dir" {
+                override = ""
+                if index + 1 < arguments.count, !arguments[index + 1].hasPrefix("-") {
+                    index += 1
+                    override = arguments[index]
+                }
+            }
+            index += 1
+        }
+        if let override, !override.isEmpty {
+            return URL(fileURLWithPath: override, isDirectory: true).standardizedFileURL.path
+        }
+        let isTestLaunch = arguments.contains("-uitest")
+            || ["XCTestConfigurationFilePath", "XCTestBundlePath"].contains {
+                !(environment[$0] ?? "").isEmpty
+            }
+        guard isTestLaunch else { return nil }
+        return URL(fileURLWithPath: temporaryDirectory, isDirectory: true)
+            .appendingPathComponent("PhiTests-\(launchIdentifier)", isDirectory: true).path
+    }
+
     @objc static func applicationSupportDirctory() -> String {
+        if let launchUserDataDirectory { return launchUserDataDirectory }
         let paths = NSSearchPathForDirectoriesInDomains(.applicationSupportDirectory, .userDomainMask, true)
         let cacheDirectory = paths[0]
         let bundleId = bundleId

@@ -144,8 +144,7 @@ final class TabStripBarView: NSView, TitlebarAwareHitTestable {
     /// land here when made over the bar itself and when the tab strip
     /// declines them (content fits, or already scrolled to a clamp edge —
     /// see `TabStrip.scrollWheel`).
-    private let spaceSwipe = SpaceSwipeTracker()
-    var onSpaceSwipe: ((Int) -> Void)?
+    var onSpaceSwipe: ((NSEvent) -> Bool)?
 
     override func mouseDown(with event: NSEvent) {
         guard !popUpControlClickMenu(for: event, in: self) else { return }
@@ -153,14 +152,7 @@ final class TabStripBarView: NSView, TitlebarAwareHitTestable {
     }
 
     override func scrollWheel(with event: NSEvent) {
-        switch spaceSwipe.handle(event) {
-        case .passthrough:
-            super.scrollWheel(with: event)
-        case .consumed:
-            break
-        case .trigger(let step):
-            onSpaceSwipe?(step)
-        }
+        if onSpaceSwipe?(event) != true { super.scrollWheel(with: event) }
     }
 
     func shouldConsumeHitTest(at point: NSPoint) -> Bool {
@@ -353,35 +345,11 @@ final class TabStripBarController: NSViewController {
         applySpacesPickerVisibility()
         observeSpacesFeatureFlag()
 
-        (view as? TabStripBarView)?.onSpaceSwipe = { [weak self] step in
-            self?.activateAdjacentSpace(by: step)
+        (view as? TabStripBarView)?.onSpaceSwipe = { [weak self] event in
+            guard let self, self.spacesPickerEligible,
+                  let slot = self.browserState.windowController?.slot else { return false }
+            return slot.handleSpaceSwipe(event)
         }
-    }
-
-    /// Switches THIS window's active Space, clamped at the first/last Space
-    /// (no wrap-around) so the slide animation direction always matches the
-    /// swipe. At a clamp edge a rubber-band end effect plays instead of the
-    /// swipe being swallowed. Traditional-layout counterpart of
-    /// `SidebarViewController.activateAdjacentSpace` — the sidebar owns the
-    /// gesture in vertical layouts.
-    private func activateAdjacentSpace(by step: Int) {
-        guard PhiPreferences.GeneralSettings.loadLayoutMode().isTraditional,
-              spacesPickerEligible else { return }
-        guard let slot = browserState.windowController?.slot ?? SpaceManager.shared.keySlot else { return }
-        // The slot's own list: agent Spaces hosted by other windows are not
-        // swiped through here (`SpaceWindowSlot.presents`).
-        let spaces = slot.presentedSpaces
-        guard let currentId = slot.activeSpaceId,
-              let currentIdx = spaces.firstIndex(where: { $0.spaceId == currentId }) else { return }
-        let targetIdx = currentIdx + step
-        guard spaces.indices.contains(targetIdx) else {
-            // Already at the first/last Space (or only one exists) — nowhere to
-            // switch, so play the rubber-band end effect instead of silently
-            // swallowing the swipe.
-            browserState.windowController?.bounceContentForSpaceSwitchEdge(forward: step > 0)
-            return
-        }
-        slot.activate(spaceId: spaces[targetIdx].spaceId, userInitiated: true)
     }
 
     /// Builds the active-Space picker against this Space's own slot. Hosted

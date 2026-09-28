@@ -78,7 +78,7 @@ struct SiteMemoryService: Sendable {
         guard let account = AccountController.shared.account else {
             throw SiteMemoryError.accountUnavailable
         }
-        let root = Account.uiTestStoreDirectoryURL ?? account.userDataStorage
+        let root = account.userDataStorage
         return SiteMemoryService(accountID: account.userID, settings: SiteMemorySettingsStore(
             fileURL: root.appendingPathComponent("defaults/site_memory.json")))
     }

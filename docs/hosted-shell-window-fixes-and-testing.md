@@ -33,6 +33,16 @@ is historical and is not the final implementation contract.
 
 ## Build and test setup
 
+`--user-data-dir=/absolute/path` selects the root for both Chromium and native
+Phi account data. The native database and `account_defaults.plist` (including
+Space/window restore mappings) live under that root's `Phi/users` directory.
+Reusing the same root preserves both halves of a session across restarts.
+XCTest app hosts and `-uitest` launches without an explicit root get a unique
+temporary root before account binding and Chromium startup. This replaces the
+old UI-test-only database redirect, which left account defaults in real storage.
+This does not isolate Keychain credentials, app-group services, or global macOS
+preferences; it is not a separate OS user environment.
+
 1. Build **Phi Framework first, then Phi Browser Canary** against that framework.
    Rebuilding only Swift will not include Chromium popup fixes. Relaunch the
    rebuilt app; record both repository revisions and whether each is dirty.

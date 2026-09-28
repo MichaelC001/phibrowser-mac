@@ -485,8 +485,6 @@ class SidebarViewController: NSViewController, BrowserThemeContextProviding {
     private var lastPersistedFavoriteHeight: CGFloat?
     private var sidebarTrackingArea: NSTrackingArea?
 
-    /// Swipe-to-switch-Space gesture state (see `SpaceSwipeTracker`).
-    private let spaceSwipe = SpaceSwipeTracker()
     
     init(browserState: BrowserState) {
         self.state = browserState
@@ -640,13 +638,11 @@ class SidebarViewController: NSViewController, BrowserThemeContextProviding {
             super.scrollWheel(with: event)
             return
         }
-        switch spaceSwipe.handle(event) {
-        case .passthrough:
+        guard state.participatesInSpaces,
+              let slot = state.windowController?.slot,
+              slot.handleSpaceSwipe(event) else {
             super.scrollWheel(with: event)
-        case .consumed:
-            break
-        case .trigger(let step):
-            activateAdjacentSpace(by: step, state: state)
+            return
         }
     }
 

@@ -11,59 +11,91 @@ import UniformTypeIdentifiers
 
 /// State machine for the trackpad swipe-to-switch-Space gesture, shared by
 /// the sidebar (vertical layouts) and the tab strip bar (traditional
-/// layout). The gesture's axis is latched on the first non-zero delta and
+/// layout). The gesture's axis is latched on the first directional delta and
 /// holds for the rest of the gesture (including momentum), so a swipe that
 /// drifts diagonally doesn't alternate between scrolling and switching.
 /// Horizontal-dominant gestures are consumed entirely; callers forward
 /// `.passthrough` events to `super.scrollWheel`.
 final class SpaceSwipeTracker {
     enum Outcome {
-        /// Legacy wheel event or vertical-dominant gesture — scroll as usual.
         case passthrough
-        /// Part of a horizontal gesture; swallow without acting.
         case consumed
-        /// Horizontal travel crossed the threshold — fired once per gesture.
-        /// The deltas follow `scrollingDeltaX` as-is, so the system
-        /// scroll-direction setting applies: content-left means the next
-        /// Space (+1), content-right the previous (-1).
-        case trigger(step: Int)
+        case update(distance: CGFloat, velocity: CGFloat, began: Bool)
+        case end(distance: CGFloat, velocity: CGFloat, cancelled: Bool)
     }
 
     private enum Axis { case undecided, horizontal, vertical }
     private var axis: Axis = .undecided
     private var accumulatedX: CGFloat = 0
-    private var triggered = false
-    private static let threshold: CGFloat = 50
+    private var lastTime: TimeInterval?
+    private var velocity: CGFloat = 0
+    private var ended = false
+
+    var consumesHorizontalGesture: Bool { axis == .horizontal }
+
+    func reset() {
+        axis = .undecided
+        accumulatedX = 0
+        velocity = 0
+        lastTime = nil
+        ended = false
+    }
 
     func handle(_ event: NSEvent) -> Outcome {
-        // Legacy wheel events carry no gesture phases; never treat them as
-        // swipes.
-        guard event.phase != [] || event.momentumPhase != [] else { return .passthrough }
+        handle(deltaX: event.scrollingDeltaX, deltaY: event.scrollingDeltaY,
+               phase: event.phase, momentum: event.momentumPhase, timestamp: event.timestamp)
+    }
 
-        if event.phase == .mayBegin || event.phase == .began {
-            axis = .undecided
-            accumulatedX = 0
-            triggered = false
+    /// Kept independent of NSEvent construction so phase sequences can be tested.
+    func handle(deltaX: CGFloat, deltaY: CGFloat, phase: NSEvent.Phase,
+                momentum: NSEvent.Phase, timestamp: TimeInterval) -> Outcome {
+        guard phase != [] || momentum != [] else { return .passthrough }
+        if phase.contains(.began) || phase.contains(.mayBegin) {
+            reset()
+            lastTime = timestamp
         }
-
-        if axis == .undecided {
-            let dx = abs(event.scrollingDeltaX)
-            let dy = abs(event.scrollingDeltaY)
-            if dx > dy {
-                axis = .horizontal
-            } else if dy > dx {
-                axis = .vertical
+        // Momentum belongs to the completed gesture. It never starts or
+        // commits another Space switch after the fingers have lifted.
+        if (momentum != [] && !phase.contains(.ended) && !phase.contains(.cancelled)) || ended {
+            return axis == .horizontal ? .consumed : .passthrough
+        }
+        accumulatedX += deltaX
+        let wasUndecided = axis == .undecided
+        if wasUndecided {
+            // Match the child scroll views' axis latch: delaying this choice
+            // could turn their vertical scroll into a Space swipe mid-gesture.
+            if abs(deltaX) > abs(deltaY) { axis = .horizontal }
+            else if abs(deltaY) > abs(deltaX) { axis = .vertical }
+        }
+        if deltaX != 0 {
+            if let lastTime, timestamp > lastTime {
+                velocity = deltaX / CGFloat(max(1.0 / 240, timestamp - lastTime))
             }
+            lastTime = timestamp
         }
-
+        if phase.contains(.ended) || phase.contains(.cancelled) {
+            ended = true
+            guard axis == .horizontal else { return .passthrough }
+            if timestamp - (lastTime ?? timestamp) > 0.1 { velocity = 0 }
+            return .end(distance: accumulatedX, velocity: velocity,
+                        cancelled: phase.contains(.cancelled))
+        }
         guard axis == .horizontal else { return .passthrough }
+        return .update(distance: accumulatedX, velocity: velocity, began: wasUndecided)
+    }
 
-        accumulatedX += event.scrollingDeltaX
-        if !triggered, abs(accumulatedX) >= Self.threshold {
-            triggered = true
-            return .trigger(step: accumulatedX < 0 ? 1 : -1)
-        }
-        return .consumed
+    static func shouldComplete(distance: CGFloat, velocity: CGFloat, width: CGFloat) -> Bool {
+        guard width > 0 else { return false }
+        // A deliberate reversal before release cancels even a long drag.
+        if distance * velocity < 0, abs(velocity) > 250 { return false }
+        return abs(distance) / width >= 0.35
+            || (abs(distance) >= 12 && distance * velocity > 0 && abs(velocity) >= 650)
+    }
+
+    static func settlingDuration(progress: CGFloat, completes: Bool,
+                                 velocity: CGFloat, width: CGFloat) -> TimeInterval {
+        let remaining = completes ? 1 - progress : progress
+        return min(0.24, max(0.08, Double(remaining * width / max(abs(velocity), 900))))
     }
 }
 
@@ -160,6 +192,13 @@ final class SpacesStripGeometry: ObservableObject {
         let source: String
         let target: String
     }
+
+    struct SwipeSelection {
+        let source: String
+        let target: String
+        let progress: CGFloat
+    }
+    @Published var swipeSelection: SwipeSelection?
 
     /// Keep the leaving selection visible while a newly created Space's
     /// icon is rendered and its content is prepared for the band slide.
@@ -282,13 +321,20 @@ struct SpacesStripView: View {
 
     private var animatesOnScreen: Bool { presence?.isOnScreen ?? true }
 
+    private var swipeChipOffset: CGFloat {
+        guard let swipe = stripGeometry.swipeSelection,
+              let source = stripOrderedSpaces.firstIndex(where: { $0.spaceId == swipe.source }),
+              let target = stripOrderedSpaces.firstIndex(where: { $0.spaceId == swipe.target }) else { return 0 }
+        return CGFloat(target - source) * (Self.stripItemWidth + Self.stripSpacing) * swipe.progress
+    }
+
     private var stripSelectedSpaceId: String? {
         stripGeometry.pendingSelection?.source ?? slot.activeSpaceId
     }
 
     /// The Space-switch animation for this strip, or nil while off screen.
     private var switchAnimation: Animation? {
-        animatesOnScreen
+        animatesOnScreen && stripGeometry.swipeSelection == nil
             ? .easeInOut(duration: PhiPreferences.GeneralSettings.loadSwitchSpaceAnimationDuration())
             : nil
     }
@@ -837,8 +883,14 @@ struct SpacesStripView: View {
         // instead a transparent hit target overlaid on the visible sliver
         // (see `peekHitTarget`) makes the half icon hover- and clickable.
         let peek = Self.stripItemWidth / 2 + Self.stripSpacing
-        let leadingPeek: CGFloat = start > 0 ? peek : 0
-        let trailingPeek: CGFloat = start + visibleCount < stripOrderedSpaces.count ? peek : 0
+        let swipe = stripGeometry.swipeSelection
+        let targetIndex = swipe.flatMap { swipe in stripOrderedSpaces.firstIndex { $0.spaceId == swipe.target } }
+        let targetStart = targetIndex.map { max(0, min($0 - visibleCount / 2, stripOrderedSpaces.count - visibleCount)) } ?? start
+        let progress = swipe?.progress ?? 0
+        let viewportStart = CGFloat(start) + CGFloat(targetStart - start) * progress
+        let leadingPeek = (start > 0 ? peek : 0) * (1 - progress) + (targetStart > 0 ? peek : 0) * progress
+        let trailingPeek = (start + visibleCount < stripOrderedSpaces.count ? peek : 0) * (1 - progress)
+            + (targetStart + visibleCount < stripOrderedSpaces.count ? peek : 0) * progress
         HStack(spacing: Self.stripSpacing) {
             ForEach(Array(stripOrderedSpaces.enumerated()), id: \.element.spaceId) { index, space in
                 spacePip(for: space)
@@ -918,12 +970,16 @@ struct SpacesStripView: View {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(Color.sidebarTabSelected)
                     .shadow(color: Color.black.opacity(0.15), radius: 1, x: 0, y: 1)
+                    // Offset the drawing inside the matched frame. An outer
+                    // offset is cancelled by matched geometry aligning the chip
+                    // back to the still-active source pip during a swipe.
+                    .offset(x: swipeChipOffset)
                     .matchedGeometryEffect(id: activeId, in: pipGlassNamespace, isSource: false)
                     .allowsHitTesting(false)
                     .transition(.identity)
             }
         }
-        .offset(x: -CGFloat(start) * step + leadingPeek)
+        .offset(x: -viewportStart * step + leadingPeek)
         .frame(width: pipRowWidth(visibleCount) + leadingPeek + trailingPeek, alignment: .leading)
         .clipped()
         // The clip frame bounds where the chip flight may fly (its layer is
@@ -935,12 +991,12 @@ struct SpacesStripView: View {
         // sliver that shows through the clip so no hit region leaks past it.
         // The peek conditions guarantee the indexed neighbor exists.
         .overlay(alignment: .leading) {
-            if leadingPeek > 0 {
+            if swipe == nil, leadingPeek > 0, start > 0 {
                 peekHitTarget(for: stripOrderedSpaces[start - 1])
             }
         }
         .overlay(alignment: .trailing) {
-            if trailingPeek > 0 {
+            if swipe == nil, trailingPeek > 0, start + visibleCount < stripOrderedSpaces.count {
                 peekHitTarget(for: stripOrderedSpaces[start + visibleCount])
             }
         }

@@ -156,8 +156,6 @@ class FloatingSidebarViewController: NSViewController, BrowserThemeContextProvid
         return view
     }()
 
-    /// Swipe-to-switch-Space gesture state (see `SpaceSwipeTracker`).
-    private let spaceSwipe = SpaceSwipeTracker()
 
     private var cancellables = Set<AnyCancellable>()
     private var contentCancellables = Set<AnyCancellable>()
@@ -230,13 +228,11 @@ class FloatingSidebarViewController: NSViewController, BrowserThemeContextProvid
             super.scrollWheel(with: event)
             return
         }
-        switch spaceSwipe.handle(event) {
-        case .passthrough:
+        guard state.participatesInSpaces,
+              let slot = state.windowController?.slot,
+              slot.handleSpaceSwipe(event) else {
             super.scrollWheel(with: event)
-        case .consumed:
-            break
-        case .trigger(let step):
-            activateAdjacentSpace(by: step, state: state)
+            return
         }
     }
 

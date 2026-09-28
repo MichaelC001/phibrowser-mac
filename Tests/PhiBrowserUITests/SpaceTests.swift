@@ -60,11 +60,9 @@ final class SpaceTests: XCTestCase {
     /// independent. The cold start (Chromium + Sentinel + bridge warm-up) is the
     /// price of that isolation.
     ///
-    /// Two isolation layers are in play: `--user-data-dir` gives Chromium a
-    /// fresh profile tree, and `-uitest` makes the Swift-side `LocalStore`
-    /// (Spaces / bookmarks / pinned tabs) use a throwaway per-launch temp
-    /// directory (see `Account.uiTestStoreDirectoryURL`) so the suite never
-    /// reads or mutates the real account's data.
+    /// `--user-data-dir` isolates both the Chromium profile tree and native
+    /// account data, including the database and Space/window restore settings.
+    /// `-uitest` also provides a temporary root when no explicit one is passed.
     private var app: XCUIApplication!
 
     override func setUpWithError() throws {
