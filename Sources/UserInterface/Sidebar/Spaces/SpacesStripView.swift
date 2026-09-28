@@ -153,10 +153,17 @@ final class SpacesStripWheelTracker {
 /// rects are directly usable as layer frames there).
 ///
 /// The frame stores are deliberately NOT `@Published`: layout writes them on
-/// every pass and must not re-render the strip. Only `isChipConcealed` — the
-/// flag that hides the SwiftUI glass chip while the CA stand-in flies —
-/// publishes, flipped exactly twice per flight (begin/sweep).
+/// every pass and must not re-render the strip. Selection preparation and
+/// `isChipConcealed` publish only at switch boundaries.
 final class SpacesStripGeometry: ObservableObject {
+    struct PendingSelection: Equatable {
+        let source: String
+        let target: String
+    }
+
+    /// Keep the leaving selection visible while a newly created Space's
+    /// icon is rendered and its content is prepared for the band slide.
+    @Published var pendingSelection: PendingSelection?
     /// Each pip's frame keyed by its spaceId, written by the pip's layout.
     /// Entries are only added or refreshed — nothing prunes a deleted
     /// Space's entry, and that residue is memory-only by an invariant the
@@ -274,6 +281,10 @@ struct SpacesStripView: View {
     var presence: SpacesStripPresence? = nil
 
     private var animatesOnScreen: Bool { presence?.isOnScreen ?? true }
+
+    private var stripSelectedSpaceId: String? {
+        stripGeometry.pendingSelection?.source ?? slot.activeSpaceId
+    }
 
     /// The Space-switch animation for this strip, or nil while off screen.
     private var switchAnimation: Animation? {
@@ -677,11 +688,11 @@ struct SpacesStripView: View {
         // viewport shift rides its own `withAnimation` with the same
         // curve (see `ensureActivePipVisible`), so both slides move
         // together.
-        .animation(switchAnimation, value: slot.activeSpaceId)
+        .animation(switchAnimation, value: stripSelectedSpaceId)
         .onAppear {
             reanchorViewport(animated: false)
         }
-        .onChange(of: slot.activeSpaceId) { _ in
+        .onChange(of: stripSelectedSpaceId) { _ in
             reanchorViewport(animated: animatesOnScreen)
         }
         .onChange(of: slot.isCreatingSpace) { _ in
@@ -831,6 +842,7 @@ struct SpacesStripView: View {
         HStack(spacing: Self.stripSpacing) {
             ForEach(Array(stripOrderedSpaces.enumerated()), id: \.element.spaceId) { index, space in
                 spacePip(for: space)
+                    .transition(.identity)
                     .overlay(alignment: .topTrailing) {
                         agentBadge(for: space.spaceId)
                             .offset(y: max(0, (rowHeight - Self.stripItemHeight) / 2))
@@ -901,7 +913,7 @@ struct SpacesStripView: View {
             // must not keep reading as active beside it.
             if !stripGeometry.isChipConcealed,
                !slot.isCreatingSpace,
-               let activeId = slot.activeSpaceId,
+               let activeId = stripSelectedSpaceId,
                stripOrderedSpaces.contains(where: { $0.spaceId == activeId }) {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(Color.sidebarTabSelected)
@@ -994,7 +1006,7 @@ struct SpacesStripView: View {
         }
         let visibleCount = visiblePipCount(availableWidth: availableWidth)
         guard visibleCount > 0,
-              let activeId = slot.activeSpaceId,
+              let activeId = stripSelectedSpaceId,
               let index = stripOrderedSpaces.firstIndex(where: { $0.spaceId == activeId }) else { return }
         let start = max(0, min(index - visibleCount / 2, stripOrderedSpaces.count - visibleCount))
         guard start != stripStartIndex else { return }
@@ -1195,12 +1207,13 @@ struct SpacesStripView: View {
 
     private func spacePip(for space: Space) -> some View {
         // The highlight follows `activeSpaceId` (matching the Spaces menu).
-        // `activate` flips it to the target up front — before the vertical
+        // `activate` normally flips it to the target up front — before the vertical
         // push-in animation starts — so the active pip moves to the new Space
         // immediately on switch, while the leaving Space's content slides out
         // beneath it (the strip lives in the leaving window's header, which
-        // stays on screen for the animation).
-        let isActive = space.spaceId == slot.activeSpaceId
+        // stays on screen for the animation). A newly created Incognito
+        // Space holds the source selection until the band is ready to move.
+        let isActive = space.spaceId == stripSelectedSpaceId
         return Button {
             activatePip(space)
         } label: {

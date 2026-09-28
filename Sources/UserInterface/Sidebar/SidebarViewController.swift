@@ -61,6 +61,28 @@ final class SpacesStripHostingView: ThemedHostingView {
         super.scrollWheel(with: event)
     }
 
+    /// Publish the new icon with the old selection before preparation can
+    /// block the main thread. Layout alone does not submit its pixels.
+    func prepareSpacesSelection(fromSpaceId: String, toSpaceId: String) {
+        cancelSpacesChipFlight()
+        stripGeometry?.pendingSelection = .init(source: fromSpaceId, target: toSpaceId)
+        needsLayout = true
+        layoutSubtreeIfNeeded()
+        displayIfNeeded()
+        CATransaction.flush()
+    }
+
+    /// Called on the band's animation clock, after the incoming rows exist.
+    /// Overflow keeps the SwiftUI selection/viewport animation instead.
+    func beginPreparedSpacesChipFlight(toSpaceId: String, pipCount: Int,
+                                      duration: TimeInterval) {
+        guard let pending = stripGeometry?.pendingSelection,
+              pending.target == toSpaceId else { return }
+        stripGeometry?.pendingSelection = nil
+        _ = beginSpacesChipFlight(fromSpaceId: pending.source, toSpaceId: toSpaceId,
+                                  pipCount: pipCount, duration: duration)
+    }
+
     /// Flies the glass chip from the source pip to the target pip as an
     /// EXPLICIT Core Animation layer animation — the one animation kind that
     /// keeps playing in the render server while the main thread is blocked
@@ -138,6 +160,9 @@ final class SpacesStripHostingView: ThemedHostingView {
     /// Sweeps the stand-in and restores the SwiftUI chip. Idempotent — run
     /// when the flight lands and ahead of every new flight.
     func cancelSpacesChipFlight() {
+        if stripGeometry?.pendingSelection != nil {
+            stripGeometry?.pendingSelection = nil
+        }
         chipFlightLayer?.removeFromSuperlayer()
         chipFlightLayer = nil
         chipFlightTargetId = nil
@@ -150,6 +175,9 @@ final class SpacesStripHostingView: ThemedHostingView {
     /// a switch that fails or is forced to settle drops its own stand-in,
     /// never the one a newer switch has started since.
     func cancelSpacesChipFlight(toSpaceId: String) {
+        if stripGeometry?.pendingSelection?.target == toSpaceId {
+            stripGeometry?.pendingSelection = nil
+        }
         guard chipFlightTargetId == toSpaceId else { return }
         cancelSpacesChipFlight()
     }
