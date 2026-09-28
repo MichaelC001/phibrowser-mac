@@ -7,6 +7,7 @@ import Cocoa
 import Combine
 import Foundation
 import PostHog
+import SwiftUI
 
 /// One monotonic timeline per request. Collect on the UI thread and format
 /// after the critical path, so logging does not inflate preparation time.
@@ -8709,7 +8710,7 @@ final class SpaceWindowSlot: ObservableObject {
     /// stack on the animation already running. Both flags are set synchronously
     /// within the initiating `activate` call, so the next event-loop trigger
     /// always observes them.
-    private var isSwitchAnimationInFlight: Bool {
+    var isSwitchAnimationInFlight: Bool {
         isAnimatingWindowSlide || verticalSwapCancel != nil
     }
 
@@ -8748,6 +8749,113 @@ final class SpaceWindowSlot: ObservableObject {
     init(manager: SpaceManager, initialSpaceId: String?) {
         self.manager = manager
         self.activeSpaceId = initialSpaceId
+    }
+
+    // MARK: - Interactive Space switching
+
+    /// Shared across the resident sidebar trees: hit testing can move to the
+    /// incoming tree during a swipe, but the gesture still belongs to this window.
+    private let spaceSwipeTracker = SpaceSwipeTracker()
+    private var spaceSwipeMonitor: Any?
+
+    private func installSpaceSwipeMonitor() {
+        guard spaceSwipeMonitor == nil else { return }
+        // Once horizontal tracking starts, moving content must not transfer
+        // the remaining events to another scroll view. New gestures still
+        // go through normal hit testing (including scrolling an overflowing tab bar).
+        spaceSwipeMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+            guard let self, event.window === self.shell?.window else { return event }
+            if event.phase.contains(.began) || event.phase.contains(.mayBegin) {
+                if self.activeHostedBandSlide?.isTrackingSwipe == true {
+                    self.activeHostedBandSlide?.cancelInteractive()
+                }
+                self.spaceSwipeTracker.reset()
+                return event
+            }
+            guard self.spaceSwipeTracker.consumesHorizontalGesture else { return event }
+            return self.handleSpaceSwipe(event) ? nil : event
+        }
+    }
+
+    @discardableResult
+    func handleSpaceSwipe(_ event: NSEvent) -> Bool {
+        handleSpaceSwipe(spaceSwipeTracker.handle(event))
+    }
+
+    @discardableResult
+    func handleSpaceSwipe(_ outcome: SpaceSwipeTracker.Outcome) -> Bool {
+        guard PhiPreferences.GeneralSettings.spacesFeatureEnabled.loadValue(),
+              !isCreatingSpace, !isTearingDown, manager?.acceptsStoreAction() == true else {
+            activeHostedBandSlide?.cancelInteractive()
+            return false
+        }
+        switch outcome {
+        case .passthrough:
+            return false
+        case .consumed:
+            return true
+        case let .update(distance, _, began):
+            installSpaceSwipeMonitor()
+            if began {
+                if activeHostedBandSlide?.isTrackingSwipe == true {
+                    activeHostedBandSlide?.cancelInteractive()
+                }
+                if isSwitchAnimationInFlight { return true }
+            }
+            guard began || activeHostedBandSlide?.isTrackingSwipe == true else { return true }
+            guard let source = visibleController, let sourceID = activeSpaceId,
+                  source.spaceId == sourceID,
+                  let index = presentedSpaces.firstIndex(where: { $0.spaceId == sourceID }) else { return true }
+            let step = distance < 0 ? 1 : -1
+            let targetIndex = index + step
+            let targetID = presentedSpaces.indices.contains(targetIndex)
+                ? presentedSpaces[targetIndex].spaceId : sourceID
+            if let slide = activeHostedBandSlide,
+               slide.enteringSpaceId != targetID || slide.swipeStep != step {
+                slide.cancelInteractive()
+            }
+            if activeHostedBandSlide == nil {
+                guard let slide = beginHostedBandSlide(leaving: source, enteringSpaceId: targetID,
+                    direction: step > 0 ? .forward : .backward, onSwapSettled: nil,
+                    interactive: true) else { return true }
+                if targetID != sourceID {
+                    guard let target = nativeSessionForSwipe(spaceId: targetID) else {
+                        slide.cancelInteractive()
+                        return true
+                    }
+                    slide.attachEntering(target)
+                }
+            }
+            activeHostedBandSlide?.updateSwipe(distance: distance)
+            return true
+        case let .end(distance, velocity, cancelled):
+            activeHostedBandSlide?.endSwipe(distance: distance, velocity: velocity, cancelled: cancelled)
+            return true
+        }
+    }
+
+    /// A native preview may prepare a dormant tree, but never starts or
+    /// presents its Chromium Browser until the user commits the gesture.
+    private func nativeSessionForSwipe(spaceId: String) -> SpaceSessionController? {
+        if let session = windowsBySpaceId[spaceId] ?? dormantSessionsBySpaceId[spaceId] { return session }
+        guard manager != nil, let shell,
+              let space = presentedSpaces.first(where: { $0.spaceId == spaceId }),
+              !space.isAnyAgentSpace,
+              let bridge = ChromiumLauncher.sharedInstance().bridge,
+              bridge.responds(to: #selector(PhiChromiumBridgeProtocol.reserveWindowId)) else { return nil }
+        let reserved = Int(bridge.reserveWindowId())
+        guard reserved > 0 else { return nil }
+        let session = MainActor.assumeIsolated {
+            SpaceSessionControllersManager.shared.createWindowController(
+                window: shell.window, windowId: reserved,
+                browserType: SpaceManager.isIncognitoSpaceId(spaceId) ? .incognitoSpace : .normal,
+                profileId: space.profileId, spaceId: spaceId, slot: self, dormant: true)
+        }
+        session.warmUpDormantTree()
+        // NSWindowController initialization must not change the responder
+        // chain while the source remains the actual presented session.
+        shell.window.windowController = visibleController
+        return session
     }
 
     // MARK: - Public
@@ -8892,6 +9000,7 @@ final class SpaceWindowSlot: ObservableObject {
             timing.target = "agent"
         }
         timing.mark("activation.guards_and_routing.end")
+        activeHostedBandSlide?.cancelInteractive()
         activeSwitchTiming = (spaceId, timing)
         isPerformingActivate = true
         defer { isPerformingActivate = false }
@@ -9236,6 +9345,9 @@ final class SpaceWindowSlot: ObservableObject {
     /// Closes the shell for good. Called when the slot leaves the registry;
     /// no-op without a shell.
     func closeShellIfPresent() {
+        activeHostedBandSlide?.cancelInteractive()
+        if let spaceSwipeMonitor { NSEvent.removeMonitor(spaceSwipeMonitor) }
+        spaceSwipeMonitor = nil
         discardDormantSessions()
         guard let shell else { return }
         self.shell = nil
@@ -9893,6 +10005,9 @@ final class SpaceWindowSlot: ObservableObject {
         var droppedPresented = false
         for (spaceId, session) in dormantSessionsBySpaceId
         where !wantedIds.contains(spaceId) || session.profileId != wanted.first(where: { $0.spaceId == spaceId })?.profileId {
+            if activeHostedBandSlide?.carries(session) == true || visibleController === session {
+                activeHostedBandSlide?.cancelInteractive()
+            }
             dormantSessionsBySpaceId.removeValue(forKey: spaceId)
             AppLogInfo("[SpaceWindowSlot] dropping dormant session \(session.windowId) for \(spaceId)")
             if visibleController === session {
@@ -10466,6 +10581,19 @@ final class SpaceWindowSlot: ObservableObject {
         private let duration: TimeInterval
         private let restoreLeavingTheme: () -> Void
         private let startLeavingChrome: () -> Void
+        private let updateInteractiveChrome: (CGFloat) -> Void
+        private let interactive: Bool
+        private let pageSlide: Bool
+        private var swipeProgress: CGFloat = 0
+        private var swipeDistance: CGFloat = 0
+        private var swipeReady = false
+        private var swipeSettling = false
+        private var swipeTimer: Timer?
+        private var swipeObservers: [NSObjectProtocol] = []
+        private var swipeAppearances: [(view: NSView, appearance: NSAppearance?)] = []
+        private weak var swipeStrip: SpacesStripHostingView?
+        var isTrackingSwipe: Bool { interactive && !finished && !swipeSettling }
+        var swipeStep: Int { enteringStartDx > 0 ? 1 : -1 }
         /// The slide is a Core Animation animation, not a timer: once its
         /// transaction is committed the render server plays it whatever the
         /// main thread does next — and a cold switch blocks the main thread
@@ -10475,6 +10603,7 @@ final class SpaceWindowSlot: ObservableObject {
         /// animation at all. `startTime` is set after target preparation and
         /// is the shared clock for both bands and backgrounds.
         private static let slideAnimationKey = "phi.hostedBandSlide"
+        private static let swipePositionKey = "phi.hostedBandSwipePosition"
         private var startTime: CFTimeInterval = 0
         var timing: SpaceSwitchTiming?
         private var fallbackTimer: Timer?
@@ -10492,6 +10621,9 @@ final class SpaceWindowSlot: ObservableObject {
              leavingPinnedStrip: NSView? = nil,
              direction: SwapDirection,
              duration: TimeInterval,
+             interactive: Bool = false,
+             pageSlide: Bool = false,
+             updateInteractiveChrome: @escaping (CGFloat) -> Void = { _ in },
              startLeavingChrome: @escaping () -> Void = {},
              restoreLeavingTheme: @escaping () -> Void) {
             self.slot = slot
@@ -10512,6 +10644,9 @@ final class SpaceWindowSlot: ObservableObject {
             }
             leavingContainerMaskedToBounds = leavingBandContainer.layer?.masksToBounds ?? false
             self.duration = duration
+            self.interactive = interactive
+            self.pageSlide = pageSlide
+            self.updateInteractiveChrome = updateInteractiveChrome
             self.restoreLeavingTheme = restoreLeavingTheme
             self.startLeavingChrome = startLeavingChrome
             let forward = (direction == .forward)
@@ -10520,9 +10655,180 @@ final class SpaceWindowSlot: ObservableObject {
             // margins meeting read as an empty strip travelling between
             // the Spaces. Overlapped, the content keeps the list's own
             // rhythm across the seam; the margins hold nothing to collide.
-            let travel = max(0, bandFrame.width - Self.bandContentInset)
+            let travel = max(1, bandFrame.width - (pageSlide ? 0 : Self.bandContentInset))
             enteringStartDx = forward ? travel : -travel
             leavingEndDx = forward ? -travel : travel
+        }
+
+        /// Direct manipulation holds the finger position between events.
+        /// Only release starts a bounded settling timer.
+        func updateSwipe(distance: CGFloat) {
+            guard isTrackingSwipe else { return }
+            swipeDistance = distance
+            swipeProgress = min(1, abs(distance) / max(1, abs(enteringStartDx)))
+            applySwipeProgress()
+        }
+
+        private func applySwipeProgress() {
+            guard interactive, !finished else { return }
+            let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            let edge = enteringSpaceId == leaving?.spaceId
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            leavingBandContainer.layer?.masksToBounds = true
+            if edge {
+                let resistance = min(60, bandFrame.width * 0.18)
+                let offset = reduceMotion ? 0 : resistance * (1 - exp(-abs(swipeDistance) / 120))
+                    * (swipeDistance < 0 ? -1 : 1)
+                for view in leavingBandViews {
+                    holdSwipePosition(of: view, at: offset)
+                }
+            } else if swipeReady {
+                let p: CGFloat = reduceMotion ? 0 : swipeProgress
+                for view in leavingBandViews {
+                    holdSwipePosition(of: view, at: leavingEndDx * p)
+                }
+                for view in enteringBandViews + [enteringStandIn].compactMap({ $0 }) {
+                    holdSwipePosition(of: view, at: enteringStartDx * (1 - p))
+                }
+                updateInteractiveChrome(p)
+                if let source = leaving?.spaceId {
+                    swipeStrip?.stripGeometry?.swipeSelection = .init(source: source,
+                        target: enteringSpaceId, progress: p)
+                }
+            }
+            CATransaction.commit()
+        }
+
+        /// AppKit can reset a backing layer's model transform during layout.
+        /// A constant presentation value survives that reset, without advancing
+        /// the drag on a clock. Each event replaces it at the new finger position.
+        private func holdSwipePosition(of view: NSView, at offset: CGFloat) {
+            guard let layer = view.layer else { return }
+            layer.transform = CATransform3DMakeTranslation(offset, 0, 0)
+            let hold = CABasicAnimation(keyPath: "transform.translation.x")
+            hold.fromValue = offset
+            hold.toValue = offset
+            hold.duration = 1
+            hold.repeatCount = .infinity
+            layer.add(hold, forKey: Self.swipePositionKey)
+        }
+
+        func endSwipe(distance: CGFloat, velocity: CGFloat, cancelled: Bool) {
+            guard isTrackingSwipe else { return }
+            updateSwipe(distance: distance)
+            swipeSettling = true
+            let completes = !cancelled && swipeReady && entering != nil
+                && SpaceSwipeTracker.shouldComplete(distance: distance, velocity: velocity,
+                                                     width: abs(enteringStartDx))
+            let initial = swipeProgress
+            let initialDistance = swipeDistance
+            let destination: CGFloat = completes ? 1 : 0
+            let seconds = SpaceSwipeTracker.settlingDuration(progress: initial, completes: completes,
+                                                             velocity: velocity, width: abs(enteringStartDx))
+            if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion || duration <= 0 {
+                finishInteractive(commit: completes)
+                return
+            }
+            let start = CACurrentMediaTime()
+            let timer = Timer(timeInterval: 1.0 / 120.0, repeats: true) { [weak self] timer in
+                guard let self, !self.finished else { timer.invalidate(); return }
+                let t = min(1, (CACurrentMediaTime() - start) / seconds)
+                let eased = CGFloat(1 - pow(1 - t, 3))
+                self.swipeProgress = initial + (destination - initial) * eased
+                self.swipeDistance = initialDistance * (1 - eased)
+                self.applySwipeProgress()
+                if t >= 1 { self.finishInteractive(commit: completes) }
+            }
+            swipeTimer = timer
+            RunLoop.main.add(timer, forMode: .common)
+        }
+
+        func cancelInteractive() {
+            guard interactive, !finished else { return }
+            finishInteractive(commit: false)
+        }
+
+        private func finishInteractive(commit: Bool) {
+            guard interactive, !finished else { return }
+            finished = true
+            swipeTimer?.invalidate()
+            swipeTimer = nil
+            for observer in swipeObservers { NotificationCenter.default.removeObserver(observer) }
+            swipeObservers.removeAll()
+            standInTimeout?.invalidate()
+            let slot = slot
+            let source = leaving
+            let canCommit = commit && source != nil && entering != nil
+                && slot?.visibleController === source
+                && slot?.manager?.acceptsStoreAction() == true
+                && slot?.presentedSpaces.contains(where: { $0.spaceId == enteringSpaceId }) == true
+            let discardStandIn = {
+                self.enteringTabsCancellable = nil
+                self.enteringStandIn?.removeFromSuperview()
+                self.enteringStandIn = nil
+                self.enteringSurface?.setSwitchBandContentHidden(false)
+            }
+            if !canCommit { discardStandIn() }
+            let restoreSource = {
+                if self.pageSlide {
+                    self.entering?.removeSessionViewFromShell()
+                    source?.installPageTreeInShell()
+                } else {
+                    self.entering?.concealSidebarViewInShell()
+                }
+                if let source {
+                    source.presentSidebarViewInShell()
+                    slot?.shell?.split.floatingSidebarHost.present(source.browserState)
+                    slot?.shell?.split.sidebarHost.followTheme(of: source)
+                    slot?.shell?.split.contentHost.followTheme(of: source)
+                }
+            }
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            if canCommit {
+                // Keep the landed destination visible during the hand-over.
+                // Restoring the source on screen first can flash it during a
+                // synchronous layout/display inside normal activation.
+                if pageSlide { source?.removeSessionViewFromShell() }
+                else { source?.concealSidebarViewInShell() }
+                if let entering {
+                    slot?.shell?.split.floatingSidebarHost.present(entering.browserState)
+                    slot?.shell?.split.sidebarHost.followTheme(of: entering)
+                    slot?.shell?.split.contentHost.followTheme(of: entering)
+                }
+            }
+            restoreEnteringChrome()
+            restoreLeavingBand()
+            if enteringStandIn == nil { enteringSurface?.setSwitchBandContentHidden(false) }
+            enteringSurface?.setSpaceSwitchBackdropHidden(false)
+            restoreLeavingTheme()
+            for (view, appearance) in swipeAppearances { view.appearance = appearance }
+            swipeAppearances.removeAll()
+            if !canCommit { restoreSource() }
+            slot?.hostedBandSlideDidEnd(self)
+            var transaction = Transaction(animation: nil)
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                swipeStrip?.stripGeometry?.swipeSelection = nil
+                if canCommit {
+                    // The preview already travelled to its destination. The normal
+                    // activation performs the one real hand-over without replaying.
+                    slot?.activate(spaceId: enteringSpaceId, animated: false, userInitiated: true)
+                    if slot?.activeSpaceId != enteringSpaceId {
+                        discardStandIn()
+                        restoreSource()
+                    }
+                }
+            }
+            CATransaction.commit()
+            if enteringStandIn != nil {
+                // Keep the cached rows through a committed cold activation,
+                // just as the timed slide does, until the Browser supplies them.
+                standInTimeout = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: false) { _ in
+                    self.revealEnteringLiveBand()
+                }
+            }
         }
 
         /// The horizontal inset a sidebar list keeps around its rows
@@ -10539,6 +10845,25 @@ final class SpaceWindowSlot: ObservableObject {
         func start() {
             timing?.mark("animation.armed")
             slot?.shell?.split.floatingSidebarHost.beginSpaceSwitch()
+            if interactive {
+                if let leaving, let slot {
+                    swipeStrip = slot.spaceSwitchSurface(of: leaving).spacesStripRowView as? SpacesStripHostingView
+                }
+                if let window = slot?.shell?.window {
+                    for name in [NSWindow.willCloseNotification, NSWindow.didResignKeyNotification, NSWindow.didResizeNotification] {
+                        swipeObservers.append(NotificationCenter.default.addObserver(forName: name,
+                            object: window, queue: .main) { [weak self] _ in self?.cancelInteractive() })
+                    }
+                }
+                swipeObservers.append(NotificationCenter.default.addObserver(forName: .spaceListDidChange,
+                    object: nil, queue: .main) { [weak self] _ in
+                        guard let self, let slot = self.slot else { return }
+                        if !slot.presentedSpaces.contains(where: { $0.spaceId == self.enteringSpaceId }) {
+                            self.cancelInteractive()
+                        }
+                    })
+                return
+            }
             // Keep the outgoing band intact while a cold session is built.
             // Starting its motion now would slide into an empty destination.
             fallbackTimer = Timer.scheduledTimer(withTimeInterval: duration + 0.5, repeats: false) { [weak self] _ in
@@ -10606,7 +10931,7 @@ final class SpaceWindowSlot: ObservableObject {
             // in empty and fill ~100 ms later. Hold the leaving band still
             // until that tab lands (bounded, so a Space with none to come
             // still moves), then slide the formed rows in.
-            if controller.browserState.tabs.isEmpty,
+            if !interactive, controller.browserState.tabs.isEmpty,
                SpaceBandSnapshotCache.shared.snapshot(
                    for: controller.spaceId,
                    appearanceOf: controller.mainSplitViewController.sidebarViewController.view,
@@ -10641,6 +10966,32 @@ final class SpaceWindowSlot: ObservableObject {
         private var firstTabTimeout: Timer?
 
         private func beginEntering(_ controller: SpaceSessionController) {
+            if interactive {
+                for session in [leaving, controller].compactMap({ $0 }) {
+                    let main = session.mainSplitViewController
+                    var views = [main.view, main.sidebarViewController.view]
+                    if !pageSlide { views.append(main.floatingSidebarContent.view) }
+                    swipeAppearances += views.map { ($0, $0.appearance) }
+                }
+            }
+            if pageSlide {
+                CATransaction.begin()
+                CATransaction.setDisableActions(true)
+                leaving?.pinContentAppearanceForSwitch()
+                controller.pinContentAppearanceForSwitch()
+                let page = controller.mainSplitViewController.view
+                page.wantsLayer = true
+                page.layer?.transform = CATransform3DMakeTranslation(enteringStartDx, 0, 0)
+                controller.installPageTreeInShell()
+                enteringBandViews = [page]
+                enteringBandContainer = root
+                enteringContainerMaskedToBounds = root.layer?.masksToBounds ?? false
+                root.layer?.masksToBounds = true
+                swipeReady = true
+                applySwipeProgress()
+                CATransaction.commit()
+                return
+            }
             // The entering sidebar content is resident in the column (hidden)
             // and takes the switch at once; its page tree takes the page area
             // when the slide lands. It paints no backdrop (hosted sidebars
@@ -10711,6 +11062,13 @@ final class SpaceWindowSlot: ObservableObject {
             timing?.mark("sidebar.prepare.end")
             enteringHeldViews = enteringStandIn.map { [$0] } ?? enteringBandViews
             for view in enteringHeldViews { view.alphaValue = 0 }
+            if interactive {
+                releaseEnteringHeldViews()
+                swipeReady = true
+                applySwipeProgress()
+                CATransaction.commit()
+                return
+            }
             let pageTree = controller.mainSplitViewController.view
             pageTree.wantsLayer = true
             // Mount the target page for layout, but keep the leaving page
@@ -10881,6 +11239,7 @@ final class SpaceWindowSlot: ObservableObject {
             releaseEnteringHeldViews()
             for view in enteringBandViews + [enteringStandIn].compactMap({ $0 }) {
                 view.layer?.removeAnimation(forKey: Self.slideAnimationKey)
+                view.layer?.removeAnimation(forKey: Self.swipePositionKey)
                 view.layer?.transform = CATransform3DIdentity
             }
             enteringBandContainer?.layer?.masksToBounds = enteringContainerMaskedToBounds
@@ -10896,6 +11255,7 @@ final class SpaceWindowSlot: ObservableObject {
             CATransaction.setDisableActions(true)
             for view in leavingBandViews {
                 view.layer?.removeAnimation(forKey: Self.slideAnimationKey)
+                view.layer?.removeAnimation(forKey: Self.swipePositionKey)
                 view.layer?.transform = CATransform3DIdentity
             }
             leavingBandContainer.layer?.masksToBounds = leavingContainerMaskedToBounds
@@ -10916,6 +11276,7 @@ final class SpaceWindowSlot: ObservableObject {
         /// Resolves the slide now: lands on the entering tree if it has been
         /// attached, otherwise puts the leaving band back.
         func settle() {
+            if interactive { cancelInteractive(); return }
             guard !finished else { return }
             timing?.mark("animation.forced_settle")
             fallbackTimer?.invalidate()
@@ -10930,6 +11291,7 @@ final class SpaceWindowSlot: ObservableObject {
 
         /// The spawn did not produce a session: put the leaving band back.
         func fail() {
+            if interactive { cancelInteractive(); return }
             guard !finished else { return }
             timing?.mark("animation.failed")
             finished = true
@@ -10942,7 +11304,7 @@ final class SpaceWindowSlot: ObservableObject {
             enteringTabsCancellable = nil
             enteringStandIn?.removeFromSuperview()
             enteringStandIn = nil
-            enteringSurface?.setSwitchBandContentHidden(false)
+            if enteringStandIn == nil { enteringSurface?.setSwitchBandContentHidden(false) }
             enteringSurface?.setSpaceSwitchBackdropHidden(false)
             restoreLeavingTheme()
             releaseBackdropAppearance()
@@ -11072,7 +11434,8 @@ final class SpaceWindowSlot: ObservableObject {
     private func beginHostedBandSlide(leaving: SpaceSessionController,
                                       enteringSpaceId: String,
                                       direction: SwapDirection,
-                                      onSwapSettled: (() -> Void)?) -> HostedBandSlide? {
+                                      onSwapSettled: (() -> Void)?,
+                                      interactive: Bool = false) -> HostedBandSlide? {
         let timing = timingForSpaceSwitch(spaceId: enteringSpaceId)
         timing?.mark("animation.setup.begin")
         verticalSwapCancel?()
@@ -11082,15 +11445,18 @@ final class SpaceWindowSlot: ObservableObject {
         guard let shell, shell.window.isVisible,
               leaving.mainSplitViewController.isViewLoaded else { return nil }
         let prevSurface = spaceSwitchSurface(of: leaving)
-        guard prevSurface.view.window === shell.window,
-              !prevSurface.view.isHiddenOrHasHiddenAncestor else { return nil }
-        let root = prevSurface is FloatingSidebarViewController
-            ? shell.split.floatingSidebarHost.view : shell.split.sidebarHost.view
+        guard PhiPreferences.GeneralSettings.loadLayoutMode().isTraditional && interactive
+                || (prevSurface.view.window === shell.window && !prevSurface.view.isHiddenOrHasHiddenAncestor)
+        else { return nil }
+        let pageSlide = interactive && PhiPreferences.GeneralSettings.loadLayoutMode().isTraditional
+        let root = pageSlide ? shell.split.contentHost.view
+            : (prevSurface is FloatingSidebarViewController
+                ? shell.split.floatingSidebarHost.view : shell.split.sidebarHost.view)
         let bandInSurface = prevSurface.spaceSwitchBandFrame
-        let bandFrame = prevSurface.view.convert(bandInSurface, to: root)
+        let bandFrame = pageSlide ? root.bounds : prevSurface.view.convert(bandInSurface, to: root)
         let duration = Self.swapAnimationDuration
         AppLogInfo("[SpaceWindowSlot] band slide \(leaving.spaceId) -> \(enteringSpaceId): band=\(bandFrame) duration=\(duration)")
-        guard duration > 0, bandFrame.width > 0, bandFrame.height > 0 else {
+        guard (interactive || duration > 0), bandFrame.width > 0, bandFrame.height > 0 else {
             return nil
         }
         // Ramp the leaving tree's theme and tint to the entering Space's so
@@ -11112,11 +11478,17 @@ final class SpaceWindowSlot: ObservableObject {
             enteringSpaceId: enteringSpaceId,
             root: root,
             bandFrame: bandFrame,
-            leavingBandViews: prevSurface.spaceSwitchBandViews,
-            leavingBandContainer: prevSurface.spaceSwitchBandContainer,
-            leavingPinnedStrip: prevSurface.spaceSwitchPinnedStrip,
+            leavingBandViews: pageSlide ? [leaving.mainSplitViewController.view] : prevSurface.spaceSwitchBandViews,
+            leavingBandContainer: pageSlide ? root : prevSurface.spaceSwitchBandContainer,
+            leavingPinnedStrip: pageSlide ? nil : prevSurface.spaceSwitchPinnedStrip,
             direction: direction,
             duration: duration,
+            interactive: interactive,
+            pageSlide: pageSlide,
+            updateInteractiveChrome: { progress in
+                prevThemeContext.mirrorsSharedTheme = false
+                prevThemeContext.setTheme(Self.interpolatedTheme(from: sourceTheme, to: targetTheme, progress: progress))
+            },
             startLeavingChrome: { [weak self, weak prevSurface] in
                 (prevSurface?.spacesStripRowView as? SpacesStripHostingView)?
                     .beginPreparedSpacesChipFlight(toSpaceId: enteringSpaceId,
@@ -11932,6 +12304,9 @@ final class SpaceWindowSlot: ObservableObject {
     /// guaranteed spawn and the late unregister a no-op (identity check).
     @discardableResult
     func evictWindow(for spaceId: String, removeSlotIfEmpty: Bool = true) -> SpaceSessionController? {
+        if activeHostedBandSlide?.enteringSpaceId == spaceId || activeSpaceId == spaceId {
+            activeHostedBandSlide?.cancelInteractive()
+        }
         guard let controller = windowsBySpaceId.removeValue(forKey: spaceId) else { return nil }
         restoredSiblingsAwaitingPresent.remove(spaceId)
         manager?.noteSlotWindowsDidChange()
@@ -12531,6 +12906,9 @@ final class SpaceWindowSlot: ObservableObject {
     /// manager no longer tracks. Called by `SpaceManager.unbind` when the
     /// account goes away while windows may still be open, and from `deinit`.
     fileprivate func invalidate() {
+        activeHostedBandSlide?.cancelInteractive()
+        if let spaceSwipeMonitor { NSEvent.removeMonitor(spaceSwipeMonitor) }
+        spaceSwipeMonitor = nil
         for token in visibleFrameObservers {
             NotificationCenter.default.removeObserver(token)
         }
