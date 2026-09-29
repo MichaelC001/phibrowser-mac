@@ -67,15 +67,9 @@ enum PostHogIdentityResetPolicy {
 class Account {
     let userID: String
     let userInfo: User?
-    lazy var localStorage: LocalStore = {
-        // Under UI testing the store is redirected to a throwaway per-launch
-        // temp directory so tests never read or mutate the real account's
-        // Spaces, bookmarks, or pinned tabs. See `uiTestStoreDirectoryURL`.
-        if let testStoreURL = Account.uiTestStoreDirectoryURL {
-            return LocalStore(account: self, storeDirectoryURL: testStoreURL)
-        }
-        return LocalStore(account: self)
-    }()
+    // FileSystemUtils isolates the whole account directory for test launches,
+    // keeping the database and account defaults (including restore IDs) together.
+    lazy var localStorage: LocalStore = LocalStore(account: self)
     private(set) lazy var userDefaults: AccountUserDefaults = {
         AccountUserDefaults(account: self)
     }()
@@ -99,19 +93,6 @@ extension Account {
         return Account(userID: defaultUid)
     }
 
-    /// A unique-per-launch temp directory for the `LocalStore` when the app is
-    /// launched for UI testing (`-uitest`); otherwise nil. Isolating the store
-    /// keeps UI tests from reading or writing the real account's Spaces,
-    /// bookmarks, and pinned tabs — the Chromium `--user-data-dir` does not
-    /// cover this Swift-side, per-account store. Computed once per process.
-    static let uiTestStoreDirectoryURL: URL? = {
-        guard ProcessInfo.processInfo.arguments.contains("-uitest") else { return nil }
-        return URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-            .appendingPathComponent(
-                "PhiUITestStore-\(ProcessInfo.processInfo.globallyUniqueString)",
-                isDirectory: true
-            )
-    }()
 }
 
 class AccountController {
@@ -364,6 +345,8 @@ class AccountController {
 
     // MARK: Avatar bytes for the Chromium settings bridge
 
+    static let avatarDidChange = Notification.Name("accountAvatarDidChange")
+
     /// The processor the account settings pane renders avatars with. Owned here
     /// rather than at the view: Kingfisher folds the processor identifier into
     /// the cache key, so `clearCachedAccount()` can only evict the rounded
@@ -401,6 +384,7 @@ class AccountController {
         avatarPNG = png
         avatarPNGOwnerID = account.userID
         avatarGeneration += 1
+        NotificationCenter.default.post(name: Self.avatarDidChange, object: self)
     }
 
     /// Stores fetched bytes unless a newer locally saved avatar landed
@@ -413,6 +397,7 @@ class AccountController {
               let png = image.pngData() else { return }
         avatarPNG = png
         avatarPNGOwnerID = account.userID
+        NotificationCenter.default.post(name: Self.avatarDidChange, object: self)
     }
 
     /// Fills the avatar store from Kingfisher's disk cache (no network).

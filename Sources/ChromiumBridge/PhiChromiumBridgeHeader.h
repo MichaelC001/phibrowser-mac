@@ -8,10 +8,87 @@
 #ifndef PhiChromiumBridgeHeader_h
 #define PhiChromiumBridgeHeader_h
 NS_ASSUME_NONNULL_BEGIN
+/// Result of Chromium's first-pass handling before the shell's responder chain.
+typedef NS_ENUM(NSInteger, PhiKeyEquivalentHandling) {
+  PhiKeyEquivalentHandlingUnhandled,
+  PhiKeyEquivalentHandlingHandled,
+  PhiKeyEquivalentHandlingPassToMainMenu,
+};
+
 @protocol WebContentWrapper;
 @protocol BookmarkWrapper;
 @protocol DownloadItemWrapper;
 @class ASWebAuthenticationSessionRequest;
+
+// ==========================================================================
+// Content blocking (Privacy pane)
+// ==========================================================================
+
+/// The three Privacy pane toggles.
+typedef NS_ENUM(NSInteger, PhiContentBlockingCategory) {
+  PhiContentBlockingCategoryAds = 0,
+  PhiContentBlockingCategoryCookieBanners = 1,
+  PhiContentBlockingCategoryTrackers = 2,
+};
+
+/// One catalog filter list as shown in the Advanced sheet. Titles and
+/// descriptions are Mac-side strings keyed by `listId`. A protocol, like
+/// WebContentWrapper: the framework does not export class symbols.
+@protocol PhiContentBlockingListInfo <NSObject>
+@property (nonatomic, copy, readonly) NSString *listId;
+/// One of @"ads", @"trackers", @"cookies", @"regional", @"phi".
+@property (nonatomic, copy, readonly) NSString *category;
+@property (nonatomic, copy, readonly) NSString *homepage;
+@property (nonatomic, copy, readonly) NSString *license;
+/// BCP 47 primary subtags that switch a regional list on by default.
+@property (nonatomic, copy, readonly) NSArray<NSString *> *langs;
+/// The checkbox state (user override, else catalog/language default).
+@property (nonatomic, assign, readonly) BOOL checked;
+@property (nonatomic, assign, readonly) BOOL defaultChecked;
+/// Custom lists (`category` @"custom"): the user's name and, when the list
+/// is downloaded, its URL (empty for pasted rules).
+@property (nonatomic, copy, readonly) NSString *name;
+@property (nonatomic, assign, readonly) BOOL custom;
+@property (nonatomic, copy, readonly) NSString *sourceURL;
+/// Whether the list's text is on disk. Downloaded lists start unavailable
+/// until the first fetch completes; `fetchedAt` is Unix seconds (0 while
+/// never fetched) and `lastError` the last download failure, if any.
+@property (nonatomic, assign, readonly) BOOL available;
+/// A download the user asked for is in progress; `downloadedBytes` of
+/// `totalBytes` received so far (`totalBytes` is -1 when the server did not
+/// announce a size). `contentBlockingStatusChanged:` fires as they change.
+@property (nonatomic, assign, readonly) BOOL downloading;
+@property (nonatomic, assign, readonly) int64_t downloadedBytes;
+@property (nonatomic, assign, readonly) int64_t totalBytes;
+@property (nonatomic, assign, readonly) NSTimeInterval fetchedAt;
+@property (nonatomic, copy, readonly) NSString *lastError;
+@end
+
+/// A snapshot of one profile's content blocking state.
+@protocol PhiContentBlockingSettings <NSObject>
+@property (nonatomic, assign, readonly) BOOL blockAds;
+@property (nonatomic, assign, readonly) BOOL blockCookieBanners;
+@property (nonatomic, assign, readonly) BOOL blockTrackers;
+@property (nonatomic, copy, readonly) NSArray<id<PhiContentBlockingListInfo>> *lists;
+/// Registrable domains where blocking is off.
+@property (nonatomic, copy, readonly) NSArray<NSString *> *siteExceptions;
+/// One of @"active", @"building", @"degraded", @"disabled", @"no_lists"
+/// (a toggle is on but none of its lists is downloaded; `statusDetail` has
+/// the last download error, if any).
+@property (nonatomic, copy, readonly) NSString *status;
+/// Human-readable reason when `status` is @"degraded"; empty otherwise.
+@property (nonatomic, copy, readonly) NSString *statusDetail;
+/// 0 while no generation is published.
+@property (nonatomic, assign, readonly) int64_t generationId;
+/// Unix seconds; 0 while no generation is published.
+@property (nonatomic, assign, readonly) NSTimeInterval builtAt;
+/// Requests blocked for the profile since it was loaded. Session-only,
+/// never persisted.
+@property (nonatomic, assign, readonly) uint64_t sessionBlockedCount;
+/// One line about the published rule set (rule counts, list ids) for the
+/// Privacy pane's diagnostics; empty while none is published.
+@property (nonatomic, copy, readonly) NSString *lastBuildLog;
+@end
 // Window types reported by Chromium bridge.
 // Note: ChromiumBrowserTypeIncognito means TYPE_NORMAL + incognito profile.
 // Non-normal incognito windows (e.g. DevTools, Popup opened from incognito)
@@ -333,7 +410,9 @@ typedef NS_ENUM(NSInteger, PhiGhostMaterializeOutcome) {
 /// @param downloadItem The download item wrapper containing meta information (may be nil for REMOVED/DESTROYED events)
 - (void)downloadEventOccurred:(DownloadEventType)eventType
                          guid:(NSString *)guid
-                 downloadItem:(id<DownloadItemWrapper> _Nullable)downloadItem;
+                 downloadItem:(id<DownloadItemWrapper> _Nullable)downloadItem
+                    profileId:(NSString *)profileId
+               isOffTheRecord:(BOOL)isOffTheRecord;
 
 - (NSString *)getNativeSettings;
 /// Returns whether Phi extensions should be kept enabled (Mac is source of truth).
@@ -366,6 +445,9 @@ typedef NS_ENUM(NSInteger, PhiGhostMaterializeOutcome) {
 - (BOOL)isAutoPipParkEnabled;
 - (BOOL)handleDeeplinkWithUrlString:(NSString *)urlString windowId:(int64_t)windowId;
 - (void)toggleChatSidebar:(NSNumber * _Nullable)show;
+/// `toggleChatSidebar:` for the Browser window `windowId` (the calling
+/// tab's); -1 when the caller has no tab, which means the active window.
+- (void)toggleChatSidebar:(NSNumber * _Nullable)show windowId:(int64_t)windowId;
 - (void)showFeedbackDialog;
 
 /// A navigation matched a Space URL rule whose action is "ask first", so
@@ -465,6 +547,32 @@ typedef NS_ENUM(NSInteger, PhiGhostMaterializeOutcome) {
 - (void)openReaderViewForTabId:(int64_t)tabId windowId:(int64_t)windowId;
 
 @optional
+
+/// Hosted-window mode: Chromium asked to show or activate a hosted browser
+/// window — a routed navigation landing in another Space's window, a page
+/// calling window.focus(), chrome.windows.update({focused: true}), a tab
+/// activated by an extension. The window itself never appears; the Mac client
+/// presents that window's Space in its slot instead, which is the outcome the
+/// ordered-in NSWindow used to produce through key-window adoption. Not sent
+/// for inactive shows (restored siblings), so a restore burst never switches
+/// Spaces.
+- (void)windowRequestedPresentation:(int64_t)windowId;
+/// Show the initial shell without taking focus when activate is NO.
+- (void)windowRequestedPresentation:(int64_t)windowId activate:(BOOL)activate;
+
+/// Hosted-window mode: Chromium changed the fullscreen state of a hosted
+/// browser's (never shown) window — a page's fullscreen request or exit,
+/// the fullscreen command, press-and-hold Esc leaving fullscreen — and
+/// the shell presenting it should follow. `fullscreen` is the state
+/// Chromium now holds; put the shell into it if it is not there or on its
+/// way there already. The transitions the client started itself
+/// (`setHostedFullscreen:forWindowId:`) come back through here too and are
+/// no-ops by that rule.
+- (void)windowRequestedFullscreen:(BOOL)fullscreen forWindowId:(int64_t)windowId;
+/// targetDisplayId is the macOS display ID, or -1 for the current display.
+- (void)windowRequestedFullscreen:(BOOL)fullscreen
+                     forWindowId:(int64_t)windowId
+                 targetDisplayId:(int64_t)targetDisplayId;
 
 /// Queried synchronously on the browser UI thread before each highlight copy.
 /// Read the current native preference without blocking. NO skips authentication
@@ -699,6 +807,12 @@ typedef NS_ENUM(NSInteger, PhiGhostMaterializeOutcome) {
 /// thread per settings page load — must not block (answer from cache).
 - (NSDictionary<NSString *, id> * _Nullable)getPhiAccountInfo;
 
+/// Stable native sync identity, independent of access-token renewal or reauth.
+/// Return {subject: NSString, email: NSString (optional)} when signed in, an
+/// empty dictionary for confirmed sign-out, and nil while restoring a session.
+/// Optional for older clients. Called synchronously on the UI thread.
+- (nullable NSDictionary<NSString *, id> *)getPhiSyncAccountInfo;
+
 /// The user pressed "export account data" on the Phi account subpage in
 /// chrome://settings. Mac owns the verification UI and all authenticated
 /// network calls; Chromium only relays the action. Called on the UI thread —
@@ -855,6 +969,16 @@ typedef NS_ENUM(NSInteger, PhiGhostMaterializeOutcome) {
 /// closed since. Sent before the request resolves; never on failure. Callers
 /// must guard with respondsToSelector: (skew).
 - (void)collapseAIChatForTabId:(int64_t)tabId windowId:(int64_t)windowId;
+
+// Sync key layer (M2-4). Returns nil while the key layer is locked or this
+// profile has no resolved sync key. Keys: @"uuid" (NSString, account-global
+// profile UUID), @"passphrase" (NSString, 64-char lowercase hex).
+- (nullable NSDictionary<NSString *, id> *)getPhiProfileSyncInfo:(NSString *)profileId;
+/// Content blocking of `profileId` published a new rule generation or changed
+/// status (active / building / degraded / disabled). Re-read the settings
+/// with -getContentBlockingSettings:completion:. UI thread.
+- (void)contentBlockingStatusChanged:(NSString *)profileId;
+
 @end
 
 @protocol PhiChromiumBridgeProtocol <NSObject>
@@ -912,7 +1036,7 @@ typedef NS_ENUM(NSInteger, PhiGhostMaterializeOutcome) {
                     atIndex:(NSInteger)index
                    windowId:(NSInteger)windowId
                  customGuid:(NSString* _Nullable)customGuid;
-                 
+
 // Unlike createNewTabWithUrl, this reuses an existing tab for the same URL when possible.
 - (void)openTabWithUrl:(NSString *)urlString windowId:(int64_t)windowId;
 
@@ -1160,6 +1284,23 @@ typedef NS_ENUM(NSInteger, PhiGhostMaterializeOutcome) {
                                                             profileId:(NSString * _Nullable)profileId
                                                                 hidden:(BOOL)hidden;
 
+/// Hosted-window mode: mints a window id from the Browser session-id
+/// generator without creating a Browser. The Mac client keys the Space's
+/// session on it up front — sidebar, pinned tabs and bookmarks are built
+/// before the Space is first visited — and hands it back through
+/// `createBrowserWithWindowType:profileId:hidden:reservedWindowId:` on the
+/// first switch, so the Browser that arrives carries the id the session
+/// already has. Ids are as unique as minted ones; an unused reservation is
+/// simply never seen again.
+- (int64_t)reserveWindowId;
+
+/// `createBrowserWithWindowType:profileId:hidden:` for a window id obtained
+/// from `reserveWindowId`. Pass 0 to mint one as usual.
+- (nullable NSDictionary<NSString *, id> *)createBrowserWithWindowType:(ChromiumBrowserType)browserType
+                                                            profileId:(NSString * _Nullable)profileId
+                                                               hidden:(BOOL)hidden
+                                                     reservedWindowId:(int64_t)reservedWindowId;
+
 /// Creates a hidden agent-Space browser window: TYPE_NORMAL, never Show()n by
 /// Chromium, omitted from session restore, and starting in agent mode (window
 /// activation, content fullscreen, and omnibox focus are suppressed; tab
@@ -1306,6 +1447,85 @@ typedef NS_ENUM(NSInteger, PhiGhostMaterializeOutcome) {
 - (void)setRestoredSiblingConcealed:(BOOL)concealed windowId:(int64_t)windowId;
 
 // ==========================================================================
+// Hosted window mode (Mac → Chromium)
+// ==========================================================================
+
+/// Every TYPE_NORMAL, non-shadow browser (Space windows, Incognito Spaces,
+/// agent Spaces, and session-restored windows alike) is hosted: its own
+/// NSWindow is never shown by Chromium — Show()/Activate()/fullscreen on it
+/// are no-ops, and its visibility and activity are answered from the
+/// presentation state below. The Mac client presents a hosted browser by
+/// mounting its tabs' native views into a client-owned shell window bound
+/// with `setPresentationHost:forWindowId:`.
+
+/// Binds a hosted browser to the client-owned shell NSWindow that presents
+/// it. From then on Chromium attaches that browser's child windows —
+/// permission and other bubbles, the find bar, dialogs and sheets — to the
+/// shell instead of to the hidden browser window, and treats the browser as
+/// visible for child-ordering whenever the shell is. Pass nil to unbind (the
+/// binding also clears itself when the browser closes). A `windowId` that
+/// does not resolve to a hosted browser is a no-op.
+- (void)setPresentationHost:(nullable NSWindow *)shellWindow
+                forWindowId:(int64_t)windowId;
+
+/// Marks a hosted browser as the one currently presented in its shell (YES)
+/// or as a background Space of that shell (NO). Presenting into a key shell
+/// activates the browser's widget as a key change on a real window would,
+/// so the activation order Chromium uses for
+/// "the current window" (keyboard commands, chrome.windows.getLastFocused,
+/// new tabs from the Dock menu) follows Space switches; the previously
+/// presented browser of the same shell becomes inactive. Send YES after the
+/// entering Space's view tree is installed and NO for the leaving one; both
+/// directions are idempotent. YES requires a prior
+/// `setPresentationHost:forWindowId:` for the window and is ignored (logged)
+/// without one. Tab visibility is not driven here — mounting and detaching
+/// the tab's native view already does that.
+- (void)setPresented:(BOOL)presented forWindowId:(int64_t)windowId;
+
+/// Mirrors the shell's native fullscreen state onto the hosted browser it
+/// presents. Chromium never fullscreens the hidden browser window, so a
+/// transition the user starts on the shell (the green button, the
+/// fullscreen menu item) reaches it only through this call: send YES/NO
+/// from the shell's will-enter/will-exit fullscreen callbacks for the
+/// presented browser, and again when a browser is presented into a shell
+/// that is already fullscreen. Chromium then runs the same
+/// fullscreen-state change a real window's transition would — in
+/// particular a NO releases a tab's DOM fullscreen, which otherwise stays
+/// on inside the windowed shell. Idempotent, so the transitions Chromium
+/// itself started (content fullscreen, which the client answers by
+/// fullscreening the shell) are no-ops here.
+- (void)setHostedFullscreen:(BOOL)fullscreen forWindowId:(int64_t)windowId;
+/// Complete an explicit-display request after the native shell has settled.
+- (void)hostedFullscreenTransitionDidCompleteForWindowId:(int64_t)windowId;
+
+/// Run only the presented browser's pre-responder shortcut handlers. The
+/// original event must belong to its shell. Handled includes intentionally
+/// dropped key repeats; PassToMainMenu (Phi's placeholder-mode short circuit)
+/// must bypass the shell's web view so AppKit runs the menu action.
+- (PhiKeyEquivalentHandling)preHandleHostedKeyEquivalent:(NSEvent*)event
+                                             forWindowId:(int64_t)windowId;
+/// Run the presented browser's post-responder shortcut handlers after the
+/// shell's responder chain declined the event (a native text field was first
+/// responder). Executes non-menu browser commands; PassToMainMenu leaves
+/// menu-backed ones to AppKit.
+- (PhiKeyEquivalentHandling)postHandleHostedKeyEquivalent:(NSEvent*)event
+                                              forWindowId:(int64_t)windowId;
+
+/// Mirrors key status onto the hosted browser a shell presents, separately
+/// from presentation: a browser stays presented (on screen in its shell)
+/// while its shell is not the key window. YES activates the browser's widget
+/// (as its own window becoming key would) and makes it the only active
+/// hosted one; NO deactivates it. Send NO when the shell resigns key to a window
+/// outside it — another shell, a standalone Incognito or Kiosk window,
+/// another application — but not to one of its own child windows (a find
+/// bar, bubble or dialog Chromium parented to it), which keeps a real
+/// browser window active too. `setPresented:YES` already activates when the
+/// shell is key or owns the key window, so YES is only needed when key
+/// returns to a shell whose presented browser did not change. Both
+/// directions are idempotent.
+- (void)setHostedActive:(BOOL)active forWindowId:(int64_t)windowId;
+
+// ==========================================================================
 // Window-group close (Mac → Chromium)
 // ==========================================================================
 
@@ -1388,6 +1608,25 @@ typedef NS_ENUM(NSInteger, PhiGhostMaterializeOutcome) {
 /// @param windowId The window ID (used to find the Browser object)
 /// @return Array of DownloadItemWrapper objects
 - (NSArray<id<DownloadItemWrapper>> *)getAllDownloadItemsWithWindowId:(int64_t)windowId;
+
+/// Queries regular profiles, loading each profile and its download history first.
+/// nil selects all registered profiles; an empty array selects none. Duplicate IDs
+/// are ignored. Invalid/unavailable IDs are returned in failedProfileIds; no fallback.
+/// Completion runs on the UI thread. Off-the-record sessions are never included.
+- (void)getDownloadItemsForProfileIds:(NSArray<NSString *> * _Nullable)profileIds
+    completion:(void (^)(NSArray<id<DownloadItemWrapper>> *items, NSArray<NSString *> *failedProfileIds))completion
+    NS_SWIFT_NAME(getDownloadItems(forProfileIds:completion:));
+
+/// Profile-addressed operations target loaded regular profiles without a window.
+- (void)pauseDownloadWithGuid:(NSString *)guid profileId:(NSString *)profileId;
+- (void)resumeDownloadWithGuid:(NSString *)guid profileId:(NSString *)profileId;
+- (void)cancelDownloadWithGuid:(NSString *)guid profileId:(NSString *)profileId;
+- (void)removeDownloadWithGuid:(NSString *)guid profileId:(NSString *)profileId;
+- (void)openDownloadWithGuid:(NSString *)guid profileId:(NSString *)profileId;
+- (void)showDownloadInFinderWithGuid:(NSString *)guid profileId:(NSString *)profileId;
+- (void)validateDangerousDownloadWithGuid:(NSString *)guid profileId:(NSString *)profileId;
+- (void)validateInsecureDownloadWithGuid:(NSString *)guid profileId:(NSString *)profileId;
+
 
 /// Get a single download item by GUID
 /// @param guid The unique identifier of the download item
@@ -1589,6 +1828,15 @@ typedef NS_ENUM(NSInteger, PhiGhostMaterializeOutcome) {
                      profileId:(NSString *)profileId
              outcomeCompletion:(void (^)(PhiGhostMaterializeOutcome outcome))completion;
 
+/// `materializeGhostWindow:profileId:outcomeCompletion:` for a window id
+/// obtained from `reserveWindowId`: the rebuilt window adopts it as its
+/// window id (hosted-window mode, where the Mac side's session for the Space
+/// already exists under that id). Pass 0 to mint one as usual.
+- (void)materializeGhostWindow:(int32_t)previousSessionWindowId
+                     profileId:(NSString *)profileId
+              reservedWindowId:(int64_t)reservedWindowId
+             outcomeCompletion:(void (^)(PhiGhostMaterializeOutcome outcome))completion;
+
 /// Drops the ghost window parked as `previousSessionWindowId` for `profileId`
 /// without rebuilding it — the session-side half of closing a Space whose
 /// window exists only as a ghost (the Space was deleted, or its window group
@@ -1788,6 +2036,71 @@ typedef NS_ENUM(NSInteger, PhiGhostMaterializeOutcome) {
                        path:(NSString *)path
                  completion:(void (^)(BOOL success, NSString * _Nullable error))completion;
 
+/// Reads `profileId`'s content blocking state. `completion` fires on the UI
+/// thread with the snapshot, or nil and an error.
+- (void)getContentBlockingSettings:(NSString *)profileId
+                        completion:(void (^)(id<PhiContentBlockingSettings> _Nullable settings, NSString * _Nullable error))completion;
+
+/// Turns one of the three Privacy pane toggles on or off. The rule set is
+/// rebuilt in the background; `contentBlockingStatusChanged:` reports it.
+- (void)setContentBlockingCategory:(NSString *)profileId
+                          category:(PhiContentBlockingCategory)category
+                           enabled:(BOOL)enabled
+                        completion:(void (^)(BOOL success, NSString * _Nullable error))completion;
+
+/// Records the user's choice for one Advanced sheet list (`listId` from
+/// PhiContentBlockingListInfo). Unknown ids fail.
+- (void)setContentBlockingList:(NSString *)profileId
+                        listId:(NSString *)listId
+                       enabled:(BOOL)enabled
+                    completion:(void (^)(BOOL success, NSString * _Nullable error))completion;
+
+/// Adds a custom filter list to `profileId`: either `url` (http(s), downloaded
+/// and refreshed daily) or `rules` (filter text stored as given), exactly one
+/// non-empty. `completion` fires on the UI thread with the new list id, or nil
+/// and an error.
+- (void)addContentBlockingCustomList:(NSString *)profileId
+                                name:(NSString *)name
+                                 url:(NSString * _Nullable)url
+                               rules:(NSString * _Nullable)rules
+                          completion:(void (^)(NSString * _Nullable listId, NSString * _Nullable error))completion;
+
+/// Removes a custom list and its stored text. Unknown ids fail.
+- (void)removeContentBlockingCustomList:(NSString *)profileId
+                                 listId:(NSString *)listId
+                             completion:(void (^)(BOOL success, NSString * _Nullable error))completion;
+
+/// Downloads every enabled downloadable list again now; `contentBlockingStatusChanged:`
+/// reports the rebuild when one changed.
+- (void)refreshContentBlockingLists:(NSString *)profileId
+                         completion:(void (^)(BOOL success, NSString * _Nullable error))completion;
+
+/// Downloads the given lists now, whether or not they are checked. Every
+/// download is an explicit user action: Chromium never fetches a list on its
+/// own. Fails when none of the ids is a downloadable list.
+- (void)downloadContentBlockingLists:(NSString *)profileId
+                             listIds:(NSArray<NSString *> *)listIds
+                          completion:(void (^)(BOOL success, NSString * _Nullable error))completion;
+
+/// Deletes a list's downloaded text and unchecks it so it is not fetched
+/// again until the user asks. Fails for the bundled Phi list and unknown ids.
+- (void)deleteContentBlockingListDownload:(NSString *)profileId
+                                   listId:(NSString *)listId
+                               completion:(void (^)(BOOL success, NSString * _Nullable error))completion;
+
+/// Adds (`enabled` YES) or removes a registrable-domain exception where
+/// blocking is off for `profileId`.
+- (void)setContentBlockingSiteException:(NSString *)profileId
+                                 domain:(NSString *)domain
+                                enabled:(BOOL)enabled
+                             completion:(void (^)(BOOL success, NSString * _Nullable error))completion;
+
+/// The domain `setContentBlockingSiteException:` keys the page at `url` by:
+/// its registrable domain, or its host when it has none (an IP address,
+/// localhost). Empty for URLs that are not http(s). Synchronous, UI thread,
+/// needs no profile; the toolbar toggle uses it so it matches the service.
+- (NSString *)contentBlockingSiteExceptionDomainForURL:(NSString *)url;
+
 /// Opens one of `profileId`'s data/settings pages in a browser window for that
 /// profile (creating one if needed). `page` is one of @"privacy",
 /// @"passwords", @"payments", @"notifications", @"clearBrowserData".
@@ -1834,6 +2147,33 @@ typedef NS_ENUM(NSInteger, PhiGhostMaterializeOutcome) {
 /// array to clear. The Mac client is the source of truth and re-pushes on every
 /// change. Must be called on the main thread.
 - (void)setUserReclaimedTabs:(NSArray<NSNumber *> *)tabIds;
+
+@optional
+
+/// Phi auth session state changed on the Mac side (login, logout, token
+/// renewal completion, reauthentication required). No payload by design:
+/// Chromium re-reads the session via GetAuth0AccessTokenSyncly() and
+/// reconciles, so redundant or coalesced calls are harmless. Optional so an
+/// older framework paired with a newer Mac client degrades to poll-only.
+- (void)notifyPhiAuthStateChanged;
+
+/// Read-only status for an already loaded Profile. Missing capability means checking.
+- (void)getProfileSyncStatus:(NSString *)profileId
+                 completion:(void (^)(NSDictionary<NSString *, id> * _Nullable status,
+                                      NSString * _Nullable error))completion
+    NS_SWIFT_NAME(getProfileSyncStatus(_:completion:));
+
+// Payload-free ping: profile sync keys became available or changed on the
+// Mac side. Chromium re-pulls via getPhiProfileSyncInfo:.
+- (void)notifyPhiSyncKeysChanged;
+
+// M4 routing metadata. Empty profileUUID + dataTypeIds requests account catch-up.
+// Optional for compatibility with an older polling-only framework.
+- (void)notifyPhiSyncInvalidationForAccount:(NSString *)accountId
+                              profileUUID:(NSString *)profileUUID
+                              dataTypeIds:(NSArray<NSNumber *> *)dataTypeIds
+                        excludingClientId:(NSString *)excludingClientId
+    NS_SWIFT_NAME(notifyPhiSyncInvalidation(forAccount:profileUUID:dataTypeIds:excludingClientId:));
 
 @end
 
@@ -1992,6 +2332,9 @@ typedef NS_ENUM(NSInteger, PhiGhostMaterializeOutcome) {
 
 // Identification
 @property(nonatomic, copy, readonly) NSString *guid;
+/// Owning regular profile basename (or the Incognito Space wire ID).
+@property(nonatomic, copy, readonly) NSString *profileId;
+@property(nonatomic, assign, readonly) BOOL isOffTheRecord;
 @property(nonatomic, copy, readonly) NSString *url;
 @property(nonatomic, copy, readonly) NSString *mimeType;
 

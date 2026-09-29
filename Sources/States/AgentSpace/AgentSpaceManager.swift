@@ -408,8 +408,11 @@ final class AgentSpaceManager: ObservableObject {
         // The operating mask's in-page recolor differs between light and dark
         // appearance, so any theme source flipping must restyle masked pages.
         // All three notifications funnel into the same per-window re-resolve.
+        // The developer "unstyled page" switch adds or strips the recolor on
+        // pages already masked, through the same re-resolve.
         for name: Notification.Name in
-            [.themeDidChange, .appearanceDidChange, .spaceThemeDidChange] {
+            [.themeDidChange, .appearanceDidChange, .spaceThemeDidChange,
+             .agentUnstyledOperatingPageDidChange] {
             NotificationCenter.default.addObserver(
                 forName: name, object: nil, queue: .main
             ) { [weak self] _ in
@@ -690,13 +693,18 @@ final class AgentSpaceManager: ObservableObject {
         // badge number are the same value. A persistent Space is named by its
         // taskId instead — the durable half of the re-bind mapping.
         let number = nextAgentNumber()
+        let preparedSpaceId = SpaceManager.shared.claimPrewarmedAgentContent(profileId: profile.profileId)
         guard let spaceId = SpaceManager.shared.createSpace(
             name: persistent ? taskId : Self.agentSpaceName(number),
             colorHex: persistent ? Self.persistentSpaceColorHex : Self.spaceColorHex,
             iconName: Self.spaceIconName,
             profileId: profile.profileId,
-            makeDefaultActive: false
+            makeDefaultActive: false,
+            spaceId: preparedSpaceId
         ) else {
+            if let preparedSpaceId {
+                SpaceManager.shared.discardClaimedSpaceContent(spaceId: preparedSpaceId)
+            }
             AppLogWarn("[AgentSpace] createAgentSpace: createSpace failed")
             completion(nil, nil)
             return
@@ -1476,11 +1484,13 @@ final class AgentSpaceManager: ObservableObject {
     /// window, and every page in an agent window belongs to the agent anyway.
     private func refreshOperatingPageTheme(for task: AgentTask) {
         guard task.windowId != 0 else { return }
-        guard task.maskedTabId != nil else {
+        // A developer inspecting the page wants it exactly as it renders.
+        guard task.maskedTabId != nil,
+              !PhiPreferences.AgentSpaces.unstyledOperatingPageEnabled else {
             AgentPageTheme.shared.clear(windowId: task.windowId)
             return
         }
-        guard let themeContext = MainBrowserWindowControllersManager.shared
+        guard let themeContext = SpaceSessionControllersManager.shared
                 .getBrowserState(for: task.windowId)?.themeContext else { return }
         let appearance = themeContext.currentAppearance
         let color = themeContext.currentTheme.color(
@@ -1491,8 +1501,9 @@ final class AgentSpaceManager: ObservableObject {
 
     /// Re-issues the in-page recolor for every task currently wearing the
     /// mask. The injected sheet carries a different palette per appearance, so
-    /// a theme or appearance flip must restyle live targets; the native wash
-    /// (layer 1) refreshes through each window's own theme pipeline.
+    /// a theme or appearance flip must restyle live targets, and the developer
+    /// unstyled-page switch applies or strips it; the native wash (layer 1)
+    /// refreshes through each window's own theme pipeline.
     private func refreshMaskedPageThemes() {
         for task in tasksBySpaceId.values where task.maskedTabId != nil {
             refreshOperatingPageTheme(for: task)
@@ -1502,7 +1513,7 @@ final class AgentSpaceManager: ObservableObject {
     /// The Phi tab id of the agent window's currently active (operating) tab.
     private func currentActiveTabId(forSpaceId spaceId: String) -> Int? {
         guard let task = tasksBySpaceId[spaceId], task.windowId != 0 else { return nil }
-        return MainBrowserWindowControllersManager.shared
+        return SpaceSessionControllersManager.shared
             .getBrowserState(for: task.windowId)?.focusingTab?.guid
     }
 

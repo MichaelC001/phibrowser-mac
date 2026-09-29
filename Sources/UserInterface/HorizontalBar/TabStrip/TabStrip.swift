@@ -154,7 +154,7 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
     }
 
     private struct ExternalDropTarget {
-        let windowController: MainBrowserWindowController
+        let windowController: SpaceSessionController
         let zone: TabContainerType
         let index: Int
         /// Non-nil when the resolved intent is JOIN. Identifies the
@@ -2092,6 +2092,9 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
                 self?.handleTabDragEnd()
             }
 
+            view.shouldSelectOnMouseDown = { [weak self] in
+                self?.browserState.multiSelection.isActive != true
+            }
             view.onSelect = { [weak self, weak tab] flags in
                 guard let self, let tab else { return }
                 self.handleTabClick(
@@ -3851,10 +3854,10 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
         }
     }
 
-    private func visibleExternalTabStripTarget(for screenPoint: CGPoint) -> (windowController: MainBrowserWindowController, tabStrip: TabStrip)? {
+    private func visibleExternalTabStripTarget(for screenPoint: CGPoint) -> (windowController: SpaceSessionController, tabStrip: TabStrip)? {
         let point = NSPoint(x: screenPoint.x, y: screenPoint.y)
         let sourceWindowController = unsafeBrowserWindowController
-        let windowManager = MainBrowserWindowControllersManager.shared
+        let windowManager = SpaceSessionControllersManager.shared
 
         for window in NSApp.orderedWindows where window.frame.contains(point) {
             guard let windowController = windowManager.findControllerWith(window: window) else {
@@ -5828,7 +5831,7 @@ extension TabStrip: TabGroupDragDelegate {
 
     func groupDragControllerCommitMoveCrossWindow(
         memberTabIds: [Int],
-        targetWindowController: MainBrowserWindowController,
+        targetWindowController: SpaceSessionController,
         atIndex: Int
     ) {
         browserState.moveGroupSliceToWindow(

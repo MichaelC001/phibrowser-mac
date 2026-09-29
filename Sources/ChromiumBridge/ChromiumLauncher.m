@@ -49,6 +49,21 @@
             continue;
         }
         NSString *arg = [NSString stringWithUTF8String:bytes];
+        if ([arg isEqualToString:@"--"]) {
+            break;
+        }
+        // FileSystemUtils resolves this switch once for native storage and
+        // Chromium, including the separated-value form and test defaults.
+        if ([arg isEqualToString:@"--user-data-dir"]) {
+            if (i + 1 < launchArgc && launchArgv[i + 1] != NULL &&
+                launchArgv[i + 1][0] != '-') {
+                i++;
+            }
+            continue;
+        }
+        if ([arg hasPrefix:@"--user-data-dir="]) {
+            continue;
+        }
         if (arg == nil || ![arg hasPrefix:@"--"]) {
             AppLogWarn(@"Skipping argv[%d]: not valid", i);
             continue;
@@ -138,6 +153,13 @@
                 NSMutableArray<NSString *> *arguments = [NSMutableArray array];
                 [arguments addObject:@"Phi"];
 
+                // Set the channel default before forwarding explicit launch overrides.
+#if NIGHTLY_BUILD
+                [arguments addObject:@"--sync-url=https://sync.stag.phibrowser.com/chromium-sync"];
+#else
+                [arguments addObject:@"--sync-url=https://sync.phibrowser.com/chromium-sync"];
+#endif
+
 #if DEBUG || NIGHTLY_BUILD
                 [arguments addObject:@"--phi-ai-debug"];
                 [arguments addObject:@"--phi-no-embed-extensions"];
@@ -168,6 +190,10 @@
                                error:nil];
 
                 [self appendLaunchCommandLineArgc:launchArgc argv:launchArgv toArguments:arguments];
+                if (FileSystemUtils.launchUserDataDirectory != nil) {
+                    [arguments addObject:[@"--user-data-dir="
+                        stringByAppendingString:FileSystemUtils.launchUserDataDirectory]];
+                }
 
                 int argc = (int)arguments.count;
                 const char **argv = (const char **)malloc(sizeof(char *) * argc);

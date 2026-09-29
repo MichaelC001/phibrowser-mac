@@ -246,14 +246,7 @@ private struct LegacyImagePreviewBridgeItem: Decodable {
 enum ImagePreviewMessageHandler {
     static func handle(_ context: ExtensionMessageContext) {
         Task { @MainActor in
-            handle(context, messenger: ExtensionMessaging.shared) { windowID, items, currentIndex in
-                guard let controller = MainBrowserWindowControllersManager.shared.controller(for: windowID)
-                    ?? MainBrowserWindowControllersManager.shared.activeWindowController else {
-                    return false
-                }
-                controller.browserState.imagePreviewState.open(items: items, currentIndex: currentIndex)
-                return true
-            }
+            handle(context, messenger: ExtensionMessaging.shared)
         }
     }
 
@@ -263,7 +256,10 @@ enum ImagePreviewMessageHandler {
     static func handle(
         _ context: ExtensionMessageContext,
         messenger: ExtensionMessagingProtocol,
-        openPreview: (Int, [ImagePreviewItem], Int) -> Bool
+        openPreview: ([ImagePreviewItem], Int) -> Void = { items, currentIndex in
+            let controller = ImagePreviewWindowController(items: items, currentIndex: currentIndex)
+            controller.showWindow(nil)
+        }
     ) {
         let request: ImagePreviewBridgeRequest
         do {
@@ -282,10 +278,7 @@ enum ImagePreviewMessageHandler {
             messenger.sendError("No image preview items provided", requestId: context.requestId)
             return
         }
-        guard openPreview(request.windowId, items, request.currentIndex) else {
-            messenger.sendError("Image preview window unavailable", requestId: context.requestId)
-            return
-        }
+        openPreview(items, request.currentIndex)
         messenger.sendResponse("{}", requestId: context.requestId)
     }
 }

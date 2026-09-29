@@ -11,59 +11,91 @@ import UniformTypeIdentifiers
 
 /// State machine for the trackpad swipe-to-switch-Space gesture, shared by
 /// the sidebar (vertical layouts) and the tab strip bar (traditional
-/// layout). The gesture's axis is latched on the first non-zero delta and
+/// layout). The gesture's axis is latched on the first directional delta and
 /// holds for the rest of the gesture (including momentum), so a swipe that
 /// drifts diagonally doesn't alternate between scrolling and switching.
 /// Horizontal-dominant gestures are consumed entirely; callers forward
 /// `.passthrough` events to `super.scrollWheel`.
 final class SpaceSwipeTracker {
     enum Outcome {
-        /// Legacy wheel event or vertical-dominant gesture — scroll as usual.
         case passthrough
-        /// Part of a horizontal gesture; swallow without acting.
         case consumed
-        /// Horizontal travel crossed the threshold — fired once per gesture.
-        /// The deltas follow `scrollingDeltaX` as-is, so the system
-        /// scroll-direction setting applies: content-left means the next
-        /// Space (+1), content-right the previous (-1).
-        case trigger(step: Int)
+        case update(distance: CGFloat, velocity: CGFloat, began: Bool)
+        case end(distance: CGFloat, velocity: CGFloat, cancelled: Bool)
     }
 
     private enum Axis { case undecided, horizontal, vertical }
     private var axis: Axis = .undecided
     private var accumulatedX: CGFloat = 0
-    private var triggered = false
-    private static let threshold: CGFloat = 50
+    private var lastTime: TimeInterval?
+    private var velocity: CGFloat = 0
+    private var ended = false
+
+    var consumesHorizontalGesture: Bool { axis == .horizontal }
+
+    func reset() {
+        axis = .undecided
+        accumulatedX = 0
+        velocity = 0
+        lastTime = nil
+        ended = false
+    }
 
     func handle(_ event: NSEvent) -> Outcome {
-        // Legacy wheel events carry no gesture phases; never treat them as
-        // swipes.
-        guard event.phase != [] || event.momentumPhase != [] else { return .passthrough }
+        handle(deltaX: event.scrollingDeltaX, deltaY: event.scrollingDeltaY,
+               phase: event.phase, momentum: event.momentumPhase, timestamp: event.timestamp)
+    }
 
-        if event.phase == .mayBegin || event.phase == .began {
-            axis = .undecided
-            accumulatedX = 0
-            triggered = false
+    /// Kept independent of NSEvent construction so phase sequences can be tested.
+    func handle(deltaX: CGFloat, deltaY: CGFloat, phase: NSEvent.Phase,
+                momentum: NSEvent.Phase, timestamp: TimeInterval) -> Outcome {
+        guard phase != [] || momentum != [] else { return .passthrough }
+        if phase.contains(.began) || phase.contains(.mayBegin) {
+            reset()
+            lastTime = timestamp
         }
-
-        if axis == .undecided {
-            let dx = abs(event.scrollingDeltaX)
-            let dy = abs(event.scrollingDeltaY)
-            if dx > dy {
-                axis = .horizontal
-            } else if dy > dx {
-                axis = .vertical
+        // Momentum belongs to the completed gesture. It never starts or
+        // commits another Space switch after the fingers have lifted.
+        if (momentum != [] && !phase.contains(.ended) && !phase.contains(.cancelled)) || ended {
+            return axis == .horizontal ? .consumed : .passthrough
+        }
+        accumulatedX += deltaX
+        let wasUndecided = axis == .undecided
+        if wasUndecided {
+            // Match the child scroll views' axis latch: delaying this choice
+            // could turn their vertical scroll into a Space swipe mid-gesture.
+            if abs(deltaX) > abs(deltaY) { axis = .horizontal }
+            else if abs(deltaY) > abs(deltaX) { axis = .vertical }
+        }
+        if deltaX != 0 {
+            if let lastTime, timestamp > lastTime {
+                velocity = deltaX / CGFloat(max(1.0 / 240, timestamp - lastTime))
             }
+            lastTime = timestamp
         }
-
+        if phase.contains(.ended) || phase.contains(.cancelled) {
+            ended = true
+            guard axis == .horizontal else { return .passthrough }
+            if timestamp - (lastTime ?? timestamp) > 0.1 { velocity = 0 }
+            return .end(distance: accumulatedX, velocity: velocity,
+                        cancelled: phase.contains(.cancelled))
+        }
         guard axis == .horizontal else { return .passthrough }
+        return .update(distance: accumulatedX, velocity: velocity, began: wasUndecided)
+    }
 
-        accumulatedX += event.scrollingDeltaX
-        if !triggered, abs(accumulatedX) >= Self.threshold {
-            triggered = true
-            return .trigger(step: accumulatedX < 0 ? 1 : -1)
-        }
-        return .consumed
+    static func shouldComplete(distance: CGFloat, velocity: CGFloat, width: CGFloat) -> Bool {
+        guard width > 0 else { return false }
+        // A deliberate reversal before release cancels even a long drag.
+        if distance * velocity < 0, abs(velocity) > 250 { return false }
+        return abs(distance) / width >= 0.35
+            || (abs(distance) >= 12 && distance * velocity > 0 && abs(velocity) >= 650)
+    }
+
+    static func settlingDuration(progress: CGFloat, completes: Bool,
+                                 velocity: CGFloat, width: CGFloat) -> TimeInterval {
+        let remaining = completes ? 1 - progress : progress
+        return min(0.24, max(0.08, Double(remaining * width / max(abs(velocity), 900))))
     }
 }
 
@@ -153,10 +185,24 @@ final class SpacesStripWheelTracker {
 /// rects are directly usable as layer frames there).
 ///
 /// The frame stores are deliberately NOT `@Published`: layout writes them on
-/// every pass and must not re-render the strip. Only `isChipConcealed` — the
-/// flag that hides the SwiftUI glass chip while the CA stand-in flies —
-/// publishes, flipped exactly twice per flight (begin/sweep).
+/// every pass and must not re-render the strip. Selection preparation and
+/// `isChipConcealed` publish only at switch boundaries.
 final class SpacesStripGeometry: ObservableObject {
+    struct PendingSelection: Equatable {
+        let source: String
+        let target: String
+    }
+
+    struct SwipeSelection {
+        let source: String
+        let target: String
+        let progress: CGFloat
+    }
+    @Published var swipeSelection: SwipeSelection?
+
+    /// Keep the leaving selection visible while a newly created Space's
+    /// icon is rendered and its content is prepared for the band slide.
+    @Published var pendingSelection: PendingSelection?
     /// Each pip's frame keyed by its spaceId, written by the pip's layout.
     /// Entries are only added or refreshed — nothing prunes a deleted
     /// Space's entry, and that residue is memory-only by an invariant the
@@ -171,8 +217,14 @@ final class SpacesStripGeometry: ObservableObject {
     /// subject to SwiftUI's `.clipped()`, so a flight is only allowed
     /// between pips wholly inside this rect.
     var viewportFrame: CGRect = .zero
+    /// The pip row's measured width (see `SpacesStripView.iconStrip`).
+    var rowWidth: CGFloat = 0
     /// Hides the SwiftUI glass chip while the CA stand-in stands in for it.
     @Published var isChipConcealed = false
+    /// Fires when the hosting view is unhidden (the header hides the row
+    /// while there is a single Space), so the strip re-anchors its viewport
+    /// at the width it has on screen again.
+    let revealed = PassthroughSubject<Void, Never>()
 }
 
 /// Compact active-Space header that sits between the pinned-tab strip and
@@ -203,7 +255,7 @@ struct SpacesStripView: View {
     /// slot observes the same bump; this lets `openActiveIconPicker` honor the
     /// request only in the window currently on screen. Nil (previews) means the
     /// strip always treats itself as the owner. See `openActiveIconPicker`.
-    var resolveOwnerController: () -> MainBrowserWindowController? = { nil }
+    var resolveOwnerController: () -> SpaceSessionController? = { nil }
     /// Wheel-to-pip-step feed from the strip's AppKit hosting view (see
     /// SpacesStripWheelTracker), letting the user scroll an overflowing row
     /// directly. Nil for the horizontal chip, which renders no pip row.
@@ -227,15 +279,65 @@ struct SpacesStripView: View {
     /// `stripDraggingId` marks the pip under the cursor. Mirrors the popover's
     /// picker (SpacePickerPopup) so the commit path through `manager.reorder`
     /// is identical.
-    @State private var stripDraggingId: String?
+    ///
+    /// The dragging id lives on the slot, shared by every Space's strip in
+    /// the window: a pip press switches Spaces at once, so a drag that goes
+    /// on from that press is sourced by the strip of the Space just left
+    /// (hidden by then, still tracking the mouse) and dropped on the strip
+    /// of the Space now shown. Both have to agree on what is being dragged.
+    private var stripDraggingId: String? {
+        get { slot.stripReorderDraggingId }
+        nonmutating set { slot.stripReorderDraggingId = newValue }
+    }
     @State private var stripOrderedIds: [String] = []
+    /// How many whole pips the row fits at its measured width. The width
+    /// itself lives in `stripGeometry.rowWidth`, outside SwiftUI state, and
+    /// only this count re-renders the row: a sidebar divider drag changes the
+    /// width every frame while the count changes a handful of times.
+    @State private var fittedPipCount = 0
 
     /// Index of the first pip inside the strip's sliding viewport. The row
     /// slides to keep the active Space's pip centered in the visible window,
     /// clamped at the list's ends (see `ensureActivePipVisible`).
     /// Always read through `clampedStripStart`, so a shrinking Space list or
     /// a widening sidebar can never leave the window hanging past the end.
-    @State private var stripStartIndex: Int = 0
+    ///
+    /// Lives on the slot, like the dragging id: every Space's strip in the
+    /// window shows the same viewport, so the strip revealed when a switch
+    /// lands sits exactly where the leaving strip's slide ended.
+    private var stripStartIndex: Int {
+        get { slot.stripViewportStart }
+        nonmutating set { slot.stripViewportStart = newValue }
+    }
+
+    /// Whether this strip is the one on screen. A switch flips the slot's
+    /// active Space for every strip in the window at once; only the strip
+    /// the user sees (the leaving Space's, during the band slide) animates
+    /// the chip and viewport to the new pip, and the others snap, so the
+    /// entering strip is already at rest when the landing reveals it. A
+    /// strip that animated while hidden was caught mid-motion, or replayed
+    /// its motion, at the reveal.
+    var presence: SpacesStripPresence? = nil
+
+    private var animatesOnScreen: Bool { presence?.isOnScreen ?? true }
+
+    private var swipeChipOffset: CGFloat {
+        guard let swipe = stripGeometry.swipeSelection,
+              let source = stripOrderedSpaces.firstIndex(where: { $0.spaceId == swipe.source }),
+              let target = stripOrderedSpaces.firstIndex(where: { $0.spaceId == swipe.target }) else { return 0 }
+        return CGFloat(target - source) * (Self.stripItemWidth + Self.stripSpacing) * swipe.progress
+    }
+
+    private var stripSelectedSpaceId: String? {
+        stripGeometry.pendingSelection?.source ?? slot.activeSpaceId
+    }
+
+    /// The Space-switch animation for this strip, or nil while off screen.
+    private var switchAnimation: Animation? {
+        animatesOnScreen && stripGeometry.swipeSelection == nil
+            ? .easeInOut(duration: PhiPreferences.GeneralSettings.loadSwitchSpaceAnimationDuration())
+            : nil
+    }
 
     /// The pip currently under the cursor — or the active Space while the
     /// horizontal chip is hovered — driving its hover tooltip (Space name,
@@ -595,76 +697,86 @@ struct SpacesStripView: View {
         // (pinned right via a Spacer) holds the add button — or, once any
         // pips are hidden, a "…" affordance in its place that opens the full
         // switcher menu.
-        GeometryReader { geo in
-            // While the create form is up, a dashed placeholder pip follows
-            // the row — reserve its slot so the viewport math never lets the
-            // real pips collide with it.
-            let placeholderReserve: CGFloat = slot.isCreatingSpace
-                ? Self.stripItemWidth + Self.stripSpacing
-                : 0
-            let visibleCount = visiblePipCount(availableWidth: geo.size.width - placeholderReserve)
-            let hasOverflow = visibleCount < stripOrderedSpaces.count
-            HStack(spacing: Self.stripSpacing) {
-                pipsViewport(visibleCount: visibleCount)
-                if slot.isCreatingSpace {
-                    creatingSpacePlaceholderPip
-                }
-                Spacer(minLength: 4)
-                if hasOverflow {
-                    moreButton
-                } else {
-                    addButton
-                }
+        // Measured with `onGeometryChange` rather than a `GeometryReader`: a
+        // reader rebuilds its content on every size change, which rebuilt
+        // every pip on every frame of a sidebar divider drag. The width lives
+        // outside SwiftUI state; `fittedPipCount` is what re-renders the row,
+        // and only when the number of pips that fit changes.
+        _ = fittedPipCount
+        let visibleCount = visiblePipCount(availableWidth: measuredRowWidth - placeholderReserve)
+        let hasOverflow = visibleCount < stripOrderedSpaces.count
+        return HStack(spacing: Self.stripSpacing) {
+            pipsViewport(visibleCount: visibleCount)
+            if slot.isCreatingSpace {
+                creatingSpacePlaceholderPip
             }
-            .frame(width: geo.size.width, height: rowHeight, alignment: .leading)
-            // The whole row is the add button's hover region, so the "+" is
-            // already visible by the time the cursor could reach its
-            // far-right slot.
-            .contentShape(Rectangle())
-            .onHover { stripRowHoverChanged($0) }
-            // Slide the glass chip (and cross-fade the pips' dim/brighten
-            // swap) to the new active pip on every switch source — click,
-            // ⌃-number, menu, swipe. Match the band push-in exactly (same
-            // curve + duration) so the chip lands with the slide. The
-            // viewport shift rides its own `withAnimation` with the same
-            // curve (see `ensureActivePipVisible`), so both slides move
-            // together.
-            .animation(
-                .easeInOut(duration: PhiPreferences.GeneralSettings.loadSwitchSpaceAnimationDuration()),
-                value: slot.activeSpaceId
-            )
-            .onAppear {
-                ensureActivePipVisible(availableWidth: geo.size.width, animated: false)
+            Spacer(minLength: 4)
+            if hasOverflow {
+                moreButton
+            } else {
+                addButton
             }
-            .onChange(of: slot.activeSpaceId) { _ in
-                ensureActivePipVisible(availableWidth: geo.size.width, animated: true)
+        }
+        // `minWidth: 0` makes the measured width the row's own, never its
+        // content's: without it a row that lays out every pip (a fresh
+        // mount, or a sidebar narrowed after a wide one) is as wide as
+        // those pips, measures as fitting them all, and never overflows.
+        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+        // The whole row is the add button's hover region, so the "+" is
+        // already visible by the time the cursor could reach its
+        // far-right slot.
+        .contentShape(Rectangle())
+        .onHover { stripRowHoverChanged($0) }
+        // Slide the glass chip (and cross-fade the pips' dim/brighten
+        // swap) to the new active pip on every switch source — click,
+        // ⌃-number, menu, swipe. Match the band push-in exactly (same
+        // curve + duration) so the chip lands with the slide. The
+        // viewport shift rides its own `withAnimation` with the same
+        // curve (see `ensureActivePipVisible`), so both slides move
+        // together.
+        .animation(switchAnimation, value: stripSelectedSpaceId)
+        .onAppear {
+            reanchorViewport(animated: false)
+        }
+        .onChange(of: stripSelectedSpaceId) { _ in
+            reanchorViewport(animated: animatesOnScreen)
+        }
+        .onChange(of: slot.isCreatingSpace) { _ in
+            // Opening the create form slides an overflowing row to its
+            // end, where the dashed placeholder stands; closing it slides
+            // back to the active pip's window.
+            reanchorViewport(animated: animatesOnScreen)
+        }
+        .onGeometryChange(for: CGFloat.self) { proxy in
+            proxy.size.width
+        } action: { newWidth in
+            stripGeometry.rowWidth = newWidth
+            let count = visiblePipCount(availableWidth: measuredRowWidth - placeholderReserve)
+            if count != fittedPipCount {
+                fittedPipCount = count
             }
-            .onChange(of: slot.isCreatingSpace) { _ in
-                // Opening the create form slides an overflowing row to its
-                // end, where the dashed placeholder stands; closing it slides
-                // back to the active pip's window.
-                ensureActivePipVisible(availableWidth: geo.size.width, animated: true)
-            }
-            .onChange(of: geo.size.width) { newWidth in
-                ensureActivePipVisible(availableWidth: newWidth, animated: false)
-            }
-            .onChange(of: stripOrderedSpaces.map(\.spaceId)) { _ in
-                // A delete/reorder can push the active pip out of the window
-                // (e.g. removing a pip ahead of it). Re-anchor — but never
-                // mid-drag, where the live rearrangement is transient.
-                guard stripDraggingId == nil else { return }
-                ensureActivePipVisible(availableWidth: geo.size.width, animated: false)
-            }
-            .onReceive(wheelStepPublisher) { step in
-                stepViewport(by: step, availableWidth: geo.size.width)
-            }
+            reanchorViewport(animated: false)
+        }
+        .onChange(of: stripOrderedSpaces.map(\.spaceId)) { _ in
+            // A delete/reorder can push the active pip out of the window
+            // (e.g. removing a pip ahead of it). Re-anchor — but never
+            // mid-drag, where the live rearrangement is transient.
+            guard stripDraggingId == nil else { return }
+            reanchorViewport(animated: false)
+        }
+        .onReceive(stripGeometry.revealed) { _ in
+            reanchorViewport(animated: false)
+        }
+        .onReceive(wheelStepPublisher) { step in
+            guard stripGeometry.rowWidth > 0 else { return }
+            stepViewport(by: step, availableWidth: stripGeometry.rowWidth)
         }
         .frame(height: rowHeight)
         // Reset a drag that ends off every pip (Spacer / add button / "…" /
         // padding) so the lifted pip doesn't stay dimmed and `stripOrderedIds`
         // re-sync doesn't stay frozen until the next drag. See the delegate doc.
         .onDrop(of: [.text], delegate: SpaceListResetDropDelegate(
-            draggingSpaceId: $stripDraggingId,
+            draggingSpaceId: $slot.stripReorderDraggingId,
             orderedIds: $stripOrderedIds,
             commit: { [storeIdentifier = manager.storeIdentifier] ids in
                 guard !slot.isCreatingSpace else { return }
@@ -705,6 +817,54 @@ struct SpacesStripView: View {
             guard stripDraggingId == nil else { return }
             stripOrderedIds = ids
         }
+        .onChange(of: slot.stripReorderDraggingId) { id in
+            // A drag sourced by another Space's strip has ended (dropped or
+            // not): this strip's preview arrangement goes back to the model,
+            // which a committed drop has already updated.
+            guard id == nil else { return }
+            let ids = manager.spaces.map(\.spaceId)
+            guard ids != stripOrderedIds else { return }
+            withAnimation(.easeInOut(duration: 0.15)) {
+                stripOrderedIds = ids
+            }
+        }
+    }
+
+    /// The row's measured width, or unbounded before the first measurement
+    /// (every pip fits), so a freshly mounted row starts with its full set
+    /// rather than an overflow it corrects a pass later.
+    private var measuredRowWidth: CGFloat {
+        stripGeometry.rowWidth > 0 ? stripGeometry.rowWidth : .greatestFiniteMagnitude
+    }
+
+    /// `ensureActivePipVisible` at the on-screen row's width. A no-op before
+    /// the row's first layout, whose geometry action re-anchors it: the
+    /// viewport start is shared by every Space's strip in the window, so an
+    /// unmeasured strip must not move it. Every strip re-anchors on a switch,
+    /// so all of them compute at the width last measured on screen
+    /// (`SpaceWindowSlot.stripViewportWidth`): a hidden strip's own width
+    /// can be anything (the hidden floating panel's strip lays out 28pt
+    /// wide), and the last strip to re-anchor wins. The strip on screen
+    /// computes at its own width and refreshes the shared one with it, so
+    /// a row that was hidden (a single Space) while the sidebar resized
+    /// corrects the shared width the first time it re-anchors.
+    private func reanchorViewport(animated: Bool) {
+        guard stripGeometry.rowWidth > 0 else { return }
+        let width: CGFloat
+        if animatesOnScreen {
+            width = stripGeometry.rowWidth
+            slot.stripViewportWidth = width
+        } else {
+            width = slot.stripViewportWidth > 0 ? slot.stripViewportWidth : stripGeometry.rowWidth
+        }
+        ensureActivePipVisible(availableWidth: width, animated: animated)
+    }
+
+    /// While the create form is up, a dashed placeholder pip follows the row;
+    /// its slot is reserved so the viewport math never lets the real pips
+    /// collide with it.
+    private var placeholderReserve: CGFloat {
+        slot.isCreatingSpace ? Self.stripItemWidth + Self.stripSpacing : 0
     }
 
     /// Clipped sliding window onto the FULL pip row. Every pip stays in the
@@ -723,11 +883,18 @@ struct SpacesStripView: View {
         // instead a transparent hit target overlaid on the visible sliver
         // (see `peekHitTarget`) makes the half icon hover- and clickable.
         let peek = Self.stripItemWidth / 2 + Self.stripSpacing
-        let leadingPeek: CGFloat = start > 0 ? peek : 0
-        let trailingPeek: CGFloat = start + visibleCount < stripOrderedSpaces.count ? peek : 0
+        let swipe = stripGeometry.swipeSelection
+        let targetIndex = swipe.flatMap { swipe in stripOrderedSpaces.firstIndex { $0.spaceId == swipe.target } }
+        let targetStart = targetIndex.map { max(0, min($0 - visibleCount / 2, stripOrderedSpaces.count - visibleCount)) } ?? start
+        let progress = swipe?.progress ?? 0
+        let viewportStart = CGFloat(start) + CGFloat(targetStart - start) * progress
+        let leadingPeek = (start > 0 ? peek : 0) * (1 - progress) + (targetStart > 0 ? peek : 0) * progress
+        let trailingPeek = (start + visibleCount < stripOrderedSpaces.count ? peek : 0) * (1 - progress)
+            + (targetStart + visibleCount < stripOrderedSpaces.count ? peek : 0) * progress
         HStack(spacing: Self.stripSpacing) {
             ForEach(Array(stripOrderedSpaces.enumerated()), id: \.element.spaceId) { index, space in
                 spacePip(for: space)
+                    .transition(.identity)
                     .overlay(alignment: .topTrailing) {
                         agentBadge(for: space.spaceId)
                             .offset(y: max(0, (rowHeight - Self.stripItemHeight) / 2))
@@ -744,7 +911,7 @@ struct SpacesStripView: View {
                     .allowsHitTesting(index >= start && index < start + visibleCount)
                     .onDrop(of: [.text], delegate: SpaceRowDropDelegate(
                         targetSpaceId: space.spaceId,
-                        draggingSpaceId: $stripDraggingId,
+                        draggingSpaceId: $slot.stripReorderDraggingId,
                         orderedIds: $stripOrderedIds,
                         commit: { [storeIdentifier = manager.storeIdentifier] ids in
                             guard !slot.isCreatingSpace else { return }
@@ -759,6 +926,7 @@ struct SpacesStripView: View {
         // the surface only claims slots the sliding window actually shows.
         .overlay {
             SpacesStripReorderSurface(
+                slot: slot,
                 orderedSpaceIds: stripOrderedSpaces.map(\.spaceId),
                 visibleRange: start..<min(start + visibleCount, stripOrderedSpaces.count),
                 // The create form's strip is read-only: it must not vend a
@@ -787,8 +955,8 @@ struct SpacesStripView: View {
         // shifts and clips with the row.
         .background {
             // Concealed while the hosting view's CA stand-in flies a
-            // spawn/materialize switch (the only animation kind that plays
-            // through the rebuild's main-thread block). `.identity` on both
+            // switch (the only animation kind that plays through the
+            // switch's main-thread blocks). `.identity` on both
             // edges: the concealment flips in the same update pass as the
             // `activeSpaceId` switch, whose row-level animation would
             // otherwise fade the removal — a doubled chip beside the
@@ -797,17 +965,21 @@ struct SpacesStripView: View {
             // must not keep reading as active beside it.
             if !stripGeometry.isChipConcealed,
                !slot.isCreatingSpace,
-               let activeId = slot.activeSpaceId,
+               let activeId = stripSelectedSpaceId,
                stripOrderedSpaces.contains(where: { $0.spaceId == activeId }) {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(Color.sidebarTabSelected)
                     .shadow(color: Color.black.opacity(0.15), radius: 1, x: 0, y: 1)
+                    // Offset the drawing inside the matched frame. An outer
+                    // offset is cancelled by matched geometry aligning the chip
+                    // back to the still-active source pip during a swipe.
+                    .offset(x: swipeChipOffset)
                     .matchedGeometryEffect(id: activeId, in: pipGlassNamespace, isSource: false)
                     .allowsHitTesting(false)
                     .transition(.identity)
             }
         }
-        .offset(x: -CGFloat(start) * step + leadingPeek)
+        .offset(x: -viewportStart * step + leadingPeek)
         .frame(width: pipRowWidth(visibleCount) + leadingPeek + trailingPeek, alignment: .leading)
         .clipped()
         // The clip frame bounds where the chip flight may fly (its layer is
@@ -819,12 +991,12 @@ struct SpacesStripView: View {
         // sliver that shows through the clip so no hit region leaks past it.
         // The peek conditions guarantee the indexed neighbor exists.
         .overlay(alignment: .leading) {
-            if leadingPeek > 0 {
+            if swipe == nil, leadingPeek > 0, start > 0 {
                 peekHitTarget(for: stripOrderedSpaces[start - 1])
             }
         }
         .overlay(alignment: .trailing) {
-            if trailingPeek > 0 {
+            if swipe == nil, trailingPeek > 0, start + visibleCount < stripOrderedSpaces.count {
                 peekHitTarget(for: stripOrderedSpaces[start + visibleCount])
             }
         }
@@ -890,7 +1062,7 @@ struct SpacesStripView: View {
         }
         let visibleCount = visiblePipCount(availableWidth: availableWidth)
         guard visibleCount > 0,
-              let activeId = slot.activeSpaceId,
+              let activeId = stripSelectedSpaceId,
               let index = stripOrderedSpaces.firstIndex(where: { $0.spaceId == activeId }) else { return }
         let start = max(0, min(index - visibleCount / 2, stripOrderedSpaces.count - visibleCount))
         guard start != stripStartIndex else { return }
@@ -984,8 +1156,7 @@ struct SpacesStripView: View {
         }
         // Room left of the trailing slot (which keeps a small gap before it).
         let budget = availableWidth - item - spacing
-        // Everything fits, with the "+" trailing?
-        if width(total) <= budget { return total }
+        if Self.allPipsFit(count: total, availableWidth: availableWidth) { return total }
         // Overflowing: the "…" takes the trailing slot, and BOTH edge peeks
         // are reserved regardless of the window's position, so the whole-pip
         // count never reflows while the row slides.
@@ -993,6 +1164,13 @@ struct SpacesStripView: View {
         var count = total - 1
         while count > 1, width(count) + peekAllowance > budget { count -= 1 }
         return count
+    }
+
+    /// Whether `count` pips all fit in a row `availableWidth` wide, with the
+    /// "+" trailing — the row then shows every pip and never slides.
+    static func allPipsFit(count: Int, availableWidth: CGFloat) -> Bool {
+        let width = count <= 0 ? 0 : CGFloat(count) * stripItemWidth + CGFloat(count - 1) * stripSpacing
+        return width <= availableWidth - stripItemWidth - stripSpacing
     }
 
     /// Pips in drag order: the local `stripOrderedIds` snapshot (rearranged live
@@ -1085,12 +1263,13 @@ struct SpacesStripView: View {
 
     private func spacePip(for space: Space) -> some View {
         // The highlight follows `activeSpaceId` (matching the Spaces menu).
-        // `activate` flips it to the target up front — before the vertical
+        // `activate` normally flips it to the target up front — before the vertical
         // push-in animation starts — so the active pip moves to the new Space
         // immediately on switch, while the leaving Space's content slides out
         // beneath it (the strip lives in the leaving window's header, which
-        // stays on screen for the animation).
-        let isActive = space.spaceId == slot.activeSpaceId
+        // stays on screen for the animation). A newly created Incognito
+        // Space holds the source selection until the band is ready to move.
+        let isActive = space.spaceId == stripSelectedSpaceId
         return Button {
             activatePip(space)
         } label: {
@@ -1846,6 +2025,7 @@ struct SpaceListResetDropDelegate: DropDelegate {
 /// mouse does mean owning the plain click, which is what `onActivate` is for:
 /// the SwiftUI `Button` beneath never sees a left-mouseDown on a claimed pip.
 private struct SpacesStripReorderSurface: NSViewRepresentable {
+    let slot: SpaceWindowSlot
     let orderedSpaceIds: [String]
     let visibleRange: Range<Int>
     let allowsReordering: Bool
@@ -1857,6 +2037,7 @@ private struct SpacesStripReorderSurface: NSViewRepresentable {
     func makeNSView(context: Context) -> SpacesStripReorderView { SpacesStripReorderView() }
 
     func updateNSView(_ nsView: SpacesStripReorderView, context: Context) {
+        nsView.slot = slot
         nsView.orderedSpaceIds = orderedSpaceIds
         nsView.visibleRange = visibleRange
         nsView.allowsReordering = allowsReordering
@@ -1867,7 +2048,8 @@ private struct SpacesStripReorderSurface: NSViewRepresentable {
     }
 }
 
-private final class SpacesStripReorderView: NSView {
+final class SpacesStripReorderView: NSView {
+    weak var slot: SpaceWindowSlot?
     var orderedSpaceIds: [String] = []
     var visibleRange: Range<Int> = 0..<0
     var allowsReordering = false
@@ -1879,8 +2061,15 @@ private final class SpacesStripReorderView: NSView {
     private var mouseDownPoint: CGPoint?
     private var pressedIndex: Int?
     private var hasCrossedHysteresis = false
+    private var activatedOnMouseDown = false
     private var draggedSpaceId: String?
     private let dragThreshold: CGFloat = 4
+    /// Follows a press that switched Spaces until it ends. The switch hides
+    /// this view (its Space's strip) once it lands, and AppKit stops routing
+    /// the press's drags to a hidden view — so the drags are watched at the
+    /// event level instead, and the drag they turn into is sourced by the
+    /// strip on screen.
+    private var pressContinuationMonitor: Any?
 
     // MARK: - Slot geometry
 
@@ -1940,6 +2129,56 @@ private final class SpacesStripReorderView: NSView {
         mouseDownPoint = local
         pressedIndex = claimableIndex(atX: local.x)
         hasCrossedHysteresis = false
+        // A plain press switches at once, not on release: the press-to-
+        // release of a click is 60–100 ms, which would all be dead time
+        // before the switch's first frame. Same rule as tab rows
+        // (`HoverableView.shouldClickOnMouseDown`): single click, no
+        // modifiers; a drag past the hysteresis still reorders.
+        activatedOnMouseDown = false
+        if event.clickCount == 1,
+           event.modifierFlags.intersection([.command, .shift, .option, .control]).isEmpty,
+           let index = pressedIndex, orderedSpaceIds.indices.contains(index) {
+            activatedOnMouseDown = true
+            AppLogDebug("[SpacesStrip] pip pressed; activating \(Int((ProcessInfo.processInfo.systemUptime - event.timestamp) * 1000))ms after the event")
+            let spaceId = orderedSpaceIds[index]
+            followPress(spaceId: spaceId, index: index, from: event.locationInWindow, in: event.window)
+            onActivate(spaceId)
+        }
+    }
+
+    /// Watches the rest of a switching press at the event level (see
+    /// `pressContinuationMonitor`): past the hysteresis it becomes a reorder
+    /// drag of `spaceId`, sourced by the strip on screen; a release ends it.
+    private func followPress(spaceId: String, index: Int, from start: CGPoint, in window: NSWindow?) {
+        endPressContinuation()
+        pressContinuationMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDragged, .leftMouseUp]) { [weak self] event in
+            guard let self else { return event }
+            guard event.window === window else { return event }
+            switch event.type {
+            case .leftMouseUp:
+                self.endPressContinuation()
+            case .leftMouseDragged:
+                guard !self.hasCrossedHysteresis else { return event }
+                let current = event.locationInWindow
+                guard abs(current.x - start.x) > self.dragThreshold
+                        || abs(current.y - start.y) > self.dragThreshold else { return event }
+                self.hasCrossedHysteresis = true
+                self.endPressContinuation()
+                let source = self.slot?.presentedSpacesStripReorderView() ?? self
+                AppLogDebug("[SpacesStrip] press became a reorder drag of \(spaceId); source on screen=\(source !== self)")
+                source.beginReorderDrag(spaceId: spaceId, at: index, with: event)
+            default:
+                break
+            }
+            return event
+        }
+    }
+
+    private func endPressContinuation() {
+        if let monitor = pressContinuationMonitor {
+            NSEvent.removeMonitor(monitor)
+            pressContinuationMonitor = nil
+        }
     }
 
     override func mouseDragged(with event: NSEvent) {
@@ -1952,11 +2191,27 @@ private final class SpacesStripReorderView: NSView {
         // must not fall back to a click and switch Spaces.
         hasCrossedHysteresis = true
         guard let index = pressedIndex, orderedSpaceIds.indices.contains(index) else { return }
-        beginReorderDrag(spaceId: orderedSpaceIds[index], at: index, with: event)
+        // A press that switched Spaces is still tracked by this view — the
+        // strip of the Space just left, hidden once the switch landed. The
+        // drag it turns into is sourced by the strip now on screen, whose
+        // view can open a dragging session and whose SwiftUI row takes the
+        // drop; the pip grid is the same in every strip, so the index and
+        // the slot rect carry over.
+        let source = (activatedOnMouseDown ? slot?.presentedSpacesStripReorderView() : nil) ?? self
+        source.beginReorderDrag(spaceId: orderedSpaceIds[index], at: index, with: event)
+    }
+
+    /// The reorder surface inside `stripRow`'s SwiftUI hierarchy.
+    static func first(in stripRow: NSView) -> SpacesStripReorderView? {
+        if let view = stripRow as? SpacesStripReorderView { return view }
+        for subview in stripRow.subviews {
+            if let found = first(in: subview) { return found }
+        }
+        return nil
     }
 
     override func mouseUp(with event: NSEvent) {
-        if !hasCrossedHysteresis,
+        if !hasCrossedHysteresis, !activatedOnMouseDown,
            let index = pressedIndex,
            orderedSpaceIds.indices.contains(index),
            slotRect(at: index).contains(convert(event.locationInWindow, from: nil)) {
@@ -1965,11 +2220,13 @@ private final class SpacesStripReorderView: NSView {
         mouseDownPoint = nil
         pressedIndex = nil
         hasCrossedHysteresis = false
+        activatedOnMouseDown = false
+        endPressContinuation()
     }
 
     // MARK: - Dragging session
 
-    private func beginReorderDrag(spaceId: String, at index: Int, with event: NSEvent) {
+    fileprivate func beginReorderDrag(spaceId: String, at index: Int, with event: NSEvent) {
         let item = NSPasteboardItem()
         // `SpaceRowDropDelegate` accepts `.text`; a string item is what
         // SwiftUI's own `NSItemProvider(object:)` vended before.
@@ -2285,8 +2542,13 @@ struct SpaceIconView: View {
 /// Space.iconName may be either an IconPicker storage value or the legacy
 /// SF Symbol id (e.g. "rectangle.stack"). Legacy symbols are resolved at view
 /// time so old rows keep rendering without a data migration.
+/// `stored` when it names a real SF Symbol, else nil so the caller draws the
+/// placeholder — an unknown name (e.g. a stray value written by agent
+/// tooling or a newer synced catalog) would otherwise render blank.
 private func systemSymbolName(for stored: String) -> String? {
-    stored.isEmpty ? nil : stored
+    guard !stored.isEmpty,
+          NSImage(systemSymbolName: stored, accessibilityDescription: nil) != nil else { return nil }
+    return stored
 }
 
 /// A pip's hover card: the Space (icon + name) as a tinted pill on the left, the
@@ -2675,5 +2937,26 @@ private struct SpaceTooltipAnchor: NSViewRepresentable {
             self.controller = controller
             self.spaceId = spaceId
         }
+    }
+}
+
+
+/// Where a strip's hosting view is, for the strip's animation decisions.
+/// Set by the sidebar that mounts the strip; nil (previews, the horizontal
+/// chip) means "always on screen".
+final class SpacesStripPresence {
+    weak var view: NSView?
+
+    /// On screen: in a window, not hidden, and not faded out by any ancestor
+    /// (a band slide fades the entering sidebar's header to alpha 0 while
+    /// its band slides in).
+    var isOnScreen: Bool {
+        guard let view, view.window != nil, !view.isHiddenOrHasHiddenAncestor else { return false }
+        var ancestor: NSView? = view
+        while let current = ancestor {
+            if current.alphaValue <= 0 { return false }
+            ancestor = current.superview
+        }
+        return true
     }
 }

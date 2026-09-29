@@ -270,7 +270,7 @@ extension AppController {
     }
     
     private var activeBrowserState: BrowserState? {
-        (NSApp.keyWindow?.windowController as? MainBrowserWindowController)?.browserState
+        (NSApp.keyWindow?.windowController as? SpaceSessionController)?.browserState
     }
     
     private var activeBrowserIsIncognito: Bool {
@@ -375,19 +375,11 @@ extension AppController {
 #if DEBUG
     @MainActor
     @objc func openImagePreviewDemo(_ sender: Any?) {
-        guard let controller = MainBrowserWindowControllersManager.shared.activeWindowController else {
-            let alert = NSAlert()
-            alert.messageText = "No Active Browser Window"
-            alert.informativeText = "Open a browser window first, then try the image preview demo again."
-            alert.addButton(withTitle: "OK")
-            alert.runModal()
-            return
-        }
-
-        controller.browserState.imagePreviewState.open(
+        let controller = ImagePreviewWindowController(
             items: ImagePreviewDebugSamples.demoItems(),
             currentIndex: 0
         )
+        controller.showWindow(sender)
     }
 #endif
     
@@ -511,7 +503,7 @@ extension AppController {
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.isAutomaticTextReplacementEnabled = false
 
-        let windowId = MainBrowserWindowControllersManager.shared.activeWindowController?.windowId ?? 0
+        let windowId = SpaceSessionControllersManager.shared.activeWindowController?.windowId ?? 0
         let samplePayload = """
         {
           "sessionId": "debug-\(UUID().uuidString.prefix(8))",
@@ -675,7 +667,7 @@ extension AppController {
     /// Static so the theme observers need not capture the controller.
     @MainActor
     private static func applyOperatingMaskPreviewPageTheme(windowId: Int) {
-        guard let themeContext = MainBrowserWindowControllersManager.shared
+        guard let themeContext = SpaceSessionControllersManager.shared
                 .getBrowserState(for: windowId)?.themeContext else { return }
         let appearance = themeContext.currentAppearance
         let color = themeContext.currentTheme.color(

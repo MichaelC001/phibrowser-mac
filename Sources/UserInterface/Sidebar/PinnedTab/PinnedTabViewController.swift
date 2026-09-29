@@ -183,9 +183,13 @@ class PinnedTabViewController: NSViewController {
         }
     }
 
-    private enum Item: Hashable {
+    enum Item: Hashable {
         case extensionItem(PinnedTabItemModel)
         case tabItem(PinnedTabSnapshotItem)
+
+        static func tab(_ tab: Tab) -> Item {
+            .tabItem(PinnedTabSnapshotItem(tab: tab))
+        }
         case splitItem(PinnedSplitGroupItem)
 
         func hash(into hasher: inout Hasher) {
@@ -210,6 +214,22 @@ class PinnedTabViewController: NSViewController {
                 return a == b
             case (.splitItem(let a), .splitItem(let b)):
                 return a == b
+            default:
+                return false
+            }
+        }
+
+        /// Diffable identifiers alone do not detect replacement Tab objects
+        /// or changed extension presentation models under the same ID.
+        func hasSameContent(as other: Item) -> Bool {
+            guard self == other else { return false }
+            switch (self, other) {
+            case (.tabItem(let a), .tabItem(let b)):
+                return a.tab === b.tab
+            case (.splitItem(let a), .splitItem(let b)):
+                return a.leftTab === b.leftTab && a.rightTab === b.rightTab
+            case (.extensionItem(let a), .extensionItem(let b)):
+                return a.title == b.title && a.tooltip == b.tooltip && a.icon === b.icon
             default:
                 return false
             }
@@ -368,7 +388,7 @@ class PinnedTabViewController: NSViewController {
 
     private func activate() {
         guard isActive == false else {
-            syncCurrentState()
+            syncCurrentState(skippingUnchangedSnapshot: true)
             return
         }
         isActive = true
@@ -517,16 +537,16 @@ class PinnedTabViewController: NSViewController {
         clearInactiveContent()
     }
 
-    private func syncCurrentState() {
+    private func syncCurrentState(skippingUnchangedSnapshot: Bool = false) {
         guard let browserState else { return }
         pinnedTabs = browserState.pinnedTabs
         pinnedExtensionItems = visibleExtensionItems(currentPinnedExtensionsForDisplay())
-        applySnapshot(animatingDifferences: false)
+        applySnapshot(animatingDifferences: false, skippingUnchangedSnapshot: skippingUnchangedSnapshot)
         updateEmptyViewVisibility(isDraggingTab: browserState.isDraggingTab)
         updateAllItemsSelectionState(browserState.focusingTab)
     }
 
-    /// Synchronously re-applies the current data and forces the pending
+    /// Synchronously reconciles changed data and forces the pending
     /// layout so the band is fully formed before a restored window fronts.
     /// The restore front happens in the same main-thread turn as the state
     /// application (T3B), while the collection view materializes cells only
@@ -535,7 +555,7 @@ class PinnedTabViewController: NSViewController {
     /// and fills one cycle later.
     func formRestoredContentNow() {
         guard isActive, !isDragging else { return }
-        syncCurrentState()
+        syncCurrentState(skippingUnchangedSnapshot: true)
         view.layoutSubtreeIfNeeded()
     }
 
@@ -649,8 +669,18 @@ class PinnedTabViewController: NSViewController {
         // `splits`, and `pinnedTabs`. Snapshot rebuilds fire on every
         // `$pinnedTabs` / `$splits` / `$focusingTab` emission, so the
         // savings compound during normal interaction.
-        let pinnedByDB: [String: Tab] = Dictionary(uniqueKeysWithValues:
-            sourcePinnedTabs.compactMap { tab in tab.guidInLocalDB.map { ($0, tab) } }
+        // `uniquingKeysWith:` rather than `uniqueKeysWithValues:`. `guidInLocalDB` comes
+        // from a store column with no uniqueness constraint, so two pinned rows can end
+        // up sharing one guid after a bad write; `uniqueKeysWithValues:` traps on the
+        // duplicate key and takes the whole app down while the sidebar is merely
+        // redrawing (Mac B, 2026-09-14 23:49). Keep the first: iteration follows
+        // `pinnedTabs` order, the same "first row wins" rule every guid-addressed
+        // reader in the store already uses. The store repairs such rows on its own
+        // (`LocalStore.healDuplicatePinnedTabRows()`); this keeps the window up until
+        // it does.
+        let pinnedByDB: [String: Tab] = Dictionary(
+            sourcePinnedTabs.compactMap { tab in tab.guidInLocalDB.map { ($0, tab) } },
+            uniquingKeysWith: { first, _ in first }
         )
         let liveByDB: [String: Tab] = Dictionary(
             state.tabs.compactMap { tab in tab.guidInLocalDB.map { ($0, tab) } },
@@ -783,15 +813,48 @@ class PinnedTabViewController: NSViewController {
         state.pinnedSplitDBPair(forPinnedTab: tab) == nil ? 1 : 2
     }
 
-    private func applySnapshot(animatingDifferences: Bool = true, completion: (() -> Void)? = nil) {
+    /// Drops repeated item identifiers, keeping the first.
+    ///
+    /// `NSDiffableDataSourceSnapshot` requires identifiers to be unique across the
+    /// **whole** snapshot, not per section, and it does not fail politely: a repeat
+    /// throws out of Foundation's ordered-set diffing with an uncaught
+    /// `NSInvalidArgumentException`, which is a hard crash. Every producer above is
+    /// supposed to guarantee uniqueness already, so a non-zero `dropped` here means
+    /// one of them is wrong — log it and render the sidebar anyway. R12: counts only.
+    /// `static` and not `private` so `PinnedTabSnapshotIdentityTests` can drive it
+    /// without standing up a collection view; it reads nothing off `self`.
+    static func deduplicatedItems(_ items: [Item], seen: inout Set<Item>, dropped: inout Int) -> [Item] {
+        var unique: [Item] = []
+        unique.reserveCapacity(items.count)
+        for item in items {
+            guard seen.insert(item).inserted else { dropped += 1; continue }
+            unique.append(item)
+        }
+        return unique
+    }
+
+    private func applySnapshot(animatingDifferences: Bool = true,
+                               skippingUnchangedSnapshot: Bool = false,
+                               completion: (() -> Void)? = nil) {
         var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
         snapshot.appendSections(Section.allCases)
-        if !pinnedExtensionItems.isEmpty {
-            snapshot.appendItems(pinnedExtensionItems.map { .extensionItem($0) }, toSection: .extensions)
+        // One `seen` set across both sections: the uniqueness requirement spans the
+        // whole snapshot, not each section.
+        var seen = Set<Item>()
+        var dropped = 0
+        let extensionItems = Self.deduplicatedItems(pinnedExtensionItems.map { .extensionItem($0) },
+                                                   seen: &seen, dropped: &dropped)
+        if !extensionItems.isEmpty {
+            snapshot.appendItems(extensionItems, toSection: .extensions)
         }
-        let tabSectionItems = buildTabSectionItems()
+        let tabSectionItems = Self.deduplicatedItems(buildTabSectionItems(),
+                                                    seen: &seen, dropped: &dropped)
         if !tabSectionItems.isEmpty {
             snapshot.appendItems(tabSectionItems, toSection: .tabs)
+        }
+        if dropped > 0 {
+            AppLogWarn("[PinnedTab] dropped \(dropped) duplicate item identifier(s) "
+                       + "before applying the sidebar snapshot")
         }
 
         var newSplitPairs: [String: String] = [:]
@@ -811,6 +874,16 @@ class PinnedTabViewController: NSViewController {
             snapshot.reloadItems(splitItemsToReconfigure)
         }
         lastSplitItemPairs = newSplitPairs
+
+        if skippingUnchangedSnapshot, splitItemsToReconfigure.isEmpty {
+            let current = dataSource.snapshot()
+            if current.sectionIdentifiers == snapshot.sectionIdentifiers,
+               current.itemIdentifiers.count == snapshot.itemIdentifiers.count,
+               zip(current.itemIdentifiers, snapshot.itemIdentifiers).allSatisfy({ $0.hasSameContent(as: $1) }) {
+                completion?()
+                return
+            }
+        }
 
         let hasAnyContent = !pinnedTabs.isEmpty || !pinnedExtensionItems.isEmpty
         let shouldAnimate = animatingDifferences && (hasAppliedInitialContentSnapshot || !hasAnyContent)
@@ -920,7 +993,8 @@ class PinnedTabViewController: NSViewController {
         let tabItemCount = buildTabSectionItems().count
         customLayout.configure(parentWidth: parentWidth, tabCount: tabItemCount, extensionCount: pinnedExtensionItems.count)
 
-        collectionView.collectionViewLayout?.invalidateLayout()
+        // configure invalidates when width or item counts change. Repeating
+        // that invalidation here forces work even for an unchanged shelf.
         collectionView.layoutSubtreeIfNeeded()
 
         let newHeight = customLayout.contentHeight
@@ -974,7 +1048,7 @@ class PinnedTabViewController: NSViewController {
             handleExtensionSecondaryClicked(item)
             return
         }
-        let windowId = MainBrowserWindowControllersManager.shared.activeWindowController?.browserState.windowId
+        let windowId = SpaceSessionControllersManager.shared.activeWindowController?.browserState.windowId
         ChromiumLauncher.sharedInstance().bridge?.triggerExtension(
             withId: item.id,
             anchorRect: ExtensionPopupAnchor.rectOfView(view),
@@ -984,7 +1058,7 @@ class PinnedTabViewController: NSViewController {
 
     private func handleExtensionSecondaryClicked(_ item: PinnedTabItemModel) {
         let point = ExtensionPopupAnchor.mouseFallback()
-        let windowId = MainBrowserWindowControllersManager.shared.activeWindowController?.browserState.windowId
+        let windowId = SpaceSessionControllersManager.shared.activeWindowController?.browserState.windowId
         ChromiumLauncher.sharedInstance().bridge?.triggerExtensionContextMenu(
             withId: item.id,
             pointInScreen: point,
@@ -2015,7 +2089,7 @@ extension PinnedTabViewController {
     
     private func sourceBrowserState(for pasteboard: NSPasteboard) -> BrowserState? {
         guard let sourceId = dragSourceWindowId(from: pasteboard) else { return nil }
-        return MainBrowserWindowControllersManager.shared.getBrowserState(for: sourceId)
+        return SpaceSessionControllersManager.shared.getBrowserState(for: sourceId)
     }
     
     private func isCrossWindowDrag(_ pasteboard: NSPasteboard) -> Bool {

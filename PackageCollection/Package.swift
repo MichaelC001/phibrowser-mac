@@ -24,7 +24,8 @@ let package = Package(
         .package(url: "https://github.com/getsentry/sentry-cocoa", exact: "9.25.0"),
         .package(url: "https://github.com/airbnb/lottie-spm.git", exact: "4.5.2"),
         .package(url: "https://github.com/PostHog/posthog-ios.git", exact: "3.53.1"),
-        .package(url: "https://github.com/exyte/SVGView.git", exact: "1.0.6"),
+        .package(url: "https://github.com/apple/swift-protobuf.git", exact: "1.38.1"),
+        .package(url: "https://github.com/LiYanan2004/MarkdownView.git", exact: "3.0.0"),
 
     ],
     targets: [
@@ -42,7 +43,8 @@ let package = Package(
                 .product(name: "Sentry", package: "sentry-cocoa"),
                 .product(name: "Lottie", package: "lottie-spm"),
                 .product(name: "PostHog", package: "posthog-ios"),
-                .product(name: "SVGView", package: "SVGView"),
+                .product(name: "SwiftProtobuf", package: "swift-protobuf"),
+                .product(name: "MarkdownView", package: "MarkdownView"),
             ])
     ]
 )

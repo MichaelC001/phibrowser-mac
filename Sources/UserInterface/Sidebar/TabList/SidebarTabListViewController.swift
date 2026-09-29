@@ -60,6 +60,26 @@ enum SidebarBookmarkFolderDropResolver {
         return isUpperHalf ? .insertBeforeFolder : .insertAfterFolder
     }
 
+    /// Shared AppKit adapter for Sidebar and bookmark-only management outlines.
+    static func remappedTarget(folder: Bookmark, outlineView: NSOutlineView,
+                               locationInWindow: NSPoint, proposedChildIndex: Int,
+                               siblings: [SidebarItem]) -> (item: Any?, childIndex: Int)? {
+        let row = outlineView.row(forItem: folder)
+        guard folder.isFolder, row >= 0 else { return nil }
+        let location = outlineView.convert(locationInWindow, from: nil)
+        let rect = outlineView.rect(ofRow: row)
+        let target = resolve(isExpanded: outlineView.isItemExpanded(folder),
+                             isUpperHalf: outlineView.isFlipped ? location.y < rect.midY : location.y > rect.midY,
+                             isDropOnItem: proposedChildIndex == NSOutlineViewDropOnItemIndex)
+        switch target {
+        case .keepOriginal, .dropOnFolder: return nil
+        case .insertAsFirstChild: return (folder, 0)
+        case .insertBeforeFolder, .insertAfterFolder:
+            guard let index = siblings.firstIndex(where: { $0.id == folder.id }) else { return nil }
+            return (folder.parent, index + (target == .insertAfterFolder ? 1 : 0))
+        }
+    }
+
     static func shouldHighlightFolder(isExpanded: Bool, isDropOnItem: Bool) -> Bool {
         !isExpanded && isDropOnItem
     }
@@ -362,6 +382,22 @@ class SidebarTabListViewController: NSViewController {
         outlineView.setDraggingSourceOperationMask([.move, .copy], forLocal: false)
         outlineView.registerForDraggedTypes([.pinnedTab, .normalTab, .normalTabs, .phiBookmark, .bookmarks, .tabGroup])
         outlineView.phiOutlineDelegate = self
+        outlineView.mouseDownAction = { [weak self] row, event in
+            guard let self,
+                  event.clickCount == 1,
+                  event.modifierFlags.intersection([.command, .shift, .option, .control]).isEmpty,
+                  !self.browserState.multiSelection.isActive,
+                  let item = self.outlineView.item(atRow: row) as? SidebarItem else { return false }
+            if item.itemType == .tab {
+                self.outlineView(self.outlineView, didClickRow: row, modifierFlags: event.modifierFlags)
+                return true
+            }
+            guard let bookmark = self.bookmarkForRow(row), !bookmark.isFolder,
+                  !bookmark.isEditing,
+                  !self.shouldStartBookmarkRename(for: bookmark, event: event) else { return false }
+            self.handleOutlineClick(row: row, modifierFlags: event.modifierFlags)
+            return true
+        }
         
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("SidebarColumn"))
         column.isEditable = false
@@ -504,6 +540,30 @@ class SidebarTabListViewController: NSViewController {
         tabSectionController.browserState = browserState
         bookmarkSectionController.setActive(true)
         refreshAllItems()
+    }
+
+    /// Materialize the native rows while the incoming sidebar is stationary.
+    /// Preserve the restore gate: it holds an existing projection until the
+    /// bookmark store arrives, while New Tab is already in that projection.
+    func prepareSpaceSwitchBand(timing: SpaceSwitchTiming? = nil) {
+        timing?.mark("rows.activate.begin")
+        loadViewIfNeeded()
+        if !isActive { setActive(true) }
+        timing?.mark("rows.activate.end")
+        _ = refreshAllItems(animated: false)
+        timing?.mark("rows.refresh.end")
+        view.layoutSubtreeIfNeeded()
+        outlineView.layoutSubtreeIfNeeded()
+        timing?.mark("rows.layout.end")
+        let visibleRows = outlineView.rows(in: outlineView.visibleRect)
+        if visibleRows.location != NSNotFound {
+            for row in visibleRows.location..<NSMaxRange(visibleRows) {
+                _ = outlineView.view(atColumn: 0, row: row, makeIfNecessary: true)
+            }
+        }
+        timing?.mark("rows.realize.end")
+        outlineView.displayIfNeeded()
+        timing?.mark("rows.display.end")
     }
 
     private func deactivate() {
@@ -789,9 +849,18 @@ class SidebarTabListViewController: NSViewController {
 
     private func reconcileTabGroupRowHeightsWithoutAnimation() {
         var groupRows = IndexSet()
-        for row in 0..<outlineView.numberOfRows
-            where outlineView.item(atRow: row) is TabGroupSidebarItem {
-            groupRows.insert(row)
+        for row in 0..<outlineView.numberOfRows {
+            guard let item = outlineView.item(atRow: row) as? TabGroupSidebarItem else { continue }
+            let expectedHeight = self.outlineView(outlineView, heightOfRowByItem: item)
+                + outlineView.intercellSpacing.height
+            let cachedHeight = outlineView.rect(ofRow: row).height
+            if abs(cachedHeight - expectedHeight) > 0.5 {
+                groupRows.insert(row)
+                AppLogDebug(
+                    "[TAB_GROUP_GAP] reconciling cached height row=\(row) " +
+                        "height=\(cachedHeight)->\(expectedHeight)"
+                )
+            }
         }
         guard !groupRows.isEmpty else { return }
         NSAnimationContext.runAnimationGroup { context in
@@ -906,16 +975,19 @@ class SidebarTabListViewController: NSViewController {
     }
 
     @objc private func outlineViewClicked(_ sender: NSOutlineView) {
-        let clickedRow = sender.clickedRow
+        guard !outlineView.handledMouseDownAction else { return }
+        let modifierFlags = (sender as? SideBarOutlineView)?.consumeMouseDownModifierFlags()
+            ?? NSApp.currentEvent?.modifierFlags
+            ?? []
+        handleOutlineClick(row: sender.clickedRow, modifierFlags: modifierFlags)
+    }
+
+    private func handleOutlineClick(row clickedRow: Int, modifierFlags: NSEvent.ModifierFlags) {
         guard clickedRow != -1 else {
             handleSidebarBlankAreaClick()
             return
         }
-        cancelTabPreview(at: clickedRow, in: sender)
-
-        let modifierFlags = (sender as? SideBarOutlineView)?.consumeMouseDownModifierFlags()
-            ?? NSApp.currentEvent?.modifierFlags
-            ?? []
+        cancelTabPreview(at: clickedRow, in: outlineView)
         let isCommandClick = modifierFlags.contains(.command)
         let isShiftClick = modifierFlags.contains(.shift)
         if modifierFlags.isPureOptionClick,
@@ -3417,7 +3489,7 @@ extension SidebarTabListViewController: NSOutlineViewDataSource {
         else { return }
 
         let pt = CGPoint(x: screenPoint.x, y: screenPoint.y)
-        let overPhiTabChrome = MainBrowserWindowControllersManager.shared.getAllWindows()
+        let overPhiTabChrome = SpaceSessionControllersManager.shared.getAllWindows()
             .contains { $0.containsTabDragBoundary(at: pt) }
         guard !overPhiTabChrome else { return }
 
@@ -3541,40 +3613,12 @@ extension SidebarTabListViewController: NSOutlineViewDataSource {
             return nil
         }
         
-        let row = outlineView.row(forItem: folder)
-        guard row >= 0 else { return nil }
-        let isExpanded = outlineView.isItemExpanded(folder)
-        
-        let locationInOutline = outlineView.convert(info.draggingLocation, from: nil)
-        let rowRect = outlineView.rect(ofRow: row)
-
-        let target = SidebarBookmarkFolderDropResolver.resolve(
-            isExpanded: isExpanded,
-            isUpperHalf: outlineView.isFlipped
-                ? locationInOutline.y < rowRect.midY
-                : locationInOutline.y > rowRect.midY,
-            isDropOnItem: proposedChildIndex == NSOutlineViewDropOnItemIndex
-        )
-
-        switch target {
-        case .keepOriginal, .dropOnFolder:
-            return nil
-        case .insertAsFirstChild:
-            return (item: folder, childIndex: 0)
-        case .insertBeforeFolder, .insertAfterFolder:
-            let parentItem = folder.parent
-            let siblings = dataSourceChildren(of: parentItem)
-            guard let folderIndex = siblings.firstIndex(where: { $0.id == folder.id }) else {
-                return nil
-            }
-
-            let targetIndex = target == .insertBeforeFolder
-                ? folderIndex
-                : folderIndex + 1
-            return (item: parentItem, childIndex: targetIndex)
-        }
+        return SidebarBookmarkFolderDropResolver.remappedTarget(
+            folder: folder, outlineView: outlineView, locationInWindow: info.draggingLocation,
+            proposedChildIndex: proposedChildIndex, siblings: dataSourceChildren(of: folder.parent))
     }
     
+
     private func dataSourceChildren(of parent: SidebarItem?) -> [SidebarItem] {
         if let parent {
             guard parent.isExpandable else { return [] }
@@ -3604,7 +3648,7 @@ extension SidebarTabListViewController: NSOutlineViewDataSource {
     
     private func sourceBrowserState(for pasteboard: NSPasteboard) -> BrowserState? {
         guard let sourceId = dragSourceWindowId(from: pasteboard) else { return nil }
-        return MainBrowserWindowControllersManager.shared.getBrowserState(for: sourceId)
+        return SpaceSessionControllersManager.shared.getBrowserState(for: sourceId)
     }
     
     private func isCrossWindowDrag(_ pasteboard: NSPasteboard) -> Bool {
@@ -3653,7 +3697,7 @@ extension SidebarTabListViewController: NSOutlineViewDataSource {
     }
 
     private func tabIsInSplitInAnyWindow(_ tab: Tab) -> Bool {
-        MainBrowserWindowControllersManager.shared.getAllWindows().contains {
+        SpaceSessionControllersManager.shared.getAllWindows().contains {
             $0.browserState.splitGroup(forTabId: tab.guid) != nil
         }
     }
@@ -4106,6 +4150,10 @@ extension SidebarTabListViewController: TabSectionDelegate {
                     change.affectedGroupTokens,
                     animated: !self.suppressesGroupUpdateAnimations
                 )
+                // Off-screen groups have no cell to send a height callback.
+                // Membership, collapse, and split changes can preserve every
+                // root ID while changing their cached height and all later rows.
+                self.reconcileTabGroupRowHeightsWithoutAnimation()
                 self.pushPaneUpdatesToSplitPairCells(change.affectedSplitIds)
                 self.updateNewTabCleanupVisibility()
                 self.clearFloatingProxyIfTabClosed()

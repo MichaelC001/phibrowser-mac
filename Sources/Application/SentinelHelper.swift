@@ -502,10 +502,15 @@ enum SentinelHelper {
         AppLogInfo("Posted account deleted event (requestID \(event.requestID), bundleID \(identifier))")
     }
 
-    static func loginItemIdentifier() -> String {
-        let mainBundleID = Bundle.main.bundleIdentifier?.lowercased() ?? ""
+    static func loginItemIdentifier(
+        browserBundleIdentifier: String? = Bundle.main.bundleIdentifier
+    ) -> String {
+        let mainBundleID = browserBundleIdentifier?.lowercased() ?? ""
         if mainBundleID.contains("canary") {
             return "com.phibrowser.canary.Sentinel"
+        }
+        if mainBundleID.contains("dev") {
+            return "com.phibrowser.dev.Sentinel"
         }
         return "com.phibrowser.Sentinel"
     }
@@ -644,6 +649,24 @@ enum SentinelHelper {
             .appendingPathComponent("Library", isDirectory: true)
             .appendingPathComponent("Logs", isDirectory: true)
             .appendingPathComponent(sentinelLogDirName(), isDirectory: true)
+    }
+
+    /// Account-scoped logs only; never use the account storage root as an archive source.
+    static func sentinelServiceLogsDirectoryURL(
+        auth0Subject: String,
+        browserBundleIdentifier: String = Bundle.main.bundleIdentifier ?? "",
+        applicationSupportURL: URL = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support", isDirectory: true)
+    ) -> URL? {
+        guard !auth0Subject.isEmpty else { return nil }
+        var safeSubject = ServiceBrokerSocketPath.sanitizePathComponent(auth0Subject)
+        if safeSubject == "." || safeSubject == ".." { safeSubject = "_" }
+        return applicationSupportURL
+            .appendingPathComponent(ServiceBrokerSocketPath.sentinelBundleIdentifier(
+                browserBundleIdentifier: browserBundleIdentifier
+            ), isDirectory: true)
+            .appendingPathComponent(safeSubject, isDirectory: true)
+            .appendingPathComponent("state/logs", isDirectory: true)
     }
 
     private static func bootLogURL() -> URL {

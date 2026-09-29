@@ -26,10 +26,12 @@ final class SpacesStripHostingView: ThemedHostingView {
     /// The stand-in chip currently flying, nil when idle. One flight at a
     /// time: a new begin sweeps the previous one first.
     private var chipFlightLayer: CALayer?
+    /// The Space the live flight is heading for.
+    private var chipFlightTargetId: String?
 
     /// Keep AppKit's window-background drag off the strip row. The main window
     /// sets `isMovableByWindowBackground = true`
-    /// (`MainBrowserWindowController.swift`), which makes a mouse-drag over the
+    /// (`SpaceSessionController.swift`), which makes a mouse-drag over the
     /// row a window move unless the view AppKit hit-tests vetoes it.
     ///
     /// This veto works and is what AppKit consults — measured on macOS 15.6
@@ -45,28 +47,75 @@ final class SpacesStripHostingView: ThemedHostingView {
     /// `NSThemeFrame` — returns true, and the window still stayed put.
     override var mouseDownCanMoveWindow: Bool { false }
 
+    /// The header hides the row while there is a single Space. Coming back,
+    /// its width is unchanged, so no geometry change re-anchors the viewport;
+    /// tell the strip instead.
+    override var isHidden: Bool {
+        didSet {
+            if oldValue, !isHidden { stripGeometry?.revealed.send() }
+        }
+    }
+
     override func scrollWheel(with event: NSEvent) {
         if wheelTracker?.handle(event) == true { return }
         super.scrollWheel(with: event)
     }
 
+    /// Publish the new icon with the old selection before preparation can
+    /// block the main thread. Layout alone does not submit its pixels.
+    func prepareSpacesSelection(fromSpaceId: String, toSpaceId: String) {
+        cancelSpacesChipFlight()
+        stripGeometry?.pendingSelection = .init(source: fromSpaceId, target: toSpaceId)
+        needsLayout = true
+        layoutSubtreeIfNeeded()
+        displayIfNeeded()
+        CATransaction.flush()
+    }
+
+    /// Called on the band's animation clock, after the incoming rows exist.
+    /// Overflow keeps the SwiftUI selection/viewport animation instead.
+    func beginPreparedSpacesChipFlight(toSpaceId: String, pipCount: Int,
+                                      duration: TimeInterval) {
+        guard let pending = stripGeometry?.pendingSelection,
+              pending.target == toSpaceId else { return }
+        stripGeometry?.pendingSelection = nil
+        _ = beginSpacesChipFlight(fromSpaceId: pending.source, toSpaceId: toSpaceId,
+                                  pipCount: pipCount, duration: duration)
+    }
+
     /// Flies the glass chip from the source pip to the target pip as an
     /// EXPLICIT Core Animation layer animation — the one animation kind that
     /// keeps playing in the render server while the main thread is blocked
-    /// (the materialize rebuild, the spawn's createBrowser; SwiftUI and
-    /// NSAnimationContext view animations both freeze there). The SwiftUI
-    /// chip is concealed in the same runloop turn, so the same CATransaction
-    /// commits the swap — no doubled and no missing chip frame. The stand-in
-    /// is swept by `cancelSpacesChipFlight` when the switch resolves.
+    /// (the dormant session's tree bind, the spawn's createBrowser, the
+    /// materialize rebuild; SwiftUI and NSAnimationContext view animations
+    /// all freeze there). Started by the slot in the same runloop turn as
+    /// the `activeSpaceId` flip, and the SwiftUI chip is concealed here, so
+    /// one CATransaction commits the swap — no doubled and no missing chip
+    /// frame, and no SwiftUI chip that has already moved for the flight to
+    /// restart behind. The stand-in sweeps itself when it lands (the SwiftUI
+    /// chip is at the target by then), or when a new flight begins.
     ///
     /// Returns false — with zero side effects — when the flight can't run
-    /// (no geometry published yet, either pip not wholly inside the
-    /// viewport's clip frame, degenerate input); the strip then behaves
-    /// exactly as it did before this feature existed.
+    /// (the `pipCount` pips overflow the row, no geometry published yet,
+    /// either pip not wholly inside the viewport's clip frame, degenerate
+    /// input); the strip then behaves exactly as it did before this
+    /// feature existed.
     func beginSpacesChipFlight(fromSpaceId: String,
                                toSpaceId: String,
+                               pipCount: Int,
                                duration: TimeInterval) -> Bool {
         guard let geometry = stripGeometry, let hostLayer = layer else { return false }
+        // Only a row that shows every pip holds still. An overflowing row
+        // re-centers on the new pip and slides under the stand-in, which is
+        // not part of it; the SwiftUI chip, which rides the row, keeps those
+        // switches.
+        guard SpacesStripView.allPipsFit(count: pipCount,
+                                         availableWidth: geometry.rowWidth) else { return false }
+        // A Space created in this same turn (a new Incognito Space) has no
+        // pip laid out yet; lay the strip out now so its frame is published.
+        if geometry.pipFrames[toSpaceId] == nil {
+            layoutSubtreeIfNeeded()
+        }
         // Eligibility first, sweep second: an ineligible begin must leave a
         // flight already on this strip untouched, or "returns false with
         // zero side effects" would hold only while no flight is live.
@@ -77,6 +126,7 @@ final class SpacesStripHostingView: ThemedHostingView {
             viewportFrame: geometry.viewportFrame,
             duration: duration) else { return false }
         cancelSpacesChipFlight()
+        chipFlightTargetId = toSpaceId
         let from = Self.chipLayerRect(endpoints.from, boundsHeight: bounds.height,
                                       isFlipped: isFlipped)
         let to = Self.chipLayerRect(endpoints.to, boundsHeight: bounds.height,
@@ -85,26 +135,51 @@ final class SpacesStripHostingView: ThemedHostingView {
         effectiveAppearance.performAsCurrentDrawingAppearance {
             fill = NSColor(resource: .sidebarTabSelected).cgColor
         }
+        // The completion block covers the slide added inside this group:
+        // it sweeps the stand-in once it lands, unless a newer flight has
+        // replaced it.
+        weak var landing: CALayer?
+        CATransaction.begin()
+        CATransaction.setCompletionBlock { [weak self] in
+            guard let self, let landing, self.chipFlightLayer === landing else { return }
+            self.cancelSpacesChipFlight()
+        }
         let chip = Self.makeChipFlightLayer(from: from, to: to, duration: duration,
                                             fillColor: fill)
+        landing = chip
         // Below the SwiftUI content, like the chip it stands in for — the
         // pips draw on top of it (zPosition < 0 sublayers composite under
         // the hosting view's SwiftUI layers; probed for the design).
         hostLayer.insertSublayer(chip, at: 0)
+        CATransaction.commit()
         chipFlightLayer = chip
         geometry.isChipConcealed = true
         return true
     }
 
-    /// Sweeps the stand-in and restores the SwiftUI chip. Idempotent — wired
-    /// into the switch's shared restoreLeaving, which every resolution
-    /// (reveal, failure, supersession) funnels through.
+    /// Sweeps the stand-in and restores the SwiftUI chip. Idempotent — run
+    /// when the flight lands and ahead of every new flight.
     func cancelSpacesChipFlight() {
+        if stripGeometry?.pendingSelection != nil {
+            stripGeometry?.pendingSelection = nil
+        }
         chipFlightLayer?.removeFromSuperlayer()
         chipFlightLayer = nil
+        chipFlightTargetId = nil
         if let geometry = stripGeometry, geometry.isChipConcealed {
             geometry.isChipConcealed = false
         }
+    }
+
+    /// Sweeps the flight only while it is still heading for `toSpaceId`:
+    /// a switch that fails or is forced to settle drops its own stand-in,
+    /// never the one a newer switch has started since.
+    func cancelSpacesChipFlight(toSpaceId: String) {
+        if stripGeometry?.pendingSelection?.target == toSpaceId {
+            stripGeometry?.pendingSelection = nil
+        }
+        guard chipFlightTargetId == toSpaceId else { return }
+        cancelSpacesChipFlight()
     }
 
     /// Resolves a flight's endpoints, or nil ("don't fly") unless both pips
@@ -185,7 +260,13 @@ final class SpacesStripHostingView: ThemedHostingView {
     }
 }
 
-class SidebarViewController: NSViewController {
+class SidebarViewController: NSViewController, BrowserThemeContextProviding {
+    /// Hosted mode moves this view into the shell's sidebar column, whose
+    /// host answers with the presented session's theme. Every Space's sidebar
+    /// is resident there, so answer with this Space's own context — as the
+    /// floating sidebar does — or rows built while it is hidden take the
+    /// theme of the Space on screen.
+    var providedBrowserThemeContext: BrowserThemeContext? { state.themeContext }
     private static let defaultFavoriteHeight: CGFloat = 0
     private static let pinnedHeightPersistenceThreshold: CGFloat = 20
     private static let pinnedHeightCacheKey = "Sidebar.pinnedTabsContainerHeight.v1"
@@ -193,6 +274,9 @@ class SidebarViewController: NSViewController {
     /// Main vertical stack view for the sidebar layout.
     private lazy var mainStackView: NSStackView = {
         let stackView = NSStackView()
+        // Retain the backing tree across switches. Toggling the parent layer
+        // rebuilds and redraws every row even when resident content is unchanged.
+        stackView.wantsLayer = true
         stackView.orientation = .vertical
         stackView.alignment = .centerX
         stackView.spacing = 0
@@ -299,42 +383,34 @@ class SidebarViewController: NSViewController {
     /// state, then reapplies it when the sidebar content becomes interactive.
     private var shouldShowMessageCard = false
 
-    /// Hosting controller for the Spaces strip — placed just above the bottom
-    /// toolbar so the row of Space pips is the last per-Space element before
-    /// the global actions. Reports its intrinsic height so the strip can grow
-    /// to multiple rows when pips wrap.
-    ///
-    /// The strip is bound to its hosting window's `SpaceWindowSlot` so that
-    /// clicks here only switch THIS window's active Space. The slot is
-    /// resolved via `state.windowController?.slot`; for the early-init case
-    /// where the window controller isn't wired up yet (BrowserState is
-    /// constructed before the controller assigns itself in
-    /// `MainBrowserWindowController.init`), fall back to the manager's
-    /// `keySlot` as a stand-in — at cold start that IS this window's own slot.
-    /// A stand-in only: `init` wires the controller before `setupWindow()`
-    /// loads this view tree, so the first resolution is the one that answers
-    /// in practice.
-    /// The slot driving this sidebar's Spaces strip, resolved once so the
-    /// create-Space overlay can flip the same instance's `isCreatingSpace`
-    /// flag that the strip observes (see `showCreateSpaceOverlay`).
-    ///
-    /// Nil when neither resolves, and then no strip is mounted at all: a
-    /// window with no slot must NOT mint one just to have something to bind
-    /// to. A slot minted here registers no window, so `slots` never empties
-    /// again and every later Dock reopen bypasses
-    /// `reopenOnPersistedSpaceIfWindowless` and falls back to Chromium's own
-    /// handler, landing on the wrong Space until the app restarts (see
-    /// `SpaceManager.reclaimsMintedSlot`). `participatesInSpaces` does not
-    /// keep that out on its own: a shadow window passes it (it is not
-    /// incognito) and builds this sidebar from `viewDidLoad`, which runs even
-    /// for a window that is never shown.
-    private lazy var spacesStripSlot: SpaceWindowSlot? = state.windowController?.slot
-        ?? SpaceManager.shared.keySlot
+    /// Prewarmed content has no owner yet. Bind once the real session is
+    /// attached; borrowing the key slot would route clicks to another shell.
+    private var spacesStripSlot: SpaceWindowSlot? { state.windowController?.slot }
+    private var spacesStripHostingView: SpacesStripHostingView?
 
-    private lazy var spacesStripHostingView: SpacesStripHostingView? = {
-        guard let slot = spacesStripSlot else { return nil }
+    /// Follows the active Space of the slot this sidebar belongs to. Mirrors
+    /// the SpacesStripView fallback chain so the gradient still resolves
+    /// before SpaceSessionController has wired up its slot — a prewarmed
+    /// spare is built before it has one — and re-binds once it has, since the
+    /// key window's slot it fell back to may be another window's.
+    private func bindSpaceTintToSlot() {
+        let slot = state.windowController?.slot ?? SpaceManager.shared.keySlot
+        guard slot !== spaceTintSlot || spaceTintCancellable == nil else { return }
+        spaceTintSlot = slot
+        spaceTintCancellable = slot?.$activeSpaceId
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.updateSpaceTintGradient() }
+    }
+    private weak var spaceTintSlot: SpaceWindowSlot?
+    private var spaceTintCancellable: AnyCancellable?
+
+    func bindSpaceStripToSession() {
+        bindSpaceTintToSlot()
+        guard state.participatesInSpaces, spacesStripHostingView == nil,
+              let slot = spacesStripSlot else { return }
         let wheelTracker = SpacesStripWheelTracker()
         let stripGeometry = SpacesStripGeometry()
+        let presence = SpacesStripPresence()
         let hostingView = SpacesStripHostingView(
             rootView: SpacesStripView(
                 manager: SpaceManager.shared,
@@ -342,18 +418,23 @@ class SidebarViewController: NSViewController {
                 rowHeight: SpacesStripView.sidebarHeight,
                 resolveOwnerController: { [weak state] in state?.windowController },
                 wheelTracker: wheelTracker,
-                stripGeometry: stripGeometry
+                stripGeometry: stripGeometry,
+                presence: presence
             ),
             themeSource: state.themeContext
         )
+        presence.view = hostingView
         hostingView.wheelTracker = wheelTracker
         hostingView.stripGeometry = stripGeometry
         if #available(macOS 13.0, *) {
             hostingView.sizingOptions = []
         }
         hostingView.translatesAutoresizingMaskIntoConstraints = false
-        return hostingView
-    }()
+        spacesStripHostingView = hostingView
+        headerView.mountSpaceSwitch(hostingView)
+        spacesStripRowView = hostingView
+        updateHeaderHeight()
+    }
 
     /// The Spaces strip row's AppKit view, resolved live by the slot's
     /// pointer-vs-row test (`SpaceWindowSlot.stripRowContainsPointer()`) so
@@ -404,12 +485,21 @@ class SidebarViewController: NSViewController {
     private var lastPersistedFavoriteHeight: CGFloat?
     private var sidebarTrackingArea: NSTrackingArea?
 
-    /// Swipe-to-switch-Space gesture state (see `SpaceSwipeTracker`).
-    private let spaceSwipe = SpaceSwipeTracker()
     
     init(browserState: BrowserState) {
         self.state = browserState
         super.init(nibName: nil, bundle: nil)
+    }
+
+    /// Whether this sidebar paints its own vibrancy backdrop and tint. A
+    /// hosted session's sidebar sits on the shell column's backdrop
+    /// (`ShellSidebarHostViewController`) and paints none; a standalone
+    /// window's sidebar paints its own. Set once by `MainSplitViewController`.
+    var paintsOwnBackdrop = true {
+        didSet {
+            guard isViewLoaded else { return }
+            setSpaceSwitchBackdropHidden(false)
+        }
     }
     
     
@@ -444,6 +534,9 @@ class SidebarViewController: NSViewController {
         super.viewDidLoad()
         lastPersistedFavoriteHeight = loadCachedFavoriteHeight()
         setupStackView()
+        if !paintsOwnBackdrop {
+            setSpaceSwitchBackdropHidden(false)
+        }
         setupObserversIfNeeded()
         setupConfigObserverIfNeeded()
         updateHeaderHeight()
@@ -476,7 +569,9 @@ class SidebarViewController: NSViewController {
 
     override func viewDidDisappear() {
         super.viewDidDisappear()
-        setHoverControlsVisible(false)
+        // A concealed Space's sidebar keeps its hover state for its next reveal.
+        guard view.window == nil else { return }
+        setHoverControlsVisible(false, animated: false)
     }
 
     override func mouseEntered(with event: NSEvent) {
@@ -492,21 +587,30 @@ class SidebarViewController: NSViewController {
             super.mouseExited(with: event)
             return
         }
+        // A Space switch swapping sessions under a still pointer sends the
+        // leaving sidebar an exit; keep its controls for its next reveal.
+        guard !view.isHiddenOrHasHiddenAncestor, !isPointerInside else { return }
         setHoverControlsVisible(false)
     }
 
-    private func setHoverControlsVisible(_ visible: Bool) {
-        headerView.setAddressBarButtonsVisible(visible)
+    private func setHoverControlsVisible(_ visible: Bool, animated: Bool = true) {
+        headerView.setAddressBarButtonsVisible(visible, animated: animated)
         tabList.setCleanupButtonsVisible(visible)
     }
 
+    /// Snaps rather than fades: a sidebar coming on screen (a Space switch
+    /// reveals the entering session's sidebar under the pointer) must show
+    /// its controls as they already were, not fade them in from nothing.
     private func updateHoverControlsForCurrentMouseLocation() {
-        guard let window = view.window, !view.isHiddenOrHasHiddenAncestor else {
-            setHoverControlsVisible(false)
-            return
-        }
+        // A concealed session's sidebar keeps its state until it shows again.
+        guard !view.isHiddenOrHasHiddenAncestor else { return }
+        setHoverControlsVisible(isPointerInside, animated: false)
+    }
+
+    private var isPointerInside: Bool {
+        guard let window = view.window else { return false }
         let point = view.convert(window.mouseLocationOutsideOfEventStream, from: nil)
-        setHoverControlsVisible(view.visibleRect.contains(point))
+        return view.visibleRect.contains(point)
     }
 
     /// Binds the bottom bar's download button to the downloads manager exactly
@@ -534,13 +638,11 @@ class SidebarViewController: NSViewController {
             super.scrollWheel(with: event)
             return
         }
-        switch spaceSwipe.handle(event) {
-        case .passthrough:
+        guard state.participatesInSpaces,
+              let slot = state.windowController?.slot,
+              slot.handleSpaceSwipe(event) else {
             super.scrollWheel(with: event)
-        case .consumed:
-            break
-        case .trigger(let step):
-            activateAdjacentSpace(by: step, state: state)
+            return
         }
     }
 
@@ -701,10 +803,7 @@ class SidebarViewController: NSViewController {
         // `spacesStripSlot`). Shadow windows are the reachable case — they
         // pass `participatesInSpaces` and build this sidebar even though they
         // never appear on screen.
-        if state.participatesInSpaces, let stripHostingView = spacesStripHostingView {
-            headerView.mountSpaceSwitch(stripHostingView)
-            spacesStripRowView = stripHostingView
-        }
+        bindSpaceStripToSession()
 
         tabList.enableContextMenuClickRouting()
         mainStackView.addArrangedSubview(tabList.view)
@@ -831,13 +930,7 @@ class SidebarViewController: NSViewController {
             }
             .store(in: &cancellables)
 
-        // Mirror the SpacesStripView fallback chain so the gradient still
-        // resolves before MainBrowserWindowController has wired up its slot.
-        let slot = state.windowController?.slot ?? SpaceManager.shared.keySlot
-        slot?.$activeSpaceId
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in self?.updateSpaceTintGradient() }
-            .store(in: &cancellables)
+        bindSpaceTintToSlot()
 
         SpaceManager.shared.$spaces
             .receive(on: DispatchQueue.main)
@@ -1585,5 +1678,28 @@ extension SidebarViewController: SpaceSwitchBandSurface {
     // The Spaces switch lives in the header (with its own scroll animation),
     // so the push-in band is just the pinned strip and the tab list.
     var spaceSwitchBandViews: [NSView] { [pinnedTabContainerView, tabList.view] }
+    var spaceSwitchPinnedStrip: NSView { pinnedTabContainerView }
     var spaceSwitchBandContainer: NSView { mainStackView }
+
+    func prepareSpaceSwitchBand(timing: SpaceSwitchTiming? = nil) {
+        timing?.mark("sidebar.content_activation.begin")
+        loadViewIfNeeded()
+        updateSidebarContentActivation()
+        timing?.mark("sidebar.content_activation.end")
+        if !state.isIncognito {
+            pinnedTabViewController.formRestoredContentNow()
+            updateFavoriteHeight(pinnedTabViewController.contentHeight, isDragging: state.isDraggingTab)
+        }
+        timing?.mark("sidebar.pinned_items.end")
+        tabList.prepareSpaceSwitchBand(timing: timing)
+        view.layoutSubtreeIfNeeded()
+        timing?.mark("sidebar.layout.end")
+        view.displayIfNeeded()
+        timing?.mark("sidebar.display.end")
+    }
+
+    func setSpaceSwitchBackdropHidden(_ hidden: Bool) {
+        (view as? ColoredVisualEffectView)?.suppressesBackdrop = hidden || !paintsOwnBackdrop
+        spaceTintBackgroundView.isHidden = hidden || !paintsOwnBackdrop
+    }
 }

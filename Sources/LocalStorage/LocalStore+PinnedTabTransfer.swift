@@ -58,12 +58,29 @@ struct PinnedTabCreationResult: Sendable, Equatable {
     let isSplit: Bool
 }
 
-private struct PinnedTabTransferOwner: Equatable {
+struct PinnedTabTransferOwner: Equatable {
     let profileId: String?
     let spaceId: String?
 }
 
 extension LocalStore {
+    /// Deletes one persisted pin unit, including both panes of a split, atomically.
+    func removePinnedTabUnit(guid: String, profileId: String, spaceId: String) async throws -> Set<String> {
+        try await performBackgroundWriteAndWaitThrowing { context in
+            let tabs = try self.pinnedTabs(profileId: profileId, spaceId: spaceId,
+                                           scope: self.pinnedTabScope(in: context), in: context)
+            guard let source = tabs.first(where: { $0.guid == guid }) else {
+                throw PinnedTabTransferError.sourceNotFound(guid)
+            }
+            // A missing partner must not make an orphaned pin impossible to delete.
+            let unit = (try? Self.pinnedTransferUnit(containing: source, partnerGuidHint: nil, in: tabs)) ?? [source]
+            let ids = Set(unit.map(\.guid))
+            unit.forEach { context.delete($0) }
+            Self.reindexPinnedTabs(tabs.filter { !ids.contains($0.guid) }, updatedAt: Date())
+            return ids
+        }
+    }
+
     /// Moves an existing pinned record to the target window's owner in one
     /// SwiftData transaction. Shared owners only reorder the existing physical
     /// rows; Space-owned records are copied with fresh guids and deleted from
@@ -118,6 +135,7 @@ extension LocalStore {
             )
             let now = Date()
 
+            AppLogInfo("[LibrarySpaces] pin.transfer scope=\(scope.rawValue) sameOwner=\(sourceOwner == targetOwner) source=\(sourceSpaceId) target=\(targetSpaceId)")
             if sourceOwner == targetOwner {
                 var reordered = targetTabs.filter { !sourceGuids.contains($0.guid) }
                 var resolvedDestinationIndex = destinationIndex
@@ -147,13 +165,16 @@ extension LocalStore {
                     throw PinnedTabTransferError.sourceNotFound(sourceTab.guid)
                 }
                 let copied = Self.copyPinnedTab(sourceTab, newGuid: newGuid)
+                // Insert before assigning ownership: the inverse `ProfileModel.tabs` would otherwise register
+                // a placeholder with missing required fields, causing every later save to fail validation
+                // (1560).
+                context.insert(copied)
                 try self.applyCurrentPinnedTabOwner(
                     profileId: targetProfileId,
                     spaceId: targetSpaceId,
                     to: copied,
                     in: context
                 )
-                context.insert(copied)
                 copiedTabs.append(copied)
             }
 
@@ -233,13 +254,14 @@ extension LocalStore {
                 model.isOpenned = false
                 model.isCreatedByChromium = false
                 model.pinLineageId = guid
+                // Insert before assigning ownership, as for the cross-owner copy above.
+                context.insert(model)
                 try self.applyCurrentPinnedTabOwner(
                     profileId: targetProfileId,
                     spaceId: targetSpaceId,
                     to: model,
                     in: context
                 )
-                context.insert(model)
                 createdTabs.append(model)
             }
 
@@ -266,7 +288,7 @@ extension LocalStore {
         }
     }
 
-    private static func pinnedTransferOwner(
+    static func pinnedTransferOwner(
         scope: PinnedTabScope,
         profileId: String,
         spaceId: String
@@ -281,7 +303,7 @@ extension LocalStore {
         }
     }
 
-    private static func pinnedTransferUnit(
+    static func pinnedTransferUnit(
         containing source: TabDataModel,
         partnerGuidHint: String?,
         in sourceTabs: [TabDataModel]

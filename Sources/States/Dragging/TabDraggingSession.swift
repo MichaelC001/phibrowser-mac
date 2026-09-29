@@ -59,6 +59,41 @@ final class TabDraggingSession {
     private(set) weak var state: BrowserState?
     private weak var dragBoundaryContainerView: NSView?
     private var lastIsInsideDragBoundary: Bool?
+    private var mouseEventMonitor: Any?
+    private var mouseDownFocusedTabId: Int?
+    private(set) var previousFocusedTabId: Int?
+
+    /// Capture before tab views handle mouseDown and activate the pressed tab.
+    private func observeMouseDownFocus() {
+        mouseEventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp]) { [weak self] event in
+            guard let self else { return event }
+            self.mouseDownFocusedTabId = nil
+            if event.type == .leftMouseDown,
+               let sourceWindow = self.sourceWindow,
+               event.window === sourceWindow {
+                self.recordFocusBeforeMouseDown()
+            }
+            return event
+        }
+    }
+
+    func recordFocusBeforeMouseDown() {
+        mouseDownFocusedTabId = state?.focusingTab?.guid
+    }
+
+    /// Consume once, before activation can re-enter drag/layout callbacks.
+    func restorePreviousFocusForSplitDrop(draggedTabId: Int) {
+        guard snapshot.isDragging, let state,
+              state.focusingTab?.guid == draggedTabId,
+              let previousFocusedTabId,
+              previousFocusedTabId != draggedTabId,
+              let tab = state.tabs.first(where: { $0.guid == previousFocusedTabId }) else { return }
+        self.previousFocusedTabId = nil
+        // Chromium reports activation asynchronously. Keep this drop's mode and
+        // partner deterministic even if the mouse is released before that echo.
+        state.focuseTab(tab)
+        tab.makeSelfActive()
+    }
     
     /// Strongly held reference to the current dragging item.
     /// This ensures the item is not deallocated during the drag session.
@@ -86,6 +121,11 @@ final class TabDraggingSession {
         let dropScreenLocation: CGPoint
         let sourceWindowNumber: Int?
         let requestedAt: Date
+        /// Windows that existed when the tear-off was requested. Hosted mode
+        /// posts `.mainBrowserWindowCreated` with an existing shell whenever
+        /// a background or dormant session of it registers, so only a window
+        /// not in this set is the torn-off tab's new one.
+        let preexistingWindows: Set<ObjectIdentifier>
     }
     private static let tearOffPlacementTimeout: TimeInterval = 4.0
     private var pendingTearOffWindowPlacement: PendingTearOffWindowPlacement?
@@ -125,9 +165,13 @@ final class TabDraggingSession {
         self.snapshot = Snapshot(phase: .idle, draggingItem: nil, screenLocation: nil, updatedAt: Date())
         self.state = state
         registerMainWindowCreatedObserver()
+        observeMouseDownFocus()
     }
     
     deinit {
+        if let mouseEventMonitor {
+            NSEvent.removeMonitor(mouseEventMonitor)
+        }
         if let mainWindowCreatedObserver {
             NotificationCenter.default.removeObserver(mainWindowCreatedObserver)
         }
@@ -194,6 +238,8 @@ final class TabDraggingSession {
     }
 
     func begin(draggingItem: Any?, screenLocation: CGPoint?, containerView: NSView? = nil) {
+        previousFocusedTabId = mouseDownFocusedTabId
+        mouseDownFocusedTabId = nil
         snapshot.phase = .dragging
         snapshot.draggingItem = draggingItem
         snapshot.screenLocation = screenLocation
@@ -297,6 +343,8 @@ final class TabDraggingSession {
     
     /// Resets all dragging state after end or cancel.
     private func resetDraggingState() {
+        mouseDownFocusedTabId = nil
+        previousFocusedTabId = nil
         snapshot.phase = .idle
         snapshot.draggingItem = nil
         snapshot.screenLocation = nil
@@ -434,7 +482,7 @@ final class TabDraggingSession {
     /// same bookmark can only have one active binding at a time (the second
     /// open call re-activates the first), but it can live in any window.
     private func openedSplitWrapper(forBookmarkGuid bookmarkGuid: String) -> (WebContentWrapper & NSObject)? {
-        for controller in MainBrowserWindowControllersManager.shared.getAllWindows() {
+        for controller in SpaceSessionControllersManager.shared.getAllWindows() {
             let bs = controller.browserState
             guard let splitId = bs.splitBookmarkBindings[bookmarkGuid],
                   let group = bs.splits.first(where: { $0.id == splitId }) else { continue }
@@ -503,7 +551,7 @@ final class TabDraggingSession {
 
     private func isInsideAnyBrowserWindow(_ screenLocation: CGPoint) -> Bool {
         let point = NSPoint(x: screenLocation.x, y: screenLocation.y)
-        let windows = MainBrowserWindowControllersManager.shared.getAllWindows()
+        let windows = SpaceSessionControllersManager.shared.getAllWindows()
         if !windows.isEmpty {
             return windows.contains { $0.window?.frame.contains(point) == true }
         }
@@ -513,10 +561,12 @@ final class TabDraggingSession {
     private func isInsideAnyOtherBrowserTabDragBoundary(_ screenLocation: CGPoint) -> Bool {
         let point = NSPoint(x: screenLocation.x, y: screenLocation.y)
         let sourceWindowNumber = sourceWindow?.windowNumber
-        let windows = MainBrowserWindowControllersManager.shared.getAllWindows()
+        let windows = SpaceSessionControllersManager.shared.getAllWindows()
         if !windows.isEmpty {
             return windows.contains { controller in
-                guard let window = controller.window else { return false }
+                // A background session of a hosted shell shares the shell's
+                // frame but has no drag boundary on screen.
+                guard let window = controller.window, controller.isPresentedOrLegacy else { return false }
                 if let sourceWindowNumber, window.windowNumber == sourceWindowNumber {
                     return false
                 }
@@ -541,7 +591,8 @@ final class TabDraggingSession {
         pendingTearOffWindowPlacement = PendingTearOffWindowPlacement(
             dropScreenLocation: screenLocation,
             sourceWindowNumber: sourceWindow?.windowNumber,
-            requestedAt: Date()
+            requestedAt: Date(),
+            preexistingWindows: Set(NSApp.windows.map(ObjectIdentifier.init))
         )
     }
 
@@ -565,7 +616,8 @@ final class TabDraggingSession {
         pendingTearOffWindowPlacement = PendingTearOffWindowPlacement(
             dropScreenLocation: screenLocation,
             sourceWindowNumber: sourceWindow?.windowNumber,
-            requestedAt: Date()
+            requestedAt: Date(),
+            preexistingWindows: Set(NSApp.windows.map(ObjectIdentifier.init))
         )
     }
     
@@ -580,6 +632,9 @@ final class TabDraggingSession {
         }
         if let sourceWindowNumber = request.sourceWindowNumber,
            createdWindow.windowNumber == sourceWindowNumber {
+            return
+        }
+        guard !request.preexistingWindows.contains(ObjectIdentifier(createdWindow)) else {
             return
         }
         guard let targetFrame = resolvedTearOffWindowFrame(
@@ -901,16 +956,16 @@ extension TabDraggingSession {
             if let split = makeSplitSnapshotImage(forTab: tab) {
                 return split
             }
-            return makeTabSnapshotImage(tab) ?? makeTabPlaceholderImage(url: tab.url, title: tab.title)
+            // Foreground and background drags share Chromium's cached thumbnail.
+            // A live AppKit capture can omit the foreground page's remote surface.
+            return requestChromiumThumbnail(for: tab) ?? makeTabPlaceholderImage(url: tab.url, title: tab.title)
         } else if let bookmark = item as? Bookmark, !bookmark.isFolder {
             if let split = makeSplitSnapshotImage(forSplitBookmark: bookmark) {
                 return split
             }
-            if bookmark.isActive,
-               let nativeView = bookmark.webContentWrapper?.nativeView,
-               let live = makeTabSnapshotImage(nativeView)
-            {
-                return live
+            if let tab = state?.tabs.first(where: { $0.guidInLocalDB == bookmark.guid }),
+               let image = requestChromiumThumbnail(for: tab) {
+                return image
             }
             return makeTabPlaceholderImage(url: bookmark.url, title: bookmark.title)
         }
@@ -1105,15 +1160,6 @@ extension TabDraggingSession {
         if let jpegData = ChromiumLauncher.sharedInstance().bridge?.thumbnail(forTab: Int64(tab.guid)),
            let image = NSImage(data: jpegData) {
             return image.drawnAsRoundedSnapshot(targetSize: size, cornerRadius: 0)
-        }
-        // No cached thumbnail yet (common right after opening a pinned/bookmark
-        // split). Both panes of a visible split are simultaneously laid out
-        // and painted, so capturing from `webContentView` is safe regardless
-        // of which pane currently holds focus — `snapshotImage(of:)` rejects
-        // degenerate bounds itself.
-        if let view = tab.webContentView,
-           let live = snapshotImage(of: view, targetSize: size, cornerRadius: 0) {
-            return live
         }
         return makeTabPlaceholderImage(url: tab.url, title: tab.title)
             .drawnAsRoundedSnapshot(targetSize: size, cornerRadius: 0)

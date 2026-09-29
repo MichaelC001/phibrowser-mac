@@ -804,27 +804,6 @@ final class LazySpaceRestoreWiringTests: XCTestCase {
             windowSpaceId: "sibling"))
     }
 
-    // MARK: - Whether a materializing ghost is staged for a deferred reveal
-
-    /// One rule feeds both halves of the animate-first materialization — the
-    /// alpha conceal on arrival and the push-in that reveals it — so the two
-    /// can never disagree (a concealed window nothing reveals is invisible
-    /// forever; an animated switch to a visibly-arriving window double
-    /// presents).
-
-    func testAMaterializingGhostIsStagedForTheReveal() {
-        XCTAssertTrue(SpaceWindowSlot.materializeStagesForReveal(
-            slotHasFullScreenWindow: false))
-    }
-
-    func testAFullscreenSlotKeepsTheVisibleArrival() {
-        // Same exception as spawn's `spawnHidden`: revealing a window that
-        // has never been ordered in through a fullscreen tab group corrupts
-        // NSWindowStackController's bookkeeping and crashes the app.
-        XCTAssertFalse(SpaceWindowSlot.materializeStagesForReveal(
-            slotHasFullScreenWindow: true))
-    }
-
     // MARK: - Whether a minted slot is reclaimed when no window arrives
 
     /// A slot minted for a window that never arrives is not merely untidy: it
@@ -1254,6 +1233,39 @@ final class LazySpaceRestoreWiringTests: XCTestCase {
         XCTAssertEqual(reconciliation.unmapped, [20, 30])
     }
 
+    // MARK: - Whether a cold-start receipt writes the snapshot
+
+    /// A cold start predicts no park set, so the record learns a profile's
+    /// parked windows only from that profile's receipt — and the head
+    /// profile's eager window registers, and writes, before any later
+    /// profile's receipt arrives. A run that wrote nothing after that receipt
+    /// quit with those windows missing from the record, and the next cold
+    /// start parked them where no Space reaches them.
+
+    func testAReceiptThatRecordsALaterProfilesParkedWindowWritesTheSnapshot() {
+        XCTAssertTrue(SpaceManager.coldStartReceiptWritesSnapshot(
+            recordedBefore: [10: "space-a"],
+            recordedAfter: [10: "space-a", 20: "space-p1"]))
+    }
+
+    func testAReceiptThatRecordsNothingNewWritesNothing() {
+        // The head profile parking nothing, and a later receipt repeating the
+        // whole registry: the record already says this.
+        XCTAssertFalse(SpaceManager.coldStartReceiptWritesSnapshot(
+            recordedBefore: [:], recordedAfter: [:]))
+        XCTAssertFalse(SpaceManager.coldStartReceiptWritesSnapshot(
+            recordedBefore: [10: "space-a", 20: "space-p1"],
+            recordedAfter: [10: "space-a", 20: "space-p1"]))
+    }
+
+    func testAReceiptThatStopsNamingAParkedWindowWritesTheSnapshot() {
+        // A closed-group candidate the registry shed once it retired to the
+        // undo stack: the record must stop naming it too.
+        XCTAssertTrue(SpaceManager.coldStartReceiptWritesSnapshot(
+            recordedBefore: [10: "space-a", 20: "space-p1"],
+            recordedAfter: [20: "space-p1"]))
+    }
+
     // MARK: - Cold-start repair (what an entry does with a replay receipt)
 
     /// The default inputs describe the repairable shape: an unclaimed,
@@ -1350,5 +1362,47 @@ final class LazySpaceRestoreWiringTests: XCTestCase {
         XCTAssertEqual(Self.repairDecision(
             entryWindowMap: [11: "space-b"]
         ), .none)
+    }
+
+    // MARK: - Which record a launch reads and writes
+
+    /// The slot snapshot maps Chromium's previous-session window ids to
+    /// Spaces, and those ids only mean anything inside the Chromium user data
+    /// directory that issued them. Chromium's directory follows the bundle
+    /// while this record follows the account, so a launch pointed at another
+    /// directory (`--user-data-dir`, the QA and XCTest shape) rewrote the
+    /// real profile's record with ids from a session it never had — and the
+    /// next real launch found every saved window unplaceable. The key carries
+    /// the explicit directory so each directory keeps its own record.
+
+    func testTheSnapshotKeyIsUnchangedWithoutAnExplicitUserDataDir() {
+        XCTAssertEqual(
+            SpaceManager.slotsRestoreSnapshotKey(
+                arguments: ["Phi", "--enable-features=TabStripUnification"]),
+            "slotsRestoreSnapshot")
+    }
+
+    func testAnExplicitUserDataDirScopesTheSnapshotKey() {
+        XCTAssertEqual(
+            SpaceManager.slotsRestoreSnapshotKey(
+                arguments: ["Phi", "--user-data-dir=/tmp/r11-fresh"]),
+            "slotsRestoreSnapshot@/tmp/r11-fresh")
+    }
+
+    func testTheLastUserDataDirSwitchWins() {
+        // Chromium's command line keeps the last value of a repeated switch;
+        // the key follows the directory Chromium actually opens.
+        XCTAssertEqual(
+            SpaceManager.slotsRestoreSnapshotKey(
+                arguments: ["Phi", "--user-data-dir=/a", "--user-data-dir=/b"]),
+            "slotsRestoreSnapshot@/b")
+    }
+
+    func testAnEmptyUserDataDirSwitchLeavesTheKeyUnscoped() {
+        // Chromium treats an empty value as "use the default directory".
+        XCTAssertEqual(
+            SpaceManager.slotsRestoreSnapshotKey(
+                arguments: ["Phi", "--user-data-dir="]),
+            "slotsRestoreSnapshot")
     }
 }

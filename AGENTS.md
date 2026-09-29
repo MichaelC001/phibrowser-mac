@@ -87,10 +87,6 @@ Silent architectural shifts are prohibited.
 - No bullet lists
 - No long explanations
 
-## Commit Timing
-- Do NOT commit immediately after making changes
-- Wait for explicit instruction before committing
-
 ---
 
 # Documentation Rules
@@ -140,6 +136,17 @@ Clear separation between these layers is critical.
 - AppKit-based macOS UI
 - Owns presentation and user interaction only
 - Must not contain Chromium internal logic
+- Never enter a nested modal run loop (`NSApp.runModal`, `beginModalSession`) from
+  inside a main-actor task or a `DispatchQueue.main.async` block. The main dispatch
+  queue is serial and non-reentrant, so a nested loop started from inside one of its
+  blocks never drains it again and every main-actor continuation the modal is waiting
+  for is starved until the modal returns. Schedule the session with
+  `RunLoop.main.perform(inModes:)` instead — see `AppModalPairingHost` in
+  `Sources/Sync/Keys/UI/ProfilePairingGate.swift`. The window presents `SyncSetupView` (`Sources/Sync/Keys/UI/KeyLayerView.swift`),
+  which retains one host through device verification and `PairingWizardView`
+  (Profile/Space matching and overwrite review). Closing or Escape defers setup
+  except during confirmed writes or recovery-code acknowledgement. A synchronous `NSAlert.runModal()` that
+  awaits nothing while it is up is exempt.
 
 ## Chromium Integration Layer
 - Interacts with Phi Framework.framework
@@ -185,6 +192,21 @@ Rules:
   request-scoped extension bridge and authenticated Unix-domain-socket client.
   It must not become a general remote HTTP client or bypass the shared-auth and
   extension-authorization boundaries.
+
+Exception — dedicated per-backend clients:
+
+A feature that talks to a distinct backend (not `account`/`connector`/`phi-agent`)
+and needs an injectable `URLSession` for testability MAY own its own client
+(e.g. `IMChannelAPIClient`, `KeyEnvelopeAPIClient` for the sync `/keys/v1`
+backend). Such a client must still source its bearer token from `AuthManager`,
+must not duplicate calls already served by `APIClient`, and must not reimplement
+the shared `Response<T>` envelope handling. Authentication stays centralized in
+`AuthManager`; only the transport is local.
+
+`KeyEnvelopeAPIClient` also owns the device-lifecycle calls on that backend
+(`POST /keys/v1/devices/{id}/revoke`, M3-2's self-revoke). No second client is
+introduced for them: the exception is per BACKEND, not per endpoint, and the
+bearer token still comes from `AuthManager`.
 
 ---
 

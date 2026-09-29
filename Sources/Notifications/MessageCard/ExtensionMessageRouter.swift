@@ -180,6 +180,28 @@ final class ExtensionMessageRouter {
             return "{}"
         }
 
+        register(type: "sidecar.chat.profiles") { context in
+            MainActor.assumeIsolated {
+                guard context.senderId == SidecarAIOutputStateStore.extensionId,
+                      ApplicationState.shared.isAuthenticated,
+                      PhiPreferences.AISettings.phiAIEnabled.loadValue(),
+                      ChromiumLauncher.sharedInstance().bridge != nil else {
+                    return "{\"error\":\"unavailable\"}"
+                }
+                let manager = ProfileManager.shared
+                guard manager.refresh() else { return "{\"error\":\"unavailable\"}" }
+                let profiles = manager.userAssignableProfiles.map {
+                    ["profileId": $0.profileId, "displayName": $0.displayName]
+                }
+                guard !profiles.isEmpty,
+                      let data = try? JSONSerialization.data(withJSONObject: ["profiles": profiles]),
+                      let reply = String(data: data, encoding: .utf8) else {
+                    return "{\"error\":\"unavailable\"}"
+                }
+                return reply
+            }
+        }
+
         for type in TravelBackMessageHandler.messageTypes {
             register(type: type) { context in
                 Task { @MainActor in
@@ -267,6 +289,9 @@ final class ExtensionMessageRouter {
         register(type: "saveForLater.videoGist") { context in
             SaveForLaterService.handleVideoGist(context)
             return nil
+        }
+        register(type: "saveForLater.videoArticles") { context in
+            return SaveForLaterService.handleVideoArticles(context)
         }
 
         register(type: "agentSpace.create") { context in
@@ -392,13 +417,16 @@ final class ExtensionMessageRouter {
             return AgentSpaceRouter.handleUrlRulesList(context: context)
         }
         registerUserSpaceManaged(type: "agentSpace.urlRules.add") { context in
-            return AgentSpaceRouter.handleUrlRulesAdd(context: context)
+            AgentSpaceRouter.handleUrlRulesAdd(context: context)
+            return nil  // async reply via ExtensionMessaging
         }
         registerUserSpaceManaged(type: "agentSpace.urlRules.update") { context in
-            return AgentSpaceRouter.handleUrlRulesUpdate(context: context)
+            AgentSpaceRouter.handleUrlRulesUpdate(context: context)
+            return nil  // async reply via ExtensionMessaging
         }
         registerUserSpaceManaged(type: "agentSpace.urlRules.delete") { context in
-            return AgentSpaceRouter.handleUrlRulesDelete(context: context)
+            AgentSpaceRouter.handleUrlRulesDelete(context: context)
+            return nil  // async reply via ExtensionMessaging
         }
         register(type: "agentSpace.tabGroups.list") { context in
             return AgentSpaceRouter.handleTabGroupsList(context: context)

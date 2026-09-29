@@ -416,7 +416,7 @@ class SidebarTabCellView: SidebarCellView, TabPreviewInteractionCancelling {
 
     private func closePeekTapped() {
         guard let tab = item as? Tab else { return }
-        MainBrowserWindowControllersManager.shared
+        SpaceSessionControllersManager.shared
             .controller(for: tab.windowId)?.browserState
             .closePeek(forOpener: tab.guid)
     }
@@ -427,7 +427,7 @@ class SidebarTabCellView: SidebarCellView, TabPreviewInteractionCancelling {
         cancellables.forEach { $0.cancel() }
         cancellables.removeAll()
 
-        let state = MainBrowserWindowControllersManager.shared
+        let state = SpaceSessionControllersManager.shared
             .controller(for: tab.windowId)?.browserState
         viewModel.configure(with: tab, in: state)
         if let state {
@@ -504,6 +504,11 @@ class SidebarSplitPairCellView: SidebarCellView, TabPreviewInteractionCancelling
     private let outerBackground = HoverableView()
     private let leftPane = HoverableView()
     private let rightPane = HoverableView()
+
+    func handledPaneClick(onMouseDown event: NSEvent) -> Bool {
+        leftPane.handledClick(onMouseDown: event) || rightPane.handledClick(onMouseDown: event)
+    }
+
     private lazy var leftIconView = TabFaviconImageView(
         model: leftStatusModel, cornerRadius: Self.faviconCornerRadius
     )
@@ -714,6 +719,12 @@ class SidebarSplitPairCellView: SidebarCellView, TabPreviewInteractionCancelling
         leftPane.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         rightPane.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
+        leftPane.shouldClickOnMouseDown = { [weak self] in
+            self?.browserState?.multiSelection.isActive != true
+        }
+        rightPane.shouldClickOnMouseDown = { [weak self] in
+            self?.browserState?.multiSelection.isActive != true
+        }
         leftPane.clickAction = { [weak self] in
             self?.handlePaneClick(isLeft: true)
         }
@@ -1319,7 +1330,7 @@ enum FarringdonOrganizer {
     static func organizeFocusedWindow(eligibleTabCount: Int? = nil) {
         // Buttons and shortcuts share the same eligibility gate; this is the
         // backstop for hidden UI and direct command dispatch.
-        guard let state = MainBrowserWindowControllersManager.shared.getActiveWindowState() else {
+        guard let state = SpaceSessionControllersManager.shared.getActiveWindowState() else {
             return
         }
         let count = eligibleTabCount ?? Self.eligibleTabCount(in: state.normalTabs)
@@ -1488,8 +1499,10 @@ final class BroomButton: NSButton {
     }
 
     @objc private func handleOrganizeDidStart() {
-        // Only the window that triggered the run (the key window) animates.
-        guard !isHidden, window?.isKeyWindow == true else { return }
+        // Only the window that triggered the run (the key window) animates —
+        // and in it only the Space on screen: every Space's sidebar is
+        // resident, hidden, in the shared shell.
+        guard !isHiddenOrHasHiddenAncestor, window?.isKeyWindow == true else { return }
         startOrganizing()
     }
 

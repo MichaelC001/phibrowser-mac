@@ -226,6 +226,11 @@ class Tab: WebContentRepresentable {
     /// owner, so their profile-specific fallback remains display-only.
     var allowsProfileScopedFaviconPersistence = true
     var windowId: Int = 0
+    /// The Space whose sidebar or strip the last context menu for this tab was
+    /// opened from; its actions run against it (see `Tab+Sidebar`). Pinned
+    /// records carry no `windowId`, and the key window's Space is not the
+    /// right-clicked one when the click lands in another window.
+    weak var contextMenuOwnerState: BrowserState?
     var isOpenned = true
     /// DB-persisted title that bypasses title KVO from `webContentWrapper`.
     var storedTitle: String?
@@ -654,12 +659,12 @@ class Tab: WebContentRepresentable {
         // its tabs (the ✕ button, split close, ⌘W all funnel here) — the agent
         // drives tab lifecycle over CDP. Taking control re-enables it.
         if windowId != 0,
-           let state = MainBrowserWindowControllersManager.shared.getBrowserState(for: windowId),
+           let state = SpaceSessionControllersManager.shared.getBrowserState(for: windowId),
            MainActor.assumeIsolated({ AgentSpaceManager.shared.isAgentOwned(state.spaceId) }) {
             return
         }
         if isActive, windowId != 0 {
-            let manager = MainBrowserWindowControllersManager.shared
+            let manager = SpaceSessionControllersManager.shared
             let state = manager.getBrowserState(for: windowId)
             // Closing the last tab in the active Space via the UI X button:
             // tag the slot so the resulting browser auto-close falls into

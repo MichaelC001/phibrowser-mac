@@ -57,6 +57,10 @@ final class ProfileManager: ObservableObject {
     static let shared = ProfileManager()
 
     @Published private(set) var profiles: [PhiBrowserProfile] = []
+    private var archiveObservers: [NSObjectProtocol] = []
+    private var archiveTimer: Timer?
+    private var archiveInFlight = false
+    private var nextArchiveAttempt: TimeInterval = 0
 
     /// Profiles a user picker should offer: every profile except the agent's
     /// auto-created fallback, which belongs to the agent (see
@@ -70,6 +74,11 @@ final class ProfileManager: ObservableObject {
     }
 
     private init() {
+        for name in [Notification.Name.mainAccountChanged, UserDefaults.didChangeNotification,
+                     NSApplication.didBecomeActiveNotification] {
+            archiveObservers.append(NotificationCenter.default.addObserver(forName: name,
+                object: nil, queue: .main) { [weak self] _ in self?.drainChatArchives() })
+        }
         refresh()
     }
 
@@ -78,17 +87,22 @@ final class ProfileManager: ObservableObject {
     /// Pulls the latest profile list from the bridge. Synchronous and
     /// cheap (Chromium-side just reads from in-memory ProfileAttributesStorage).
     /// Safe to call repeatedly on the main thread.
-    func refresh() {
+    @discardableResult
+    func refresh() -> Bool {
         guard let bridge = ChromiumLauncher.sharedInstance().bridge else {
             // Bridge not up yet at very early launch; `profiles` stays empty
             // and the first post-launch `refresh()` (driven by any UI that
             // needs profiles) will populate it.
-            return
+            return false
         }
         let raw = bridge.listProfiles()
         let decodedProfiles = raw.compactMap(Self.decode(_:))
+        // An incomplete bridge response must not look like Profile deletion.
+        guard !decodedProfiles.isEmpty, decodedProfiles.count == raw.count else { return false }
         profiles = decodedProfiles
         persistDisplayNamesToLocalStore(decodedProfiles)
+        drainChatArchives()
+        return true
     }
 
     /// Convenience lookup — nil if the basename isn't known. Most callers
@@ -125,17 +139,28 @@ final class ProfileManager: ObservableObject {
     ///
     /// Limitation: this is a check-then-act guard, not an authoritative
     /// cross-flight uniqueness constraint — the pending name isn't reserved
-    /// during the async bridge create, so two *concurrent* same-name creates (or
-    /// a create racing a rename) could both pass it and leave indistinguishable
-    /// profiles. Today every create/rename goes through an app-modal prompt,
-    /// which serializes user operations and makes that unreachable; a future
-    /// non-modal path would need a pending-name reservation here or uniqueness
-    /// enforced Chromium-side.
+    /// during the async bridge create. Several non-modal callers exist today (the
+    /// agent fallback profile, the `agentSpace.profiles.create` extension message,
+    /// user-data import repair, and the sync layer's per-round account profile
+    /// auto-create), so two same-name creates CAN interleave through this window.
+    /// The consequence is a DUPLICATE DISPLAY NAME: a Profile's identity is its
+    /// account-global uuid, not its name, so an EXISTING mapping is never
+    /// corrupted. It is not free, though: `SyncKeyController`'s same-named twin
+    /// search (SyncKeyController.swift:604-609) adopts an account uuid onto the
+    /// first unmapped local whose display name matches, so two same-named
+    /// unmapped locals make that choice arbitrary. What the suffixing callers do
+    /// (`uniqueDisplayName`) is best-effort disambiguation, not a uniqueness
+    /// guarantee; guaranteeing it would need a pending-name reservation here or
+    /// Chromium-side enforcement.
     func createProfile(displayName: String,
                        completion: @escaping (String?) -> Void) {
         refresh()
         let trimmed = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, !displayNameExists(trimmed) else {
+        // `excluding:` spelled out, not defaulted: the one-argument
+        // `LocalProfileCreating` witness below is `@MainActor` (it witnesses a
+        // `@MainActor` requirement), so a bare `displayNameExists(trimmed)` binds
+        // to that overload instead and this nonisolated method stops compiling.
+        guard !trimmed.isEmpty, !displayNameExists(trimmed, excluding: nil) else {
             completion(nil)
             return
         }
@@ -191,18 +216,35 @@ final class ProfileManager: ObservableObject {
     /// it deletes profiles wholesale while restoring a snapshot.
     /// Successful deletion starts best-effort memory cleanup for the original
     /// account. Completion reports Chromium deletion; cleanup failures are logged.
-    /// Import rollback disables cleanup to preserve existing account memory.
+    /// Import rollback disables memory cleanup and conversation archival.
     @MainActor
     func deleteProfile(_ profileId: String,
                        removeMemories: Bool = true,
+                       archiveConversations: Bool = true,
                        completion: @escaping (Bool, String?) -> Void) {
         guard let bridge = ChromiumLauncher.sharedInstance().bridge else {
             completion(false, "bridge unavailable")
             return
         }
         let memoryService = removeMemories ? try? SiteMemoryService.currentAccount() : nil
+        let journal = archiveConversations ? AccountController.shared.account.map(Self.chatArchiveJournal) : nil
+        let pending: ProfileChatArchiveJournal.Entry?
+        do {
+            // Persist before the irreversible browser operation, even with AI off.
+            pending = try journal?.prepare(profileId: profileId)
+        } catch {
+            AppLogError("[ProfileChatArchive] could not persist deletion intent")
+            completion(false, NSLocalizedString("profiles.archive.prepareFailed",
+                value: "Could not save the conversation recovery record. Please try again.",
+                comment: "Profile deletion - Error when the local recovery record could not be saved before deleting a profile"))
+            return
+        }
         bridge.deleteProfile(profileId) { [weak self] success, error in
             DispatchQueue.main.async {
+                if let pending, let journal {
+                    do { try journal.finish(pending.operationId, deleted: success) }
+                    catch { AppLogError("[ProfileChatArchive] could not persist deletion result") }
+                }
                 self?.refresh()
                 if success, removeMemories {
                     if let memoryService {
@@ -219,6 +261,58 @@ final class ProfileManager: ObservableObject {
                 }
                 completion(success, error)
             }
+        }
+    }
+
+    private static func chatArchiveJournal(_ account: Account) -> ProfileChatArchiveJournal {
+        ProfileChatArchiveJournal(fileURL: account.userDataStorage
+            .appendingPathComponent("chat-profile-archive", isDirectory: true)
+            .appendingPathComponent("pending.json"))
+    }
+
+    /// Delivery is gated by AI availability and the original account. It never
+    /// launches Sentinel or enables AI. Only one bounded request is in flight.
+    private func drainChatArchives() {
+        archiveTimer?.invalidate()
+        archiveTimer = nil
+        guard ProfileChatArchiveJournal.deliveryAllowed(
+                aiEnabled: PhiPreferences.AISettings.phiAIEnabled.loadValue(),
+                authenticated: AccountController.shared.account != nil),
+              let account = AccountController.shared.account,
+              !archiveInFlight,
+              let bridge = ChromiumLauncher.sharedInstance().bridge else { return }
+        let journal = Self.chatArchiveJournal(account)
+        let raw = bridge.listProfiles()
+        let decoded = raw.compactMap(Self.decode(_:))
+        guard !decoded.isEmpty, decoded.count == raw.count else { return }
+        let ready: [ProfileChatArchiveJournal.Entry]
+        do { ready = try journal.ready(existingProfileIds: Set(decoded.map(\.profileId))) }
+        catch {
+            AppLogError("[ProfileChatArchive] could not read pending operations")
+            return
+        }
+        guard let entry = ready.first else { return }
+        let remaining = nextArchiveAttempt - ProcessInfo.processInfo.systemUptime
+        if remaining > 0 {
+            archiveTimer = Timer.scheduledTimer(withTimeInterval: remaining, repeats: false) { [weak self] _ in
+                self?.drainChatArchives()
+            }
+            return
+        }
+        archiveInFlight = true
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                try await APIClient.shared.archiveProfileConversations(profileId: entry.profileId,
+                    operationId: entry.operationId, expectedUserID: account.userID)
+                try journal.finish(entry.operationId, deleted: false)
+                self.nextArchiveAttempt = 0
+            } catch {
+                AppLogWarn("[ProfileChatArchive] delivery deferred; will retry while AI is enabled")
+                self.nextArchiveAttempt = ProcessInfo.processInfo.systemUptime + 30
+            }
+            self.archiveInFlight = false
+            self.drainChatArchives()
         }
     }
 
@@ -402,5 +496,35 @@ final class ProfileManager: ObservableObject {
         // reuse its decoder (pre-baked reps up to 32 pt cover this row's 20 pt).
         let icon = (dict["icon"] as? String).flatMap(Extension.imageFromBase64(_:))
         return ProfileExtensionInfo(id: id, name: name, enabled: enabled, icon: icon)
+    }
+}
+
+/// §3.6's injection point into the key layer: `SyncKeyController` creates local
+/// Chromium profiles for account profiles that have no counterpart on this Mac,
+/// and reaches the bridge only through these three members.
+extension ProfileManager: LocalProfileCreating {
+    /// Never the whole `profiles` list: the agent fallback profile is in that one
+    /// and must never be handed to the account. Refreshed on every read for the
+    /// same reason as the key layer's `localProfilesProvider`: the cache fills
+    /// only through `refresh()`, and the twin search in §3.6 must not run against
+    /// a list that no UI has populated yet, or it creates a duplicate of a profile
+    /// this Mac already has.
+    var userAssignableProfileIds: [(profileId: String, displayName: String)] {
+        refresh()
+        return userAssignableProfiles.map { ($0.profileId, $0.displayName) }
+    }
+
+    /// The key layer only ever asks the unqualified question; `excluding:` is the
+    /// rename prompt's parameter and has no meaning here.
+    func displayNameExists(_ name: String) -> Bool {
+        displayNameExists(name, excluding: nil)
+    }
+
+    /// `createProfile`'s completion, as an `await`. The completion fires on the
+    /// main queue after `refresh()`, so the published list is already current.
+    func createProfile(displayName: String) async -> String? {
+        await withCheckedContinuation { continuation in
+            createProfile(displayName: displayName) { continuation.resume(returning: $0) }
+        }
     }
 }

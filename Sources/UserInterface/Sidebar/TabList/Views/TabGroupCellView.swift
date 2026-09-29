@@ -506,6 +506,9 @@ final class TabGroupCellView: SidebarCellView {
         // hide it so the cell looks flush with the outer outline rows.
         innerTable.focusRingType = .none
         innerTable.phiTableDelegate = self
+        innerTable.shouldSelectOnMouseDown = { [weak self] in
+            self?.configuredBrowserState?.multiSelection.isActive != true
+        }
         innerTable.delegate = self
         innerTable.target = self
         innerTable.action = #selector(innerTableClicked(_:))
@@ -624,7 +627,7 @@ final class TabGroupCellView: SidebarCellView {
 
     override func configureAppearance() {
         guard let groupItem = item as? TabGroupSidebarItem,
-              let state = MainBrowserWindowControllersManager.shared
+              let state = SpaceSessionControllersManager.shared
                 .controller(for: groupItem.windowId)?.browserState
         else { return }
 

@@ -281,10 +281,55 @@ class BrowserState {
     private var aiChatTabsBeingCreated: Set<String> = []
     // Request lifetime only; not a second sidebar ownership registry.
     var travelBackRunning = false
+    @Published var travelBackHandoffs: [Int: TravelBackHandoff] = [:]
+    @Published var profileMoveRequests: [Int: SidecarProfileMoveRequest] = [:]
+    var profileMovesInFlight: Set<Int> = []
     let travelBackTabCreated = PassthroughSubject<(marker: String, tab: Tab), Never>()
     
-    @Published var sidebarCollapsed = false
-    @Published var sidebarWidth: CGFloat = 0
+    /// Read-only views of the owning window's split, never per-Space state.
+    var sidebarCollapsed: Bool {
+        MainActor.assumeIsolated {
+            isKioskWindow || (windowController?.mainSplitViewController.isSidebarCollapsed
+                ?? layoutMode.isTraditional)
+        }
+    }
+
+    var sidebarWidth: CGFloat {
+        MainActor.assumeIsolated {
+            isKioskWindow ? 0 : (windowController?.mainSplitViewController.sidebarWidth ?? 0)
+        }
+    }
+
+    var sidebarCollapsedPublisher: AnyPublisher<Bool, Never> {
+        windowControllerChanges.prepend(())
+            .map { [weak self] _ -> AnyPublisher<Bool, Never> in
+                MainActor.assumeIsolated {
+                    guard let self else { return Just(false).eraseToAnyPublisher() }
+                    guard !self.isKioskWindow, let controller = self.windowController else {
+                        return Just(self.sidebarCollapsed).eraseToAnyPublisher()
+                    }
+                    return controller.mainSplitViewController.sidebarCollapsedPublisher
+                }
+            }
+            .switchToLatest()
+            .removeDuplicates()
+            .eraseToAnyPublisher()
+    }
+
+    var sidebarWidthPublisher: AnyPublisher<CGFloat, Never> {
+        windowControllerChanges.prepend(())
+            .map { [weak self] _ -> AnyPublisher<CGFloat, Never> in
+                MainActor.assumeIsolated {
+                    guard let self, !self.isKioskWindow, let controller = self.windowController else {
+                        return Just(CGFloat.zero).eraseToAnyPublisher()
+                    }
+                    return controller.mainSplitViewController.sidebarWidthPublisher
+                }
+            }
+            .switchToLatest()
+            .removeDuplicates()
+            .eraseToAnyPublisher()
+    }
     @Published var aiChatCollapsed = true
     private var pendingAIChatSidebarOpenTrigger: AIChatSidebarOpenTrigger = .restore
     @Published var isInFullScreenMode = false
@@ -374,7 +419,7 @@ class BrowserState {
 
     let windowId: Int
     let localStore: LocalStore
-    let profileId: String
+    @Published private(set) var profileId: String
     /// Identifies which Space this window renders. Persisted pinned tabs and
     /// bookmarks under the same Space share this id; see `Space`.
     let spaceId: String
@@ -389,6 +434,8 @@ class BrowserState {
     /// differ: the Incognito Space's window lives inside a Space slot and
     /// shows the Spaces UI; a standalone incognito window does not.
     let isIncognitoSpace: Bool
+    /// Native agent content is isolated before a task or Browser exists.
+    let isAgentSpace: Bool
     /// Whether this window participates in the Spaces UI (strip, picker,
     /// swipe/menu switching). Standalone incognito windows are orthogonal to
     /// Spaces; the Incognito Space's window is one.
@@ -534,7 +581,12 @@ class BrowserState {
     private(set) lazy var  extensionManager: ExtensionManager = { .init(browserState: self) }()
     private(set) lazy var  downloadsManager: DownloadsManager = { .init(browserState: self) }()
     
-    weak var windowController: MainBrowserWindowController?
+    // Rebind read-only window publishers when a controller is attached. The
+    // subject carries no sidebar value and does not retain the controller.
+    private let windowControllerChanges = PassthroughSubject<Void, Never>()
+    weak var windowController: SpaceSessionController? {
+        didSet { windowControllerChanges.send(()) }
+    }
     
     @MainActor
     init(windowId: Int,
@@ -543,13 +595,15 @@ class BrowserState {
          spaceId: String = SpaceManager.shared.currentDefaultSpaceId,
          isIncognito: Bool = false,
          isIncognitoSpace: Bool = false,
-         isKioskWindow: Bool = false) {
+         isKioskWindow: Bool = false,
+         isAgentSpace: Bool = false) {
         self.windowId = windowId
         self.localStore = localStore
         self.profileId = profileId
         self.spaceId = spaceId
         self.isIncognito = isIncognito
         self.isIncognitoSpace = isIncognitoSpace
+        self.isAgentSpace = isAgentSpace || AgentSpaceManager.shared.isAgentSpace(spaceId)
         self.isKioskWindow = isKioskWindow
         self.imagePreviewState = BrowserImagePreviewState(loader: ImagePreviewLoader())
         self.themeContext = BrowserThemeContext(
@@ -559,11 +613,10 @@ class BrowserState {
         self.layoutMode = Self.buildLayoutMode()
         // Agent Spaces are isolated workspaces, like incognito: they show none
         // of the profile's pinned tabs and grow no bookmarks of their own, so
-        // the agent's window stays a clean, self-contained surface. The agent
-        // task is recorded before its window is created, so isAgentSpace() is
-        // already true here.
+        // the agent's window stays a clean, self-contained surface. A native
+        // spare declares its agent role before any task or profile is bound.
         let isIsolated = isIncognito || isKioskWindow
-            || AgentSpaceManager.shared.isAgentSpace(spaceId)
+            || self.isAgentSpace
         if isIsolated {
             pinnedTabs = []
             visibleBookmarkTabs = []
@@ -600,6 +653,18 @@ class BrowserState {
         }
     }
     
+    /// The one permitted profile assignment after initialization: a native
+    /// agent spare has no Browser, tabs, or profile-scoped store bindings yet.
+    @MainActor
+    @discardableResult
+    func bindPrewarmedAgentProfile(_ profileId: String) -> Bool {
+        guard isAgentSpace, self.profileId.isEmpty, !profileId.isEmpty,
+              windowController == nil, tabs.isEmpty, !isIncognito else { return false }
+        self.profileId = profileId
+        bookmarkManager.bindPrewarmedAgentProfile()
+        return true
+    }
+
     private func makePinnedTab(from model: TabDataModel) -> Tab {
         let tab = Tab(with: model)
         // App-scoped rows intentionally have no persisted profile owner, but
@@ -720,7 +785,7 @@ class BrowserState {
             return
         }
         let localTabs: [TabDataModel] = localStore.getAllPinnedTabs(for: profileId, spaceId: spaceId)
-        pinnedTabs = localTabs.map { makePinnedTab(from: $0) }
+        pinnedTabs = dedupedPinnedRuntimeTabs(localTabs.map { makePinnedTab(from: $0) })
 
         for pinnedTab in pinnedTabs {
             guard let localGuid = pinnedTab.guidInLocalDB else { continue }
@@ -746,14 +811,18 @@ class BrowserState {
             localTabs: localTabs,
             existingTabs: existingTabs
         )
-        pinnedTabs = localTabs.enumerated().map { index, localTab in
+        // `dedupedPinnedRuntimeTabs` is not decoration: the rebind above re-points
+        // surviving `Tab` objects at the migrated rows in place, and any repeat that
+        // escapes here reaches the sidebar's diffable data source, which treats a
+        // repeated identifier as a hard error.
+        pinnedTabs = dedupedPinnedRuntimeTabs(localTabs.enumerated().map { index, localTab in
             if let existing = scopeSyncMatches[index] {
                 rebindPinnedTabAfterScopeMigrationIfNeeded(existing, to: localTab)
                 syncPinnedTabMetadata(existing, from: localTab)
                 return existing
             }
             return localTab
-        }
+        })
 
         // Re-sync every pinned tab against the currently open Chromium tabs.
         syncAllPinnedTabsState()
@@ -1147,13 +1216,13 @@ class BrowserState {
     }
     
     func toggleSidebar(_ collapse: Bool? = nil) {
-        if let collapse {
-            sidebarCollapsed = collapse
-        } else {
-            sidebarCollapsed.toggle()
+        MainActor.assumeIsolated {
+            guard !isKioskWindow, !layoutMode.isTraditional else { return }
+            windowController?.mainSplitViewController.setSidebarCollapsed(
+                collapse ?? !sidebarCollapsed, animated: true)
         }
     }
-    
+
     /// Toggle AI Chat for the currently focused tab
     /// The collapse state is now managed per-tab, not globally
     func toggleAIChat(
@@ -1246,9 +1315,8 @@ class BrowserState {
     //
     // Driven by PhiChromiumCoordinator.windowDidEnter/ExitPlaceholderMode,
     // which are themselves triggered by Browser::Show/HidePlaceholder on the
-    // Chromium side. See docs/superpowers/specs/
-    // 2026-05-25-placeholder-on-last-tab-close-design.md §6.1 / §9.1 for
-    // the synchronous detach contract.
+    // Chromium side. The detach contract must complete synchronously before
+    // native state can expose the placeholder wrapper.
     // =========================================================================
 
     @MainActor
@@ -1903,13 +1971,14 @@ class BrowserState {
     /// cleanup and the existing cross-Space persistence semantics.
     @discardableResult
     @MainActor
-    func moveBookmarks(bookmarkGuids: [String], to targetSpace: Space) -> Bool {
+    func moveBookmarks(bookmarkGuids: [String], to targetSpace: Space,
+                       targetParentId: String? = nil, destinationIndex: Int? = nil) -> Bool {
         guard let plan = spaceTransferPlan(tabs: [], bookmarkGuids: Set(bookmarkGuids)),
               canMoveSpaceTransfer(plan, to: targetSpace, sourceHasSpaceSlot: false) else {
             return false
         }
 
-        commitBookmarkSpaceMove(plan, to: targetSpace)
+        commitBookmarkSpaceMove(plan, to: targetSpace, targetParentId: targetParentId, destinationIndex: destinationIndex)
         return true
     }
 
@@ -2050,7 +2119,8 @@ class BrowserState {
 
     @MainActor
     private func commitBookmarkSpaceMove(_ plan: MultiSelectionSpaceTransferPlan,
-                                         to targetSpace: Space) {
+                                         to targetSpace: Space, targetParentId: String? = nil,
+                                         destinationIndex: Int? = nil) {
         if !plan.detachedBookmarkGuids.isEmpty {
             detachBookmarkTabsForComfortableLayout(bookmarkGuids: plan.detachedBookmarkGuids)
         }
@@ -2058,7 +2128,8 @@ class BrowserState {
             localStore.moveBookmarks(plan.bookmarkGuids,
                                      sourceProfileId: profileId,
                                      toSpaceId: targetSpace.spaceId,
-                                     targetProfileId: targetSpace.profileId)
+                                     targetProfileId: targetSpace.profileId, sourceSpaceId: spaceId,
+                                     targetParentId: targetParentId, destinationIndex: destinationIndex)
         }
     }
 
@@ -2642,10 +2713,13 @@ class BrowserState {
         pendingBookmarkGroupCreations[customGuid] = PendingBookmarkGroupCreation(
             bookmarkGuids: bookmarks.map(\.guid)
         )
-        bridge.createNewTab(withUrl: "chrome://newtab/",
-                            windowId: windowId.int64Value,
-                            customGuid: customGuid,
-                            focusAfterCreate: false)
+        let windowId = self.windowId.int64Value
+        performWithBrowser {
+            bridge.createNewTab(withUrl: "chrome://newtab/",
+                                windowId: windowId,
+                                customGuid: customGuid,
+                                focusAfterCreate: false)
+        }
         scheduleBookmarkGroupSeedTimeout(customGuid: customGuid)
         return true
     }
@@ -5245,6 +5319,7 @@ class BrowserState {
         if tab.isInContentFullscreen != isFullscreen {
             tab.isInContentFullscreen = isFullscreen
         }
+        windowController?.handleTabContentFullscreen(isFullscreen: isFullscreen)
     }
     
     func toggleTabPinStatus(_ tabId: Int, guidInDB: String?) {
@@ -5342,10 +5417,13 @@ class BrowserState {
             "windowId=\(windowId) url=\(url ?? "") focusAfterCreate=\(focusAfterCreate) " +
             "focusingTab=\(focusingTabText) normalOrder=\(normalTabOrder)"
         )
-        ChromiumLauncher.sharedInstance().bridge?.createNewTab(withUrl: url ?? "",
-                                                               windowId: windowId.int64Value,
-                                                               customGuid: customGuid,
-                                                               focusAfterCreate: focusAfterCreate)
+        let windowId = self.windowId.int64Value
+        performWithBrowser {
+            ChromiumLauncher.sharedInstance().bridge?.createNewTab(withUrl: url ?? "",
+                                                                   windowId: windowId,
+                                                                   customGuid: customGuid,
+                                                                   focusAfterCreate: focusAfterCreate)
+        }
     }
 
     func createQuickLookupTab(customGuid: String? = nil) {
@@ -5359,7 +5437,20 @@ class BrowserState {
     }
     
     func openTab(_ url: String?) {
-        ChromiumLauncher.sharedInstance().bridge?.openTab(withUrl: url ?? "", windowId: windowId.int64Value)
+        let windowId = self.windowId.int64Value
+        performWithBrowser {
+            ChromiumLauncher.sharedInstance().bridge?.openTab(withUrl: url ?? "", windowId: windowId)
+        }
+    }
+
+    /// Tab-opening bridge calls wait for a dormant session's Browser (see
+    /// `SpaceSessionController.performWithBrowser`).
+    private func performWithBrowser(_ call: @escaping () -> Void) {
+        if let windowController {
+            windowController.performWithBrowser(call)
+        } else {
+            call()
+        }
     }
     
     func updateTabTitle(tabId: Int, newTitle: String) {
@@ -7243,6 +7334,27 @@ class BrowserState {
         }
     }
     
+    /// A storage-only management operation removed these records. Keep any live
+    /// pages accessible as normal tabs without reopening closed pins or moving windows.
+    @MainActor
+    func detachLiveTabsFromRemovedPins(_ guids: Set<String>) {
+        let affected = tabs.filter { $0.guidInLocalDB.map(guids.contains) == true }
+        guard !affected.isEmpty else { return }
+        let tabIDs = Set(affected.map(\.guid))
+        for tab in affected {
+            migrateAIChatTab(for: tab, toNewIdentifier: nil)
+            tab.guidInLocalDB = nil
+            tab.isPinned = false
+            tab.webContentWrapper?.updateTabCustomValue("")
+            insertIntoNormalTabOrder(tabGuid: tab.guid, at: normalTabOrder.count, syncChromiumOrder: false)
+        }
+        for index in splits.indices where tabIDs.contains(splits[index].primaryTabId)
+            || tabIDs.contains(splits[index].secondaryTabId) {
+            splits[index].isPinned = false
+        }
+        updateNormalTabs()
+    }
+
     func movePinnedTabOut(pinnedGuid: String, to normalIndex: Int, selectAfterMove: Bool = false) {
         guard let pinnedTab = pinnedTabs.first(where: { $0.guidInLocalDB == pinnedGuid }) else {
             return
@@ -7304,7 +7416,11 @@ class BrowserState {
                                                                   expectedGroupToken: nil,
                                                                   index: normalIndex,
                                                                   syncChromiumOrder: true)
-            ChromiumLauncher.sharedInstance().bridge?.createNewTab(withUrl: pinnedTab.url ?? "", at: -1, windowId: windowId, customGuid: nil)
+            let url = pinnedTab.url ?? ""
+            let windowId = self.windowId
+            performWithBrowser {
+                ChromiumLauncher.sharedInstance().bridge?.createNewTab(withUrl: url, at: -1, windowId: windowId, customGuid: nil)
+            }
         }
 
         localStore.removePinnedTab(pinnedTab, profileId: profileId, spaceId: spaceId)
@@ -7878,10 +7994,13 @@ class BrowserState {
                                                                   expectedGroupToken: nil,
                                                                   index: index,
                                                                   syncChromiumOrder: true)
-            ChromiumLauncher.sharedInstance().bridge?.createNewTab(withUrl: url,
-                                                                   at: -1,
-                                                                   windowId: windowId,
-                                                                   customGuid: nil)
+            let windowId = self.windowId
+            performWithBrowser {
+                ChromiumLauncher.sharedInstance().bridge?.createNewTab(withUrl: url,
+                                                                       at: -1,
+                                                                       windowId: windowId,
+                                                                       customGuid: nil)
+            }
         }
         
         // Remove the old bookmark entry after migration.
@@ -8354,7 +8473,7 @@ class BrowserState {
 
 extension BrowserState {
     static func currentState() -> BrowserState? {
-        MainBrowserWindowControllersManager.shared.activeWindowController?.browserState
+        SpaceSessionControllersManager.shared.activeWindowController?.browserState
     }
 }
 
@@ -8379,7 +8498,7 @@ extension BrowserState {
 protocol BrowserWindowAware: AnyObject {
     var unsafeBrowserWindowId: Int? { get }
     var unsafeBrowserState: BrowserState? { get }
-    var unsafeBrowserWindowController: MainBrowserWindowController? { get }
+    var unsafeBrowserWindowController: SpaceSessionController? { get }
 }
 
 extension NSViewController: BrowserWindowAware {
@@ -8390,7 +8509,7 @@ extension NSViewController: BrowserWindowAware {
     weak var unsafeBrowserState: BrowserState? { view.unsafeBrowserState }
     
     @available(*, deprecated, message: "Not Safe, should avoid using it")
-    weak var unsafeBrowserWindowController: MainBrowserWindowController? { view.unsafeBrowserWindowController }
+    weak var unsafeBrowserWindowController: SpaceSessionController? { view.unsafeBrowserWindowController }
 }
 
 extension NSView: BrowserWindowAware {
@@ -8401,5 +8520,5 @@ extension NSView: BrowserWindowAware {
     weak var unsafeBrowserState: BrowserState? { unsafeBrowserWindowController?.browserState }
     
     @available(*, deprecated, message: "Not Safe, should avoid using it")
-    weak var unsafeBrowserWindowController: MainBrowserWindowController? { window?.windowController as? MainBrowserWindowController }
+    weak var unsafeBrowserWindowController: SpaceSessionController? { window?.windowController as? SpaceSessionController }
 }

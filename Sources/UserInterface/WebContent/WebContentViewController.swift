@@ -451,8 +451,25 @@ class WebContentViewController: NSViewController {
     
     // MARK: - Focus Management
     
+    /// Hosted mode puts every Space's tree in the one shell window, so only
+    /// the presented session may move its first responder or Chromium's
+    /// focus; a background Space doing so would take the user's keystrokes.
+    private var ownsWindowFocus: Bool {
+        browserState?.windowController?.isPresentedOrLegacy ?? true
+    }
+
+    /// Hosted mode: focus after a Space switch installs this session's tree
+    /// in the shell. Same targets as a tab switch — the agent overlay while
+    /// an agent drives the tab, the AI chat when it held focus — but with no
+    /// recorded target the page is focused: the leaving session's first
+    /// responder left the window with its views.
+    func restoreFocusAfterPresentation() {
+        restoreFocusForCurrentTab(focusingWebContentByDefault: true)
+    }
+
     /// Restores focus based on the associated tab's last focus target.
-    private func restoreFocusForCurrentTab() {
+    private func restoreFocusForCurrentTab(focusingWebContentByDefault: Bool = false) {
+        guard ownsWindowFocus else { return }
         guard let tab = associatedTab else {
             AppLogDebug("🔍 [Focus] restoreFocusForCurrentTab - no associatedTab")
             return
@@ -481,15 +498,20 @@ class WebContentViewController: NSViewController {
                 focusWebContent()
             }
         case nil:
-            // Leave focus unchanged when no prior target is recorded.
-            AppLogDebug("🔍 [Focus] lastFocusTarget is nil, not restoring focus")
-            break
+            if focusingWebContentByDefault {
+                AppLogDebug("🔍 [Focus] lastFocusTarget is nil, focusing webContent")
+                focusWebContent()
+            } else {
+                // Leave focus unchanged when no prior target is recorded.
+                AppLogDebug("🔍 [Focus] lastFocusTarget is nil, not restoring focus")
+            }
         }
     }
     
     /// Focuses the active web content view. Internal so the container can
     /// hand focus back to the page when the extension side panel closes.
     func focusWebContent() {
+        guard ownsWindowFocus else { return }
         guard let tab = associatedTab else {
             AppLogDebug("🔍 [Focus] focusWebContent - no tab or webView")
             return
@@ -611,7 +633,7 @@ class WebContentViewController: NSViewController {
         // Observe AI Chat collapse state once the split item exists.
         setupAIChatObserver()
 
-        browserState?.$sidebarCollapsed
+        browserState?.sidebarCollapsedPublisher
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.updateSplitViewLeadingInset()
@@ -1671,7 +1693,11 @@ class WebContentViewController: NSViewController {
     /// renders a fixed `CrashPageData` snapshot.
     private func showCrashedPage(for tab: Tab) {
         guard let crashData = tab.crashState else { return }
-        guard let host = view.window?.windowController as? MainBrowserWindowController else {
+        // The owning session, not the window's controller: in hosted mode
+        // the window is the slot's shell, whose controller is whichever
+        // Space is presented — a background Space's crash would otherwise
+        // reload and open help through the Space the user is looking at.
+        guard let host = browserState?.windowController else {
             return
         }
         // Already showing this exact crash for this tab — don't rebuild (avoids
@@ -1738,7 +1764,7 @@ class WebContentViewController: NSViewController {
                                     tabId: Int) {
         guard let tab = browserState?.tabs.first(where: { $0.guid == tabId }),
               let crashData = tab.crashState,
-              let hostWC = view.window?.windowController as? MainBrowserWindowController else {
+              let hostWC = browserState?.windowController else {
             host.detachCrashView(pane: pane)
             dropSplitCrashController(tabId: tabId)
             return
@@ -2167,6 +2193,20 @@ class WebContentViewController: NSViewController {
         }
     }
 
+    /// Hosted mode: the session is leaving the shell's screen (a Space
+    /// switch, a close). A fullscreen page sits under the shell's content
+    /// view, outside the session's own tree, so hiding that tree would
+    /// leave the page over the Space taking its place. Put it back under
+    /// its tree now; Chromium leaves tab fullscreen with the Space
+    /// (`UnpresentHostedBrowser`), and the flag follows.
+    func collapseContentFullscreenForConcealment() {
+        guard savedHostViewSuperview != nil else { return }
+        applyContentFullscreenState(false)
+    }
+
+    var hostViewForTesting: NSView { hostView }
+    var crashedPageControllerForTesting: RendererCrashViewController? { crashedPageController }
+
     /// Rebind the content-fullscreen observer to the given tab. Called from
     /// `updateAssociatedTab`. If the controller is still in fullscreen from a
     /// previous tab (shouldn't happen under normal flow, but guard anyway),
@@ -2196,6 +2236,10 @@ class WebContentViewController: NSViewController {
     private func applyContentFullscreenState(_ isFullscreen: Bool) {
         if isFullscreen {
             guard savedHostViewSuperview == nil else { return }
+            // Hosted mode: a background Space's tree is resident in the shell,
+            // so the lift would cover the Space on screen. The slot releases
+            // that fullscreen (`sessionRequestedShellFullscreen`).
+            guard ownsWindowFocus else { return }
             guard let window = hostView.window,
                   let contentView = window.contentView else {
                 // The controller's view is not currently in a window (cached
@@ -2269,6 +2313,7 @@ class WebContentViewController: NSViewController {
     }
 
     private func restoreWebContentFirstResponder() {
+        guard ownsWindowFocus else { return }
         guard let tab = associatedTab,
               let webView = tab.webContentView,
               let window = hostView.window else { return }
@@ -3201,7 +3246,7 @@ class WebContentViewController: NSViewController {
             }
         }
         raiseAgentSpaceOverlayAboveMask()
-        if associatedTab === browserState?.focusingTab {
+        if associatedTab === browserState?.focusingTab, ownsWindowFocus {
             view.window?.makeFirstResponder(agentAnimationOverlay)
         }
     }

@@ -12,8 +12,7 @@ import PostHog
 /// with one shared basename into the configured folder. Identifiers keep
 /// the original SaveForLater/saveForLater names; only the product-facing
 /// strings say Folio ("Memory is what Phi remembers about you, Folio is
-/// what you chose to keep"). Design:
-/// docs/plans/2026-08-31-save-for-later-design.md.
+/// what you chose to keep"). See `docs/folio-capture.md`.
 ///
 /// A save is a background job detached from the tab: both capture legs start
 /// the moment the save is triggered, and once their payloads are in hand
@@ -70,13 +69,12 @@ enum SaveForLaterService {
     private static var inFlightTabGuids: Set<Int> = []
 
     /// Whether the menu item / shortcut should be offered for this tab.
-    /// Guest Mode is refused outright: a guest session must not write into
-    /// the permanent library. Only web pages are saveable — chrome:// and
-    /// chrome-extension:// surfaces (reader pages, settings) are not items.
+    /// Guest Mode saves too, into the same folder as a signed-in session.
+    /// Only web pages are saveable — chrome:// and chrome-extension://
+    /// surfaces (reader pages, settings) are not items.
     static func canSave(_ tab: Tab?) -> Bool {
         guard featureEnabled,
               let tab, !tab.isShowingNativeNTP,
-              !ApplicationState.shared.isGuest,
               !inFlightTabGuids.contains(tab.guid),
               let url = tab.url, !url.isEmpty, !url.isLocalUrlString,
               url.lowercased().hasPrefix("http://")
@@ -185,12 +183,11 @@ enum SaveForLaterService {
         return PostHogSDK.shared.isFeatureEnabled("save-for-later-auto-trigger")
     }
 
-    /// Effective arming: Folio on && flag && user opt-in && not Guest Mode.
+    /// Effective arming: Folio on && flag && user opt-in.
     static var autoTriggerArmed: Bool {
         featureEnabled
             && autoTriggerFlagEnabled
             && PhiPreferences.SaveForLater.autoSaveOnSiteActions
-            && !ApplicationState.shared.isGuest
     }
 
     /// Pushes the armed state to Mirage's trigger relay. Called when the
@@ -272,7 +269,7 @@ enum SaveForLaterService {
     /// The extension speaks in Chromium tab ids (`Tab.guid`); the tab can be
     /// in any window.
     private static func findTab(_ tabId: Int) -> (tab: Tab, state: BrowserState)? {
-        for controller in MainBrowserWindowControllersManager.shared.getAllWindows() {
+        for controller in SpaceSessionControllersManager.shared.getAllWindows() {
             let state = controller.browserState
             if let tab = state.tabs.first(where: { $0.guid == tabId }) {
                 return (tab, state)
@@ -345,7 +342,7 @@ enum SaveForLaterService {
             value: "Cancel",
             comment: "Folio - Cancel button of the add-note dialog"))
         alert.window.initialFirstResponder = field
-        let window = MainBrowserWindowControllersManager.shared.getAllWindows()
+        let window = SpaceSessionControllersManager.shared.getAllWindows()
             .first(where: { $0.browserState.windowId == windowId })?.window
         let response: NSApplication.ModalResponse
         if let window {
@@ -367,7 +364,7 @@ enum SaveForLaterService {
         AppLogWarn("[SaveForLater] legacy saveForLater.highlight from a " +
                    "pre-3.7 Mirage; the extension now owns highlights")
         Task { @MainActor in
-            guard let windowId = MainBrowserWindowControllersManager.shared
+            guard let windowId = SpaceSessionControllersManager.shared
                 .getActiveWindowState()?.windowId else { return }
             showToast(
                 title: NSLocalizedString(
@@ -381,12 +378,9 @@ enum SaveForLaterService {
 
     // MARK: - Library
 
-    /// Opens the Save for Later library — a Mirage extension page that lists
-    /// the saved items and renders their markdown with the reader's own
-    /// stylesheet. The page cannot touch the folder itself; the
-    /// `saveForLater.list/read/delete/reveal/openWebpage` handlers below are
-    /// its only access, and this service stays the authority on paths.
+    /// Opens Mirage's Folio library page in the active browser Profile.
     static func openLibrary() {
+        guard featureEnabled else { return }
         openExtensionPage("library.html")
     }
 
@@ -400,7 +394,7 @@ enum SaveForLaterService {
 
     private static func openExtensionPage(_ page: String) {
         guard featureEnabled,
-              let state = MainBrowserWindowControllersManager.shared
+              let state = SpaceSessionControllersManager.shared
                   .activeWindowController?.browserState else { return }
         state.createTab(
             "chrome-extension://\(ReaderExtensionBridge.extensionId)/\(page)",
@@ -444,7 +438,7 @@ enum SaveForLaterService {
         if let tabId, let found = findTab(tabId) {
             return folderURL(forProfile: found.state.profileId)
         }
-        return folderURL(forProfile: MainBrowserWindowControllersManager.shared
+        return folderURL(forProfile: SpaceSessionControllersManager.shared
             .getActiveWindowState()?.profileId ?? "")
     }
 
@@ -538,11 +532,6 @@ enum SaveForLaterService {
         }
         let tabId = brokerTabId(context)
         Task { @MainActor in
-            guard !ApplicationState.shared.isGuest else {
-                libraryReply("{\"error\":\"unavailable\"}",
-                             requestId: context.requestId)
-                return
-            }
             let folder = libraryFolder(forTab: tabId)
             let json = await Task.detached(priority: .utility) { () -> String in
                 struct Reply: Encodable {
@@ -628,11 +617,6 @@ enum SaveForLaterService {
             return
         }
         Task { @MainActor in
-            guard !ApplicationState.shared.isGuest else {
-                libraryReply("{\"error\":\"unavailable\"}",
-                             requestId: context.requestId)
-                return
-            }
             let url = libraryFolder(forTab: payload.tabId)
                 .appendingPathComponent(name)
             let offset = max(0, payload.offset ?? 0)
@@ -701,8 +685,7 @@ enum SaveForLaterService {
         }
         Task { @MainActor in
             let folder = libraryFolder(forTab: payload.tabId)
-            guard !ApplicationState.shared.isGuest,
-                  libraryFileURL(basename: payload.basename, ext: "md",
+            guard libraryFileURL(basename: payload.basename, ext: "md",
                                  folder: folder) != nil else {
                 libraryReply("{\"error\":\"invalid\"}",
                              requestId: context.requestId)
@@ -727,8 +710,7 @@ enum SaveForLaterService {
         guard libraryGate(context) else { return }
         guard let payload = libraryItemPayload(context) else { return }
         Task { @MainActor in
-            guard !ApplicationState.shared.isGuest,
-                  let url = libraryFileURL(
+            guard let url = libraryFileURL(
                       basename: payload.basename, ext: "md",
                       folder: libraryFolder(forTab: payload.tabId)),
                   FileManager.default.fileExists(atPath: url.path) else {
@@ -878,11 +860,6 @@ enum SaveForLaterService {
             return
         }
         Task { @MainActor in
-            guard !ApplicationState.shared.isGuest else {
-                libraryReply("{\"error\":\"unavailable\"}",
-                             requestId: context.requestId)
-                return
-            }
             let folder = libraryFolder(forTab: payload.tabId)
             let text = payload.text
             let ok = await Task.detached(priority: .utility) { () -> Bool in
@@ -921,11 +898,6 @@ enum SaveForLaterService {
             return
         }
         Task { @MainActor in
-            guard !ApplicationState.shared.isGuest else {
-                libraryReply("{\"error\":\"unavailable\"}",
-                             requestId: context.requestId)
-                return
-            }
             let folder = libraryFolder(forTab: payload.tabId)
             let from = payload.from
             let to = payload.to
@@ -971,7 +943,7 @@ enum SaveForLaterService {
         }
         Task { @MainActor in
             let windowId = payload.tabId.flatMap { findTab($0)?.state.windowId }
-                ?? MainBrowserWindowControllersManager.shared
+                ?? SpaceSessionControllersManager.shared
                     .getActiveWindowState()?.windowId
             guard let windowId else { return }
             guard let title = toastTitle(forKey: payload.titleKey) else {
@@ -1029,7 +1001,7 @@ enum SaveForLaterService {
     private static func requestExtensionSave(tab: Tab, context: JobContext,
                                              timeout: TimeInterval = 12) async -> Bool {
         let requestId = UUID().uuidString
-        let windowId = MainBrowserWindowControllersManager.shared.getAllWindows()
+        let windowId = SpaceSessionControllersManager.shared.getAllWindows()
             .first(where: { controller in
                 controller.browserState.tabs.contains(where: { $0.guid == tab.guid })
             })?.browserState.windowId
@@ -1079,6 +1051,26 @@ enum SaveForLaterService {
 
     private struct VideoGistPayload: Decodable { let url: String }
 
+    /// Whether a video save may ask for its article. The article is Phi AI,
+    /// so it needs a signed-in user with Phi AI turned on; without either,
+    /// Mirage keeps a video as its link and webpage copy and does not offer
+    /// the YouTube import.
+    static var videoArticlesAvailable: Bool {
+        PhiPreferences.AISettings.phiAIEnabled.loadValue()
+            && ApplicationState.shared.isAuthenticated
+    }
+
+    /// `saveForLater.videoArticles`: asked at the start of every video save
+    /// and when the import sheet opens, so a sign-out between saves is seen
+    /// by the next one.
+    nonisolated static func handleVideoArticles(
+        _ context: ExtensionMessageContext) -> String? {
+        guard libraryGate(context) else { return "{\"available\":false}" }
+        return MainActor.assumeIsolated {
+            "{\"available\":\(videoArticlesAvailable)}"
+        }
+    }
+
     /// `saveForLater.videoGist`: the app still owns the authenticated call
     /// to phi-agent, so Mirage asks for the article rather than carrying
     /// credentials. Moving this is a later phase.
@@ -1090,8 +1082,7 @@ enum SaveForLaterService {
             return
         }
         Task { @MainActor in
-            guard PhiPreferences.AISettings.phiAIEnabled.loadValue(),
-                  ApplicationState.shared.isAuthenticated else {
+            guard videoArticlesAvailable else {
                 libraryReply("{\"error\":\"unavailable\"}",
                              requestId: context.requestId)
                 return
@@ -1179,11 +1170,6 @@ enum SaveForLaterService {
             return
         }
         Task { @MainActor in
-            guard !ApplicationState.shared.isGuest else {
-                libraryReply("{\"error\":\"unavailable\"}",
-                             requestId: context.requestId)
-                return
-            }
             let folder = libraryFolder(forTab: payload.tabId)
             let token = UUID().uuidString
             let partURL = folder.appendingPathComponent(".folio-part-" + token)

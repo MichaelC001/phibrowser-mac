@@ -136,6 +136,30 @@ final class SpacesStripChipFlightTests: XCTestCase {
 /// sweep exists for.
 @MainActor
 final class SpacesStripChipFlightHostTests: XCTestCase {
+    private final class IconInsertion: ObservableObject {
+        @Published var icons = ["W"]
+    }
+
+    private struct InsertingIcons: View {
+        @ObservedObject var insertion: IconInsertion
+        let geometry: SpacesStripGeometry
+
+        var body: some View {
+            HStack(spacing: 4) {
+                ForEach(insertion.icons, id: \.self) { icon in
+                    Text(icon).frame(width: 24, height: 24)
+                        .onGeometryChange(for: CGRect.self) { proxy in
+                            proxy.frame(in: .named("strip"))
+                        } action: { frame in
+                            geometry.pipFrames[icon] = frame
+                        }
+                }
+            }
+            .coordinateSpace(name: "strip")
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
     private let viewport = CGRect(x: 10, y: 4, width: 200, height: 24)
     private let insideA = CGRect(x: 10, y: 4, width: 24, height: 24)
     private let insideB = CGRect(x: 38, y: 4, width: 24, height: 24)
@@ -147,6 +171,7 @@ final class SpacesStripChipFlightHostTests: XCTestCase {
         let geometry = SpacesStripGeometry()
         geometry.pipFrames = ["a": insideA, "b": insideB]
         geometry.viewportFrame = viewport
+        geometry.rowWidth = 220
         host.stripGeometry = geometry
         return (host, geometry)
     }
@@ -159,7 +184,7 @@ final class SpacesStripChipFlightHostTests: XCTestCase {
 
     func testBeginMountsTheStandInAndConcealsTheChip() {
         let (host, geometry) = makeHost()
-        XCTAssertTrue(host.beginSpacesChipFlight(fromSpaceId: "a", toSpaceId: "b",
+        XCTAssertTrue(host.beginSpacesChipFlight(fromSpaceId: "a", toSpaceId: "b", pipCount: 2,
                                                  duration: 0.15))
         XCTAssertEqual(flightLayers(of: host).count, 1)
         XCTAssertTrue(geometry.isChipConcealed)
@@ -171,7 +196,7 @@ final class SpacesStripChipFlightHostTests: XCTestCase {
 
     func testCancelSweepsTheStandInAndRestoresTheChip() {
         let (host, geometry) = makeHost()
-        _ = host.beginSpacesChipFlight(fromSpaceId: "a", toSpaceId: "b", duration: 0.15)
+        _ = host.beginSpacesChipFlight(fromSpaceId: "a", toSpaceId: "b", pipCount: 2, duration: 0.15)
         host.cancelSpacesChipFlight()
         XCTAssertTrue(flightLayers(of: host).isEmpty)
         XCTAssertFalse(geometry.isChipConcealed)
@@ -179,7 +204,7 @@ final class SpacesStripChipFlightHostTests: XCTestCase {
 
     func testDoubleCancelIsIdempotent() {
         let (host, geometry) = makeHost()
-        _ = host.beginSpacesChipFlight(fromSpaceId: "a", toSpaceId: "b", duration: 0.15)
+        _ = host.beginSpacesChipFlight(fromSpaceId: "a", toSpaceId: "b", pipCount: 2, duration: 0.15)
         host.cancelSpacesChipFlight()
         var events = 0
         let subscription = geometry.objectWillChange.sink { _ in events += 1 }
@@ -190,9 +215,118 @@ final class SpacesStripChipFlightHostTests: XCTestCase {
         subscription.cancel()
     }
 
+    func testLandedFlightSweepsItself() async throws {
+        let (host, geometry) = makeHost()
+        XCTAssertTrue(host.beginSpacesChipFlight(fromSpaceId: "a", toSpaceId: "b", pipCount: 2,
+                                                 duration: 0.05))
+        for _ in 0..<40 where geometry.isChipConcealed {
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        XCTAssertFalse(geometry.isChipConcealed)
+        XCTAssertTrue(flightLayers(of: host).isEmpty)
+    }
+
+    func testRefusesAnOverflowingRow() {
+        let (host, geometry) = makeHost()
+        // 220pt fits 7 pips with the "+" trailing; an 8th makes the row
+        // slide, which the stand-in cannot follow.
+        XCTAssertTrue(SpacesStripView.allPipsFit(count: 7, availableWidth: 220))
+        XCTAssertFalse(host.beginSpacesChipFlight(fromSpaceId: "a", toSpaceId: "b",
+                                                  pipCount: 8, duration: 0.15))
+        XCTAssertTrue(flightLayers(of: host).isEmpty)
+        XCTAssertFalse(geometry.isChipConcealed)
+    }
+
+    func testNewSpaceKeepsSourceSelectedUntilTheBandStarts() {
+        let (host, geometry) = makeHost()
+        _ = NSApplication.shared
+        let window = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: 220, height: 32),
+                              styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = host
+        window.orderFront(nil)
+        defer { window.orderOut(nil) }
+        host.prepareSpacesSelection(fromSpaceId: "a", toSpaceId: "b")
+        XCTAssertEqual(geometry.pendingSelection?.source, "a")
+        XCTAssertEqual(geometry.pendingSelection?.target, "b")
+        XCTAssertFalse(geometry.isChipConcealed)
+        XCTAssertTrue(flightLayers(of: host).isEmpty)
+
+        host.beginPreparedSpacesChipFlight(toSpaceId: "b", pipCount: 2, duration: 0.15)
+        XCTAssertNil(geometry.pendingSelection)
+        XCTAssertTrue(geometry.isChipConcealed)
+        XCTAssertEqual(flightLayers(of: host).count, 1)
+        host.cancelSpacesChipFlight()
+    }
+
+    func testPreparationRendersAnIconInsertedInTheSameTurn() {
+        let geometry = SpacesStripGeometry()
+        let insertion = IconInsertion()
+        let host = SpacesStripHostingView(rootView: AnyView(
+            InsertingIcons(insertion: insertion, geometry: geometry)))
+        host.frame = NSRect(x: 0, y: 0, width: 220, height: 32)
+        host.stripGeometry = geometry
+        host.layoutSubtreeIfNeeded()
+        XCTAssertNotNil(geometry.pipFrames["W"])
+        XCTAssertNil(geometry.pipFrames["🥷"])
+
+        insertion.icons.append("🥷")
+        host.prepareSpacesSelection(fromSpaceId: "W", toSpaceId: "🥷")
+
+        XCTAssertNotNil(geometry.pipFrames["🥷"], "The new icon must be laid out before selection moves")
+        XCTAssertEqual(geometry.pendingSelection?.source, "W")
+        XCTAssertFalse(geometry.isChipConcealed)
+        XCTAssertTrue(flightLayers(of: host).isEmpty)
+        host.cancelSpacesChipFlight()
+    }
+
+    func testPreparedOverflowReleasesSelectionWithoutAStandIn() {
+        let (host, geometry) = makeHost()
+        host.prepareSpacesSelection(fromSpaceId: "a", toSpaceId: "b")
+        host.beginPreparedSpacesChipFlight(toSpaceId: "b", pipCount: 8, duration: 0.15)
+        XCTAssertNil(geometry.pendingSelection)
+        XCTAssertFalse(geometry.isChipConcealed)
+        XCTAssertTrue(flightLayers(of: host).isEmpty)
+    }
+
+    func testSupersededSwitchCannotReleaseTheNewSelection() {
+        let (host, geometry) = makeHost()
+        host.prepareSpacesSelection(fromSpaceId: "a", toSpaceId: "b")
+        host.prepareSpacesSelection(fromSpaceId: "a", toSpaceId: "c")
+        host.beginPreparedSpacesChipFlight(toSpaceId: "b", pipCount: 3, duration: 0.15)
+        host.cancelSpacesChipFlight(toSpaceId: "b")
+        XCTAssertEqual(geometry.pendingSelection?.target, "c")
+        XCTAssertTrue(flightLayers(of: host).isEmpty)
+        host.cancelSpacesChipFlight(toSpaceId: "c")
+        XCTAssertNil(geometry.pendingSelection)
+    }
+
+    func testUnhidingTheRowAsksTheStripToReanchor() {
+        let (host, geometry) = makeHost()
+        var reveals = 0
+        let subscription = geometry.revealed.sink { reveals += 1 }
+        host.isHidden = false
+        XCTAssertEqual(reveals, 0)
+        host.isHidden = true
+        XCTAssertEqual(reveals, 0)
+        host.isHidden = false
+        XCTAssertEqual(reveals, 1)
+        subscription.cancel()
+    }
+
+    func testTargetedCancelSweepsOnlyItsOwnFlight() {
+        let (host, geometry) = makeHost()
+        _ = host.beginSpacesChipFlight(fromSpaceId: "a", toSpaceId: "b", pipCount: 2, duration: 0.15)
+        host.cancelSpacesChipFlight(toSpaceId: "a")
+        XCTAssertEqual(flightLayers(of: host).count, 1)
+        XCTAssertTrue(geometry.isChipConcealed)
+        host.cancelSpacesChipFlight(toSpaceId: "b")
+        XCTAssertTrue(flightLayers(of: host).isEmpty)
+        XCTAssertFalse(geometry.isChipConcealed)
+    }
+
     func testIneligibleBeginHasZeroSideEffects() {
         let (host, geometry) = makeHost()
-        XCTAssertFalse(host.beginSpacesChipFlight(fromSpaceId: "missing", toSpaceId: "b",
+        XCTAssertFalse(host.beginSpacesChipFlight(fromSpaceId: "missing", toSpaceId: "b", pipCount: 2,
                                                   duration: 0.15))
         XCTAssertTrue(flightLayers(of: host).isEmpty)
         XCTAssertFalse(geometry.isChipConcealed)
@@ -200,11 +334,11 @@ final class SpacesStripChipFlightHostTests: XCTestCase {
 
     func testIneligibleBeginDoesNotSweepALiveFlight() {
         let (host, geometry) = makeHost()
-        XCTAssertTrue(host.beginSpacesChipFlight(fromSpaceId: "a", toSpaceId: "b",
+        XCTAssertTrue(host.beginSpacesChipFlight(fromSpaceId: "a", toSpaceId: "b", pipCount: 2,
                                                  duration: 0.15))
         let live = flightLayers(of: host)
         XCTAssertEqual(live.count, 1)
-        XCTAssertFalse(host.beginSpacesChipFlight(fromSpaceId: "missing", toSpaceId: "b",
+        XCTAssertFalse(host.beginSpacesChipFlight(fromSpaceId: "missing", toSpaceId: "b", pipCount: 2,
                                                   duration: 0.15))
         let after = flightLayers(of: host)
         XCTAssertEqual(after.count, 1)

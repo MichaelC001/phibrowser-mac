@@ -33,7 +33,7 @@ extension AgentSpaceRouter {
     /// user-space management message refuses with this response. nil means
     /// allowed.
     static func userSpaceOperationsRefusal() -> String? {
-        if MainBrowserWindowControllersManager.shared
+        if SpaceSessionControllersManager.shared
             .isGuestTransitionInteractionBlocked {
             return failure("guest_account_transition_in_progress")
         }
@@ -56,7 +56,7 @@ extension AgentSpaceRouter {
         let spaces = MainActor.assumeIsolated { () -> [[String: Any]] in
             let manager = SpaceManager.shared
             let activeId = manager.activeSpaceId
-            let controllers = MainBrowserWindowControllersManager.shared.getAllWindows()
+            let controllers = SpaceSessionControllersManager.shared.getAllWindows()
             return manager.spaces
                 .filter { !$0.isAgentSpace && !SpaceManager.isIncognitoSpaceId($0.spaceId) }
                 .map { space in
@@ -64,13 +64,14 @@ extension AgentSpaceRouter {
                         "spaceId": space.spaceId,
                         "name": space.name,
                         "colorHex": space.colorHex,
+                        "themeId": manager.resolvedThemeId(forSpaceId: space.spaceId),
                         "iconName": space.iconName,
                         "profileId": space.profileId,
                         "sortOrder": space.sortOrder,
                         "isDefault": space.spaceId == SpaceManager.shared.currentDefaultSpaceId,
                         "isActive": space.spaceId == activeId,
                         "windowIds": controllers
-                            .filter { $0.spaceId == space.spaceId }
+                            .filter { $0.spaceId == space.spaceId && $0.browserType == .normal }
                             .map(\.windowId),
                     ]
                 }
@@ -88,8 +89,17 @@ extension AgentSpaceRouter {
               let rawName = obj["name"] as? String else { return invalid() }
         let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { return invalid() }
-        let colorHex = (obj["colorHex"] as? String) ?? "#3A6FF8"
-        let iconName = (obj["iconName"] as? String) ?? "phi:phi-icon-view-grid-add"
+        let requestedTheme: String?
+        let iconName: String
+        do {
+            requestedTheme = try requestedThemeId(in: obj)
+            iconName = try requestedIconName(in: obj)
+                ?? IconPickerSelection.defaultSelection.storageValue
+        } catch let error as SpacePayloadError {
+            return failure(error.code)
+        } catch {
+            return invalid()
+        }
         let activate = obj["activate"] as? Bool ?? false
         let requestedProfile = (obj["profileId"] as? String) ?? ""
 
@@ -110,22 +120,31 @@ extension AgentSpaceRouter {
             } else {
                 profileId = profiles.first?.profileId ?? LocalStore.defaultProfileId
             }
+            // Every Space owns a pinned theme, as the create panel does; with
+            // none requested the new Space keeps the look it would render
+            // with today (the global theme). `setTheme` re-derives the
+            // stored `colorHex` from it.
+            let themeId = requestedTheme ?? ThemeManager.shared.currentTheme.id
             guard let spaceId = manager.createSpace(name: name,
-                                                    colorHex: colorHex,
+                                                    colorHex: BrowserMigrationSpaceTheme.overlayHex(ofThemeID: themeId),
                                                     iconName: iconName,
                                                     profileId: profileId,
                                                     makeDefaultActive: false) else {
                 return failure("no_account")
             }
+            manager.setTheme(forSpaceId: spaceId, themeId: themeId)
             if activate {
                 manager.activateInFocusedWindow(spaceId: spaceId)
             }
-            return encode(["ok": true, "spaceId": spaceId, "profileId": profileId])
+            return encode(["ok": true, "spaceId": spaceId, "profileId": profileId,
+                           "themeId": themeId, "iconName": iconName])
         }
     }
 
-    /// `agentSpace.spaces.update` — rename / recolor / change icon. All
-    /// fields optional and independent.
+    /// `agentSpace.spaces.update` — rename / retheme / change icon. All
+    /// fields optional and independent. `themeId` or `colorHex` pins a
+    /// theme (see `requestedThemeId`); the reply echoes the pinned `themeId`
+    /// and the normalized `iconName` so the caller can see what landed.
     static func handleSpacesUpdate(context: ExtensionMessageContext) -> String? {
         guard let obj = json(context.payload),
               let spaceId = obj["spaceId"] as? String else { return invalid() }
@@ -135,18 +154,110 @@ extension AgentSpaceRouter {
                 return failure("unknown_space")
             }
             guard !space.isAgentSpace else { return failure("agent_space") }
+            // Validate everything before writing anything, so a bad field
+            // never leaves a half-applied update behind.
+            let themeId: String?
+            let iconName: String?
+            do {
+                themeId = try requestedThemeId(in: obj)
+                iconName = try requestedIconName(in: obj)
+            } catch let error as SpacePayloadError {
+                return failure(error.code)
+            } catch {
+                return invalid()
+            }
             if let name = (obj["name"] as? String)?
                 .trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty {
                 manager.renameSpace(spaceId: spaceId, to: name)
             }
-            if let colorHex = obj["colorHex"] as? String, !colorHex.isEmpty {
-                manager.recolorSpace(spaceId: spaceId, colorHex: colorHex)
+            if let themeId {
+                manager.setTheme(forSpaceId: spaceId, themeId: themeId)
             }
-            if let iconName = obj["iconName"] as? String, !iconName.isEmpty {
+            if let iconName {
                 manager.changeIcon(spaceId: spaceId, iconName: iconName)
             }
-            return ok()
+            var reply: [String: Any] = ["ok": true,
+                                        "themeId": manager.resolvedThemeId(forSpaceId: spaceId)]
+            if let iconName { reply["iconName"] = iconName }
+            return encode(reply)
         }
+    }
+
+    struct SpacePayloadError: Error {
+        let code: String
+    }
+
+    /// The theme a `spaces.create` / `spaces.update` payload asks to pin, or
+    /// nil when it names none. A Space's color IS its pinned theme — the
+    /// stored `colorHex` is a cache `setTheme` re-derives and nothing on
+    /// screen reads it — so writing the hex alone reported success while the
+    /// window kept its old color (PHI-1648). `themeId` names a built-in theme
+    /// by id or display name; a bare `colorHex` snaps to the nearest built-in
+    /// by hue, exactly as browser import does. `themeId` wins when both are
+    /// given.
+    static func requestedThemeId(in obj: [String: Any]) throws -> String? {
+        if let raw = (obj["themeId"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty {
+            guard let theme = Theme.builtInThemes.first(where: {
+                $0.id.caseInsensitiveCompare(raw) == .orderedSame
+                    || $0.name.caseInsensitiveCompare(raw) == .orderedSame
+            }) else { throw SpacePayloadError(code: "unknown_theme") }
+            return theme.id
+        }
+        if let raw = (obj["colorHex"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty {
+            guard raw.range(of: "^#?[0-9A-Fa-f]{6}$", options: .regularExpression) != nil else {
+                throw SpacePayloadError(code: "invalid_color")
+            }
+            let hex = raw.hasPrefix("#") ? raw : "#" + raw
+            return BrowserMigrationSpaceTheme.resolved(forSourceColorHex: hex).themeID
+        }
+        return nil
+    }
+
+    /// The payload's `iconName` normalized to a storage value the strip can
+    /// draw, or nil when it names none. Throws `invalid_icon` for anything
+    /// the catalogs don't know: such a value used to be stored verbatim and
+    /// rendered as a blank icon (PHI-1649).
+    static func requestedIconName(in obj: [String: Any]) throws -> String? {
+        guard let raw = obj["iconName"] as? String,
+              !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        guard let value = normalizedIconStorageValue(raw) else {
+            throw SpacePayloadError(code: "invalid_icon")
+        }
+        return value
+    }
+
+    /// Maps the icon spellings an agent plausibly sends to an
+    /// `IconPickerSelection` storage value: the storage forms themselves
+    /// ("phi:phi-icon-mail", "emoji:1F680"), a Phi icon by catalog name,
+    /// asset name, or legacy number with or without the "phi:" prefix
+    /// ("mail", "phi-icon-mail", "phi:22"), and an emoji by lowercase
+    /// codepoints or by the character itself ("🚀", "emoji:🚀"). nil when
+    /// nothing matches.
+    static func normalizedIconStorageValue(_ raw: String) -> String? {
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return nil }
+        if let selection = IconPickerSelection.fromStorageValue(value) {
+            return selection.storageValue
+        }
+        var body = value
+        for prefix in ["phi:", "emoji:"] where body.hasPrefix(prefix) {
+            body = String(body.dropFirst(prefix.count))
+        }
+        if let id = PhiIconCatalog.canonicalId(for: body)
+            ?? PhiIconCatalog.icon(named: body)?.assetName
+            ?? PhiIconCatalog.canonicalId(for: "phi-icon-" + body) {
+            return IconPickerSelection.phiIcon(id: id).storageValue
+        }
+        let catalog = EmojiCatalog.shared
+        if catalog.text(for: body.uppercased()) != nil {
+            return "emoji:" + body.uppercased()
+        }
+        if let id = catalog.id(forText: body) {
+            return "emoji:" + id
+        }
+        return nil
     }
 
     /// `agentSpace.spaces.delete` — delete a normal user Space (closes its
@@ -221,49 +332,93 @@ extension AgentSpaceRouter {
     }
 
     /// `agentSpace.spaces.openTab` — open a URL as a new tab in a user
-    /// Space's open window: the direct user-Space counterpart of the
-    /// task-scoped `agentSpace.openTab`. `activate` (default true) selects
-    /// the new tab — the common caller is opening a page *for* the user to
-    /// see. Fails when the Space has no open window, like `spaces.listTabs`;
-    /// an optional `windowId` targets one specific window instead of the
-    /// key-window default.
+    /// Space's window: the direct user-Space counterpart of the task-scoped
+    /// `agentSpace.openTab`. `activate` (default true) selects the new tab —
+    /// the common caller is opening a page *for* the user to see. A Space
+    /// with no open window gets one first (a closed window is not a closed
+    /// Space; this is the one way to reach a Space when the user has no
+    /// browser window at all), surfaced when `activate` is set and opened
+    /// behind the user's windows otherwise, and the reply then carries
+    /// `windowOpened: true`; that path answers asynchronously, once the
+    /// window exists. A fresh window always seeds one New Tab, so asking a
+    /// windowless Space for a New Tab is satisfied by that seed rather than
+    /// doubled — "open a New Tab there" and "open the Space" are the same
+    /// ask. An optional `windowId` targets one specific window
+    /// instead of the key-window default and never opens one
+    /// (`window_not_open` when it does not show the Space). Returns nil
+    /// when the reply is sent asynchronously.
     static func handleSpacesOpenTab(context: ExtensionMessageContext) -> String? {
         guard let obj = json(context.payload),
               let spaceId = obj["spaceId"] as? String,
               let url = obj["url"] as? String, !url.isEmpty else { return invalid() }
         let activate = obj["activate"] as? Bool ?? true
         let windowId = obj["windowId"] as? Int
-        return MainActor.assumeIsolated {
-            guard let target = spaceWindow(spaceId: spaceId, windowId: windowId) else {
-                return failure(windowId == nil ? "space_not_open" : "window_not_open")
+        let requestId = context.requestId
+        return MainActor.assumeIsolated { () -> String? in
+            if let target = spaceWindow(spaceId: spaceId, windowId: windowId) {
+                createUserSpaceTab(url: url, spaceId: spaceId, windowId: target.windowId,
+                                   activate: activate, context: context)
+                return encode(["ok": true, "windowId": target.windowId])
             }
-            // Opening a tab here IS the agent operating the user's Space, but
-            // the app performs it itself — no CDP command is sent, so the
-            // browser's drive reports never see it. Arm the operating mask
-            // from this side instead, matched to the tab Chromium is about to
-            // create. Agent Spaces keep deriving their own mask from the task.
-            let isAgentSpace = SpaceManager.shared.spaces
-                .first { $0.spaceId == spaceId }?.isAgentSpace ?? false
-            if !isAgentSpace {
-                AgentUserSpaceDriveRegistry.shared.agentWillOpenTab(
-                    inWindow: target.windowId,
-                    principalId: context.driverPrincipalId,
-                    driverName: context.agentName)
+            guard windowId == nil else { return failure("window_not_open") }
+            let manager = SpaceManager.shared
+            guard let space = manager.spaces.first(where: { $0.spaceId == spaceId }),
+                  !space.isAgentSpace, !SpaceManager.isIncognitoSpaceId(spaceId) else {
+                return failure("unknown_space")
             }
-            ChromiumLauncher.sharedInstance().bridge?
-                .createNewTab(withUrl: url,
-                              windowId: Int64(target.windowId),
-                              customGuid: nil,
-                              focusAfterCreate: activate)
-            return encode(["ok": true, "windowId": target.windowId])
+            manager.openWindow(forSpaceId: spaceId, activate: activate) { openedWindowId, error in
+                MainActor.assumeIsolated {
+                    guard let openedWindowId else {
+                        ExtensionMessaging.shared.sendResponse(
+                            failure(error ?? "create_failed"), requestId: requestId)
+                        return
+                    }
+                    if !url.isNTP {
+                        createUserSpaceTab(url: url, spaceId: spaceId, windowId: openedWindowId,
+                                           activate: activate, context: context)
+                    }
+                    ExtensionMessaging.shared.sendResponse(
+                        encode(["ok": true, "windowId": openedWindowId, "windowOpened": true]),
+                        requestId: requestId)
+                }
+            }
+            return nil
         }
     }
 
+    /// The tab creation both `spaces.openTab` paths share. Opening a tab
+    /// here IS the agent operating the user's Space, but the app performs
+    /// it itself — no CDP command is sent, so the browser's drive reports
+    /// never see it. Arm the operating mask from this side instead, matched
+    /// to the tab Chromium is about to create. Agent Spaces keep deriving
+    /// their own mask from the task.
+    @MainActor
+    private static func createUserSpaceTab(url: String, spaceId: String, windowId: Int,
+                                           activate: Bool, context: ExtensionMessageContext) {
+        let isAgentSpace = SpaceManager.shared.spaces
+            .first { $0.spaceId == spaceId }?.isAgentSpace ?? false
+        if !isAgentSpace {
+            AgentUserSpaceDriveRegistry.shared.agentWillOpenTab(
+                inWindow: windowId,
+                principalId: context.driverPrincipalId,
+                driverName: context.agentName)
+        }
+        ChromiumLauncher.sharedInstance().bridge?
+            .createNewTab(withUrl: url,
+                          windowId: Int64(windowId),
+                          customGuid: nil,
+                          focusAfterCreate: activate)
+    }
+
     /// `agentSpace.spaces.activate` — surface a user Space in the focused
-    /// window, opening its window when it has none: the programmatic
+    /// window, opening its window there when it has none: the programmatic
     /// counterpart of clicking the Space in the switcher. On-screen change,
     /// so callers invoke it only on the user's ask (or when a Space they
-    /// were asked to work in has no window to drive).
+    /// were asked to work in has no window to drive). With no user window
+    /// open at all there is nothing to switch, and that is reported as
+    /// `no_focused_window` rather than as a switch that happened — a caller
+    /// that needs the Space reachable regardless opens a tab in it
+    /// (`spaces.openTab` opens the window).
     static func handleSpacesActivate(context: ExtensionMessageContext) -> String? {
         guard let obj = json(context.payload),
               let spaceId = obj["spaceId"] as? String else { return invalid() }
@@ -273,6 +428,9 @@ extension AgentSpaceRouter {
                 return failure("unknown_space")
             }
             guard !space.isAgentSpace else { return failure("agent_space") }
+            guard manager.keySlot != nil || !manager.slots.isEmpty else {
+                return failure("no_focused_window")
+            }
             manager.activateInFocusedWindow(spaceId: spaceId)
             return ok()
         }
@@ -372,11 +530,77 @@ extension AgentSpaceRouter {
 
     // MARK: - URL rules
 
-    private static func draft(from rule: SpaceRoutingRule) -> LocalStore.URLRuleDraft {
-        LocalStore.URLRuleDraft(host: rule.host,
+    /// One existing row as a draft that names itself: `id` / `syncId` keep the
+    /// row's identity across the write (R-M3-4a-13), `spaceId` is its current
+    /// bucket and `sortOrder` the caller's per-bucket index.
+    private static func draft(from rule: SpaceRoutingRule, sortOrder: Int) -> LocalStore.URLRuleDraft {
+        LocalStore.URLRuleDraft(id: rule.id,
+                                host: rule.host,
                                 pathPrefix: rule.pathPrefix,
                                 askBeforeRouting: rule.askBeforeRouting,
-                                createdDate: rule.createdDate)
+                                spaceId: rule.spaceId,
+                                sortOrder: sortOrder,
+                                createdDate: rule.createdDate,
+                                syncId: rule.syncId)
+    }
+
+    /// `spaceId`'s rows in bucket order (`sortOrder`, then `id` — the same
+    /// order the store's dense renumbering would produce).
+    private static func bucket(_ spaceId: String, in all: [SpaceRoutingRule]) -> [SpaceRoutingRule] {
+        all.filter { $0.spaceId == spaceId }
+            .sorted { lhs, rhs in
+                if lhs.sortOrder != rhs.sortOrder { return lhs.sortOrder < rhs.sortOrder }
+                return lhs.id < rhs.id
+            }
+    }
+
+    /// Pure: the edit set for `urlRules.add`. The target bucket is re-sent in
+    /// full with its own ids (so nothing there misses the index) plus one new
+    /// draft at the tail — no `id` / `syncId` on the new row, the store mints
+    /// them at the insertion point (R-M3-4a-23). Buckets not touched send nothing.
+    static func urlRuleAddEdits(all: [SpaceRoutingRule], spaceId: String, host: String,
+                                pathPrefix: String?, ask: Bool) -> URLRulesEditor.EditSet {
+        let existing = bucket(spaceId, in: all)
+        var upserts = existing.enumerated().map { index, rule in draft(from: rule, sortOrder: index) }
+        upserts.append(LocalStore.URLRuleDraft(host: host,
+                                               pathPrefix: pathPrefix,
+                                               askBeforeRouting: ask,
+                                               spaceId: spaceId,
+                                               sortOrder: existing.count))
+        return URLRulesEditor.EditSet(upserts: upserts, deletedIds: [])
+    }
+
+    /// Pure: the edit set for `urlRules.update`. Same Space ⇒ the bucket is
+    /// re-sent in place with the edited row swapped in at its own index. A
+    /// different Space ⇒ the source bucket is re-sent without the row and the
+    /// target bucket with it appended; each bucket is indexed on its own.
+    static func urlRuleUpdateEdits(all: [SpaceRoutingRule], existing: SpaceRoutingRule, host: String,
+                                   pathPrefix: String?, ask: Bool,
+                                   spaceId: String) -> URLRulesEditor.EditSet {
+        func edited(sortOrder: Int) -> LocalStore.URLRuleDraft {
+            LocalStore.URLRuleDraft(id: existing.id,
+                                    host: host,
+                                    pathPrefix: pathPrefix,
+                                    askBeforeRouting: ask,
+                                    spaceId: spaceId,
+                                    sortOrder: sortOrder,
+                                    createdDate: existing.createdDate,
+                                    syncId: existing.syncId)
+        }
+        var upserts: [LocalStore.URLRuleDraft] = []
+        if spaceId == existing.spaceId {
+            for (index, rule) in bucket(spaceId, in: all).enumerated() {
+                upserts.append(rule.id == existing.id ? edited(sortOrder: index)
+                                                      : draft(from: rule, sortOrder: index))
+            }
+        } else {
+            let source = bucket(existing.spaceId, in: all).filter { $0.id != existing.id }
+            upserts += source.enumerated().map { index, rule in draft(from: rule, sortOrder: index) }
+            let target = bucket(spaceId, in: all)
+            upserts += target.enumerated().map { index, rule in draft(from: rule, sortOrder: index) }
+            upserts.append(edited(sortOrder: target.count))
+        }
+        return URLRulesEditor.EditSet(upserts: upserts, deletedIds: [])
     }
 
     /// Committed rule rows, straight from the store. The manager's
@@ -400,7 +624,7 @@ extension AgentSpaceRouter {
     }
 
     /// `agentSpace.urlRules.list` — every Space's rules. Row ids are stable
-    /// until the next rule write (the store regenerates ids on save), so
+    /// across writes (rows are upserted in place, R-M3-4a-13), so
     /// list-then-mutate within one round is the intended use.
     static func handleUrlRulesList(context: ExtensionMessageContext) -> String? {
         let rules = MainActor.assumeIsolated {
@@ -420,45 +644,77 @@ extension AgentSpaceRouter {
 
     /// `agentSpace.urlRules.add` — append one rule to `spaceId`'s rule set.
     /// `host` accepts the three matcher forms ("github.com", "*.figma.com",
-    /// "*git*"); `pathPrefix` is canonicalized by the draft.
-    static func handleUrlRulesAdd(context: ExtensionMessageContext) -> String? {
+    /// "*git*"); `pathPrefix` is canonicalized by the draft. Async: the
+    /// reply follows the committed write.
+    static func handleUrlRulesAdd(context: ExtensionMessageContext) {
+        let requestId = context.requestId
         guard let obj = json(context.payload),
               let spaceId = obj["spaceId"] as? String,
-              let rawHost = obj["host"] as? String else { return invalid() }
-        let host = rawHost.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !host.isEmpty else { return invalid() }
-        return MainActor.assumeIsolated {
-            guard isValidRuleTarget(spaceId) else { return failure("unknown_space") }
-            let manager = SpaceManager.shared
-            var drafts = storedRules()
-                .filter { $0.spaceId == spaceId }
-                .map(draft(from:))
-            drafts.append(LocalStore.URLRuleDraft(
-                host: host,
-                pathPrefix: obj["pathPrefix"] as? String,
-                askBeforeRouting: obj["ask"] as? Bool ?? false))
-            manager.setRules(drafts, forSpaceId: spaceId)
-            return ok()
+              let rawHost = obj["host"] as? String,
+              case let host = rawHost.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+              !host.isEmpty else {
+            MainActor.assumeIsolated {
+                ExtensionMessaging.shared.sendResponse(invalid(), requestId: requestId)
+            }
+            return
+        }
+        MainActor.assumeIsolated {
+            guard isValidRuleTarget(spaceId) else {
+                ExtensionMessaging.shared.sendResponse(failure("unknown_space"), requestId: requestId)
+                return
+            }
+            let edits = urlRuleAddEdits(all: storedRules(),
+                                        spaceId: spaceId,
+                                        host: host,
+                                        pathPrefix: obj["pathPrefix"] as? String,
+                                        ask: obj["ask"] as? Bool ?? false)
+            // Delay the reply: ok means committed; failures return write_failed, distinct from an unapplied
+            // write (R-M3-3-14).
+            guard let expectedStoreIdentifier = SpaceManager.shared.storeIdentifier else {
+                ExtensionMessaging.shared.sendResponse(failure("write_failed"), requestId: requestId)
+                return
+            }
+            Task { @MainActor in
+                do {
+                    try await SpaceManager.shared.applyRuleEdits(upserts: edits.upserts,
+                                                                 deletedIds: edits.deletedIds,
+                                                                 expectedStoreIdentifier: expectedStoreIdentifier)
+                    ExtensionMessaging.shared.sendResponse(ok(), requestId: requestId)
+                } catch {
+                    AppLogError("[AgentSpaceRouter] urlRules write failed: \(PhiSyncLog.describe(error))")
+                    ExtensionMessaging.shared.sendResponse(failure("write_failed"), requestId: requestId)
+                }
+            }
         }
     }
 
     /// `agentSpace.urlRules.update` — modify one rule by id (from a fresh
     /// `urlRules.list`). Optional `host` / `pathPrefix` / `ask` / `spaceId`
     /// (the latter moves the rule to another Space's set). Position is
-    /// preserved when the Space is unchanged.
-    static func handleUrlRulesUpdate(context: ExtensionMessageContext) -> String? {
+    /// preserved when the Space is unchanged. Async: the reply follows the
+    /// committed write.
+    static func handleUrlRulesUpdate(context: ExtensionMessageContext) {
+        let requestId = context.requestId
         guard let obj = json(context.payload),
-              let id = obj["id"] as? String else { return invalid() }
-        return MainActor.assumeIsolated {
-            let manager = SpaceManager.shared
+              let id = obj["id"] as? String else {
+            MainActor.assumeIsolated {
+                ExtensionMessaging.shared.sendResponse(invalid(), requestId: requestId)
+            }
+            return
+        }
+        MainActor.assumeIsolated {
             let all = storedRules()
             guard let existing = all.first(where: { $0.id == id }) else {
-                return failure("unknown_rule")
+                ExtensionMessaging.shared.sendResponse(failure("unknown_rule"), requestId: requestId)
+                return
             }
             let newHost = ((obj["host"] as? String)?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
                 .lowercased()) ?? existing.host
-            guard !newHost.isEmpty else { return invalid() }
+            guard !newHost.isEmpty else {
+                ExtensionMessaging.shared.sendResponse(invalid(), requestId: requestId)
+                return
+            }
             // Distinguish "pathPrefix absent" (keep) from "pathPrefix: null
             // or empty" (clear) — the draft's normalizer maps empty to nil.
             let newPath: String?
@@ -470,46 +726,72 @@ extension AgentSpaceRouter {
             let newAsk = obj["ask"] as? Bool ?? existing.askBeforeRouting
             let newSpace = obj["spaceId"] as? String ?? existing.spaceId
             if newSpace != existing.spaceId {
-                guard isValidRuleTarget(newSpace) else { return failure("unknown_space") }
-            }
-            var byTarget: [String: [LocalStore.URLRuleDraft]] = [:]
-            for rule in all {
-                if rule.id == id {
-                    byTarget[newSpace, default: []].append(LocalStore.URLRuleDraft(
-                        host: newHost,
-                        pathPrefix: newPath,
-                        askBeforeRouting: newAsk,
-                        createdDate: rule.createdDate))
-                } else {
-                    byTarget[rule.spaceId, default: []].append(draft(from: rule))
+                guard isValidRuleTarget(newSpace) else {
+                    ExtensionMessaging.shared.sendResponse(failure("unknown_space"), requestId: requestId)
+                    return
                 }
             }
-            manager.setAllRules(byTarget)
-            return ok()
+            let edits = urlRuleUpdateEdits(all: all,
+                                           existing: existing,
+                                           host: newHost,
+                                           pathPrefix: newPath,
+                                           ask: newAsk,
+                                           spaceId: newSpace)
+            // Delay the reply: ok means committed; failures return write_failed, distinct from an unapplied
+            // write (R-M3-3-14).
+            guard let expectedStoreIdentifier = SpaceManager.shared.storeIdentifier else {
+                ExtensionMessaging.shared.sendResponse(failure("write_failed"), requestId: requestId)
+                return
+            }
+            Task { @MainActor in
+                do {
+                    try await SpaceManager.shared.applyRuleEdits(upserts: edits.upserts,
+                                                                 deletedIds: edits.deletedIds,
+                                                                 expectedStoreIdentifier: expectedStoreIdentifier)
+                    ExtensionMessaging.shared.sendResponse(ok(), requestId: requestId)
+                } catch {
+                    AppLogError("[AgentSpaceRouter] urlRules write failed: \(PhiSyncLog.describe(error))")
+                    ExtensionMessaging.shared.sendResponse(failure("write_failed"), requestId: requestId)
+                }
+            }
         }
     }
 
-    /// `agentSpace.urlRules.delete` — remove one rule by id.
-    static func handleUrlRulesDelete(context: ExtensionMessageContext) -> String? {
+    /// `agentSpace.urlRules.delete` — remove one rule by id. One soft delete,
+    /// no bucket rebuild: the store keeps the bucket dense (R-M3-4a-41 /
+    /// R-M3-4a-56). Async: the reply follows the committed write.
+    static func handleUrlRulesDelete(context: ExtensionMessageContext) {
+        let requestId = context.requestId
         guard let obj = json(context.payload),
-              let id = obj["id"] as? String else { return invalid() }
-        return MainActor.assumeIsolated {
-            let manager = SpaceManager.shared
-            let all = storedRules()
-            guard all.contains(where: { $0.id == id }) else {
-                return failure("unknown_rule")
+              let id = obj["id"] as? String else {
+            MainActor.assumeIsolated {
+                ExtensionMessaging.shared.sendResponse(invalid(), requestId: requestId)
             }
-            var byTarget: [String: [LocalStore.URLRuleDraft]] = [:]
-            for rule in all where rule.id != id {
-                byTarget[rule.spaceId, default: []].append(draft(from: rule))
+            return
+        }
+        MainActor.assumeIsolated {
+            guard storedRules().contains(where: { $0.id == id }) else {
+                ExtensionMessaging.shared.sendResponse(failure("unknown_rule"), requestId: requestId)
+                return
             }
-            // Buckets that just lost their only rule must still be present so
-            // setAllRules clears them — seed every Space that had rules.
-            for rule in all where byTarget[rule.spaceId] == nil {
-                byTarget[rule.spaceId] = []
+            let edits = URLRulesEditor.EditSet(upserts: [], deletedIds: [id])
+            // Delay the reply: ok means committed; failures return write_failed, distinct from an unapplied
+            // write (R-M3-3-14).
+            guard let expectedStoreIdentifier = SpaceManager.shared.storeIdentifier else {
+                ExtensionMessaging.shared.sendResponse(failure("write_failed"), requestId: requestId)
+                return
             }
-            manager.setAllRules(byTarget)
-            return ok()
+            Task { @MainActor in
+                do {
+                    try await SpaceManager.shared.applyRuleEdits(upserts: edits.upserts,
+                                                                 deletedIds: edits.deletedIds,
+                                                                 expectedStoreIdentifier: expectedStoreIdentifier)
+                    ExtensionMessaging.shared.sendResponse(ok(), requestId: requestId)
+                } catch {
+                    AppLogError("[AgentSpaceRouter] urlRules write failed: \(PhiSyncLog.describe(error))")
+                    ExtensionMessaging.shared.sendResponse(failure("write_failed"), requestId: requestId)
+                }
+            }
         }
     }
 
@@ -523,7 +805,7 @@ extension AgentSpaceRouter {
         guard let task = AgentSpaceManager.shared.task(forTaskId: taskId),
               task.windowId != 0 else { return nil }
         return (task.windowId,
-                MainBrowserWindowControllersManager.shared.getBrowserState(for: task.windowId))
+                SpaceSessionControllersManager.shared.getBrowserState(for: task.windowId))
     }
 
     /// Resolves a user Space's open window (its slot's registered controller,
@@ -531,20 +813,24 @@ extension AgentSpaceRouter {
     /// window (nil when it does not show the Space); otherwise the key window
     /// wins when several show the Space. Agent Spaces are refused here: their
     /// windows are ownership-guarded and must be addressed through the taskId
-    /// path.
+    /// path. Only the Space's own user-facing windows count: a shadow window
+    /// carries the active Space's id as its placeholder, and resolving it
+    /// here would list it under that Space — or land the user's tab in an
+    /// invisible window.
     @MainActor
     private static func spaceWindow(spaceId: String, windowId: Int? = nil)
         -> (windowId: Int, state: BrowserState?)? {
         guard !AgentSpaceManager.shared.isAgentSpace(spaceId) else { return nil }
-        let controllers = MainBrowserWindowControllersManager.shared.getAllWindows()
-            .filter { $0.spaceId == spaceId }
+        let controllers = SpaceSessionControllersManager.shared.getAllWindows()
+            .filter { $0.spaceId == spaceId && $0.browserType == .normal }
         if let windowId {
             guard let chosen = controllers.first(where: { $0.windowId == windowId })
             else { return nil }
             return (chosen.windowId, chosen.browserState)
         }
-        guard let chosen = controllers.first(where: { $0.window?.isKeyWindow == true })
-            ?? controllers.first else { return nil }
+        guard let chosen = controllers.first(where: {
+                $0.isPresentedOrLegacy && $0.window?.isKeyWindow == true
+            }) ?? controllers.first else { return nil }
         return (chosen.windowId, chosen.browserState)
     }
 
@@ -554,8 +840,9 @@ extension AgentSpaceRouter {
     @MainActor
     private static func windowSpace(windowId: Int)
         -> (windowId: Int, state: BrowserState?, spaceId: String)? {
-        guard let chosen = MainBrowserWindowControllersManager.shared.getAllWindows()
+        guard let chosen = SpaceSessionControllersManager.shared.getAllWindows()
             .first(where: { $0.windowId == windowId }),
+            chosen.browserType == .normal,
             !AgentSpaceManager.shared.isAgentSpace(chosen.spaceId) else { return nil }
         return (chosen.windowId, chosen.browserState, chosen.spaceId)
     }

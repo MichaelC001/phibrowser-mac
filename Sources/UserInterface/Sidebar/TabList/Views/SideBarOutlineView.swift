@@ -243,6 +243,9 @@ class SideBarOutlineView: DiffableOutlineView {
 
     var dragAutoscrollTopObstructionHeight: CGFloat = 0
 
+    /// Embedded management lists keep blank-area clicks inside the list.
+    var dragsWindowFromBlankArea = true
+
     /// Keeps contextual clicks on the outline view so AppKit asks this view for
     /// its menu before any row-level click or drag handling begins.
     var capturesContextMenuClicks = false
@@ -255,6 +258,8 @@ class SideBarOutlineView: DiffableOutlineView {
     
     /// Delegate for handling middle mouse button click events
     weak var phiOutlineDelegate: SideBarOutlineViewDelegate?
+    var mouseDownAction: ((Int, NSEvent) -> Bool)?
+    private(set) var handledMouseDownAction = false
     private var lastMouseDownModifierFlags: NSEvent.ModifierFlags?
 
     func consumeMouseDownModifierFlags() -> NSEvent.ModifierFlags? {
@@ -262,7 +267,12 @@ class SideBarOutlineView: DiffableOutlineView {
         return lastMouseDownModifierFlags
     }
 
-    private var pendingTabDragRow: Int?
+    // Focusing a tab can insert/remove bookmark proxy rows before it.
+    // Keep the pressed tab's identity instead of a row index that can go stale.
+    private var pendingTabDragItem: Tab?
+    private var pendingTabDragRow: Int? {
+        pendingTabDragItem.map { row(forItem: $0) }
+    }
     private var pendingTabDragStartPoint: NSPoint?
     private var pendingTabMouseDownEvent: NSEvent?
     private var tabDragThresholdPassed = false
@@ -383,6 +393,7 @@ class SideBarOutlineView: DiffableOutlineView {
         }
         let point = convert(event.locationInWindow, from: nil)
         let index = row(at: point)
+        handledMouseDownAction = false
         let itemTypeDescription: String = {
             guard index >= 0,
                   let item = item(atRow: index) as? SidebarItem else {
@@ -397,11 +408,12 @@ class SideBarOutlineView: DiffableOutlineView {
         if index >= 0,
            let item = item(atRow: index) as? SidebarItem,
            item.itemType == .tab {
-            pendingTabDragRow = index
-            pendingTabDragStartPoint = point
+            pendingTabDragItem = item as? Tab
+            pendingTabDragStartPoint = event.locationInWindow
             pendingTabMouseDownEvent = event
             tabDragThresholdPassed = false
             tabDragBelowThresholdLogged = false
+            handledMouseDownAction = mouseDownAction?(index, event) == true
             AppLogDebug(
                 "[SIDEBAR_TAB_DRAG_THRESHOLD] pending normal tab row=\(index)"
             )
@@ -418,12 +430,16 @@ class SideBarOutlineView: DiffableOutlineView {
             // scope the exposed mouse-down modifiers to exactly that window
             // so an unconsumed click can't leak stale flags.
             lastMouseDownModifierFlags = event.modifierFlags
+            let paneHandledClick = (view(atColumn: 0, row: index, makeIfNecessary: false)
+                as? SidebarSplitPairCellView)?.handledPaneClick(onMouseDown: event) == true
+            handledMouseDownAction = paneHandledClick || mouseDownAction?(index, event) == true
             super.mouseDown(with: event)
+            handledMouseDownAction = false
             lastMouseDownModifierFlags = nil
             AppLogDebug(
                 "[SIDEBAR_TAB_DRAG_THRESHOLD] super mouseDown returned row=\(index)"
             )
-        } else if let window {
+        } else if dragsWindowFromBlankArea, let window {
             let mouseDownLocation = window.convertPoint(toScreen: event.locationInWindow)
             AppLogDebug("[SIDEBAR_TAB_DRAG_THRESHOLD] dragging window from empty area")
             window.performDrag(with: event)
@@ -457,7 +473,7 @@ class SideBarOutlineView: DiffableOutlineView {
         }
 
         if !tabDragThresholdPassed {
-            let currentPoint = convert(event.locationInWindow, from: nil)
+            let currentPoint = event.locationInWindow
             let dx = abs(currentPoint.x - startPoint.x)
             let dy = abs(currentPoint.y - startPoint.y)
 
@@ -492,9 +508,10 @@ class SideBarOutlineView: DiffableOutlineView {
         )
         defer {
             resetTabDragThresholdState()
+            handledMouseDownAction = false
         }
         if let pendingRow = pendingTabDragRow {
-            if !tabDragThresholdPassed {
+            if !tabDragThresholdPassed && !handledMouseDownAction {
                 let point = convert(event.locationInWindow, from: nil)
                 if pendingRow == row(at: point) {
                     AppLogDebug("[SIDEBAR_TAB_DRAG_THRESHOLD] click normal tab row=\(pendingRow)")
@@ -753,7 +770,7 @@ class SideBarOutlineView: DiffableOutlineView {
     }
 
     private func resetTabDragThresholdState() {
-        pendingTabDragRow = nil
+        pendingTabDragItem = nil
         pendingTabDragStartPoint = nil
         pendingTabMouseDownEvent = nil
         tabDragThresholdPassed = false
