@@ -215,6 +215,28 @@ class FloatingSidebarViewController: NSViewController, BrowserThemeContextProvid
     private var isContentActive = false
     private var isMediaPresented = false
 
+    /// macOS 26 fills a plain layer inside the panel's glass instead of a
+    /// `BackdropContainerView`, so the navigation palette is painted here.
+    private let paletteBackdropLayer: CAGradientLayer = {
+        let layer = CAGradientLayer()
+        layer.startPoint = CGPoint(x: 0.5, y: 1)
+        layer.endPoint = CGPoint(x: 0.5, y: 0)
+        layer.contentsFormat = .RGBA16Float
+        layer.isHidden = true
+        return layer
+    }()
+    private lazy var paletteBackdropView: NSView = {
+        let view = NSView()
+        view.wantsLayer = true
+        view.layer?.addSublayer(paletteBackdropLayer)
+        return view
+    }()
+    private var paletteBackdropColors: [NSColor]?
+    private var paletteBackdropCancellable: AnyCancellable?
+    /// Set while a Space switch hides or ramps the backdrop, so theme
+    /// updates don't repaint over it.
+    private var isSpaceSwitchBackdropOverridden = false
+
     init(browserState: BrowserState, mediaController: SidebarMediaController) {
         self.state = browserState
         self.mediaController = mediaController
@@ -235,6 +257,7 @@ class FloatingSidebarViewController: NSViewController, BrowserThemeContextProvid
         } else {
             view = BackdropContainerView { backdrop in
                 backdrop.themedBackgroundColor = .windowOverlayBackground
+                backdrop.usesThemePalette = true
                 backdrop.blendingMode = .behindWindow
             }
         }
@@ -244,6 +267,7 @@ class FloatingSidebarViewController: NSViewController, BrowserThemeContextProvid
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        setupPaletteBackdropIfNeeded()
         setupStackView()
         setupObserversIfNeeded()
         setupConfigObserverIfNeeded()
@@ -264,6 +288,12 @@ class FloatingSidebarViewController: NSViewController, BrowserThemeContextProvid
         let cardWidth = messageCardContainerView.bounds.width
         if cardWidth > 0, abs(cardWidth - measuredMessageCardWidth) > 0.5 {
             updateMessageCardHeight()
+        }
+        if let bounds = paletteBackdropLayer.superlayer?.bounds {
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            paletteBackdropLayer.frame = bounds
+            CATransaction.commit()
         }
         updateMediaActivation()
     }
@@ -300,6 +330,43 @@ class FloatingSidebarViewController: NSViewController, BrowserThemeContextProvid
 
     deinit {
         tabList.tearDown()
+    }
+
+    private func setupPaletteBackdropIfNeeded() {
+        guard !(view is BackdropContainerView) else { return }
+        view.addSubview(paletteBackdropView)
+        paletteBackdropView.snp.makeConstraints { make in
+            make.edges.equalToSuperview()
+        }
+        paletteBackdropCancellable = state.themeContext.themeAppearancePublisher
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.updatePaletteBackdrop() }
+        updatePaletteBackdrop()
+    }
+
+    private func updatePaletteBackdrop() {
+        guard !isSpaceSwitchBackdropOverridden else { return }
+        let context = state.themeContext
+        let colors = context.currentTheme.navigationPalette.flatMap {
+            $0.colorCount > 1 ? $0.colors(for: context.currentAppearance) : nil
+        }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+        guard let colors else {
+            paletteBackdropLayer.isHidden = true
+            paletteBackdropLayer.colors = nil
+            paletteBackdropColors = nil
+            view.phiLayer?.setBackgroundColor(.windowOverlayBackground)
+            return
+        }
+        view.phiLayer?.backgroundColor = nil
+        view.layer?.backgroundColor = nil
+        if colors != paletteBackdropColors {
+            paletteBackdropLayer.colors = ColoredVisualEffectView.gradientColors(colors)
+            paletteBackdropColors = colors
+        }
+        paletteBackdropLayer.isHidden = false
     }
 
     private func setupStackView() {
@@ -1026,8 +1093,12 @@ extension FloatingSidebarViewController: SpaceSwitchBandSurface {
             effect.backgroundColor = ThemedColor.windowOverlayBackground.resolve(in: target.view)
             if let from { effect.animateFill(from: from, duration: duration, startTime: startTime) }
         } else if let layer = view.layer {
-            let from = layer.presentation()?.backgroundColor ?? layer.backgroundColor
+            let paletteFrom = paletteBackdropLayer.isHidden
+                ? nil : (paletteBackdropLayer.colors as? [CGColor])?.first
+            let from = paletteFrom ?? layer.presentation()?.backgroundColor ?? layer.backgroundColor
             let to = ThemedColor.windowOverlayBackground.resolve(in: target.view).cgColor
+            isSpaceSwitchBackdropOverridden = true
+            paletteBackdropLayer.isHidden = true
             view.phiLayer?.backgroundColor = nil
             layer.backgroundColor = to
             let ramp = CABasicAnimation(keyPath: "backgroundColor")
@@ -1047,10 +1118,13 @@ extension FloatingSidebarViewController: SpaceSwitchBandSurface {
         } else if hidden {
             // Clearing only the layer leaves its theme binding alive. The
             // next ramp tick would paint over the outgoing sliding band.
+            isSpaceSwitchBackdropOverridden = true
+            paletteBackdropLayer.isHidden = true
             view.phiLayer?.backgroundColor = nil
             view.layer?.backgroundColor = nil
         } else {
-            view.phiLayer?.setBackgroundColor(.windowOverlayBackground)
+            isSpaceSwitchBackdropOverridden = false
+            updatePaletteBackdrop()
         }
     }
 }
