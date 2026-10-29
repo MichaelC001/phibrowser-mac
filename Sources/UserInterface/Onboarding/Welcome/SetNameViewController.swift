@@ -10,6 +10,7 @@ import SwiftUI
 class SetNameViewController: OnboardingBaseViewController {
     var newNameSettled: ((String) -> Void)?
     private var originalUserName: String?
+    private var prefilledEmailLocalPart: String?
     var credentials: Credentials? {
         didSet {
             if originalUserName == nil, let credentials {
@@ -21,7 +22,16 @@ class SetNameViewController: OnboardingBaseViewController {
                 let name = profile?.auth0_id == userInfo.sub ? profile?.name : userInfo.name
                 originalUserName = name
                 if textField.stringValue.isEmpty {
-                    textField.stringValue = name ?? ""
+                    // Keep the original email as the baseline for the profile update.
+                    if let name,
+                       name.range(of: #"^[^@\s]+@[^@\s]+\.[^@\s]+$"#, options: .regularExpression) != nil,
+                       let separator = name.firstIndex(of: "@") {
+                        let localPart = String(name[..<separator])
+                        prefilledEmailLocalPart = localPart
+                        textField.stringValue = localPart
+                    } else {
+                        textField.stringValue = name ?? ""
+                    }
                 }
             }
         }
@@ -186,7 +196,15 @@ class SetNameViewController: OnboardingBaseViewController {
             } catch {
                 await MainActor.run {
                     isLoading = false
-                    showError(error.localizedDescription)
+                    // The prefilled email local part was not chosen by the user,
+                    // so a failed update should not block onboarding.
+                    if newUserName == prefilledEmailLocalPart {
+                        AppLogWarn("[OOBESetName] Continuing with prefilled name after profile update failed")
+                        UserDefaults.standard.set(newUserName, forKey: PhiPreferences.preferedUserName.rawValue)
+                        newNameSettled?(newUserName)
+                    } else {
+                        showError(error.localizedDescription)
+                    }
                 }
                 AppLogError("update user profile failed: \(error.localizedDescription)")
             }

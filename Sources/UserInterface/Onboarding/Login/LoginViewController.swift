@@ -230,7 +230,6 @@ class LoginViewController: NSViewController {
     override func viewWillDisappear() {
         super.viewWillDisappear()
         updateGuestButtonHover(false)
-        retryHintLabel.textColor = .white.withAlphaComponent(0.5)
         resetVideo()
     }
     
@@ -300,14 +299,12 @@ class LoginViewController: NSViewController {
             make.trailing.lessThanOrEqualToSuperview().offset(-40)
         }
 
-        for textView in [continueAsGuestButton as NSView, retryHintLabel] {
-            textView.addTrackingArea(NSTrackingArea(
-                rect: .zero,
-                options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
-                owner: self,
-                userInfo: ["guestButton": textView === continueAsGuestButton]
-            ))
-        }
+        continueAsGuestButton.addTrackingArea(NSTrackingArea(
+            rect: .zero,
+            options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+            owner: self,
+            userInfo: ["guestButton": true]
+        ))
     }
 
     override func mouseEntered(with event: NSEvent) {
@@ -319,14 +316,8 @@ class LoginViewController: NSViewController {
     }
 
     private func updateTextHover(with event: NSEvent, isHovered: Bool) {
-        guard let isGuestButton = event.trackingArea?.userInfo?["guestButton"] as? Bool else { return }
-        if isGuestButton {
-            updateGuestButtonHover(isHovered && continueAsGuestButton.isEnabled && !continueAsGuestButton.isHiddenOrHasHiddenAncestor)
-        } else {
-            retryHintLabel.textColor = .white.withAlphaComponent(
-                isHovered && !retryHintLabel.isHiddenOrHasHiddenAncestor ? 1 : 0.5
-            )
-        }
+        guard event.trackingArea?.userInfo?["guestButton"] as? Bool == true else { return }
+        updateGuestButtonHover(isHovered && continueAsGuestButton.isEnabled && !continueAsGuestButton.isHiddenOrHasHiddenAncestor)
     }
 
     private func updateGuestButtonHover(_ isHovered: Bool) {
@@ -594,7 +585,6 @@ extension LoginViewController {
     
     /// Hides the retry hint and button.
     func hideRetryHint() {
-        retryHintLabel.textColor = .white.withAlphaComponent(0.5)
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.3
             retryHintLabel.animator().alphaValue = 0.0
