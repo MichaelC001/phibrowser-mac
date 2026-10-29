@@ -3932,6 +3932,14 @@ final class AuthLogoutRecoveryTests: XCTestCase {
     }
 
     @MainActor
+    func testStagedOnboardingRenewalRequiresStagedCredentials() async {
+        let auth = AuthManager(defaults: defaults)
+        let renewed = await auth.renewStagedOnboardingCredentials(expectedUserID: "auth0|onboarding-test")
+        XCTAssertNil(renewed)
+        XCTAssertNil(auth.currentCredentials)
+    }
+
+    @MainActor
     func testLogoutSuppressesPersistedReauthenticationAndLateFailure() async {
         let auth = AuthManager(defaults: defaults)
         auth.invalidateLocalCredentialSession { false }

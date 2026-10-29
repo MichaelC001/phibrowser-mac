@@ -171,6 +171,11 @@ class SetNameViewController: OnboardingBaseViewController {
                         response.data,
                         forCodableKey: AccountUserDefaults.DefaultsKey.cachedProfile.rawValue
                     )
+                    if await AuthManager.shared.renewStagedOnboardingCredentials(
+                        expectedUserID: account.userID
+                    ) == nil {
+                        AppLogWarn("[OOBESetName] Failed to refresh credentials after updating name")
+                    }
                 }
                 await MainActor.run {
                     isLoading = false
