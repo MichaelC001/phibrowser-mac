@@ -202,6 +202,7 @@ class OnboardingWindowController: NSWindowController {
 
     func completeGuestOOBE() {
         PhiPreferences.GeneralSettings.saveLayoutMode(.comfortable)
+        UserDefaults.standard.set(false, forKey: PhiPreferences.GeneralSettings.openNewTabPageOnCmdT.rawValue)
         analyticsSession.finish(isGuest: true, stepsCompleted: 2)
     }
 
