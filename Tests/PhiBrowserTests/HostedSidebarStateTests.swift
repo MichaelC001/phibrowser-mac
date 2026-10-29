@@ -364,8 +364,9 @@ final class HostedSidebarStateTests: XCTestCase {
         let container = session.mainSplitViewController.webContentContainerViewController
         let tab = Tab(url: "https://example.com", isActive: true, index: 0)
         let page = try XCTUnwrap(container.splitPaneCompanionController(for: tab))
-        let backdrop = try XCTUnwrap(page.view as? ColoredVisualEffectView)
-        XCTAssertTrue(backdrop.suppressesBackdrop)
+        let root = try XCTUnwrap(page.view as? BackdropContainerView)
+        XCTAssertFalse(root.paintsBackdrop)
+        XCTAssertNil(root.backdrop)
     }
 
     func testConcealingASessionDropsItsLiftedFullscreenPage() async throws {

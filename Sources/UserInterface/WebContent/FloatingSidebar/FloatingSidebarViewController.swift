@@ -233,10 +233,10 @@ class FloatingSidebarViewController: NSViewController, BrowserThemeContextProvid
             view.phiLayer?.setBackgroundColor(.windowOverlayBackground)
             
         } else {
-            let _view = ColoredVisualEffectView()
-            _view.themedBackgroundColor = .windowOverlayBackground
-            _view.blendingMode = .behindWindow
-            view = _view
+            view = BackdropContainerView { backdrop in
+                backdrop.themedBackgroundColor = .windowOverlayBackground
+                backdrop.blendingMode = .behindWindow
+            }
         }
         self.view = view
        
@@ -1020,7 +1020,7 @@ extension FloatingSidebarViewController: SpaceSwitchBandSurface {
     /// a cold Browser's main-thread work cannot stall the background ramp.
     func animateSpaceSwitchBackdrop(to target: FloatingSidebarViewController,
                                     duration: TimeInterval, startTime: CFTimeInterval) {
-        if let effect = view as? ColoredVisualEffectView {
+        if let effect = (view as? BackdropContainerView)?.backdrop {
             let from = effect.presentedFillColor
             effect.themedBackgroundColor = nil
             effect.backgroundColor = ThemedColor.windowOverlayBackground.resolve(in: target.view)
@@ -1041,9 +1041,9 @@ extension FloatingSidebarViewController: SpaceSwitchBandSurface {
     }
 
     func setSpaceSwitchBackdropHidden(_ hidden: Bool) {
-        if let effectView = view as? ColoredVisualEffectView {
-            effectView.suppressesBackdrop = hidden
-            if !hidden { effectView.themedBackgroundColor = .windowOverlayBackground }
+        if let container = view as? BackdropContainerView {
+            container.paintsBackdrop = !hidden
+            if !hidden { container.backdrop?.themedBackgroundColor = .windowOverlayBackground }
         } else if hidden {
             // Clearing only the layer leaves its theme binding alive. The
             // next ramp tick would paint over the outgoing sliding band.

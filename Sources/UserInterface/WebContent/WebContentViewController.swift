@@ -13,7 +13,8 @@
  
  View hierarchy:
  
- view (ColoredVisualEffectView)
+ view (BackdropContainerView)
+ ├── backdrop (ColoredVisualEffectView, only while the page paints its own)
  └── splitViewContainer              // SplitView container (rounded corners, background)
      └── contentSplitViewController.view
          ├── [Left] leftContainerWrapper
@@ -379,7 +380,7 @@ class WebContentViewController: NSViewController {
     var paintsOwnBackdrop = true {
         didSet {
             guard isViewLoaded else { return }
-            (view as? ColoredVisualEffectView)?.suppressesBackdrop = !paintsOwnBackdrop
+            (view as? BackdropContainerView)?.paintsBackdrop = paintsOwnBackdrop
         }
     }
 
@@ -408,13 +409,7 @@ class WebContentViewController: NSViewController {
     }
 
     override func loadView() {
-        let view = ColoredVisualEffectView()
-        view.themedBackgroundColor = .windowOverlayBackground
-        view.usesThemePalette = true
-        view.material = .fullScreenUI
-        view.wantsLayer = true
-        view.suppressesBackdrop = !paintsOwnBackdrop
-        self.view = view
+        self.view = BackdropContainerView(paintsBackdrop: paintsOwnBackdrop)
         setupView()
     }
     private weak var browserState: BrowserState?

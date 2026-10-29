@@ -446,16 +446,11 @@ class WebContentContainerViewController: NSViewController {
         }
         placeholderShell?.paintsOwnBackdrop = pagesPaintOwnBackdrop
         guard isViewLoaded else { return }
-        (view as? ColoredVisualEffectView)?.suppressesBackdrop = !paintsOwnBackdrop
+        (view as? BackdropContainerView)?.paintsBackdrop = paintsOwnBackdrop
     }
 
     override func loadView() {
-        let view = ColoredVisualEffectView()
-        view.themedBackgroundColor = .windowOverlayBackground
-        view.usesThemePalette = true
-        view.material = .fullScreenUI
-        view.wantsLayer = true
-        self.view = view
+        self.view = BackdropContainerView(paintsBackdrop: paintsOwnBackdrop)
         applyBackdropPainting()
     }
     
