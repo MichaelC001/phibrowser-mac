@@ -3015,7 +3015,7 @@ class WebContentViewController: NSViewController {
     }
 
     private func updateHeaderAndBookmarkBarSeparators() {
-        let isSplitViewVisible = isSplitContentMounted
+        let isSplitViewVisible = isSplitContentMounted || splitPreviewHost?.superview === hostView
         headerView.updateBottomSeparatorVisibility(
             isSplitViewVisible: isSplitViewVisible,
             isBookmarkBarVisible: isBookmarkBarVisible
