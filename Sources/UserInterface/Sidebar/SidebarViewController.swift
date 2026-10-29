@@ -750,8 +750,9 @@ class SidebarViewController: NSViewController, BrowserThemeContextProviding {
         // In top-navigation layouts, 42.5pt leaves the Space strip exactly
         // 8pt above the next sidebar band once the 5pt header spacer below is
         // included. The half point follows the legacy header controls' 15.5pt
-        // top alignment.
-        let base: CGFloat = addressInSidebar ? 80 : 42.5
+        // top alignment. With the address bar in the sidebar, 79pt leaves 3pt
+        // under it, so the band below starts 8pt under the bar.
+        let base: CGFloat = addressInSidebar ? 79 : 42.5
         let spacesBandHeight = SpacesStripView.sidebarHeight + 8
         let headerHeight = base + (spacesEnabled ? spacesBandHeight : 0)
         headerHeightConstraint?.update(offset: headerHeight)

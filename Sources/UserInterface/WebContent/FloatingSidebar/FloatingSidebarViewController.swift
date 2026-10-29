@@ -800,7 +800,7 @@ class FloatingSidebarViewController: NSViewController, BrowserThemeContextProvid
         let spacesEnabled = PhiPreferences.GeneralSettings.spacesFeatureEnabled.loadValue()
             && state.participatesInSpaces
             && (SpaceManager.shared.spaces.count > 1 || headerView.forcesSpaceSwitchVisible)
-        let base: CGFloat = showInSidebar ? 80 : 42.5
+        let base: CGFloat = showInSidebar ? 79 : 42.5
         let spacesBandHeight = SpacesStripView.sidebarHeight + 8
         let headerHeight = base + (spacesEnabled ? spacesBandHeight : 0)
         headerHeightConstraint?.update(offset: headerHeight)
