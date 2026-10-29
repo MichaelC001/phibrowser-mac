@@ -49,6 +49,9 @@ class OnboardingWelcomeViewController: OnboardingBaseViewController {
 
     override func viewWillAppear() {
         super.viewWillAppear()
+        cardView.style = LoginController.shared.accountForOnboarding?.userDefaults.codableValue(
+            forKey: AccountUserDefaults.DefaultsKey.profileCardStyle.rawValue) ?? .default
+        selectedThemeId = cardView.style.palette.themeID
         cardView.isPresentationActive = true
         profileTask?.cancel()
         profileTask = Task { [weak self] in await self?.requestProfile() }
@@ -113,7 +116,9 @@ class OnboardingWelcomeViewController: OnboardingBaseViewController {
 
     // MARK: - Actions
     @objc private func randomizeCard() {
-        cardView.style = .random()
+        let style = HolographicCardStyle.random()
+        guard saveCardStyle(style) else { return }
+        cardView.style = style
         if let theme = themes.first(where: { $0.id == cardView.style.palette.themeID }) {
             themeChanged(theme)
         }
@@ -125,14 +130,19 @@ class OnboardingWelcomeViewController: OnboardingBaseViewController {
         cardView.style.palette = .init(themeID: theme.id)
     }
 
-    override func nextButtonTapped(_ sender: NSButton? = nil) {
+    private func saveCardStyle(_ style: HolographicCardStyle) -> Bool {
         if let defaults = LoginController.shared.accountForOnboarding?.userDefaults,
-           !defaults.set(cardView.style, forCodableKey: AccountUserDefaults.DefaultsKey.profileCardStyle.rawValue) {
+           !defaults.set(style, forCodableKey: AccountUserDefaults.DefaultsKey.profileCardStyle.rawValue) {
             let message = NSLocalizedString("oobe.welcome.cardSaveFailed", value: "Your card could not be saved. Please try again.",
                 comment: "Onboarding membership card - Error when the selected card style cannot be saved")
             NSApp.presentError(NSError(domain: "Phi.ProfileCard", code: 1, userInfo: [NSLocalizedDescriptionKey: message]))
-            return
+            return false
         }
+        return true
+    }
+
+    override func nextButtonTapped(_ sender: NSButton? = nil) {
+        guard saveCardStyle(cardView.style) else { return }
         let accentColor = themes.first(where: { $0.id == selectedThemeId }).map(accentColor(for:))
         PostHogSDK.shared.capture("onboarding_completed", properties: [
             "theme_id": selectedThemeId,
