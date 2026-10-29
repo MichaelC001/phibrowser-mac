@@ -89,6 +89,7 @@ class LoginViewController: NSViewController {
     
     private lazy var loginButton: GradientBorderButton = {
         let button = GradientBorderButton()
+        button.keyboardShortcut = .enter
         button.backgroundColor = .white.opacity(0.05)
         button.hoverBackgroundColor = .white.opacity(0.12)
         button.title = NSLocalizedString("oobe.login.loginButton", value: "Sign in", comment: "Onboarding sign-in button title")
@@ -549,6 +550,7 @@ extension LoginViewController {
     private func updateUI(with phase: Phase) {
         switch phase {
         case .login:
+            loginButton.isEnabled = true
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = 0.3
                 controlContainer.animator().alphaValue = 1.0
@@ -562,6 +564,7 @@ extension LoginViewController {
             }
             
         case .waiting:
+            loginButton.isEnabled = false
             updateGuestButtonHover(false)
             captureAndBlurVideoFrame()
             
