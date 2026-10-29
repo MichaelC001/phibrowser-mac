@@ -3212,6 +3212,12 @@ class BrowserState {
         guard aiChatTabCreationGateOverrideForTesting ?? ApplicationState.shared.isAuthenticated else {
             return
         }
+        // With the AI switch off the sidecar extension is disabled, so a panel
+        // tab could only show a blocked page. Every rebuild path ends here.
+        guard PhiPreferences.AISettings.phiAIEnabled.loadValue() else {
+            AppLogInfo("🤖 [AIChat] skipped AI tab while AI is off windowId=\(windowId) identifier=\(identifier)")
+            return
+        }
         // The chat panes of a closed window can outlive it and ask again when
         // sign-in returns. Only a state that still backs a registered window
         // may create; Chromium no longer has the closed one.
