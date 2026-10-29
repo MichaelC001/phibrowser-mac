@@ -38,6 +38,100 @@ final class WebContentHeaderPageColorTests: XCTestCase {
         XCTAssertEqual(state.themeContext.currentTheme.id, Theme.pure.id)
     }
 
+    func testNewTabHeaderMatchesExtensionSurfaceAndRestoresPageColorsOnNavigation() throws {
+        let state = try makeState()
+        let base = state.themeContext.currentTheme
+        let palette = ThemePalette(hue: 0.85, saturation: 0.8, colorCount: 3)
+        state.themeContext.setTheme(palette.applying(to: base))
+        let (tab, wrapper) = makeTab(color: .black)
+        wrapper.urlString = "chrome://newtab/"
+        drainPageColorUpdates()
+        let header = WebContentHeader(browserState: state)
+        header.currentTab = tab
+
+        assertBackground(header, .white)
+        XCTAssertNil(header.pageColorPresentation.appearance)
+        XCTAssertNotNil(header.pageColorPresentation.backgroundColor,
+                        "The address bar and adjacent chrome must inherit the same new-tab color.")
+
+        wrapper.urlString = "https://example.com"
+        drainPageColorUpdates()
+        assertBackground(header, .black)
+        XCTAssertEqual(header.pageColorPresentation.appearance, .dark)
+        wrapper.pageColor = .white
+        drainPageColorUpdates()
+        assertBackground(header, .white)
+        XCTAssertEqual(header.pageColorPresentation.appearance, .light)
+
+        let changed = palette.rotatingHue(by: 0.3)
+        state.themeContext.setTheme(changed.applying(to: base))
+        drainPageColorUpdates()
+        assertBackground(header, .white)
+        wrapper.pageColor = nil
+        drainPageColorUpdates()
+        assertBackground(header, fallback(state))
+        XCTAssertEqual(header.pageColorPresentation.backgroundColor, fallback(state))
+
+        wrapper.urlString = "phi://newtab/"
+        drainPageColorUpdates()
+        assertBackground(header, .white)
+        state.themeContext.setUserAppearanceChoice(.dark)
+        drainPageColorUpdates()
+        let primary = changed.colors(for: .dark)[0].usingColorSpace(.sRGB)!
+        assertBackground(header, NSColor(srgbRed: primary.redComponent * 0.20,
+                                         green: primary.greenComponent * 0.20,
+                                         blue: primary.blueComponent * 0.20, alpha: 1))
+        XCTAssertNil(header.appearance, "New-tab chrome follows the window appearance.")
+    }
+
+    func testTranslucentPageHeaderCompositesOverExtensionSurfaceAfterPaletteEdits() throws {
+        let state = try makeState()
+        state.themeContext.setUserAppearanceChoice(.dark)
+        let base = state.themeContext.currentTheme
+        let pageColor = NSColor(srgbRed: 0.1, green: 0.25, blue: 0.4, alpha: 0.35)
+        let (tab, _) = makeTab(color: pageColor)
+        let header = WebContentHeader(browserState: state)
+        header.currentTab = tab
+        for hue in [0.0, 0.33, 0.66] {
+            state.themeContext.setTheme(ThemePalette(hue: hue, saturation: 1, colorCount: 3).applying(to: base))
+            drainPageColorUpdates()
+            let expected = WebContentHeader.compositePageColor(pageColor, over: fallback(state))
+            assertBackground(header, expected)
+        }
+    }
+
+    func testDarkInternalAndMissingTabHeadersShareTheNtpTopColor() throws {
+        let state = try makeState()
+        let theme = ThemePalette(hue: 0.2, saturation: 0.7, colorCount: 3)
+            .applying(to: state.themeContext.currentTheme)
+        state.themeContext.setTheme(theme)
+        state.themeContext.setUserAppearanceChoice(.dark)
+        let primary = theme.color(for: .windowOverlayBackground, appearance: .dark)
+            .usingColorSpace(.sRGB)!
+        let expected = NSColor(srgbRed: primary.redComponent * 0.20,
+                               green: primary.greenComponent * 0.20,
+                               blue: primary.blueComponent * 0.20, alpha: 1)
+        let header = WebContentHeader(browserState: state)
+        assertBackground(header, expected)
+        let (tab, wrapper) = makeTab(color: .red)
+        for url in ["chrome://newtab/", "phi://newtab/", "chrome://conversation/", "phi://skills/"] {
+            wrapper.urlString = url
+            header.currentTab = tab
+            drainPageColorUpdates()
+            assertBackground(header, expected)
+            XCTAssertNil(header.pageColorPresentation.appearance)
+        }
+        wrapper.urlString = "https://example.com"
+        drainPageColorUpdates()
+        assertBackground(header, .red)
+        wrapper.pageColor = nil
+        drainPageColorUpdates()
+        assertBackground(header, fallback(state))
+        XCTAssertEqual(header.pageColorPresentation.backgroundColor, fallback(state),
+                       "The address bar must expose the same extension surface as the header.")
+        XCTAssertNil(header.pageColorPresentation.appearance)
+    }
+
     func testTabStripInheritsWhileChatIsExpandedAndRestoresLatestPageColor() throws {
         let key = PhiPreferences.GeneralSettings.layoutModeKey
         let originalMode = UserDefaults.standard.object(forKey: key)
@@ -248,16 +342,12 @@ final class WebContentHeaderPageColorTests: XCTestCase {
 
         newWrapper.pageColor = nil
         drainPageColorUpdates()
-        assertBackground(bar, ThemedColor.contentOverlayBackground.resolve(
-            theme: state.themeContext.currentTheme, appearance: .dark
-        ))
+        assertBackground(bar, fallback(state))
         XCTAssertNil(bar.appearance)
 
         state.themeContext.setUserAppearanceChoice(.light)
         drainPageColorUpdates()
-        assertBackground(bar, ThemedColor.contentOverlayBackground.resolve(
-            theme: state.themeContext.currentTheme, appearance: .light
-        ))
+        assertBackground(bar, fallback(state))
     }
 
     func testLightPageOverridesDarkWindowAndNilRestoresInheritance() throws {
@@ -306,6 +396,7 @@ final class WebContentHeaderPageColorTests: XCTestCase {
 
     func testSplitMembershipDisablesColorAndDissolutionRestoresIt() throws {
         let state = try makeState()
+        state.themeContext.setUserAppearanceChoice(.dark)
         let (tab, wrapper) = makeTab(guid: 1, color: .black)
         let (partner, _) = makeTab(guid: 2, color: .white)
         state.tabs = [tab, partner]
@@ -431,8 +522,7 @@ final class WebContentHeaderPageColorTests: XCTestCase {
     }
 
     private func fallback(_ state: BrowserState) -> NSColor {
-        ThemedColor.windowBackground.resolve(theme: state.themeContext.currentTheme,
-                                            appearance: state.themeContext.currentAppearance)
+        state.themeContext.currentTheme.extensionSurfaceBackground(for: state.themeContext.currentAppearance)
     }
 
     private func assertBackground(_ header: NSView, _ expected: NSColor,

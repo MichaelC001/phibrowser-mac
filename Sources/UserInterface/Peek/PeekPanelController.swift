@@ -68,7 +68,7 @@ final class PeekPanelController {
             let isDark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
             let cardShadow = NSShadow()
             cardShadow.shadowColor = NSColor.black.withAlphaComponent(isDark ? 0.6 : 0.44)
-            // Leave room for the blur to fade within shadowMargin, including
+            // Leave room for the blur to fade within the shadow margins, including
             // the downward offset, before the panel clips it.
             cardShadow.shadowBlurRadius = 8
             cardShadow.shadowOffset = NSSize(width: 0, height: -3)
@@ -84,13 +84,33 @@ final class PeekPanelController {
         }
     }
 
-    /// Control button: an accent-tinted glyph on an opaque rounded chip.
+    /// Hosts the peek's page and its docked DevTools, without the vibrancy
+    /// filter that would wash them out (`PageOverlayVibrancySuppressor`).
+    private final class PeekWebHostView: NSView {
+        private let vibrancySuppressor = PageOverlayVibrancySuppressor()
+
+        override func didAddSubview(_ subview: NSView) {
+            super.didAddSubview(subview)
+            vibrancySuppressor.didAddSubview(subview)
+        }
+
+        override func willRemoveSubview(_ subview: NSView) {
+            vibrancySuppressor.willRemoveSubview(subview)
+            super.willRemoveSubview(subview)
+        }
+    }
+
+    /// Control button: a white glyph in dark appearance, otherwise accent-tinted.
     /// The chip is what makes it readable — the strip it sits in is
     /// transparent, so a bare glyph competes with whatever the page behind
     /// the peek happens to be showing there.
     private final class PeekControlButton: NSButton {
         /// Resolve the accent against the owning browser window's theme.
         weak var themeHostWindow: NSWindow?
+
+        private var usesDarkAppearance: Bool {
+            (themeHostWindow?.themeStateProvider ?? ThemeManager.shared).currentAppearance.isDark
+        }
 
         private var isHovered = false {
             didSet { updateColors() }
@@ -102,17 +122,15 @@ final class PeekPanelController {
             wantsLayer = true
             layer?.cornerRadius = PeekPanelController.controlCornerRadius
             layer?.cornerCurve = .continuous
-            layer?.borderWidth = 1
             // Unclipped, so the chip's own shadow survives; `cornerRadius`
-            // rounds the fill and the border on its own, and the glyph never
-            // reaches the corners.
+            // rounds the fill, and the glyph never reaches the corners.
             layer?.masksToBounds = false
             // Via `NSView.shadow`, not `layer.shadow*` — see
             // `PeekContainerView` for why direct layer writes don't survive.
             let chipShadow = NSShadow()
-            chipShadow.shadowColor = NSColor.black.withAlphaComponent(0.3)
-            chipShadow.shadowBlurRadius = 5
-            chipShadow.shadowOffset = NSSize(width: 0, height: -2)
+            chipShadow.shadowColor = NSColor.black.withAlphaComponent(0.18)
+            chipShadow.shadowBlurRadius = 4
+            chipShadow.shadowOffset = NSSize(width: 0, height: -1)
             shadow = chipShadow
         }
 
@@ -149,7 +167,9 @@ final class PeekPanelController {
                 func snap(_ value: CGFloat) -> CGFloat { (value * 2).rounded() / 2 }
                 let origin = CGPoint(x: snap(target.x - ink.midX), y: snap(target.y - inkCentreFromTop))
                 let tint = (controlView as? NSButton)?.contentTintColor ?? .labelColor
-                let color = isHighlighted ? (tint.blended(withFraction: 0.3, of: .black) ?? tint) : tint
+                let keepsWhiteGlyph = (controlView as? PeekControlButton)?.usesDarkAppearance == true
+                let color = isHighlighted && !keepsWhiteGlyph
+                    ? (tint.blended(withFraction: 0.3, of: .black) ?? tint) : tint
                 let config = image.symbolConfiguration.applying(NSImage.SymbolConfiguration(paletteColors: [color]))
                 let tinted = image.withSymbolConfiguration(config) ?? image
                 tinted.draw(in: NSRect(origin: origin, size: image.size), from: .zero,
@@ -222,25 +242,36 @@ final class PeekPanelController {
             isHovered = false
         }
 
+        func resetInteractionState() {
+            // Removing the panel during an action can skip mouseExited. The
+            // controls are reused, so each presentation starts unhighlighted.
+            isHovered = false
+            highlight(false)
+            needsDisplay = true
+        }
+
         override func viewDidChangeEffectiveAppearance() {
             super.viewDidChangeEffectiveAppearance()
             updateColors()
         }
 
-        /// Re-resolves both themed colors. Called on appearance changes and
+        /// Re-resolves the glyph, chip and outline. Called on appearance changes and
         /// whenever the panel is revealed, so a theme switched between peeks
         /// is picked up.
         func updateColors() {
+            let isDark = usesDarkAppearance
             let accent = (isHovered ? ThemedColor.themeColorOnHover : ThemedColor.themeColor)
                 .resolve(in: themeHostWindow)
-            contentTintColor = accent
+            contentTintColor = isDark ? .white : accent
+            layer?.borderWidth = isDark ? 1 : 0
+            layer?.borderColor = isDark
+                ? NSColor.white.withAlphaComponent(isHovered ? 0.28 : 0.2).cgColor : nil
             // The page card's own material, so a control reads as a chip of
             // the peek rather than as part of the page underneath it.
             let chip = ThemedColor.contentOverlayBackground.resolve(in: themeHostWindow)
             layer?.backgroundColor = (isHovered
                 ? chip.blended(withFraction: 0.14, of: accent) ?? chip
                 : chip).cgColor
-            layer?.borderColor = ThemedColor.border.resolve(in: themeHostWindow).cgColor
         }
     }
 
@@ -252,6 +283,8 @@ final class PeekPanelController {
         override init(frame frameRect: NSRect) {
             super.init(frame: frameRect)
             wantsLayer = true
+            clipsToBounds = false
+            layer?.masksToBounds = false
         }
 
         required init?(coder: NSCoder) {
@@ -268,33 +301,31 @@ final class PeekPanelController {
     /// panel spans the card's height minus a small fixed breathing margin.
     private static let paneInsetRatio: CGFloat = 0.04
     private static let minPaneInset: CGFloat = 24
-    private static let paneVerticalInset: CGFloat = 24
+    private static let paneVerticalInset: CGFloat = 0
     static let cornerRadius: CGFloat = 12
 
     /// The card carries no chrome of its own (Arc's peek layout): the page
     /// fills it edge to edge and the controls live in a transparent strip the
     /// panel window keeps to the card's right, over the page pane.
-    private static let controlGutterWidth: CGFloat = 44
-    private static let controlButtonSize: CGFloat = 28
+    private static let controlGutterWidth: CGFloat = 48
+    private static let controlButtonSize: CGFloat = 32
     private static let controlCornerRadius: CGFloat = 8
     private static let controlSpacing: CGFloat = 6
     private static let controlTopInset: CGFloat = 6
 
-    /// Room the window keeps around the card and the controls for their
-    /// shadows to draw into. A window clips its own content, and the system
-    /// window shadow can't be styled — so the panel carries its shadows
-    /// itself and holds a margin for them. Taken out of the card's pane
-    /// inset (`paneVerticalInset` is the tightest side), never added to the
-    /// window's reach: the panel still stops at the page card's edges. Must
-    /// stay ≤ `paneVerticalInset` and ≤ `minPaneInset` for that to hold, and
-    /// large enough for the card shadow's blur and offset to fade out inside it.
+    /// Margins position the card and controls without changing the page inset.
+    /// The root remains unclipped so shadows can extend beyond these margins.
     private static let shadowMargin: CGFloat = 24
+    private static let verticalShadowMargin = min(shadowMargin, paneVerticalInset)
 
     /// Width of the card the panel grows out of — link-sized, so the flight
     /// reads as "that link became this panel".
     private static let flightStartWidth: CGFloat = 44
-    private static let flightDuration: TimeInterval = 0.26
-    private static let flightContentFadeDuration: TimeInterval = 0.14
+    private static let flightDuration: TimeInterval = 0.2
+
+    private final class TransitionView: PageOverlayView {
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    }
 
     private weak var browserState: BrowserState?
     private weak var parentWindow: NSWindow?
@@ -313,7 +344,7 @@ final class PeekPanelController {
     private let rootView = PageOverlayView()
     private let containerView = PeekContainerView()
     private let controlColumn = PeekControlColumnView()
-    private let webHostView = NSView()
+    private let webHostView = PeekWebHostView()
     // Peek shares its parent's window ID but owns its visible toast lifecycle.
     private let toastCenter = OverlayToastCenter()
     private let toastViewController: OverlayToastViewController
@@ -335,6 +366,7 @@ final class PeekPanelController {
     /// container or window resizing (AI Chat dock, layout-mode insets).
     private var cardFrameObserver: NSObjectProtocol?
     private weak var observedCardView: NSView?
+    private weak var backgroundContentController: WebContentContainerViewController?
     /// True between an appear flight's start and its landing; keeps the
     /// landing idempotent across the completion block and the teardown paths.
     private var isFlying = false
@@ -342,8 +374,9 @@ final class PeekPanelController {
     /// (before the overlay is revealed) and `runAppearFlight` (once it is on
     /// screen). Non-nil only inside that gap.
     private var pendingFlightStart: CATransform3D?
-    /// The armed flight's start corner radius; see `pendingFlightStart`.
-    private var pendingFlightStartCornerRadius: CGFloat = 0
+    private var appearanceOriginScreenPoint: CGPoint?
+    private var transitionView: TransitionView?
+    private var expandingTabId: Int?
     /// See `setConcealedByInWindowOverlay`.
     private var isConcealedByInWindowOverlay = false
     /// See `setEclipsedByInWindowOverlay`.
@@ -363,9 +396,12 @@ final class PeekPanelController {
             state: browserState, toastCenter: toastCenter, isPanel: true)
         anchorView.postsFrameChangedNotifications = true
 
+        rootView.clipsToBounds = false
+        rootView.layer?.masksToBounds = false
         rootView.addSubview(containerView)
         containerView.snp.makeConstraints { make in
-            make.top.leading.bottom.equalToSuperview().inset(Self.shadowMargin)
+            make.top.bottom.equalToSuperview().inset(Self.verticalShadowMargin)
+            make.leading.equalToSuperview().inset(Self.shadowMargin)
             make.trailing.equalToSuperview().inset(Self.shadowMargin + Self.controlGutterWidth)
         }
 
@@ -389,6 +425,8 @@ final class PeekPanelController {
     }
 
     deinit {
+        transitionView?.removeFromSuperview()
+        backgroundContentController?.setPeekBackgroundDeemphasized(false, animated: false)
         removeEventMonitor()
         removeGeometryObservers()
         rootView.removeFromSuperview()
@@ -402,6 +440,7 @@ final class PeekPanelController {
     ///   peek and for switching to another opener's existing one.
     func present(tab: Tab, flyIn: Bool) {
         guard let browserState else { return }
+        cancelTransition()
 
         // Re-focus of the opener tab with the same peek still mounted: just
         // reveal, no re-mount and no flight — nothing was opened here, the
@@ -449,6 +488,9 @@ final class PeekPanelController {
     /// Temporarily hides the panel while the opener tab is not focused. The
     /// hosted content and bindings stay alive; `present(tab:)` reveals again.
     func hide() {
+        if let expandingTabId, browserState?.focusingTab?.guid == expandingTabId { return }
+        cancelTransition()
+        backgroundContentController?.setPeekBackgroundDeemphasized(false, animated: false)
         toastCenter.clearWindow(windowId: toastViewController.state.windowId)
         landAppearFlight()
         removeEventMonitor()
@@ -504,6 +546,14 @@ final class PeekPanelController {
     /// Idempotent teardown of the panel. Never closes the tab itself — that
     /// is `BrowserState`'s job (`closePeek`) or Chromium's (window teardown).
     func dismiss() {
+        // Keep the live page in this window until the normal page host has
+        // adopted it. Removing the overlay first makes Chromium hide it.
+        if let expandingTabId {
+            if browserState?.focusingTab?.guid == expandingTabId { return }
+            cancelTransition()
+        }
+        if let tabId = hostedTab?.guid { prepareToClose(tabId: tabId) }
+        backgroundContentController?.setPeekBackgroundDeemphasized(false, animated: true)
         let restoreFocus = rootView.containsFirstResponder
         removeEventMonitor()
         removeGeometryObservers()
@@ -625,6 +675,8 @@ final class PeekPanelController {
         content.installPageOverlay(rootView)
         refreshControlTints()
         layoutOnAnchor()
+        backgroundContentController = content
+        content.setPeekBackgroundDeemphasized(true, animated: true)
         if flyIn { armAppearFlight() }
         rootView.isHidden = false
         setHostedPeekPresented(true)
@@ -640,11 +692,11 @@ final class PeekPanelController {
         installGeometryObserversIfNeeded()
     }
 
-    /// Re-applies the theme accent to the controls; the theme can change
-    /// while no peek is up.
+    /// Clear interaction state from the previous presentation and re-apply
+    /// the theme, which can change while no peek is up.
     private func refreshControlTints() {
         for button in controlColumn.subviews.compactMap({ $0 as? PeekControlButton }) {
-            button.updateColors()
+            button.resetInteractionState()
         }
     }
 
@@ -658,174 +710,226 @@ final class PeekPanelController {
         setReaderButtonShown(false)
     }
 
-    // MARK: - Appear flight
+    // MARK: - Presentation transitions
 
-    /// Prepare the card's first frame before revealing the overlay. Start
-    /// the animations only after the view is visible in the browser window.
-    /// Keyboard opens, restored peeks and Reduce Motion skip the flight.
+    /// Keep the page and its controls visible throughout the flight. Only the
+    /// root's opacity and transform animate; card corners and clipping stay fixed.
     private func armAppearFlight() {
-        // Order matters: the origin is consumed FIRST, then Reduce Motion is
-        // honoured. The press belongs to this peek whether or not it gets an
-        // animation, and `PeekOriginTracker` promises each press funds at most
-        // one flight — leaving it unspent here would let the peek the user
-        // just opened statically hand its press to a later one. Reduce Motion
-        // is the same check `EdgeFogOverlayView` and `CustomTooltipController`
-        // make; a scale-and-travel animation this large steps aside entirely,
-        // so nothing visual happens below this line on that path.
-        guard let originScreenPoint = originTracker?.consumeOrigin() else {
-            // Every non-flying open lands here; the log says which kind, so a
-            // peek that should have flown and did not is one line away from
-            // being placed.
-            AppLogInfo("👀 [Peek] appear flight skipped: no press to fly out of")
-            return
-        }
+        appearanceOriginScreenPoint = originTracker?.consumeOrigin()
+        guard let layer = rootView.layer else { return }
+        let frame = rootView.screenFrame
+        let origin = appearanceOriginScreenPoint ?? CGPoint(x: frame.midX, y: frame.midY)
+        let width = appearanceOriginScreenPoint == nil ? frame.width * 0.97 : Self.flightStartWidth
         guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
-              let layer = containerView.layer,
-              let start = Self.appearFlightTransform(
-                  originScreenPoint: originScreenPoint,
-                  cardScreenFrame: cardScreenRect,
-                  startWidth: Self.flightStartWidth,
-                  anchorPoint: layer.anchorPoint) else {
-            AppLogInfo("👀 [Peek] appear flight skipped: reduce motion or unflyable card \(cardScreenRect)")
-            return
-        }
-        AppLogInfo("👀 [Peek] appear flight armed from \(originScreenPoint) card=\(cardScreenRect)")
+              let start = Self.appearFlightTransform(originScreenPoint: origin,
+                                                     cardScreenFrame: frame,
+                                                     startWidth: width,
+                                                     anchorPoint: layer.anchorPoint) else { return }
         isFlying = true
-        // The card's shadow is its own layer's, so it travels and shrinks
-        // with the card — nothing to switch off here.
-        // The hosted Chromium view is a remote layer — don't scale it. It sits
-        // the flight out and fades in once the panel is at full size.
-        webHostView.isHidden = true
-        // The controls belong beside the settled card, not hanging in the
-        // pane next to the travelling one — they come in with the page.
-        controlColumn.isHidden = true
-
-        // Corners are scaled down with everything else, so the card would
-        // start out with hairline corners. Starting at half the short side
-        // keeps the radius visually constant: a link-shaped capsule that
-        // settles into the panel's 12pt corners. From the card's frame, not
-        // the layer's bounds: the layer may not have picked up the frame
-        // `layoutOnAnchor` just set.
-        let startCornerRadius = min(cardScreenRect.width, cardScreenRect.height) / 2
         pendingFlightStart = start
-        pendingFlightStartCornerRadius = startCornerRadius
-
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         layer.transform = start
-        layer.cornerRadius = startCornerRadius
+        rootView.alphaValue = 0
         CATransaction.commit()
-        // Through the view, not `layer.opacity`: AppKit drives a layer-backed
-        // view's opacity from `alphaValue` and would clobber a raw assignment
-        // on the next display pass.
-        containerView.alphaValue = 0
     }
 
-    /// Plays the armed flight, now that the panel is on screen.
-    ///
-    /// EXPLICIT Core Animation layer animations, like the Spaces strip's chip
-    /// flight: they are the one animation kind that keeps playing in the
-    /// render server while the main thread is blocked — and a peek presents
-    /// right on top of Chromium's web-view re-parenting and focus hop, which
-    /// block it. The model geometry goes back to settled in the same
-    /// transaction, so an expired animation leaves the card exactly where it
-    /// belongs.
-    ///
-    /// No-op unless `armAppearFlight` armed one.
     private func runAppearFlight() {
-        guard let start = pendingFlightStart,
-              let layer = containerView.layer else { return }
-        let startCornerRadius = pendingFlightStartCornerRadius
+        guard let start = pendingFlightStart, let layer = rootView.layer else { return }
         pendingFlightStart = nil
-
-        let timing = CAMediaTimingFunction(controlPoints: 0.2, 0, 0, 1)
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        CATransaction.setCompletionBlock { [weak self] in
-            self?.landAppearFlight()
-        }
-
-        // Model back at rest and the animations that hide it added in the
-        // SAME transaction, so no frame ever shows the settled card before
-        // the flight takes over.
+        CATransaction.setCompletionBlock { [weak self] in self?.landAppearFlight() }
         layer.transform = CATransform3DIdentity
-        layer.cornerRadius = Self.cornerRadius
-        containerView.alphaValue = 1
-
+        rootView.alphaValue = 1
         let grow = CABasicAnimation(keyPath: "transform")
-        grow.fromValue = start
-        grow.toValue = CATransform3DIdentity
+        grow.fromValue = NSValue(caTransform3D: start)
+        grow.toValue = NSValue(caTransform3D: CATransform3DIdentity)
         grow.duration = Self.flightDuration
-        grow.timingFunction = timing
+        grow.timingFunction = CAMediaTimingFunction(name: .easeOut)
         layer.add(grow, forKey: "phiPeekAppearFlight")
-
         let fade = CABasicAnimation(keyPath: "opacity")
         fade.fromValue = 0
         fade.toValue = 1
-        fade.duration = Self.flightDuration / 2
-        fade.timingFunction = timing
+        fade.duration = Self.flightDuration
+        fade.timingFunction = grow.timingFunction
         layer.add(fade, forKey: "phiPeekAppearFade")
-
-        let corners = CABasicAnimation(keyPath: "cornerRadius")
-        corners.fromValue = startCornerRadius
-        corners.toValue = Self.cornerRadius
-        corners.duration = Self.flightDuration
-        corners.timingFunction = timing
-        layer.add(corners, forKey: "phiPeekAppearCorners")
-
         CATransaction.commit()
     }
 
-    /// Settles a flight: model geometry back at rest, content back.
-    /// Idempotent, and called from the teardown paths as well as the flight's
-    /// completion, so a peek that dies mid-flight — or one armed and then torn
-    /// down before it ever ran — never leaves its card shrunk onto the press
-    /// or its content hidden.
     private func landAppearFlight() {
         guard isFlying else { return }
         isFlying = false
         pendingFlightStart = nil
-        if let layer = containerView.layer {
-            layer.removeAnimation(forKey: "phiPeekAppearFlight")
-            layer.removeAnimation(forKey: "phiPeekAppearFade")
-            layer.removeAnimation(forKey: "phiPeekAppearCorners")
-            CATransaction.begin()
-            CATransaction.setDisableActions(true)
-            layer.transform = CATransform3DIdentity
-            layer.cornerRadius = Self.cornerRadius
-            CATransaction.commit()
-        }
-        containerView.alphaValue = 1
-        webHostView.isHidden = false
-        controlColumn.isHidden = false
-        // The page and its controls arrive at full size; a short fade keeps
-        // that from being a hard cut.
-        let fade = CABasicAnimation(keyPath: "opacity")
-        fade.fromValue = 0
-        fade.toValue = 1
-        fade.duration = Self.flightContentFadeDuration
-        webHostView.layer?.add(fade, forKey: "phiPeekContentFade")
-        controlColumn.layer?.add(fade, forKey: "phiPeekContentFade")
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        rootView.layer?.removeAnimation(forKey: "phiPeekAppearFlight")
+        rootView.layer?.removeAnimation(forKey: "phiPeekAppearFade")
+        rootView.layer?.transform = CATransform3DIdentity
+        rootView.alphaValue = 1
+        CATransaction.commit()
     }
 
-    /// The container layer's starting transform for a flight out of
-    /// `originScreenPoint`: the card shrunk to `startWidth` and moved so its
-    /// centre sits on the press. The press is clamped to keep the shrunk card
-    /// wholly inside the card's own frame — it can land up to the pane inset
-    /// outside it, and the overlay clips whatever leaves its frame.
-    ///
-    /// - Parameter anchorPoint: the layer's own `anchorPoint`, which is what
-    ///   the scale pins. It is NOT the UIKit-familiar (0.5, 0.5) here:
-    ///   `NSViewBackingLayer` anchors at (0, 0), the layer's bottom-left, so
-    ///   a shrink leaves the card in the corner and the travel has to carry
-    ///   its centre the rest of the way. Taking it as a parameter rather than
-    ///   assuming a convention is what keeps this rule honest — the first cut
-    ///   assumed a centred anchor and every peek flew out of the bottom
-    ///   corner.
-    ///
-    /// Nil — "don't fly" — for a degenerate card or a start width that isn't
-    /// a real shrink, so a caller that can't produce a sane flight falls back
-    /// to the plain appearance instead of showing a broken one.
+    /// Snapshot before BrowserState destroys the page, so closing can run the
+    /// reverse flight without retaining or delaying the WebContents lifecycle.
+    func prepareToClose(tabId: Int) {
+        guard hostedTab?.guid == tabId, expandingTabId == nil,
+              transitionView == nil, let snapshot = snapshotOverlay(of: rootView),
+              let layer = snapshot.layer else { return }
+        transitionView = snapshot
+        let frame = snapshot.screenFrame
+        let origin = appearanceOriginScreenPoint ?? CGPoint(x: frame.midX, y: frame.midY)
+        let width = appearanceOriginScreenPoint == nil ? frame.width * 0.97 : Self.flightStartWidth
+        let end = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            ? CATransform3DIdentity
+            : Self.appearFlightTransform(originScreenPoint: origin, cardScreenFrame: frame,
+                                         startWidth: width, anchorPoint: layer.anchorPoint)
+                ?? CATransform3DIdentity
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        CATransaction.setCompletionBlock { [weak self, weak snapshot] in
+            guard let self, let snapshot, self.transitionView === snapshot else { return }
+            snapshot.removeFromSuperview()
+            self.transitionView = nil
+        }
+        layer.transform = end
+        snapshot.alphaValue = 0
+        let shrink = CABasicAnimation(keyPath: "transform")
+        shrink.fromValue = NSValue(caTransform3D: CATransform3DIdentity)
+        shrink.toValue = NSValue(caTransform3D: end)
+        shrink.duration = Self.flightDuration
+        shrink.timingFunction = CAMediaTimingFunction(name: .easeIn)
+        layer.add(shrink, forKey: "phiPeekCloseFlight")
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = 1
+        fade.toValue = 0
+        fade.duration = Self.flightDuration
+        fade.timingFunction = shrink.timingFunction
+        layer.add(fade, forKey: "phiPeekCloseFade")
+        CATransaction.commit()
+    }
+
+    /// Install a painted cover before adoption. The live page stays mounted in
+    /// the overlay until the normal tab host takes it, avoiding a hidden frame.
+    func prepareToExpand(tabId: Int) {
+        guard hostedTab?.guid == tabId, rootView.isPresented,
+              let content = backgroundContentController else { return }
+        cancelTransition()
+        landAppearFlight()
+        transitionView = snapshotOverlay(of: webHostView)
+        expandingTabId = tabId
+        content.setPeekBackgroundDeemphasized(false, animated: false)
+        removeEventMonitor()
+        removeGeometryObservers()
+        setHostedPeekPresented(false)
+        content.whenPageIsMounted(tabId: tabId) { [weak self] destination in
+            guard let self, self.expandingTabId == tabId else { return }
+            self.rootView.removeFromSuperview()
+            self.detachHostedContent()
+            self.animateExpansion(into: destination)
+        }
+    }
+
+    private func animateExpansion(into destination: NSView) {
+        guard let snapshot = transitionView, let layer = snapshot.layer,
+              let window = destination.window, snapshot.window === window else {
+            cancelTransition()
+            return
+        }
+        let startFrame = snapshot.screenFrame
+        let endFrame = window.convertToScreen(destination.convert(destination.bounds, to: nil))
+        guard let start = Self.expansionTransform(from: startFrame, to: endFrame,
+                                                  anchorPoint: layer.anchorPoint) else {
+            cancelTransition()
+            return
+        }
+        snapshot.setScreenFrame(endFrame)
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        CATransaction.setCompletionBlock { [weak self, weak snapshot] in
+            // The destination has painted during the flight. Retire the cover
+            // on the next main turn, after the mount transaction has committed.
+            DispatchQueue.main.async {
+                guard let self, let snapshot, self.transitionView === snapshot else { return }
+                snapshot.removeFromSuperview()
+                self.transitionView = nil
+                self.expandingTabId = nil
+            }
+        }
+        let grow = CABasicAnimation(keyPath: "transform")
+        grow.fromValue = NSValue(caTransform3D: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+                                 ? CATransform3DIdentity : start)
+        grow.toValue = NSValue(caTransform3D: CATransform3DIdentity)
+        grow.duration = Self.flightDuration
+        grow.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        layer.add(grow, forKey: "phiPeekExpandIntoTab")
+        CATransaction.commit()
+    }
+
+    private func snapshotOverlay(of source: NSView) -> TransitionView? {
+        guard rootView.isPresented, let content = backgroundContentController,
+              let window = source.window,
+              let image = WebContentSnapshotter.captureOnScreen(webHostView, resolution: .bestResolution) else { return nil }
+        let snapshot = TransitionView()
+        snapshot.clipsToBounds = false
+        snapshot.layer?.masksToBounds = false
+        content.installPageOverlay(snapshot)
+        snapshot.setScreenFrame(window.convertToScreen(source.convert(source.bounds, to: nil)))
+        // Window-server captures flatten transparent regions against the page
+        // beneath Peek. Capture only the page, then rebuild its native chrome
+        // on a transparent root so the background never joins the close flight.
+        let pageFrame = source.convert(webHostView.bounds, from: webHostView)
+        let card = PeekContainerView(frame: pageFrame)
+        card.autoresizingMask = [.width, .height]
+        snapshot.addSubview(card)
+        let imageView = NSImageView(frame: card.bounds)
+        imageView.image = image
+        imageView.imageScaling = .scaleAxesIndependently
+        imageView.autoresizingMask = [.width, .height]
+        imageView.wantsLayer = true
+        imageView.layer?.cornerRadius = Self.cornerRadius
+        imageView.layer?.cornerCurve = .continuous
+        imageView.layer?.masksToBounds = true
+        card.addSubview(imageView)
+        if source === rootView {
+            for button in controlButtons where !button.isHidden {
+                let control = PeekControlButton(frame: source.convert(button.bounds, from: button))
+                control.bezelStyle = .regularSquare
+                control.isBordered = false
+                control.imagePosition = .imageOnly
+                control.image = button.image
+                control.isEnabled = button.isEnabled
+                control.themeHostWindow = parentWindow
+                control.updateColors()
+                snapshot.addSubview(control)
+            }
+        }
+        snapshot.isHidden = false
+        return snapshot
+    }
+
+    private func cancelTransition() {
+        if let expandingTabId { backgroundContentController?.cancelPageMountWait(tabId: expandingTabId) }
+        expandingTabId = nil
+        transitionView?.removeFromSuperview()
+        transitionView = nil
+    }
+
+    /// Maps the destination's pixels onto the current Peek frame, independently
+    /// of AppKit's backing-layer anchor. The animation then settles at identity.
+    static func expansionTransform(from source: CGRect, to destination: CGRect,
+                                   anchorPoint: CGPoint) -> CATransform3D? {
+        guard source.width > 0, source.height > 0,
+              destination.width > 0, destination.height > 0 else { return nil }
+        let sx = source.width / destination.width
+        let sy = source.height / destination.height
+        let tx = source.minX - destination.minX + (sx - 1) * destination.width * anchorPoint.x
+        let ty = source.minY - destination.minY + (sy - 1) * destination.height * anchorPoint.y
+        return CATransform3DScale(CATransform3DMakeTranslation(tx, ty, 0), sx, sy, 1)
+    }
+
+    /// Shrinks toward the recorded press, compensating for AppKit's actual
+    /// backing-layer anchor and clamping the small card inside the page region.
     static func appearFlightTransform(originScreenPoint: CGPoint,
                                       cardScreenFrame: CGRect,
                                       startWidth: CGFloat,
@@ -863,7 +967,8 @@ final class PeekPanelController {
     private func buildControls() {
         rootView.addSubview(controlColumn)
         controlColumn.snp.makeConstraints { make in
-            make.top.trailing.equalToSuperview().inset(Self.shadowMargin)
+            make.top.equalToSuperview().inset(Self.verticalShadowMargin)
+            make.trailing.equalToSuperview().inset(Self.shadowMargin)
             make.width.equalTo(Self.controlGutterWidth)
         }
 
@@ -981,9 +1086,9 @@ final class PeekPanelController {
         let maxX = min(card.maxX + Self.controlGutterWidth + Self.shadowMargin, cardRect.maxX)
         let originX = card.minX - Self.shadowMargin
         rootView.setScreenFrame(CGRect(x: originX,
-                              y: card.minY - Self.shadowMargin,
+                              y: card.minY - Self.verticalShadowMargin,
                               width: max(maxX - originX, Self.controlGutterWidth),
-                              height: card.height + Self.shadowMargin * 2))
+                              height: card.height + Self.verticalShadowMargin * 2))
         // Auto Layout has to catch up before the appear flight transforms the
         // card's layer: the scale is applied about the layer's OWN centre, so
         // a layer still carrying its pre-frame bounds would shrink about the
@@ -997,7 +1102,7 @@ final class PeekPanelController {
     /// off the view so it is right before the first layout pass — the appear
     /// flight runs on the frame `layoutOnAnchor` has only just set.
     private var cardScreenRect: NSRect {
-        var rect = rootView.screenFrame.insetBy(dx: Self.shadowMargin, dy: Self.shadowMargin)
+        var rect = rootView.screenFrame.insetBy(dx: Self.shadowMargin, dy: Self.verticalShadowMargin)
         rect.size.width = max(0, rect.width - Self.controlGutterWidth)
         return rect
     }

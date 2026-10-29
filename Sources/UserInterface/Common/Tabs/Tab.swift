@@ -198,6 +198,8 @@ class Tab: WebContentRepresentable {
     var onFocusGained: (() -> Void)?
     
     @Published private(set) var webContentWrapper: (WebContentWrapper & NSObject)?
+    private var wantsTransparentChatCanvas = false
+    private var chatCanvas: EmbeddedChatCanvas?
     let parent: Tab? = nil
     let subTabs: [Tab] = []
     var guid: Int
@@ -326,6 +328,10 @@ class Tab: WebContentRepresentable {
     }
     
     private func setupObservers<Wrapper: WebContentWrapper & NSObject>(for wrapper: Wrapper?) {
+        MainActor.assumeIsolated {
+            chatCanvas = nil
+            if wantsTransparentChatCanvas { enableTransparentChatCanvas() }
+        }
         cancellables.forEach { $0.cancel() }
         cancellables.removeAll()
         liveFaviconData = nil
@@ -387,7 +393,13 @@ class Tab: WebContentRepresentable {
             .store(in: &cancellables)
         
         wrapper.publisher(for: \.isLoading)
-            .assign(to: \.isLoading, on: self)
+            .sink { [weak self] loading in
+                guard let self else { return }
+                self.isLoading = loading
+                if !loading, self.wantsTransparentChatCanvas {
+                    MainActor.assumeIsolated { self.enableTransparentChatCanvas() }
+                }
+            }
             .store(in: &cancellables)
 
         wrapper.publisher(for: \.isDiscarded)
@@ -541,7 +553,17 @@ class Tab: WebContentRepresentable {
         self.webContentWrapper = wrapper
         setupObservers(for: wrapper)
     }
-    
+
+    /// The shared sidebar tab owns its canvas session across pane reparenting.
+    @MainActor
+    func enableTransparentChatCanvas() {
+        wantsTransparentChatCanvas = true
+        if chatCanvas == nil, let wrapper = webContentWrapper {
+            chatCanvas = EmbeddedChatCanvas(wrapper: wrapper)
+        }
+        chatCanvas?.apply()
+    }
+
     func setFaviconSnapshotUpdater(_ updater: @escaping (Data, String) -> Void) {
         faviconSnapshotUpdater = updater
     }

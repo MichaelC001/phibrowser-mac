@@ -426,6 +426,13 @@ typedef NS_ENUM(NSInteger, PhiGhostMaterializeOutcome) {
 /// Whether a backup import is in progress; preinstalled apps reads it to defer
 /// extension preinstall. Called synchronously — must not block.
 - (BOOL)isBackupImporting;
+/// Whether a window whose tab strip is (or starts out) empty should be
+/// refilled with a new tab. Mirrors the "New tab behavior" setting (Mac is the
+/// source of truth): YES for New Tab Page — the last-tab-close refill tab and
+/// the new-window seed tab are created as before; NO for Omnibox — the window
+/// enters placeholder mode instead and the Mac client opens the omnibox over
+/// it. Called synchronously on the UI thread — must not block.
+- (BOOL)shouldAutoCreateTabInEmptyWindow;
 /// Whether newly created profiles should auto-install the iCloud Passwords
 /// extension (the OOBE password-manager choice; the Mac preference is the
 /// source of truth). Read by the Chromium-side preinstall flow. Called
@@ -629,6 +636,13 @@ typedef NS_ENUM(NSInteger, PhiGhostMaterializeOutcome) {
 // Hide/dismiss the crash page (renderer recovered).
 - (void)hideCrashPage:(int64_t)tabId windowId:(int64_t)windowId;
 // Optional metadata-rich variants for richer native tab orchestration.
+/// Two-phase removal: synchronous lifetime work, then one actual model delta.
+- (void)tabWillDetach:(int64_t)tabId windowId:(int64_t)windowId;
+/// Dictionary payload containing removals, indices and the optional final active tab.
+- (void)tabsRemovedSnapshot:(NSDictionary *)snapshot windowId:(int64_t)windowId;
+/// Native duplicates, split changes and final order/selection in one owned payload.
+- (void)tabsInsertedSnapshot:(NSDictionary *)snapshot windowId:(int64_t)windowId;
+
 - (void)tabWillBeRemove:(int64_t)tabId
                windowId:(int64_t)windowId
                  context:(NSDictionary<NSString *, id> *)context;
@@ -997,6 +1011,20 @@ typedef NS_ENUM(NSInteger, PhiGhostMaterializeOutcome) {
 - (void)contentSurfaceCreated:(int64_t)windowId
                   hostingView:(NSView *)hostingView;
 
+/// The Phi Chat app opened `urlStrings`: a link in a chat answer
+/// (phinomenonPrivate.openExternalUrl), a new-tab link, a navigation leaving
+/// the chat page, or a context-menu search / "Go to". They are external links
+/// (chromium ADR 0019): open them the way links from other applications are
+/// opened, behind browser access, after the session restore when every window
+/// is closed, under the Kiosk setting and the Space URL rules, and give them
+/// back through application:openURLs:. They come from no other application,
+/// and page content chooses them, so they are never a deeplink or a sign-in
+/// callback. Return YES once the client has taken them: Chromium then drops
+/// them. NO, or a client without this method, has Chromium open them itself as
+/// before. Main thread only. Callers must guard with respondsToSelector:
+/// (skew).
+- (BOOL)openPhiChatLinks:(NSArray<NSString *> *)urlStrings;
+
 @end
 
 @protocol PhiChromiumBridgeProtocol <NSObject>
@@ -1084,6 +1112,12 @@ typedef NS_ENUM(NSInteger, PhiGhostMaterializeOutcome) {
                             tabId:(int64_t)tabId;
 - (void)moveTabsToNewWindowWithWindowId:(int64_t)windowId
                                  tabIds:(NSArray<NSNumber *> *)tabIds;
+
+/// Native multi-tab commands. Unknown IDs are ignored; split partners are included.
+- (void)closeTabsWithWindowId:(int64_t)windowId
+                       tabIds:(NSArray<NSNumber *> *)tabIds;
+- (void)duplicateTabsWithWindowId:(int64_t)windowId
+                           tabIds:(NSArray<NSNumber *> *)tabIds;
 
 /// Keeps the AI Chat panel record of the page tab `tabId` for undo close
 /// (chromium ADR 0017). Chromium never reads it: it writes it into the tab's
@@ -1407,6 +1441,30 @@ typedef NS_ENUM(NSInteger, PhiGhostMaterializeOutcome) {
 /// shouldEnablePhiExtensions returns NO during policy checks.
 - (void)disablePhiExtensions:(BOOL)clearData;
 
+/// Opens Phi Chat on the sidecar route `path` (such as @"/settings/private-ai"),
+/// by the rules of phinomenonPrivate.openPhiChat({ path }): a chat window on
+/// that route already is brought to the front as it is; otherwise the most
+/// recently active one is brought to the front and taken to the route, without
+/// a reload when it shows the chat page; a window opens only when none is,
+/// installing Phi Chat on first use - and then one for each request waiting
+/// that has joined no other (requests for the same path join). Leaves every
+/// AI Chat panel alone; see phi_chat_web_app.h. Must be called on the main
+/// thread. Callers must guard with respondsToSelector: (skew).
+/// `completion` fires at most once, on the UI thread: success=YES once a
+/// window shows the route or is on its way to it, otherwise NO with the
+/// extension API's error string - @"openPhiChat: invalid path" (`path` does
+/// not start with '/'), @"openPhiChat: AI features are off" or
+/// @"openPhiChat: could not open the window". An invalid path, or the AI
+/// switch off at the call, fires it before this returns. The AI switch going
+/// off later fires @"openPhiChat: AI features are off" while the request
+/// still waits to be served, and @"openPhiChat: could not open the window"
+/// once a window is opening for it. Otherwise it is held until a window
+/// opens or the request fails - seconds on first use, while Phi Chat
+/// installs - so capture the caller weakly in it. It may never fire, for
+/// example if the browser quits first.
+- (void)openPhiChatAtPath:(NSString *)path
+               completion:(nullable void (^)(BOOL success, NSString * _Nullable error))completion;
+
 /// Install one or more extensions from Chrome Web Store by their IDs.
 /// Results are reported per-extension via extensionInstallResult:status: delegate callback.
 /// Status values: @"success", @"skipped", @"disabled", @"blocked", @"failed"
@@ -1577,6 +1635,16 @@ typedef NS_ENUM(NSInteger, PhiGhostMaterializeOutcome) {
 /// when every surviving window reports NotAttempting; see
 /// `windowGroupCloseDidSettle` for the settle contract this protects.
 - (PhiWindowCloseState)windowCloseStateForWindowId:(int64_t)windowId;
+
+/// Enters placeholder mode for a window whose tab strip is empty: a Browser the
+/// Mac client just created without seeding a tab (the Omnibox "New tab
+/// behavior"), for which Chromium's own last-tab-close path never fires.
+/// Returns YES when the window is in placeholder mode on return (already was,
+/// or entered now) and NO when it still needs a tab: the strip is not empty,
+/// the window cannot hold a placeholder (Incognito, non-normal windows), or
+/// `windowId` resolves to no live Browser. On NO the caller seeds a tab as
+/// before. Callers must guard with respondsToSelector: (version skew).
+- (BOOL)enterPlaceholderModeIfEmptyForWindowId:(int64_t)windowId;
 
 // Favicon service
 - (void)getFaviconForURL:(NSString *)urlString completion:(void (^)(NSData * _Nullable faviconData))completion;
@@ -2281,6 +2349,14 @@ typedef NS_ENUM(NSInteger, PhiGhostMaterializeOutcome) {
                    bottomLeftRadius:(CGFloat)bottomLeftRadius
                              zOrder:(NSInteger)zOrder
     NS_SWIFT_NAME(setContentHosting(forWebView:frameInWindow:clipInWindow:topLeftRadius:topRightRadius:bottomRightRadius:bottomLeftRadius:zOrder:));
+
+/// Whether this launch was silent: the browser was started with no startup
+/// window, as the Phi Chat app's shim and Sentinel start it to show Phi Chat,
+/// so the cold-launch restore did not run (chromium ADR 0019). NO for a hidden
+/// login-item launch, whose first Dock reopen Chromium restores itself. Fixed
+/// for the life of the process. Optional so an older framework reads as not
+/// silent. Main thread only.
+- (BOOL)isSilentLaunch;
 
 @end
 

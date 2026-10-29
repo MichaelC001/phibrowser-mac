@@ -231,6 +231,198 @@ final class NotificationCardManagerTests: XCTestCase {
         wait(for: [published], timeout: 1)
     }
 
+    func testWorkingCardHasNoButtonAndUnknownKindFallsBackToAction() {
+        let manager = NotificationCardManager(maxQueueSize: 5, now: { 1000 }, messenger: TestMessenger())
+        manager.enqueueCard(
+            envelope: makeCardEnvelope(taskID: "working", kind: "working", buttonTitle: "Ignored"),
+            correlationId: nil)
+        manager.enqueueCard(
+            envelope: makeCardEnvelope(taskID: "unknown", kind: "celebration"),
+            correlationId: nil)
+
+        let published = expectation(description: "cards published")
+        DispatchQueue.main.async {
+            let working = manager.allCards.first { $0.taskId == "working" }
+            let unknown = manager.allCards.first { $0.taskId == "unknown" }
+            XCTAssertEqual(working?.kind, .working)
+            XCTAssertNil(working?.buttonTitle)
+            XCTAssertEqual(unknown?.kind, .action)
+            XCTAssertEqual(unknown?.buttonTitle, "Run")
+            published.fulfill()
+        }
+        wait(for: [published], timeout: 1)
+    }
+
+    func testWorkingCardUpdatesInPlace() {
+        let manager = NotificationCardManager(maxQueueSize: 5, now: { 1000 }, messenger: TestMessenger())
+        manager.enqueueCard(
+            envelope: makeCardEnvelope(taskID: "w", kind: "working", description: "Opening"),
+            correlationId: nil)
+        manager.enqueueCard(envelope: makeCardEnvelope(taskID: "a"), correlationId: nil)
+        manager.enqueueCard(
+            envelope: makeCardEnvelope(taskID: "w", kind: "working", description: "Reading"),
+            correlationId: nil)
+
+        XCTAssertEqual(manager.count, 2)
+        XCTAssertEqual(manager.latestTaskId, "a")
+        let published = expectation(description: "cards published")
+        DispatchQueue.main.async {
+            XCTAssertEqual(manager.allCards.map(\.taskId), ["a", "w"])
+            XCTAssertEqual(manager.allCards.last?.message, "Reading")
+            published.fulfill()
+        }
+        wait(for: [published], timeout: 1)
+    }
+
+    func testResultCardReplacesWorkingCardAtTheFront() {
+        let messenger = TestMessenger()
+        let manager = NotificationCardManager(maxQueueSize: 5, now: { 1000 }, messenger: messenger)
+        manager.enqueueCard(envelope: makeCardEnvelope(taskID: "w", kind: "working"), correlationId: nil)
+        manager.enqueueCard(envelope: makeCardEnvelope(taskID: "a"), correlationId: nil)
+        manager.enqueueCard(
+            envelope: makeCardEnvelope(taskID: "w", buttonTitle: "View details"),
+            correlationId: nil)
+
+        XCTAssertEqual(manager.count, 2)
+        XCTAssertEqual(manager.latestTaskId, "w")
+        XCTAssertTrue(messenger.broadcasts.isEmpty)
+        let published = expectation(description: "cards published")
+        DispatchQueue.main.async {
+            XCTAssertEqual(manager.latestCard?.kind, .action)
+            XCTAssertEqual(manager.latestCard?.buttonTitle, "View details")
+            published.fulfill()
+        }
+        wait(for: [published], timeout: 1)
+    }
+
+    func testRevokeTakesDownCardWithoutDecision() {
+        let messenger = TestMessenger()
+        let manager = NotificationCardManager(maxQueueSize: 5, now: { 1000 }, messenger: messenger)
+        manager.enqueueCard(envelope: makeCardEnvelope(taskID: "w", kind: "working"), correlationId: nil)
+        manager.enqueueCard(envelope: makeCardEnvelope(taskID: "a"), correlationId: nil)
+
+        manager.handleRequest(context: revokeContext(messageId: "message-w"))
+        manager.handleRequest(context: revokeContext(messageId: "message-missing"))
+
+        XCTAssertEqual(manager.count, 1)
+        XCTAssertEqual(manager.latestTaskId, "a")
+        XCTAssertTrue(messenger.broadcasts.isEmpty)
+        XCTAssertEqual(messenger.responses.map(\.response), ["message-w", ""])
+    }
+
+    func testConversationCardShownInPanelTellsSenderItOpened() throws {
+        let messenger = TestMessenger()
+        let manager = NotificationCardManager(maxQueueSize: 5, now: { 1000 }, messenger: messenger)
+        manager.enqueueCard(
+            envelope: makeCardEnvelope(taskID: "chat-1", taskType: "task-report", buttonTitle: "View details"),
+            correlationId: nil)
+        let card = try XCTUnwrap(cardSnapshot(manager))
+        var asked: [String] = []
+
+        manager.accept(card) { conversationId in
+            asked.append(conversationId)
+            return true
+        }
+        XCTAssertEqual(manager.count, 0)
+        waitForDecision(messenger)
+
+        XCTAssertEqual(asked, ["chat-1"])
+        let inner = try XCTUnwrap(decisionPayload(messenger))
+        XCTAssertEqual(inner["decision"] as? String, "accept")
+        XCTAssertEqual(inner["task_id"] as? String, "chat-1")
+        XCTAssertEqual(inner["opened_in"] as? String, "sidebar")
+    }
+
+    func testConversationCardNotShownLeavesOpeningToSender() throws {
+        let messenger = TestMessenger()
+        let manager = NotificationCardManager(maxQueueSize: 5, now: { 1000 }, messenger: messenger)
+        manager.enqueueCard(
+            envelope: makeCardEnvelope(taskID: "chat-1", taskType: "task-report"), correlationId: nil)
+        let card = try XCTUnwrap(cardSnapshot(manager))
+
+        manager.accept(card) { _ in false }
+        waitForDecision(messenger)
+
+        let inner = try XCTUnwrap(decisionPayload(messenger))
+        XCTAssertEqual(inner["decision"] as? String, "accept")
+        XCTAssertNil(inner["opened_in"])
+    }
+
+    func testOtherCardsAcceptAtOnceWithoutAskingThePanel() throws {
+        let messenger = TestMessenger()
+        let manager = NotificationCardManager(maxQueueSize: 5, now: { 1000 }, messenger: messenger)
+        manager.enqueueCard(
+            envelope: makeCardEnvelope(taskID: "t1", taskType: "research"), correlationId: nil)
+        let card = try XCTUnwrap(cardSnapshot(manager))
+
+        manager.accept(card) { _ in
+            XCTFail("only conversation cards open in the panel")
+            return true
+        }
+
+        let inner = try XCTUnwrap(decisionPayload(messenger))
+        XCTAssertEqual(inner["decision"] as? String, "accept")
+        XCTAssertNil(inner["opened_in"])
+    }
+
+    private func cardSnapshot(_ manager: NotificationCardManager) -> NotificationCardManager.Card? {
+        let published = expectation(description: "card published")
+        var card: NotificationCardManager.Card?
+        DispatchQueue.main.async {
+            card = manager.latestCard
+            published.fulfill()
+        }
+        wait(for: [published], timeout: 1)
+        return card
+    }
+
+    private func waitForDecision(_ messenger: TestMessenger) {
+        let deadline = Date().addingTimeInterval(2)
+        while messenger.broadcasts.isEmpty, Date() < deadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        }
+    }
+
+    private func decisionPayload(_ messenger: TestMessenger) -> [String: Any]? {
+        guard messenger.broadcasts.count == 1, messenger.broadcasts[0].type == "notification" else { return nil }
+        return decode(messenger.broadcasts[0].payload)?["payload"] as? [String: Any]
+    }
+
+    private func revokeContext(messageId: String) -> ExtensionMessageContext {
+        let payload = #"{"action":"notification.card.revoke","messageId":"\#(messageId)"}"#
+        return ExtensionMessageContext(type: "notification", payload: payload,
+                                       requestId: "revoke-\(messageId)", senderId: "extension")
+    }
+
+    private func makeCardEnvelope(
+        taskID: String,
+        kind: String? = nil,
+        taskType: String? = nil,
+        description: String = "Body",
+        buttonTitle: String? = nil
+    ) -> [String: AnyCodable] {
+        var payload: [String: AnyCodable] = [
+            "task_id": .string(taskID),
+            "title": .string("Title"),
+            "description": .string(description),
+            "expires_at": .string("5000"),
+        ]
+        if let kind {
+            payload["kind"] = .string(kind)
+        }
+        if let taskType {
+            payload["task_type"] = .string(taskType)
+        }
+        if let buttonTitle {
+            payload["button_title"] = .string(buttonTitle)
+        }
+        return [
+            "action": .string("notification.card.request"),
+            "messageId": .string("message-\(taskID)"),
+            "payload": .init(payload),
+        ]
+    }
+
     private func agentContext(
         payload: String = #"{"title":"Title","message":"Body"}"#,
         senderId: String = "cdp",

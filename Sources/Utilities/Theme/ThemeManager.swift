@@ -330,7 +330,7 @@ public final class ThemeManager: NSObject, ThemeSource {
     }
 
     @MainActor
-    @available(*, deprecated, message: "Theme overlay alpha is fixed at 0.8 in ThemeSnapshot V2.")
+    @available(*, deprecated, message: "Theme overlay alpha is fixed by ThemeColorAdjustment in ThemeSnapshot V2.")
     public func updateCurrentThemeOverlayOpacity(_ opacity: CGFloat, for appearance: Appearance? = nil) {
         // Retain the old entry point for source compatibility, but V2 no longer
         // accepts user-defined alpha. Normalize every registered theme instead

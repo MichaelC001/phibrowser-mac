@@ -6,8 +6,8 @@
 import Cocoa
 
 /// Holds the native traffic lights at a fixed distance below the top of the
-/// window, with the leading inset matching the top inset, without reparenting
-/// or redrawing them.
+/// window, with an optional leading centre for alignment to sidebar icons,
+/// without reparenting or redrawing them.
 ///
 /// The placement is absolute, not an offset from AppKit's: the titlebar height
 /// Chromium reports is what AppKit centres the discs in, and anything that
@@ -41,6 +41,7 @@ final class TrafficLightPositioner: NSObject {
     /// Where the discs' centre line should sit, as a distance from the top of
     /// the window.
     private let centerFromWindowTop: CGFloat
+    private let centerFromWindowLeading: CGFloat?
     /// The pre-shift placement, captured on the first apply so
     /// `stop(restoringPlacement: true)` can hand the titlebar back to AppKit
     /// exactly as it was found.
@@ -59,9 +60,10 @@ final class TrafficLightPositioner: NSObject {
     /// so the correction is in the frame AppKit is about to present.
     private static let preFlushObserverOrder: CFIndex = -1
 
-    init(window: NSWindow, centerFromWindowTop: CGFloat) {
+    init(window: NSWindow, centerFromWindowTop: CGFloat, centerFromWindowLeading: CGFloat? = nil) {
         self.window = window
         self.centerFromWindowTop = centerFromWindowTop
+        self.centerFromWindowLeading = centerFromWindowLeading
         super.init()
     }
 
@@ -259,6 +261,9 @@ final class TrafficLightPositioner: NSObject {
         // its top is a margin from the top of the window — and one AppKit
         // cannot invalidate by changing its own idea of the titlebar.
         let targetTopMargin = max(0, centerFromWindowTop - buttonHeight / 2)
+        let targetLeadingMargin = centerFromWindowLeading.map {
+            max(0, $0 - closeButton.frame.width / 2)
+        } ?? targetTopMargin
 
         // Every button, not just the leading one. AppKit does not always put
         // the three back together — installing the shared-window button on a
@@ -279,7 +284,7 @@ final class TrafficLightPositioner: NSObject {
                     - frameInContainer.maxY - targetTopMargin
             ) < 0.01 && abs(
                 button.convert(button.bounds, to: nil).minX
-                    - (targetTopMargin + originalLeadingMargins[index] - originalLeadingMargins[0])
+                    - (targetLeadingMargin + originalLeadingMargins[index] - originalLeadingMargins[0])
             ) < 0.01
         }
         if placementHolds { return }
@@ -294,7 +299,7 @@ final class TrafficLightPositioner: NSObject {
         for (index, button) in buttons.enumerated() {
             guard let buttonSuperview = button.superview else { continue }
             // Move the group together while preserving AppKit's button spacing.
-            let leadingMargin = targetTopMargin + originalLeadingMargins[index] - originalLeadingMargins[0]
+            let leadingMargin = targetLeadingMargin + originalLeadingMargins[index] - originalLeadingMargins[0]
             let targetOriginInContainer = NSPoint(
                 x: titlebarContainer.convert(NSPoint(x: leadingMargin, y: 0), from: nil).x,
                 y: titlebarContainer.bounds.minY + targetTopMargin

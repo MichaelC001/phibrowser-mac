@@ -588,4 +588,43 @@ final class DiffableOutlineViewTests: XCTestCase {
 
         XCTAssertTrue(view is DiffableOutlineView)
     }
+
+    func testRemovedItemStaysAliveUntilGracePeriodElapses() {
+        let view = RecordingDiffableOutlineView()
+        let kept = OutlineApplyItem("item0")
+        weak var removed: OutlineApplyItem?
+        autoreleasepool {
+            let item1 = OutlineApplyItem("item1")
+            removed = item1
+            view.reloadWith(
+                applySnapshot(["item0", "item1"], ["item0": (kept, nil, []), "item1": (item1, nil, [])]),
+                animated: false
+            ) {}
+        }
+        view.reloadWith(applySnapshot(["item0"], ["item0": (kept, nil, [])]), animated: false) {}
+
+        XCTAssertNotNil(removed, "an item leaving the snapshot must outlive AppKit's late references")
+        XCTAssertEqual(view.retiredItemCount, 1)
+
+        view.pruneRetiredItems(now: ProcessInfo.processInfo.systemUptime + view.retiredItemGracePeriod)
+
+        XCTAssertNil(removed)
+        XCTAssertEqual(view.retiredItemCount, 0)
+    }
+
+    func testResetRetiresItemsOfPreviousSnapshot() {
+        let view = RecordingDiffableOutlineView()
+        weak var dropped: OutlineApplyItem?
+        autoreleasepool {
+            let item = OutlineApplyItem("item0")
+            dropped = item
+            view.reloadWith(applySnapshot(["item0"], ["item0": (item, nil, [])]), animated: false) {}
+        }
+
+        view.resetDiffableSnapshot()
+
+        XCTAssertNotNil(dropped)
+        view.pruneRetiredItems(now: ProcessInfo.processInfo.systemUptime + view.retiredItemGracePeriod)
+        XCTAssertNil(dropped)
+    }
 }

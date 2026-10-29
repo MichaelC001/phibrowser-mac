@@ -15,9 +15,17 @@ import SwiftUI
     let downloadEvents = PassthroughSubject<ChromiumDownloadEvent, Never>()
 
     /// Live ask-Space overlays keyed by the source windowId, so a second
-    /// match for the same window replaces (rather than stacks) the prompt and
-    /// dismissal can tear the right one down.
+    /// match for the same window queues behind (rather than stacks on or
+    /// replaces) the prompt and dismissal can tear the right one down.
     private var activeChoosers: [Int64: NSWindow] = [:]
+    /// Ask requests that arrived while a chooser was already up for the same
+    /// source window, in arrival order. One chooser is shown at a time; the
+    /// next one is presented when the current one is answered or declined, so
+    /// no asked URL is silently replaced. Dropped (with a warning) only when
+    /// the source window closes, since nothing is left to host them.
+    private var pendingChooserRequests: [Int64: [(urlString: String,
+                                                  defaultSpaceId: String,
+                                                  sourceIsNewTab: Bool)]] = [:]
     /// `willClose` observers for the source windows hosting an active chooser,
     /// keyed the same way. Drained in lockstep with `activeChoosers` so a
     /// source window closing mid-prompt can't leak its overlay NSWindow (the
@@ -289,8 +297,10 @@ import SwiftUI
                     SyncableSettings.valueKey(for: PinnedTabScopeMirror.key)] {
             defaults.removeObject(forKey: key)
         }
-        // A pending explicit reset belongs to this account and survives switching away/back.
-        if markerStore?.load().requiresReconfiguration != true { markerStore?.deleteFile() }
+        // A pending explicit reset belongs to this account and survives switching away/back, and
+        // so does a journaled account reset (`resetOperationId`), which is an unfinished one.
+        let journal = markerStore?.load()
+        if journal?.requiresReconfiguration != true, journal?.resetOperationId == nil { markerStore?.deleteFile() }
         // The new owner is recorded last (design 3.5): a cleanup interrupted before this line still
         // sees the previous owner at the next launch and runs again.
         defaults.set(accountId, forKey: phiSyncCursorOwnerKey)
@@ -309,13 +319,19 @@ import SwiftUI
     private func buildSyncKeyControllerIfNeeded() -> SyncKeyController? {
         guard !nativeSyncCleanupInProgress, let account = AccountController.shared.account else { return nil }
         let stack = SyncKeyStack.make(accountId: account.userID)
+        // The pairing-reset resume marker (docs/sync.md, "Replacing this Mac's data at pairing"):
+        // account-scoped, cleared when enrollment completes and by the confirmed local cleanup.
+        let localResetMarker = SyncPairingLocalResetMarkerStore(
+            readData: { account.userDefaults.object(forKey: SyncPairingLocalResetMarkerStore.defaultsKey) as? Data },
+            writeData: { account.userDefaults.set($0, forKey: SyncPairingLocalResetMarkerStore.defaultsKey) })
         // Bind the fail-closed prerequisite before any unlock callback can start sync.
         do {
             let deviceID = try stack.manager.deviceKeyProviderForTesting.deviceKeyId()
             try ProfilePairingGate.shared.configureEnrollment(
                 deviceKeyID: deviceID,
                 recordData: account.userDefaults.object(forKey: ProfilePairingGate.enrollmentDefaultsKey).map { ($0 as? Data) ?? Data() },
-                saveRecord: { account.userDefaults.set($0, forKey: ProfilePairingGate.enrollmentDefaultsKey) })
+                saveRecord: { account.userDefaults.set($0, forKey: ProfilePairingGate.enrollmentDefaultsKey) },
+                clearLocalResetMarker: { localResetMarker.clear() })
         } catch {
             try? ProfilePairingGate.shared.configureEnrollment(deviceKeyID: "", recordData: nil, saveRecord: { _ in false })
             AppLogWarn("[phi-sync] pairing enrollment unavailable; sync remains stopped")
@@ -432,7 +448,9 @@ import SwiftUI
             runtimeRemovalPending: { [weak self] in
                 self?.pendingNativeCleanup?.accountID == account.userID
                     && self?.pendingNativeCleanup?.removingDevice == true
-            })
+            },
+            localResetMarker: localResetMarker,
+            localResetAccess: Self.pairingResetLocalAccess(account: account))
 
         // The main-thread facade: read-only caches plus the no-engine fallback. Cleared in
         // `invalidateSyncKeyController()` — the store and the two closures are bound to THIS
@@ -556,7 +574,8 @@ import SwiftUI
                         legacyEvidence: SyncPairingLegacyEvidence(authorizedDeviceVerified: true,
                             freshAccountMappingsVerified: true, explicitlyPending: false,
                             spaceSectionEnabled: true, hasDrainedFullReplay: true,
-                            profileMappingsValid: validProfiles, spaceMappingsValid: validSpaces))
+                            profileMappingsValid: validProfiles, spaceMappingsValid: validSpaces),
+                        clearLocalResetMarker: { localResetMarker.clear() })
                     self.activatePairedSync()
                     return .verified
                 } catch {
@@ -567,6 +586,67 @@ import SwiftUI
             scheduleLegacyEnrollmentRetries()
         }
         return syncKeyController
+    }
+
+    /// Local data access for the pairing reset (docs/sync.md, "Replacing this Mac's data at
+    /// pairing"): the account's store, `SpaceManager` and `ProfileManager`, bound to `account`.
+    /// The reset itself re-checks the account before every destructive step.
+    @MainActor
+    private static func pairingResetLocalAccess(account: Account) -> PhiLocalDataReset.LocalAccess {
+        func rows(agent: Bool) -> [PhiLocalDataReset.SpaceRow] {
+            account.localStorage.getAllSpaces().filter { $0.isAnyAgentSpace == agent }
+                .map { PhiLocalDataReset.SpaceRow(spaceId: $0.spaceId, profileId: $0.profileId) }
+        }
+        /// A failed bridge read must never look like "no Profiles": that would turn the requested
+        /// deletions into a silent no-op.
+        func refreshedProfiles() throws -> [PhiBrowserProfile] {
+            guard ProfileManager.shared.refresh() else { throw LocalStoreWriteError.storeUnavailable }
+            return ProfileManager.shared.profiles
+        }
+        return PhiLocalDataReset.LocalAccess(
+            counts: {
+                try account.localStorage.phiDataCounts { name, iconName, colorHex in
+                    AgentSpaceManager.isAgentSpaceModel(name: name, iconName: iconName, colorHex: colorHex)
+                        || AgentSpaceManager.isPersistentAgentSpaceModel(iconName: iconName, colorHex: colorHex)
+                }
+            },
+            userSpaces: { rows(agent: false) },
+            agentSpaces: { rows(agent: true) },
+            chromiumProfileIds: { Set(try refreshedProfiles().map(\.profileId)) },
+            userAssignableProfileIds: {
+                _ = try refreshedProfiles()
+                return Set(ProfileManager.shared.userAssignableProfiles.map(\.profileId))
+            },
+            storedProfileIds: { try account.localStorage.profileRowIds() },
+            isImporting: { ImportTargetLock.shared.isImporting(into: $0) },
+            hasRunningAgentTask: { spaceIds, profileIds in
+                let bindings = Dictionary(account.localStorage.getAllSpaces().map { ($0.spaceId, $0.profileId) },
+                                          uniquingKeysWith: { first, _ in first })
+                return AgentSpaceManager.shared.tasksBySpaceId.keys.contains { spaceId in
+                    spaceIds.contains(spaceId) || bindings[spaceId].map(profileIds.contains) == true
+                }
+            },
+            setDefaultSpaceRole: { SpaceManager.shared.setDefaultSpaceRoleForPairingReset(LocalStore.defaultSpaceId) },
+            recreateDefaultSpace: { try await account.localStorage.recreateDefaultSpaceForPairingResetThrowing(profileId: $0) },
+            rebindDefaultSpace: { await SpaceManager.shared.rebindDefaultSpaceForPairingReset(toProfileId: $0) },
+            defaultSpaceWindowProfileIds: { SpaceManager.shared.defaultSpaceWindowProfileIdsForPairingReset() },
+            wipeOwnedItems: {
+                try await account.localStorage.wipePhiOwnedItemsForPairingReset()
+                // Hard-deleted rules must leave Chromium's routing table too.
+                SpaceManager.shared.reloadURLRulesFromStore()
+            },
+            deleteSpace: { await SpaceManager.shared.deleteSpaceForPairingReset(spaceId: $0) },
+            profilesWithLiveWindows: { await SpaceManager.shared.profilesWithLiveWindowsForPairingReset($0) },
+            isProfileInUse: { SpaceManager.shared.isProfileInUse($0) },
+            deleteProfile: { profileId in
+                let failure: ProfileDeletionFailure? = await withCheckedContinuation { continuation in
+                    ProfileManager.shared.deleteProfile(profileId, sync: .pairingReset) { success, failure in
+                        continuation.resume(returning: success ? nil : (failure ?? .reason(nil)))
+                    }
+                }
+                if let failure { throw failure }
+            },
+            removeProfileRows: { try await account.localStorage.deleteProfileRowsForPairingResetThrowing(profileId: $0) })
     }
 
     /// Runs one legacy enrollment attempt, sharing an attempt already in flight so the
@@ -1845,6 +1925,14 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
 
     func isBackupImporting() -> Bool { isBackupImportInProgress }
 
+    /// The "New tab behavior" setting, read live: New Tab Page lets Chromium
+    /// refill an emptied window and seed a new one with a tab; Omnibox makes
+    /// it enter placeholder mode instead, and the session controller opens
+    /// the omnibox over it (`openOmniBoxForEmptyWindowIfConfigured`).
+    func shouldAutoCreateTabInEmptyWindow() -> Bool {
+        PhiPreferences.GeneralSettings.openNewTabPageOnCmdT.loadValue()
+    }
+
     func shouldAutoInstallICloudPasswords() -> Bool {
         PhiPreferences.PasswordManagerSettings.autoInstallICloudPasswords.loadValue()
     }
@@ -1966,153 +2054,225 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
         return DeeplinkHandler.handle(urlString)
     }
 
+    /// The Phi Chat app's links, which Chromium hands over as external links
+    /// (chromium ADR 0019). Taken whatever the app's state: the external-open
+    /// path decides what happens to them. A batch with a link `URL` cannot
+    /// hold is declined whole, and Chromium opens it itself.
+    func openPhiChatLinks(_ urlStrings: [String]) -> Bool {
+        let urls = urlStrings.compactMap(URL.init(string:))
+        guard urls.count == urlStrings.count,
+              let appController = AppController.shared else { return false }
+        MainActor.assumeIsolated { appController.openPhiChatLinks(urls) }
+        return true
+    }
+
     /// A navigation matched a Space URL rule whose action is "ask every time"
     /// and Chromium cancelled it. Dims the source window and presents the
     /// destination chooser (current Space first, Kiosk in a separate final
     /// section); opens the URL in the chosen destination, or keeps it in the
     /// source window if the user declines. Owns the prompt + routing so
-    /// Chromium stays out of the UI and Space-window lifecycle.
+    /// Chromium stays out of the UI and Space-window lifecycle. A request for
+    /// a window that already shows a chooser waits in that window's FIFO queue.
     func askSpace(forURL urlString: String, defaultSpaceId: String, sourceWindowId: Int64, sourceIsNewTab: Bool) {
         Task { @MainActor in
-            let manager = SpaceManager.shared
-            let spaces = manager.spaces
-            guard !spaces.isEmpty,
-                  let controller = SpaceSessionControllersManager.shared
-                      .controller(for: Int(sourceWindowId)),
-                  let sourceWindow = controller.window else {
-                // No Spaces to choose from, or the source window is gone — fall
-                // back to the rule's default Space rather than dropping the URL.
-                manager.routeAskedURL(urlString,
-                                      toSpaceId: spaces.isEmpty ? nil : defaultSpaceId,
-                                      sourceWindowId: sourceWindowId,
-                                      sourceIsNewTab: sourceIsNewTab)
-                return
-            }
-            // Hosted mode: `window` is the shell, which shows another Space
-            // while this one is in the background (an agent Space navigating,
-            // a redirect after a switch). Nobody can answer for it, so the
-            // navigation stays where it started, as a decline would keep it.
-            guard controller.isPresentedOrLegacy else {
-                AppLogInfo("[SpaceChooser] source window \(sourceWindowId) is not on screen; keeping the URL in its Space")
-                manager.routeAskedURL(urlString,
-                                      toSpaceId: nil,
-                                      sourceWindowId: sourceWindowId,
-                                      sourceIsNewTab: sourceIsNewTab)
-                return
-            }
+            self.presentChooser(forURL: urlString,
+                                defaultSpaceId: defaultSpaceId,
+                                sourceWindowId: sourceWindowId,
+                                sourceIsNewTab: sourceIsNewTab)
+        }
+    }
 
-            // List the current Space first, then the rest in their order.
-            // Live Incognito Spaces collapse into ONE generic "Incognito"
-            // choice: its id is the rules' generic target, which
-            // `routeAskedURL` resolves to the first live Incognito Space —
-            // creating one when none exists — so the choice is always
-            // offered. It leads when the navigation started in an Incognito
-            // Space (that Space is then the resolution target) and trails
-            // the user Spaces otherwise.
-            let currentSpaceId = controller.spaceId
-            let currentIsIncognito = SpaceManager.isIncognitoSpaceId(currentSpaceId)
-            let userSpaces = spaces.filter { !SpaceManager.isIncognitoSpaceId($0.spaceId) }
-            var ordered = userSpaces.filter { $0.spaceId == currentSpaceId }
-                + userSpaces.filter { $0.spaceId != currentSpaceId }
-            let incognitoTarget = manager.incognitoRuleTargetSpace()
-            if currentIsIncognito {
-                ordered.insert(incognitoTarget, at: 0)
-            } else {
-                ordered.append(incognitoTarget)
-            }
-            // Kiosk is an action destination, not a Space. Keep it last and
-            // visually separate from all regular/Incognito Space choices.
-            ordered.append(manager.kioskRuleTargetSpace())
-
-            // Resolve each Space's theme (pinned theme + custom overlay
-            // opacity) for the source window's appearance, so a row's tint
-            // matches what that Space actually looks like.
-            let appearance = sourceWindow.effectiveAppearance.phiAppearance
-            let items: [SpaceChooserItem] = ordered.map { space in
-                if space.spaceId == SpaceManager.kioskRuleTargetId {
-                    return SpaceChooserItem(
-                        id: space.spaceId,
-                        name: space.name,
-                        iconName: space.iconName,
-                        isCurrent: false,
-                        startsSection: true,
-                        themeColor: Color.primary.opacity(0.08),
-                        textColor: .primary)
+    @MainActor
+    private func presentChooser(forURL urlString: String, defaultSpaceId: String, sourceWindowId: Int64, sourceIsNewTab: Bool) {
+        if activeChoosers[sourceWindowId] != nil {
+            pendingChooserRequests[sourceWindowId, default: []].append(
+                (urlString: urlString,
+                 defaultSpaceId: defaultSpaceId,
+                 sourceIsNewTab: sourceIsNewTab))
+            return
+        }
+        let manager = SpaceManager.shared
+        let spaces = manager.spaces
+        guard !spaces.isEmpty,
+              let controller = SpaceSessionControllersManager.shared
+                  .controller(for: Int(sourceWindowId)),
+              let sourceWindow = controller.window else {
+            // A Kiosk default with no source Browser: the Kiosk sentinel in
+            // `routeAskedURL` inherits the source Browser's profile, which
+            // is gone, so open a Kiosk directly and fall back to the default
+            // Space if that fails.
+            if defaultSpaceId == SpaceManager.kioskRuleTargetId,
+               SpaceSessionControllersManager.shared
+                   .controller(for: Int(sourceWindowId)) == nil {
+                if AppController.shared?.openNewKioskWindow(
+                    url: urlString, bringToFront: false) != true {
+                    AppLogWarn("[SpaceChooser] Kiosk default failed without a source window; opening in the default Space")
+                    manager.routeAskedURL(urlString,
+                                          toSpaceId: manager.currentDefaultSpaceId,
+                                          sourceWindowId: sourceWindowId,
+                                          sourceIsNewTab: sourceIsNewTab)
                 }
-                let theme = manager.resolvedTheme(forSpaceId: space.spaceId)
-                let themeNSColor = theme.color(for: .themeColor, appearance: appearance)
-                // Contrast is computed on the opaque color, then the row is
-                // tinted with the theme's overlay opacity (the Opacity setting)
-                // so the item background is translucent like the box.
-                let legible: NSColor = themeNSColor.isLight() ? .black : .white
-                let opacity = theme.windowOverlayOpacity(for: appearance)
-                // The generic Incognito choice is "current" whenever the
-                // navigation started in any Incognito Space — that Space is
-                // what the choice resolves to.
-                let isCurrent = space.spaceId == currentSpaceId
-                    || (currentIsIncognito && space.spaceId == SpaceManager.incognitoRuleTargetId)
+                return
+            }
+            // No Spaces to choose from, or the source window is gone — fall
+            // back to the rule's default Space rather than dropping the URL.
+            manager.routeAskedURL(urlString,
+                                  toSpaceId: spaces.isEmpty ? nil : defaultSpaceId,
+                                  sourceWindowId: sourceWindowId,
+                                  sourceIsNewTab: sourceIsNewTab)
+            return
+        }
+        // Hosted mode: `window` is the shell, which shows another Space
+        // while this one is in the background (an agent Space navigating,
+        // a redirect after a switch). Nobody can answer for it, so the
+        // navigation stays where it started, as a decline would keep it.
+        guard controller.isPresentedOrLegacy else {
+            AppLogInfo("[SpaceChooser] source window \(sourceWindowId) is not on screen; keeping the URL in its Space")
+            manager.routeAskedURL(urlString,
+                                  toSpaceId: nil,
+                                  sourceWindowId: sourceWindowId,
+                                  sourceIsNewTab: sourceIsNewTab)
+            return
+        }
+
+        // List the current Space first, then the rest in their order.
+        // Live Incognito Spaces collapse into ONE generic "Incognito"
+        // choice: its id is the rules' generic target, which
+        // `routeAskedURL` resolves to the first live Incognito Space —
+        // creating one when none exists — so the choice is always
+        // offered. It leads when the navigation started in an Incognito
+        // Space (that Space is then the resolution target) and trails
+        // the user Spaces otherwise.
+        let currentSpaceId = controller.spaceId
+        let currentIsIncognito = SpaceManager.isIncognitoSpaceId(currentSpaceId)
+        let userSpaces = spaces.filter { !SpaceManager.isIncognitoSpaceId($0.spaceId) }
+        var ordered = userSpaces.filter { $0.spaceId == currentSpaceId }
+            + userSpaces.filter { $0.spaceId != currentSpaceId }
+        let incognitoTarget = manager.incognitoRuleTargetSpace()
+        if currentIsIncognito {
+            ordered.insert(incognitoTarget, at: 0)
+        } else {
+            ordered.append(incognitoTarget)
+        }
+        // Kiosk is an action destination, not a Space. Keep it last and
+        // visually separate from all regular/Incognito Space choices.
+        ordered.append(manager.kioskRuleTargetSpace())
+
+        // Resolve each Space's theme (pinned theme + custom overlay
+        // opacity) for the source window's appearance, so a row's tint
+        // matches what that Space actually looks like.
+        let appearance = sourceWindow.effectiveAppearance.phiAppearance
+        let items: [SpaceChooserItem] = ordered.map { space in
+            if space.spaceId == SpaceManager.kioskRuleTargetId {
                 return SpaceChooserItem(
                     id: space.spaceId,
                     name: space.name,
                     iconName: space.iconName,
-                    isCurrent: isCurrent,
-                    startsSection: false,
-                    themeColor: Color(nsColor: themeNSColor.withAlphaComponent(opacity)),
-                    textColor: Color(nsColor: legible))
+                    isCurrent: false,
+                    startsSection: true,
+                    themeColor: Color.primary.opacity(0.08),
+                    textColor: .primary)
             }
-
-            // The box's translucency follows the current Space's resolved
-            // overlay opacity, so it matches the window it sits over.
-            let currentTheme = manager.resolvedTheme(forSpaceId: currentSpaceId)
-            let boxBackground = Color(
-                nsColor: currentTheme.color(for: .windowOverlayBackground, appearance: appearance))
-
-            // Replace any prompt already up for this window.
-            self.dismissChooser(windowId: sourceWindowId)
-
-            let chooser = SpaceChooserView(items: items, boxBackground: boxBackground) { [weak self] chosen in
-                self?.dismissChooser(windowId: sourceWindowId)
-                SpaceManager.shared.routeAskedURL(urlString,
-                                                  toSpaceId: chosen,
-                                                  sourceWindowId: sourceWindowId,
-                                                  sourceIsNewTab: sourceIsNewTab)
-            }
-
-            // Borderless child window over the source window: a child window
-            // sits above the parent (and its accelerated web-content surface)
-            // and moves with it, so the dim reliably covers the whole window.
-            let overlay = SpaceChooserOverlayWindow(
-                contentRect: sourceWindow.frame,
-                styleMask: .borderless,
-                backing: .buffered,
-                defer: false)
-            overlay.isOpaque = false
-            overlay.backgroundColor = .clear
-            overlay.hasShadow = false
-            overlay.isReleasedWhenClosed = false
-            overlay.contentView = NSHostingView(rootView: chooser)
-            overlay.setFrame(sourceWindow.frame, display: false)
-
-            sourceWindow.addChildWindow(overlay, ordered: .above)
-            overlay.makeKeyAndOrderFront(nil)
-            self.activeChoosers[sourceWindowId] = overlay
-            self.chooserDeclines[sourceWindowId] = {
-                SpaceManager.shared.routeAskedURL(urlString,
-                                                  toSpaceId: nil,
-                                                  sourceWindowId: sourceWindowId,
-                                                  sourceIsNewTab: sourceIsNewTab)
-            }
-            // Tear the prompt down if the source window closes underneath it,
-            // so a stranded entry can't accumulate for the session. The token
-            // is removed in `dismissChooser`. Hosted mode watches the source
-            // Space's own Browser window: the shell outlives it.
-            self.chooserCloseObservers[sourceWindowId] = NotificationCenter.default.addObserver(
-                forName: NSWindow.willCloseNotification,
-                object: controller.lifecycleWindow ?? sourceWindow,
-                queue: .main) { [weak self] _ in
-                    self?.dismissChooser(windowId: sourceWindowId)
-                }
+            let theme = manager.resolvedTheme(forSpaceId: space.spaceId)
+            let themeNSColor = theme.color(for: .themeColor, appearance: appearance)
+            // Contrast is computed on the opaque color, then the row is
+            // tinted with the theme's overlay opacity (the Opacity setting)
+            // so the item background is translucent like the box.
+            let legible: NSColor = themeNSColor.isLight() ? .black : .white
+            let opacity = theme.windowOverlayOpacity(for: appearance)
+            // The generic Incognito choice is "current" whenever the
+            // navigation started in any Incognito Space — that Space is
+            // what the choice resolves to.
+            let isCurrent = space.spaceId == currentSpaceId
+                || (currentIsIncognito && space.spaceId == SpaceManager.incognitoRuleTargetId)
+            return SpaceChooserItem(
+                id: space.spaceId,
+                name: space.name,
+                iconName: space.iconName,
+                isCurrent: isCurrent,
+                startsSection: false,
+                themeColor: Color(nsColor: themeNSColor.withAlphaComponent(opacity)),
+                textColor: Color(nsColor: legible))
         }
+
+        // The box's translucency follows the current Space's resolved
+        // overlay opacity, so it matches the window it sits over.
+        let currentTheme = manager.resolvedTheme(forSpaceId: currentSpaceId)
+        let boxBackground = Color(
+            nsColor: currentTheme.color(for: .windowOverlayBackground, appearance: appearance))
+
+        let chooser = SpaceChooserView(items: items, boxBackground: boxBackground) { [weak self] chosen in
+            self?.dismissChooser(windowId: sourceWindowId)
+            SpaceManager.shared.routeAskedURL(urlString,
+                                              toSpaceId: chosen,
+                                              sourceWindowId: sourceWindowId,
+                                              sourceIsNewTab: sourceIsNewTab)
+            self?.presentNextQueuedChooser(windowId: sourceWindowId)
+        }
+
+        // Borderless child window over the source window: a child window
+        // sits above the parent (and its accelerated web-content surface)
+        // and moves with it, so the dim reliably covers the whole window.
+        let overlay = SpaceChooserOverlayWindow(
+            contentRect: sourceWindow.frame,
+            styleMask: .borderless,
+            backing: .buffered,
+            defer: false)
+        overlay.isOpaque = false
+        overlay.backgroundColor = .clear
+        overlay.hasShadow = false
+        overlay.isReleasedWhenClosed = false
+        overlay.contentView = NSHostingView(rootView: chooser)
+        overlay.setFrame(sourceWindow.frame, display: false)
+
+        sourceWindow.addChildWindow(overlay, ordered: .above)
+        overlay.makeKeyAndOrderFront(nil)
+        self.activeChoosers[sourceWindowId] = overlay
+        self.chooserDeclines[sourceWindowId] = {
+            SpaceManager.shared.routeAskedURL(urlString,
+                                              toSpaceId: nil,
+                                              sourceWindowId: sourceWindowId,
+                                              sourceIsNewTab: sourceIsNewTab)
+        }
+        // Tear the prompt down if the source window closes underneath it,
+        // so a stranded entry can't accumulate for the session. The token
+        // is removed in `dismissChooser`. Hosted mode watches the source
+        // Space's own Browser window: the shell outlives it.
+        self.chooserCloseObservers[sourceWindowId] = NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification,
+            object: controller.lifecycleWindow ?? sourceWindow,
+            queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.dismissChooser(windowId: sourceWindowId)
+                    self?.dropQueuedChoosers(windowId: sourceWindowId)
+                }
+            }
+    }
+
+    /// Presents the oldest queued ask for `windowId` once its chooser was
+    /// answered. A request that resolves without a chooser (its window left
+    /// the screen, so it is kept in place) moves straight on to the next one.
+    @MainActor
+    private func presentNextQueuedChooser(windowId: Int64) {
+        while activeChoosers[windowId] == nil,
+              var queue = pendingChooserRequests[windowId],
+              !queue.isEmpty {
+            let next = queue.removeFirst()
+            pendingChooserRequests[windowId] = queue.isEmpty ? nil : queue
+            presentChooser(forURL: next.urlString,
+                           defaultSpaceId: next.defaultSpaceId,
+                           sourceWindowId: windowId,
+                           sourceIsNewTab: next.sourceIsNewTab)
+        }
+    }
+
+    /// The source window closed with asks still queued behind its chooser.
+    /// There is no window left to host them, so they are dropped and logged.
+    @MainActor
+    private func dropQueuedChoosers(windowId: Int64) {
+        guard let queue = pendingChooserRequests.removeValue(forKey: windowId),
+              !queue.isEmpty else { return }
+        AppLogWarn("[SpaceChooser] source window \(windowId) closed; dropping \(queue.count) queued ask prompt(s)")
     }
 
     /// The user picked a Space from the web-content right-click "Open link as"
@@ -2170,6 +2330,17 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
         guard let decline = chooserDeclines[windowId] else { return }
         dismissChooser(windowId: windowId)
         decline()
+        // The Space is leaving the shell, so nobody can answer the asks queued
+        // behind this one either; keep each URL in its Space, in order.
+        let queued = pendingChooserRequests.removeValue(forKey: windowId) ?? []
+        for request in queued {
+            MainActor.assumeIsolated {
+                SpaceManager.shared.routeAskedURL(request.urlString,
+                                                  toSpaceId: nil,
+                                                  sourceWindowId: windowId,
+                                                  sourceIsNewTab: request.sourceIsNewTab)
+            }
+        }
     }
 
     private func dismissChooser(windowId: Int64) {
@@ -2917,6 +3088,32 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
     /// through EventBus (T3A amendment decision 1). The applied transaction
     /// must never call back into Chromium synchronously; BrowserState's
     /// snapshot transaction owns that discipline.
+    @objc(tabsInsertedSnapshot:windowId:)
+    func tabsInsertedSnapshot(_ snapshot: [String: Any], windowId: Int64) {
+        let infos = (snapshot["tabs"] as? [[AnyHashable: Any]]) ?? []
+        let items = infos.map { makeTab(fromBridgeInfo: $0, windowId: windowId) }
+        guard !items.isEmpty else { return }
+        var payload = BrowserState.RestoredWindowSnapshot(
+            tabs: items,
+            activeTabId: NativeTabCreationContext.intValue(snapshot["activeTabId"]),
+            splitActions: parseSplitActions(fromBridgeEvents: snapshot["splitEvents"]))
+        if let indices = snapshot["indices"] as? [NSNumber: NSNumber] {
+            payload.indices = Dictionary(uniqueKeysWithValues: indices.map { ($0.key.intValue, $0.value.intValue) })
+        }
+        if let info = snapshot["relationships"] as? [AnyHashable: Any],
+           let version = snapshot["relationshipVersion"] {
+            payload.relationships = NativeTabRelationshipSnapshot(dictionary: [
+                "windowId": windowId, "version": version,
+                "openerByTabId": info["openerByTabId"] ?? info,
+                "resetOnActiveChangeTabIds": info["resetOnActiveChangeTabIds"] ?? [],
+            ], fallbackWindowId: windowId.intValue)
+        }
+        // Duplicate commands may still be on Chromium's mutation stack. Apply
+        // the owned payload after it unwinds, just like ordinary tab events.
+        EventBus.shared.send(TabEvent(browserId: windowId.intValue,
+                                      action: .tabsInserted(payload)))
+    }
+
     @objc(restoredWindowSnapshot:windowId:)
     func restoredWindowSnapshot(_ snapshot: [String: Any], windowId: Int64) {
         let tabInfos = (snapshot["tabs"] as? [[AnyHashable: Any]]) ?? []
@@ -3053,7 +3250,15 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
         )
     }
     
+    // Legacy frameworks still send one removal event from this callback.
     func tabWillBeRemove(_ tabId: Int64, windowId: Int64) {
+        tabWillDetach(tabId, windowId: windowId)
+        EventBus.shared.send(TabEvent(browserId: windowId.intValue,
+                                      action: .closeTab(tabId.intValue)))
+    }
+
+    @objc(tabWillDetach:windowId:)
+    func tabWillDetach(_ tabId: Int64, windowId: Int64) {
         AppLogDebug("tabWillBeRemove: \(tabId)")
         // Detach the closing tab's native view from Peek or Reader SYNCHRONOUSLY,
         // before the async EventBus close dispatch. This bridge callback runs on
@@ -3094,11 +3299,26 @@ extension PhiChromiumCoordinator: PhiChromiumBridgeDelegate {
                     .splitPaneWillBeRemoved(tabId.intValue)
             }
         }
-        EventBus.shared
-            .send(TabEvent(browserId: windowId.intValue,
-                           action: .closeTab(tabId.intValue)))
     }
-    
+
+    @objc(tabsRemovedSnapshot:windowId:)
+    func tabsRemovedSnapshot(_ snapshot: [String: Any], windowId: Int64) {
+        let action = Self.decodeTabRemovalSnapshot(snapshot)
+        EventBus.shared.send(TabEvent(browserId: windowId.intValue, action: action))
+    }
+
+    static func decodeTabRemovalSnapshot(_ snapshot: [String: Any]) -> TabEvent.TabAction {
+        let removals = (snapshot["removals"] as? [[String: Any]]) ?? []
+        let nativeIndices = (snapshot["indices"] as? [NSNumber: NSNumber]) ?? [:]
+        let indices = Dictionary(uniqueKeysWithValues: nativeIndices.map {
+            ($0.key.intValue, $0.value.intValue)
+        })
+        let activeTabId = NativeTabCreationContext.intValue(snapshot["activeTabId"])
+        // Moves also remove source-window state; Chromium owns destination contents.
+        let ids = removals.compactMap { NativeTabCreationContext.intValue($0["id"]) }
+        return .tabsRemoved(ids, indices: indices, activeTabId: activeTabId)
+    }
+
     func getWebContentSuperView() -> NSView? {
         return nil
     }

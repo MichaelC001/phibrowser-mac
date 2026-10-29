@@ -96,6 +96,7 @@ struct NotificationMessageCardView: View {
                     totalCards: manager.allCards.count,
                     currentIndex: manager.currentIndex,
                     isHovered: isHovered,
+                    isAnimating: presentation.isPresented,
                     onChat: onChat,
                     onRun: { card in
                         NotificationCardAnalytics.capture("run")
@@ -163,6 +164,9 @@ struct NotificationMessageCardContent: View {
     let totalCards: Int
     let currentIndex: Int
     let isHovered: Bool
+    /// Runs the working card's animations; off while AppKit keeps the card
+    /// mounted but hidden.
+    var isAnimating: Bool = true
 
     var onChat: ((NotificationCardManager.Card) -> Void)?
     var onRun: ((NotificationCardManager.Card) -> Void)?
@@ -189,8 +193,16 @@ struct NotificationMessageCardContent: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             headerRow
-            messageBlock
-            actionRow
+            switch card.kind {
+            case .action:
+                messageBlock
+                actionRow
+            case .working:
+                workingBlock
+                if showPagination {
+                    paginationRow
+                }
+            }
         }
         .padding(.leading, 10)
         .padding(.trailing, 10)
@@ -208,6 +220,10 @@ struct NotificationMessageCardContent: View {
     private var headerRow: some View {
         HStack {
             NotificationCardAgentAvatarView(refreshID: card.id)
+
+            if card.kind == .working {
+                NotificationCardWorkingStatus(isAnimating: isAnimating)
+            }
 
             Spacer()
 
@@ -244,6 +260,47 @@ struct NotificationMessageCardContent: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// The working card's body, laid out like a running reply in Phi Chat:
+    /// what the agent is working on, then its current activity beside the
+    /// wandering dot.
+    private var workingBlock: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if !card.title.isEmpty {
+                Text(card.title)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.primary)
+                    .lineLimit(1)
+            }
+            if !card.message.isEmpty {
+                HStack(alignment: .center, spacing: 8) {
+                    NotificationCardWorkingDot(isAnimating: isAnimating)
+                    Text(card.message)
+                        .font(.system(size: 12))
+                        .themedForeground(.custom(
+                            light: NSColor.black.withAlphaComponent(0.4),
+                            dark: NSColor.white.withAlphaComponent(0.6)
+                        ))
+                        .lineLimit(3)
+                        .truncationMode(.tail)
+                }
+                .accessibilityElement(children: .combine)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var paginationRow: some View {
+        HStack {
+            NotificationCardPaginationButton(direction: .previous, isVisible: isHovered) {
+                onPrevious?()
+            }
+            Spacer()
+            NotificationCardPaginationButton(direction: .next, isVisible: isHovered) {
+                onNext?()
+            }
+        }
     }
 
     private var actionRow: some View {
@@ -494,7 +551,8 @@ struct NotificationMessageCardContent: View {
 private struct NotificationCardAgentAvatarView: View {
     let refreshID: String
 
-    @State private var image: NSImage?
+    /// Starts from the last known avatar so the card never opens blank.
+    @State private var image: NSImage? = AgentAvatarStore.cachedImage()
 
     private let size: CGFloat = 18
 
@@ -527,39 +585,153 @@ private struct NotificationCardAgentAvatarView: View {
 
     @MainActor
     private func loadAvatar() async {
-        image = nil
-        guard ApplicationState.shared.isAuthenticated else { return }
-
-        let loaded = await Self.loadImage {
-            try await APIClient.shared.getAgentAvatarImageData().data
+        // Follows account switches and sign-out before the fetch returns.
+        image = AgentAvatarStore.cachedImage()
+        if let fresh = await AgentAvatarStore.refresh(), !Task.isCancelled {
+            image = fresh
         }
-        guard !Task.isCancelled else { return }
-        image = loaded
+    }
+}
+
+// MARK: - Working Card
+
+/// The working card's status label: Phi Chat's "Thinking…" treatment, a
+/// sweeping shimmer over faint text with cycling dots.
+private struct NotificationCardWorkingStatus: View {
+    let isAnimating: Bool
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.phiTheme) private var theme
+    @Environment(\.phiAppearance) private var appearance
+
+    private static let shimmerPeriod: TimeInterval = 2
+    private static let dotsPeriod: TimeInterval = 1.5
+    private static let dotFrames = [".", "..", "...", ".."]
+
+    private var label: String {
+        NSLocalizedString(
+            "notifications.card.workingStatus",
+            value: "Working",
+            comment: "Notification card - Status beside the agent avatar while the agent is still working on a task"
+        )
     }
 
-    @MainActor
-    static func loadImage(loadData: () async throws -> Data) async -> NSImage? {
-        do {
-            let data = try await loadData()
-            guard let image = NSImage(data: data), image.isValid else {
-                AppLogWarn("[NotificationMessageCardView] Agent avatar image could not be decoded; using fallback")
-                return nil
-            }
-            return image
-        } catch is CancellationError {
-            return nil
-        } catch {
-            if let error = error as? URLError {
-                if error.code != .cancelled {
-                    AppLogWarn("[NotificationMessageCardView] Agent avatar request failed (URL error \(error.code.rawValue)); using fallback")
-                }
-            } else if case APIError.httpError(let status) = error {
-                AppLogWarn("[NotificationMessageCardView] Agent avatar request failed (HTTP \(status)); using fallback")
+    private var textColor: Color {
+        ThemedColor.custom(
+            light: NSColor.black.withAlphaComponent(0.3),
+            dark: NSColor.white.withAlphaComponent(0.3)
+        ).swiftUIColor(theme: theme, appearance: appearance)
+    }
+
+    var body: some View {
+        Group {
+            if reduceMotion {
+                statusText(dots: "...", shimmerProgress: nil)
             } else {
-                AppLogWarn("[NotificationMessageCardView] Agent avatar unavailable; using fallback")
+                TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !isAnimating)) { context in
+                    let time = context.date.timeIntervalSinceReferenceDate
+                    let dotIndex = Int(time.truncatingRemainder(dividingBy: Self.dotsPeriod)
+                        / (Self.dotsPeriod / Double(Self.dotFrames.count)))
+                    statusText(
+                        dots: Self.dotFrames[min(dotIndex, Self.dotFrames.count - 1)],
+                        shimmerProgress: time.truncatingRemainder(dividingBy: Self.shimmerPeriod)
+                            / Self.shimmerPeriod
+                    )
+                }
             }
-            return nil
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(label)
+        .accessibilityAddTraits(.updatesFrequently)
+    }
+
+    private func statusText(dots: String, shimmerProgress: Double?) -> some View {
+        // The dots stay in the same text run so the shimmer sweeps them too;
+        // their width changes as they cycle, as in Phi Chat.
+        Text(verbatim: label + dots)
+            .font(.system(size: 12))
+            .lineLimit(1)
+            .foregroundStyle(shimmerStyle(progress: shimmerProgress))
+    }
+
+    /// Phi Chat's shimmer: a gradient three times the text's width, faint
+    /// everywhere except a clear band at its middle, sliding right so the
+    /// band sweeps the text from left to right.
+    private func shimmerStyle(progress: Double?) -> AnyShapeStyle {
+        guard let progress else { return AnyShapeStyle(textColor) }
+        let start = -2 + 2 * progress
+        return AnyShapeStyle(LinearGradient(
+            stops: [
+                .init(color: textColor, location: 0),
+                .init(color: textColor, location: 0.4),
+                .init(color: textColor.opacity(0), location: 0.5),
+                .init(color: textColor, location: 0.6),
+                .init(color: textColor, location: 1),
+            ],
+            startPoint: UnitPoint(x: start, y: 0.5),
+            endPoint: UnitPoint(x: start + 3, y: 0.5)
+        ))
+    }
+}
+
+/// Phi Chat's activity indicator: a small accent dot wandering smoothly
+/// between irregular spots in a 16pt square, trailed by fainter, later copies.
+private struct NotificationCardWorkingDot: View {
+    let isAnimating: Bool
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private static let boxSize: CGFloat = 16
+    private static let dotSize: CGFloat = 4.8
+    private static let period: TimeInterval = 1.5
+    /// The leading dot first, then its afterimages.
+    private static let copies: [(delay: TimeInterval, opacity: Double)] = [
+        (0, 1), (0.08, 0.42), (0.16, 0.3), (0.24, 0.2), (0.32, 0.11),
+    ]
+    /// Keyframes as (fraction of the period, x, y), eased in and out between.
+    private static let keyframes: [(at: Double, x: CGFloat, y: CGFloat)] = [
+        (0, 0, 1), (0.12, 7, 8), (0.26, 10, 2), (0.37, 2, 9), (0.51, 9, 5),
+        (0.63, 4, 0), (0.79, 1, 6), (0.91, 8, 3), (1, 0, 1),
+    ]
+
+    var body: some View {
+        Group {
+            if reduceMotion {
+                dots(at: nil)
+            } else {
+                TimelineView(.animation(minimumInterval: 1.0 / 60, paused: !isAnimating)) { context in
+                    dots(at: context.date.timeIntervalSinceReferenceDate)
+                }
+            }
+        }
+        .frame(width: Self.boxSize, height: Self.boxSize, alignment: .topLeading)
+        .accessibilityHidden(true)
+    }
+
+    private func dots(at time: TimeInterval?) -> some View {
+        ZStack(alignment: .topLeading) {
+            ForEach(Array(Self.copies.enumerated().reversed()), id: \.offset) { _, copy in
+                let point = time.map { Self.position(at: $0 - copy.delay) }
+                    ?? CGPoint(x: Self.keyframes[0].x, y: Self.keyframes[0].y)
+                Circle()
+                    .themedFill(.themeColor)
+                    .frame(width: Self.dotSize, height: Self.dotSize)
+                    .opacity(time == nil && copy.delay > 0 ? 0 : copy.opacity)
+                    .offset(x: point.x, y: point.y)
+            }
+        }
+    }
+
+    static func position(at time: TimeInterval) -> CGPoint {
+        var phase = time.truncatingRemainder(dividingBy: period) / period
+        if phase < 0 { phase += 1 }
+        for (from, to) in zip(keyframes, keyframes.dropFirst()) where phase <= to.at {
+            let linear = (phase - from.at) / (to.at - from.at)
+            let eased = CGFloat(0.5 - 0.5 * cos(Double.pi * linear))
+            return CGPoint(x: from.x + (to.x - from.x) * eased,
+                           y: from.y + (to.y - from.y) * eased)
+        }
+        return CGPoint(x: keyframes[0].x, y: keyframes[0].y)
     }
 }
 

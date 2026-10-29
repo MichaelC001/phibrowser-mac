@@ -365,4 +365,14 @@ final class BrowserMigrationPreviewTests: XCTestCase {
         XCTAssertNotNil(arc.preflightHint(sourceIsRunning: false))
         XCTAssertEqual(arc.preflightHint(sourceIsRunning: false), arc.preflightHint(sourceIsRunning: true))
     }
+
+    /// A source that lists one Space twice used to trap while the preview built
+    /// its planned-Space lookup (Z5).
+    func testASpaceListedTwiceDoesNotBreakThePreview() {
+        let home = space("s-home", "Home", profileKey: "Default")
+        let rows = rows(source(profiles: [("Default", "Personal")], spaces: [home, home]))
+
+        XCTAssertEqual(rows.map(\.sourceProfileKey), ["Default"])
+        XCTAssertEqual(Set(rows[0].spaces.map(\.sourceSpaceID)), ["s-home"])
+    }
 }

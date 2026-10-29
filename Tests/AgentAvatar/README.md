@@ -1,9 +1,10 @@
 # Notification agent avatar regression
 
 Run `bash build-scripts/test-agent-avatar.sh` on macOS with Xcode installed.
-The harness compiles the production avatar download methods and SwiftUI avatar
-view, substituting only metadata/service dependencies. An intercepted external
-URL checks that no Phi bearer header is sent. It uses no account or private files.
+The harness compiles the production avatar download methods,
+`AgentAvatarStore`'s image loading, and the SwiftUI avatar view, substituting
+only metadata/service dependencies. An intercepted external URL checks that no
+Phi bearer header is sent. It uses no account or private files.
 
 Coverage: relative and historical loopback file references, encoded paths and
 queries, unrelated origins, data URLs, visible local fallback, image decoding,

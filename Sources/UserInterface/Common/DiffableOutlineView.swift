@@ -23,6 +23,15 @@ class DiffableOutlineView: NSOutlineView {
     private var isApplyingSnapshot = false
     private var pendingReloadRequest: ReloadRequest?
 
+    /// NSOutlineView can still reach an item after it has left the data
+    /// source: rows it has not loaded, accessibility elements and the
+    /// `rowForItem:` scan all hold item pointers it does not keep alive, and a
+    /// freed item there crashes the next lookup. Items that leave the accepted
+    /// snapshot are therefore kept for this long before they may be freed.
+    var retiredItemGracePeriod: TimeInterval = 60
+    private var retiredItems: [(item: AnyObject, retiredAt: TimeInterval)] = []
+    private var isRetiredItemPruneScheduled = false
+
     func reloadWith(
         _ snapshot: DiffableOutlineSnapshot<AnyHashable>,
         animated: Bool = true,
@@ -83,10 +92,7 @@ class DiffableOutlineView: NSOutlineView {
             request.updateDataSource()
             request.prepareReloadData?()
             reloadData()
-            if resetGeneration == snapshotResetGeneration {
-                currentSnapshot = request.snapshot
-                currentSnapshotIsValidated = true
-            }
+            acceptSnapshot(request.snapshot, resetGeneration: resetGeneration)
             request.completion?()
             return
         }
@@ -107,20 +113,14 @@ class DiffableOutlineView: NSOutlineView {
             request.updateDataSource()
             request.prepareReloadData?()
             reloadData()
-            if resetGeneration == snapshotResetGeneration {
-                currentSnapshot = request.snapshot
-                currentSnapshotIsValidated = true
-            }
+            acceptSnapshot(request.snapshot, resetGeneration: resetGeneration)
             request.completion?()
             return
         }
 
         request.updateDataSource()
         apply(plan.operations, oldSnapshot: oldSnapshot, newSnapshot: request.snapshot, animated: request.animated)
-        if resetGeneration == snapshotResetGeneration {
-            currentSnapshot = request.snapshot
-            currentSnapshotIsValidated = true
-        }
+        acceptSnapshot(request.snapshot, resetGeneration: resetGeneration)
 
         DispatchQueue.main.async {
             request.completion?()
@@ -130,8 +130,53 @@ class DiffableOutlineView: NSOutlineView {
     func resetDiffableSnapshot(_ snapshot: DiffableOutlineSnapshot<AnyHashable>? = nil) {
         // A reset from a reentrant callback must survive the active apply.
         snapshotResetGeneration &+= 1
+        retireItems(of: currentSnapshot, keeping: snapshot)
         currentSnapshot = snapshot
         currentSnapshotIsValidated = false
+    }
+
+    /// Makes `snapshot` the baseline unless a reset superseded this apply, in
+    /// which case its items were handed to the outline and are retired instead.
+    private func acceptSnapshot(_ snapshot: DiffableOutlineSnapshot<AnyHashable>, resetGeneration: UInt) {
+        guard resetGeneration == snapshotResetGeneration else {
+            retireItems(of: snapshot, keeping: currentSnapshot)
+            return
+        }
+        retireItems(of: currentSnapshot, keeping: snapshot)
+        currentSnapshot = snapshot
+        currentSnapshotIsValidated = true
+    }
+
+    private func retireItems(
+        of outgoing: DiffableOutlineSnapshot<AnyHashable>?,
+        keeping incoming: DiffableOutlineSnapshot<AnyHashable>?
+    ) {
+        guard let outgoing else { return }
+        let keptItems = Set(incoming?.nodes.values.map { ObjectIdentifier($0.item) } ?? [])
+        let now = ProcessInfo.processInfo.systemUptime
+        for node in outgoing.nodes.values where !keptItems.contains(ObjectIdentifier(node.item)) {
+            retiredItems.append((node.item, now))
+        }
+        pruneRetiredItems(now: now)
+        scheduleRetiredItemPruneIfNeeded()
+    }
+
+    func pruneRetiredItems(now: TimeInterval = ProcessInfo.processInfo.systemUptime) {
+        retiredItems.removeAll { now - $0.retiredAt >= retiredItemGracePeriod }
+    }
+
+    var retiredItemCount: Int { retiredItems.count }
+
+    private func scheduleRetiredItemPruneIfNeeded() {
+        guard let oldest = retiredItems.first, !isRetiredItemPruneScheduled else { return }
+        isRetiredItemPruneScheduled = true
+        let delay = max(0, oldest.retiredAt + retiredItemGracePeriod - ProcessInfo.processInfo.systemUptime)
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self else { return }
+            self.isRetiredItemPruneScheduled = false
+            self.pruneRetiredItems()
+            self.scheduleRetiredItemPruneIfNeeded()
+        }
     }
 
     func reportInvalidSnapshot(_ error: DiffableOutlineSnapshotValidationError<AnyHashable>) {

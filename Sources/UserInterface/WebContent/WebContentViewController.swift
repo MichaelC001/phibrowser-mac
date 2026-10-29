@@ -13,7 +13,8 @@
  
  View hierarchy:
  
- view (ColoredVisualEffectView)
+ view (BackdropContainerView)
+ ├── backdrop (ColoredVisualEffectView, only while the page paints its own)
  └── splitViewContainer              // SplitView container (rounded corners, background)
      └── contentSplitViewController.view
          ├── [Left] leftContainerWrapper
@@ -258,6 +259,7 @@ class WebContentViewController: NSViewController {
     /// the hidden window's own view size is 0×0, and measuring a tab's
     /// WebContents over CDP is polluted by native-NTP shell tabs.
     var webPanelSize: CGSize { hostView.bounds.size }
+    var webPanelView: NSView { hostView }
 
     private var headerHeightConstraint: Constraint?
 
@@ -368,6 +370,9 @@ class WebContentViewController: NSViewController {
     /// Test-only view of the page / AI Chat split.
     var contentSplitViewForTesting: NSSplitView { contentSplitViewController.splitView }
 
+    /// Test-only collapse state of the AI Chat split item.
+    var isAIChatCollapsedForTesting: Bool? { aiChatSplitViewItem?.isCollapsed }
+
     /// Whether this page paints the themed vibrancy backdrop in the margins
     /// around its card. Follows its container's
     /// (`WebContentContainerViewController.paintsOwnBackdrop`): a hosted
@@ -375,7 +380,7 @@ class WebContentViewController: NSViewController {
     var paintsOwnBackdrop = true {
         didSet {
             guard isViewLoaded else { return }
-            (view as? ColoredVisualEffectView)?.suppressesBackdrop = !paintsOwnBackdrop
+            (view as? BackdropContainerView)?.paintsBackdrop = paintsOwnBackdrop
         }
     }
 
@@ -395,19 +400,16 @@ class WebContentViewController: NSViewController {
 
     /// The page card's and left container's fills (see `hasContentSurface`).
     private func applyFills() {
-        splitViewContainer.setFill(ThemedColor.contentOverlayBackground.cgColorMapperOptional,
+        let frameBackground: ThemedColor = isPageCardSeparated
+            ? .separatedContentFrameBackground : .extensionSurfaceBackground
+        splitViewContainer.setFill(frameBackground.cgColorMapperOptional,
                                    overContentSurface: hasContentSurface)
-        leftContainerView.setFill(NSColor.white <> NSColor.black,
+        leftContainerView.setFill(ThemedColor.extensionSurfaceBackground.cgColorMapperOptional,
                                   overContentSurface: hasContentSurface)
     }
 
     override func loadView() {
-        let view = ColoredVisualEffectView()
-        view.themedBackgroundColor = .windowOverlayBackground
-        view.material = .fullScreenUI
-        view.wantsLayer = true
-        view.suppressesBackdrop = !paintsOwnBackdrop
-        self.view = view
+        self.view = BackdropContainerView(paintsBackdrop: paintsOwnBackdrop)
         setupView()
     }
     private weak var browserState: BrowserState?
@@ -778,6 +780,17 @@ class WebContentViewController: NSViewController {
         // split host — otherwise two controllers in the same split race
         // to re-parent each other's webContentView. Inactive controllers
         // refresh on switch via refreshSplitContentIfNeeded().
+        browserState?.$pendingSplitPreview
+            .removeDuplicates()
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self, let tab = self.associatedTab,
+                      self.browserState?.focusingTab?.guid == tab.guid else { return }
+                self.updateContentForTab(tab)
+            }
+            .store(in: &cancellables)
+
         browserState?.$splits
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
@@ -878,6 +891,9 @@ class WebContentViewController: NSViewController {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] isCollapsed in
                 guard let self else { return }
+                // Stale delivery: the item has moved on and the newer value
+                // is queued behind this one (see `observeTabAIChatState`).
+                guard isCollapsed == self.aiChatSplitViewItem?.isCollapsed else { return }
                 self.updateAIChatSidebarMetrics(isExpanded: !isCollapsed)
                 
                 // Ignore KVO while we are already synchronizing state ourselves.
@@ -1075,6 +1091,23 @@ class WebContentViewController: NSViewController {
             .sink { [weak self, weak splitViewItem, weak tab] collapsed in
                 guard let self, let splitViewItem, let tab else { return }
 
+                // Both mirrors (this one and the split item's KVO in
+                // `setupAIChatObserver`) land a turn late, after the
+                // `isUpdatingAIChatState` guard is long cleared. A delivery
+                // the tab has already moved past is stale, with the newer
+                // value queued behind it: acting on it flips the split back,
+                // whose late KVO flips the tab back in turn — two stale
+                // values chasing each other for good (an extension panel
+                // reopened while an AI Chat expand was still in flight).
+                guard collapsed == tab.aiChatCollapsed else {
+                    // A dropped expand never showed the chat: its explicit
+                    // open trigger must not be reported for the next open.
+                    if !collapsed {
+                        _ = self.browserState?.consumeAIChatSidebarOpenTrigger()
+                    }
+                    return
+                }
+
                 // Prevent observer feedback loops.
                 guard !self.isUpdatingAIChatState else { return }
 
@@ -1109,8 +1142,10 @@ class WebContentViewController: NSViewController {
         tab.$aiChatEnabled
             .dropFirst() // The initial value is handled by the explicit sync step.
             .receive(on: DispatchQueue.main)
-            .sink { [weak self, weak splitViewItem] enabled in
-                guard let self, let splitViewItem else { return }
+            .sink { [weak self, weak splitViewItem, weak tab] enabled in
+                guard let self, let splitViewItem, let tab else { return }
+                // Stale delivery (see `observeTabAIChatState`).
+                guard enabled == tab.aiChatEnabled else { return }
 
                 // Ignore recursive updates triggered by our own state sync.
                 guard !self.isUpdatingAIChatState else { return }
@@ -1428,6 +1463,7 @@ class WebContentViewController: NSViewController {
 
     private func updateContentForTab(_ tab: Tab?) {
         guard let tab else { return }
+        hostView.enclosesFractionalBounds = tab.isNTP
         defer {
             updateLoginRequiredPresentation(for: tab)
             updateHeaderAndBookmarkBarSeparators()
@@ -1589,6 +1625,25 @@ class WebContentViewController: NSViewController {
     private func partnerTab(for group: SplitGroup, ownTabId: Int) -> Tab? {
         let partnerId = group.primaryTabId == ownTabId ? group.secondaryTabId : group.primaryTabId
         return browserState?.tabs.first { $0.guid == partnerId }
+    }
+
+    /// Candidate pages for the surface reconciler; it checks their actual
+    /// ancestry before sending placement, including for docked DevTools.
+    /// Keep the installed split partner until teardown, even if the model
+    /// already dissolved the split or entered content fullscreen.
+    var contentSurfaceTabs: [Tab] {
+        var tabs: [Tab] = []
+        if let tab = associatedTab {
+            tabs.append(tab)
+            if isSplitContentMounted, let partner = mountedSplitPartner {
+                tabs.append(partner)
+            }
+        }
+        if let chat = aiChatSplitViewItem?.viewController as? EmbeddedChatViewController,
+           let tab = chat.currentAIChatTab {
+            tabs.append(tab)
+        }
+        return tabs
     }
 
     /// True only when this tab's split can actually be mounted right now: it's in
@@ -1762,6 +1817,14 @@ class WebContentViewController: NSViewController {
             updateLeftContainerStyleForCurrentAIChatState()
             return
         }
+        if browserState?.pendingSplitPreview?.partnerTabId == tabId,
+           associatedTab?.devToolsAttached != true {
+            installSplitPreview(ownNativeView: contentView)
+            contentMode = .webContent
+            updateLeftContainerStyleForCurrentAIChatState()
+            return
+        }
+        removeSplitPreview(keeping: contentView)
         // Tear down any leftover split host before re-mounting single content.
         if let existing = currentSplitHost {
             existing.removeFromSuperview()
@@ -2072,6 +2135,8 @@ class WebContentViewController: NSViewController {
             host = newHost
         }
 
+        mountedSplitPartner = partner
+
         // installSplitContent only runs on the focused VC's mount path, so
         // the host's "focused pane" is always the side that matches ownTabId.
         host.focusedPane = (group.primaryTabId == ownTabId) ? .primary : .secondary
@@ -2104,7 +2169,51 @@ class WebContentViewController: NSViewController {
         }
     }
 
-    private weak var currentSplitHost: SplitPaneHostView?
+    /// "Split with New Tab" preview: this tab beside a blank pane, with no
+    /// Chromium split behind it (`BrowserState.pendingSplitPreview`).
+    private func installSplitPreview(ownNativeView: NSView) {
+        let host: SplitPaneHostView
+        if let existing = splitPreviewHost, existing.superview === hostView {
+            host = existing
+        } else {
+            // Mounted before the panes move in, as in `installSplitContent`.
+            host = SplitPaneHostView(layout: .vertical, ratio: 0.5,
+                                     layoutMode: PhiPreferences.GeneralSettings.loadLayoutMode())
+            host.hasContentSurface = hasContentSurface
+            host.translatesAutoresizingMaskIntoConstraints = false
+            hostView.addSubview(host)
+            host.snp.makeConstraints { $0.edges.equalToSuperview() }
+            splitPreviewHost = host
+        }
+        host.update(primary: ownNativeView, secondary: splitPreviewPane)
+        host.focusedPane = .secondary
+    }
+
+    private func removeSplitPreview(keeping contentView: NSView) {
+        guard let host = splitPreviewHost else { return }
+        if contentView.isDescendant(of: host) {
+            // A same-window move keeps the page's renderer attached; see
+            // `SplitPaneHostView.init`.
+            hostView.addSubview(contentView)
+            contentView.translatesAutoresizingMaskIntoConstraints = true
+            contentView.autoresizingMask = []
+            contentView.frame = hostView.contentFrame
+        }
+        host.removeFromSuperview()
+        splitPreviewHost = nil
+    }
+
+    private weak var splitPreviewHost: SplitPaneHostView?
+    private lazy var splitPreviewPane = NSView()
+
+    private weak var currentSplitHost: SplitPaneHostView? {
+        didSet {
+            if currentSplitHost == nil {
+                mountedSplitPartner = nil
+            }
+        }
+    }
+    private weak var mountedSplitPartner: Tab?
 
     private var isSplitContentMounted: Bool {
         guard let currentSplitHost else { return false }
@@ -2204,9 +2313,10 @@ class WebContentViewController: NSViewController {
 
     private func addWebContentView(_ contentView: NSView, tabId: Int) {
         hostView.subviews.forEach { $0.removeFromSuperview() }
+        currentSplitHost = nil
         contentView.translatesAutoresizingMaskIntoConstraints = true
         contentView.autoresizingMask = []
-        contentView.frame = hostView.bounds
+        contentView.frame = hostView.contentFrame
         hostView.addSubview(contentView)
 
         if let tab = associatedTab, tab.devToolsAttached {
@@ -2247,6 +2357,7 @@ class WebContentViewController: NSViewController {
 
         hostView.subviews.forEach { $0.removeFromSuperview() }
         groupOverviewController?.view.removeFromSuperview()
+        currentSplitHost = nil
         groupOverviewController?.removeFromParent()
 
         let controller = GroupOverviewViewController(browserState: browserState,
@@ -2334,6 +2445,9 @@ class WebContentViewController: NSViewController {
     /// nearest in its ancestry). Lifted alone they left the surface, built a
     /// compositor of their own and showed nothing until its first frame,
     /// while the AppKit fullscreen transition held the main thread.
+    ///
+    /// The floating sidebar stays in front of the overlay, so it can still
+    /// open over the page.
     private func applyContentFullscreenState(_ isFullscreen: Bool) {
         if isFullscreen {
             guard savedHostViewSuperview == nil else { return }
@@ -2383,6 +2497,9 @@ class WebContentViewController: NSViewController {
             hostView.snp.remakeConstraints { make in
                 make.edges.equalToSuperview()
             }
+            // The floating sidebar is the overlay's sibling and draws over
+            // the page; it has to take the clicks it draws over.
+            contentSurfaceLender?.floatingSidebarHost.bringToFront(over: overlay)
             // Re-parent transiently detaches webContentView from the window,
             // which causes NSWindow to clear first responder. Without this,
             // keyboard events (including ESC to exit fullscreen) never reach
@@ -2489,6 +2606,7 @@ class WebContentViewController: NSViewController {
         // transition to web content mode first so relativeTo: is valid.
         if webContentView.superview !== hostView {
             hostView.subviews.forEach { $0.removeFromSuperview() }
+            currentSplitHost = nil
             hostView.addSubview(webContentView)
             contentMode = .webContent
         }
@@ -2892,7 +3010,7 @@ class WebContentViewController: NSViewController {
     }
 
     private func updateHeaderAndBookmarkBarSeparators() {
-        let isSplitViewVisible = isSplitContentMounted
+        let isSplitViewVisible = isSplitContentMounted || splitPreviewHost?.superview === hostView
         headerView.updateBottomSeparatorVisibility(
             isSplitViewVisible: isSplitViewVisible,
             isBookmarkBarVisible: isBookmarkBarVisible
@@ -2966,6 +3084,7 @@ class WebContentViewController: NSViewController {
         appliedPageCardSeparated = shouldSeparatePageCard
         appliedPanelDockedCorners = panelDocked
         isPageCardSeparated = shouldSeparatePageCard
+        applyFills()
 
         if shouldSeparatePageCard {
             leftContainerView.layer?.borderWidth = 1
@@ -3569,6 +3688,16 @@ extension NSView {
 /// PlusL match, and exits without further work.
 class WebContentHostView: NSView {
     var isFrameSyncPaused = false
+    var enclosesFractionalBounds = false {
+        didSet {
+            if oldValue != enclosesFractionalBounds { needsLayout = true }
+        }
+    }
+
+    /// Chromium sizes its viewport in whole DIPs. New Tab covers fractional
+    /// AppKit bounds rather than leaving an unpainted strip at the right or bottom.
+    /// The host's existing clip keeps the page aligned with the native header.
+    var contentFrame: CGRect { enclosesFractionalBounds ? bounds.integral : bounds }
 
     /// Underlying string value of Apple's `kCAFilterPlusL` (Plus Lighter
     /// additive blend, declared in `<QuartzCore/CALayer.h>`). The constant
@@ -3649,7 +3778,7 @@ class WebContentHostView: NSView {
     override func layout() {
         super.layout()
         guard !isFrameSyncPaused else { return }
-        let target = bounds
+        let target = contentFrame
         for subview in subviews where subview.translatesAutoresizingMaskIntoConstraints {
             if subview.frame != target {
                 subview.frame = target

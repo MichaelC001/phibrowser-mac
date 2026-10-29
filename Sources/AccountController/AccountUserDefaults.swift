@@ -199,13 +199,7 @@ final class AccountUserDefaults {
     /// the launch-time read that runs before any account is bound
     /// (`SpaceManager.coldStartPreferredProfiles`).
     static func storedObject(forKey key: DefaultsKey, ofAccountWithUserID userID: String) -> Any? {
-        storedObject(forKey: key.rawValue, ofAccountWithUserID: userID)
-    }
-
-    /// The raw-key form, for a key derived from a `DefaultsKey` rather than
-    /// one of them (`SpaceManager.slotsRestoreSnapshotDefaultsKey`).
-    static func storedObject(forKey key: String, ofAccountWithUserID userID: String) -> Any? {
-        loadStore(from: storeURL(for: Account(userID: userID)))[key]
+        loadStore(from: storeURL(for: Account(userID: userID)))[key.rawValue]
     }
 
     private static func loadStore(from url: URL) -> [String: Any] {
@@ -310,6 +304,7 @@ extension AccountUserDefaults {
         case loginPhase
         case cachedUserName
         case cachedProfile
+        case profileCardStyle
         case cachedUserConnectors
         /// Controls whether notification cards auto-popup. Default is popup enabled.
         case notificationPopupMode
@@ -341,14 +336,19 @@ extension AccountUserDefaults {
         /// Per-Space Pure-theme slider value. The shared position maps to
         /// separate light and dark brightness ranges.
         case spacePureThemeSliderValues
+        /// Local per-Space linked color palettes, encoded using the shared
+        /// account-preference transport rather than changing the Space schema.
+        case spaceThemePalettes
         /// Snapshot of the slot/window/Space layout written on every
         /// `SpaceWindowSlot.registerWindow`. Read on the next launch by
         /// `SpaceManager` so Chromium-restored windows reattach to the
         /// Space they had when the snapshot was saved, instead of all
-        /// piling into the persisted-active Space. Under an explicit
-        /// `--user-data-dir` the stored key carries that directory
-        /// (`SpaceManager.slotsRestoreSnapshotKey`): the ids it maps belong
-        /// to one Chromium data directory only.
+        /// piling into the persisted-active Space. The ids it maps belong to
+        /// one Chromium data directory, and this store moves with that
+        /// directory (`FileSystemUtils.launchUserDataDirectory`), so the key
+        /// needs no scoping of its own: keying it on `--user-data-dir` gave
+        /// launches the Phi Chat app's shim started, which spell the default
+        /// directory out, a second record for the same session.
         case slotsRestoreSnapshot
         /// The Migration Sources this account has already completed a
         /// Migration from, held as their source identifiers. A source listed
@@ -438,6 +438,16 @@ extension AccountUserDefaults {
     /// Persists the per-Space Pure-theme slider-value map verbatim.
     func setSpacePureThemeSliderValues(_ map: [String: Double]) {
         set(map, forKey: DefaultsKey.spacePureThemeSliderValues.rawValue)
+    }
+
+    func spaceThemePalettes() -> [String: ThemePalette] {
+        guard let data = data(forKey: DefaultsKey.spaceThemePalettes.rawValue) else { return [:] }
+        return (try? JSONDecoder().decode([String: ThemePalette].self, from: data)) ?? [:]
+    }
+
+    @discardableResult
+    func setSpaceThemePalettes(_ map: [String: ThemePalette]) -> Bool {
+        set(map, forCodableKey: DefaultsKey.spaceThemePalettes.rawValue)
     }
 
     /// The Migration Sources this account has completed a Migration from.

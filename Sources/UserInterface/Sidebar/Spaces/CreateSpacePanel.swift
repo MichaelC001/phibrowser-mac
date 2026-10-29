@@ -45,13 +45,14 @@ struct CreateSpacePanel: View {
     /// different from the Space it was created from — and it remains the
     /// fallback while no selection is resolved.
     let initialThemeId: String
+    /// Capture the source when the form opens so preview and persisted order agree.
+    var afterSpaceId: String? = nil
     /// Whether the host should restore the theme that preceded its live
     /// preview. Successful creation keeps the selected preview in place until
     /// the new Space is activated, avoiding a flash of the previous theme.
     let onClose: (_ restorePreviewTheme: Bool) -> Void
-    /// Live preview for sidebar hosts. Initial setup does not call this because
-    /// the host already inherits the active Space theme; subsequent user theme
-    /// selections and slider adjustments do.
+    /// Live preview for sidebar hosts, updated by the initial theme and draft
+    /// palette edits before the new Space is committed.
     var onThemeSelectionChange: ((Theme) -> Void)? = nil
     /// Lets sidebar hosts restore the source Space's real theme only after the
     /// target Space has surfaced, or immediately when activation fails.
@@ -74,12 +75,8 @@ struct CreateSpacePanel: View {
     /// source Space's on appear; nil only before that (falls back to the
     /// inherited `initialThemeId`).
     @State private var selectedThemeId: String?
-    /// Theme-component slider position. Follows the selected theme's
-    /// saturation (or Pure brightness) until the user drags it; from then on
-    /// it's a deliberate choice that survives theme switches and is persisted
-    /// on the new Space.
-    @State private var themeSliderValue: Double = 50
-    @State private var userAdjustedThemeComponent = false
+    @State private var selectedPalette: ThemePalette?
+    @State private var showsColorPicker = false
     @FocusState private var nameFocused: Bool
 
     @Environment(\.phiAppearance) private var appearance
@@ -99,7 +96,6 @@ struct CreateSpacePanel: View {
                     .randomElement() {
                     selectedThemeId = freshTheme.id
                 }
-                syncThemeSliderToSelectedTheme()
                 // Preview immediately so the swipe-in surface already carries
                 // the new Space's color (sidebar hosts only; the standalone
                 // window has no live preview and just shows the selection).
@@ -292,90 +288,52 @@ struct CreateSpacePanel: View {
     /// or Pure-brightness slider. Dots spread evenly across the bounded column
     /// and shrink with the sidebar.
     private var colorBlock: some View {
-        VStack(spacing: 12) {
-            HStack(spacing: 0) {
-                ForEach(Theme.builtInThemes, id: \.id) { theme in
-                    ThemeSwatchView(
-                        fillColor: theme == .pure
-                            ? .white
-                            : Color(theme.color(for: .themeColor, appearance: appearance)),
-                        ringColor: Color(theme.color(for: .themeColor, appearance: appearance)),
-                        selected: effectiveThemeId == theme.id,
-                        title: nil,
-                        showsContrastBorder: theme == .pure,
-                        dotDiameter: 16,
-                        ringDiameter: 20,
-                        action: { selectTheme(theme.id) }
-                    )
-                    .help(theme.name)
-                    .frame(maxWidth: .infinity)
-                }
+        Button {
+            showsColorPicker = true
+        } label: {
+            HStack(spacing: 8) {
+                Text(NSLocalizedString(
+                    "sidebar.createSpace.colorPicker.label", value: "Color",
+                    comment: "Create Space form - row that opens the color picker"
+                ))
+                .font(.system(size: 13))
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .medium))
+                    .frame(width: 21, height: 21)
             }
-
-            Divider()
-
-            // The slider follows the live column width (the sidebar overlay
-            // shrinks with the sidebar), so read it from a GeometryReader
-            // rather than fixing a width.
-            GeometryReader { geo in
-                ThemeOpacitySliderView(
-                    value: themeSliderBinding,
-                    trackColor: effectiveTheme().color(for: .windowOverlayBackground, appearance: appearance),
-                    borderColor: ThemedColor.border.resolve(theme: effectiveTheme(), appearance: appearance),
-                    trackStyle: effectiveThemeId == Theme.pure.id
-                        ? .pureBrightness(appearance)
-                        : .saturation,
-                    width: geo.size.width
-                )
-            }
-            .frame(height: 20)
+            .foregroundStyle(Color.primary.opacity(0.85))
+            .frame(height: 32)
+            .padding(.leading, 8)
+            .padding(.trailing, 6)
+            .background(Color.primary.opacity(0.04))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .contentShape(RoundedRectangle(cornerRadius: 8))
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 12)
-        .background(Color.primary.opacity(0.04))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("sidebar.createSpace.colorPicker")
+        .popover(isPresented: $showsColorPicker, arrowEdge: .trailing) {
+            SpaceThemeEditorView(palette: themePaletteBinding) {
+                showsColorPicker = false
+            }
+            .environment(\.phiTheme, effectiveTheme())
+            .environment(\.phiAppearance, appearance)
+        }
     }
 
-    private var themeSliderBinding: Binding<Double> {
+    private var themePaletteBinding: Binding<ThemePalette> {
         Binding(
-            get: { themeSliderValue },
-            set: { newValue in
-                themeSliderValue = newValue
-                userAdjustedThemeComponent = true
+            get: {
+                selectedPalette ?? ThemePalette(
+                    color: selectedBaseTheme().color(for: .windowOverlayBackground, appearance: appearance),
+                    appearance: appearance
+                ).settingBrightness(1)
+            },
+            set: { palette in
+                selectedPalette = palette
                 onThemeSelectionChange?(effectiveTheme())
             }
         )
-    }
-
-    private func selectTheme(_ themeId: String) {
-        guard effectiveThemeId != themeId else { return }
-        selectedThemeId = themeId
-        if !userAdjustedThemeComponent {
-            syncThemeSliderToSelectedTheme()
-        }
-        onThemeSelectionChange?(effectiveTheme())
-    }
-
-    /// Snaps the slider to the selected theme's own saturation or Pure
-    /// brightness — the value the new Space inherits unless the user drags.
-    private func syncThemeSliderToSelectedTheme() {
-        let theme = selectedBaseTheme()
-        if theme.id == Theme.pure.id {
-            let brightness = theme
-                .color(for: .windowOverlayBackground, appearance: appearance)
-                .hsbBrightnessComponent
-            themeSliderValue = PureThemeBrightnessScale.sliderValue(
-                forBrightness: Double(brightness),
-                appearance: appearance
-            )
-        } else {
-            let saturation = theme
-                .color(for: .windowOverlayBackground, appearance: appearance)
-                .hsbSaturationComponent
-            themeSliderValue = OverlaySaturationScale.sliderValue(
-                forSaturation: Double(saturation)
-            )
-        }
     }
 
     private var actions: some View {
@@ -406,8 +364,7 @@ struct CreateSpacePanel: View {
 
     // MARK: - Color math
 
-    /// The theme id used to resolve the swatch fill, caption, and derived
-    /// `colorHex`.
+    /// The base theme used for the draft palette and derived `colorHex`.
     private var effectiveThemeId: String {
         selectedThemeId ?? resolvedInitialThemeId
     }
@@ -436,28 +393,10 @@ struct CreateSpacePanel: View {
             ?? ThemeManager.shared.currentTheme
     }
 
-    /// The theme backing the new Space: the selected theme, with the user's
-    /// custom saturation or Pure brightness applied on a palette copy once
-    /// the slider has been touched, matching the theme that will be persisted.
+    /// Applies draft colors for live preview without changing the source Space.
     private func effectiveTheme() -> Theme {
         let base = selectedBaseTheme()
-        guard userAdjustedThemeComponent else { return base }
-        if base.id == Theme.pure.id {
-            return ThemeColorAdjustment.applyingPureBrightness(
-                sliderValue: themeSliderValue,
-                to: base
-            )
-        }
-
-        let saturation = CGFloat(
-            OverlaySaturationScale.saturation(forSlider: themeSliderValue)
-        )
-        return ThemeColorAdjustment.applyingSaturation(
-            light: appearance.isLight ? saturation : nil,
-            dark: appearance.isDark ? saturation : nil,
-            darkWindowBackground: appearance.isDark ? saturation : nil,
-            to: base
-        )
+        return selectedPalette?.applying(to: base) ?? base
     }
 
     // MARK: - Profiles
@@ -498,7 +437,8 @@ struct CreateSpacePanel: View {
             name: finalName,
             colorHex: resolvedColorHex(),
             iconName: selectedIcon.storageValue,
-            profileId: profileId
+            profileId: profileId,
+            afterSpaceId: afterSpaceId
         )
         if newSpaceId != nil {
             PostHogSDK.shared.capture("space_created", properties: [
@@ -508,28 +448,11 @@ struct CreateSpacePanel: View {
             ])
             FirstTimeActionTracker.capture(.spaceCreated)
         }
-        // Pin the chosen theme (and, when the user touched the slider, its
-        // custom saturation or Pure brightness) to the new Space. Persisted
-        // now; applied when its window spawns in activateInFocusedWindow.
+        // Commit the draft palette only after the new Space exists.
         if let newSpaceId {
             manager.setTheme(forSpaceId: newSpaceId, themeId: effectiveThemeId)
-            if userAdjustedThemeComponent {
-                if effectiveThemeId == Theme.pure.id {
-                    manager.setPureThemeSliderValue(
-                        themeSliderValue,
-                        forSpaceId: newSpaceId
-                    )
-                } else {
-                    manager.setOverlaySaturation(
-                        CGFloat(
-                            OverlaySaturationScale.saturation(
-                                forSlider: themeSliderValue
-                            )
-                        ),
-                        forSpaceId: newSpaceId,
-                        appearance: appearance
-                    )
-                }
+            if let selectedPalette {
+                manager.setThemePalette(selectedPalette, forSpaceId: newSpaceId)
             }
         }
         // A successful create keeps the selected live preview visible while
@@ -637,7 +560,8 @@ extension CreateSpacePanel {
             initialProfileId: initialProfileId,
             initialThemeId: manager.activeSpaceId.map {
                 manager.resolvedThemeId(forSpaceId: $0)
-            } ?? ThemeManager.shared.currentTheme.id
+            } ?? ThemeManager.shared.currentTheme.id,
+            afterSpaceId: manager.activeSpaceId
         ) { [weak window] _ in
             window?.close()
         }

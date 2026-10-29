@@ -17,14 +17,14 @@ import SwiftUI
             } }
         }
         check(visibleInterior, "missing avatar must render a local fallback inside the border")
-        let invalid = await NotificationCardAgentAvatarView.loadImage { Data("not an image".utf8) }
+        let invalid = await AgentAvatarStore.loadImage { Data("not an image".utf8) }?.image
         check(invalid == nil, "undecodable response must select fallback")
-        let offline = await NotificationCardAgentAvatarView.loadImage { throw URLError(.notConnectedToInternet) }
+        let offline = await AgentAvatarStore.loadImage { throw URLError(.notConnectedToInternet) }?.image
         check(offline == nil, "network failure must select fallback")
-        let rejected = await NotificationCardAgentAvatarView.loadImage { throw APIError.httpError(statusCode: 401) }
+        let rejected = await AgentAvatarStore.loadImage { throw APIError.httpError(statusCode: 401) }?.image
         check(rejected == nil, "HTTP failure must select fallback")
         let svg = Data("<svg xmlns='http://www.w3.org/2000/svg' width='18' height='18'><rect width='18' height='18' fill='blue'/></svg>".utf8)
-        let decoded = await NotificationCardAgentAvatarView.loadImage { svg }
+        let decoded = await AgentAvatarStore.loadImage { svg }?.image
         check(decoded?.isValid == true, "valid SVG must render instead of fallback")
         let client = APIClient()
         for source in ["/api/v1/files/test", "/v1/files/test?download=1", "http://127.0.0.1:9876/api/v1/files/test", "http://localhost:9876/v1/files/test", "http://[::1]:9876/api/v1/files/test"] {

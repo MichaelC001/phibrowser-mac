@@ -536,10 +536,33 @@ final class SpaceManager: ObservableObject {
     /// Distinguishes "the user closed the last window mid-session" — where a
     /// Dock-click reopen must respawn the persisted Space
     /// (`reopenOnPersistedSpaceIfWindowless`) — from a launch that hasn't
-    /// surfaced a window yet (e.g. a hidden login-item start), where the
-    /// first Dock click must stay with Chromium's reopen so its session
-    /// restore can run (`PhiAttemptSessionRestore`).
+    /// surfaced a window yet. A hidden login-item start is one: its first
+    /// Dock click stays with Chromium's reopen so its session restore can run
+    /// (`PhiAttemptSessionRestore`). A silent launch is the other, and its
+    /// first click is this side's (`isInSilentLaunch`).
     fileprivate(set) var hasEverHostedSlotWindow = false
+
+    /// Whether the process is still in its silent launch (chromium ADR 0019):
+    /// it was started with no startup window to show Phi Chat (by the app's
+    /// shim, or by Sentinel), so Chromium skipped the cold start, and no slot
+    /// window has been hosted since. Its first
+    /// Dock click or external link restores in the cold start's place. The
+    /// first hosted window, however it arrives, ends the state; the Phi Chat
+    /// and Kiosk windows live in no slot and leave it alone. A framework
+    /// without the query reads as not silent.
+    private var isInSilentLaunch: Bool {
+        Self.isInSilentLaunch(
+            chromiumReportsSilentLaunch: ChromiumLauncher.sharedInstance().bridge?
+                .isSilentLaunch?() ?? false,
+            hasEverHostedSlotWindow: hasEverHostedSlotWindow)
+    }
+
+    /// The rule behind the property above. Pure and static so it is pinned by
+    /// table.
+    static func isInSilentLaunch(chromiumReportsSilentLaunch: Bool,
+                                 hasEverHostedSlotWindow: Bool) -> Bool {
+        chromiumReportsSilentLaunch && !hasEverHostedSlotWindow
+    }
 
     /// Bumped whenever any slot's window map changes (`registerWindow`,
     /// `unregisterWindow`, `evictWindow`). Which slot hosts an agent Space's
@@ -1431,8 +1454,11 @@ final class SpaceManager: ObservableObject {
     /// Space's OWN profile via `createBrowser(withWindowType:profileId:)` —
     /// and returns true. Returns false when the reopen should stay with
     /// Chromium's handler: a browser window still exists (Chromium focuses
-    /// it), or no slot window has been hosted yet this session (Chromium's
-    /// session restore owns the hidden-login-item first click).
+    /// it), or no slot window has been hosted yet this session outside a
+    /// silent launch (Chromium's session restore owns the hidden-login-item
+    /// first click). A silent launch's first click is handled here; with the
+    /// restore switch on it restores by the cold-start rule
+    /// (`reopenLandingMode`).
     ///
     /// Why Chromium must not create this window itself: its reopen seeds the
     /// window from Chromium's last-used-profile pref
@@ -1452,7 +1478,7 @@ final class SpaceManager: ObservableObject {
             // absent line cannot be told apart from a build that never had
             // them, or from a reopen that never reached the app at all. Stated
             // positively instead: it appears when this path was skipped, and
-            // three of its four numbers ARE the predicate's inputs — the
+            // four of its five readings ARE the predicate's inputs — the
             // second one is `slotsHoldingWindows`, not `slots` — so the same
             // line says which one refused. `slots` is kept beside it as the
             // raw registry count, the only reading that says whether anything
@@ -1489,7 +1515,7 @@ final class SpaceManager: ObservableObject {
             let leftovers = liveWindows == 0 && !slots.isEmpty
                 ? "; " + slots.map(\.diagnosticSummary).joined(separator: ", ")
                 : ""
-            AppLogInfo("[SpaceManager] windowless reopen declined, the persisted-Space reopen did not run: hasEverHostedSlotWindow=\(hasEverHostedSlotWindow), slotsHoldingWindows=\(heldSlots), slots=\(slots.count), liveNonShadowWindows=\(liveWindows)\(leftovers)")
+            AppLogInfo("[SpaceManager] windowless reopen declined, the persisted-Space reopen did not run: hasEverHostedSlotWindow=\(hasEverHostedSlotWindow), slotsHoldingWindows=\(heldSlots), slots=\(slots.count), liveNonShadowWindows=\(liveWindows), inSilentLaunch=\(isInSilentLaunch)\(leftovers)")
             return false
         }
         // Switch on: replay the whole closed window group (each Space with its
@@ -1524,7 +1550,8 @@ final class SpaceManager: ObservableObject {
     }
 
     /// True when the app has no browser window but has hosted a slot window this
-    /// session — the state a Dock reopen or an external-link open handles.
+    /// session, or is still in its silent launch — the state a Dock reopen or
+    /// an external-link open handles.
     /// Non-slot windows don't count as "windowless": a standalone Incognito
     /// window is focused by Chromium's own reopen, and shadow windows are
     /// invisible background hosts either way.
@@ -1532,7 +1559,8 @@ final class SpaceManager: ObservableObject {
         Self.isWindowlessWithHostedSlots(
             hasEverHostedSlotWindow: hasEverHostedSlotWindow,
             slots: slotOccupancy,
-            liveNonShadowWindowCount: liveNonShadowWindowCount)
+            liveNonShadowWindowCount: liveNonShadowWindowCount,
+            isInSilentLaunch: isInSilentLaunch)
     }
 
     /// Whether one slot is holding — or is still owed — a window: the per-slot
@@ -1573,16 +1601,19 @@ final class SpaceManager: ObservableObject {
     /// whether any slot still HOLDS — or is owed — a window costs the same and
     /// cannot be latched that way, whoever mints the next shell.
     ///
-    /// The other two inputs are unchanged: `hasEverHostedSlotWindow` leaves
-    /// the hidden-login-item first click to Chromium's session restore, and
-    /// `liveNonShadowWindowCount` is what "windowless" means for the windows
-    /// that live outside slots.
+    /// `hasEverHostedSlotWindow` leaves the hidden-login-item first click to
+    /// Chromium's session restore, and `liveNonShadowWindowCount` is what
+    /// "windowless" means for the windows that live outside slots. The fourth
+    /// input, `isInSilentLaunch`, takes the silent launch's first wake from
+    /// Chromium: it skipped that launch's cold start, and its reopen restores
+    /// nothing once the Phi Chat window exists (chromium ADR 0019).
     static func isWindowlessWithHostedSlots(
         hasEverHostedSlotWindow: Bool,
         slots: [(hostsWindow: Bool, awaitsSpawnedWindow: Bool)],
-        liveNonShadowWindowCount: Int
+        liveNonShadowWindowCount: Int,
+        isInSilentLaunch: Bool
     ) -> Bool {
-        hasEverHostedSlotWindow
+        (hasEverHostedSlotWindow || isInSilentLaunch)
             && !slots.contains(where: slotHoldsOrAwaitsWindow)
             && liveNonShadowWindowCount == 0
     }
@@ -1619,9 +1650,15 @@ final class SpaceManager: ObservableObject {
     /// `reopenSettleOutcome`), and the only one where this window may claim a
     /// saved entry instead of standing alone — see `reopenFallbackWindowPlan`.
     /// Every other caller leaves it false and gets exactly today's plain spawn.
+    ///
+    /// `onSettled` runs once, a turn after the window registers or its spawn
+    /// fails, or after `sessionRestoreWatchdogDeadline` when neither is
+    /// reported; its argument names which. It never runs when this returns
+    /// false.
     @discardableResult
     private func spawnPersistedSpaceWindow(
-        restoreProducedNoWindow: Bool = false
+        restoreProducedNoWindow: Bool = false,
+        onSettled: ((_ outcome: String) -> Void)? = nil
     ) -> Bool {
         // Same resolution shape as `handleSpacesUpdate`'s fallback: the
         // persisted id when it names a live, automatically-switchable Space,
@@ -1704,9 +1741,36 @@ final class SpaceManager: ObservableObject {
                 slot.seedRememberedGeometry(frame: restoreEntries[landingIndex].frame)
             }
         }
+        // `activate` promises neither callback exactly once: a transition
+        // replaced mid-spawn reports nothing, a dormant repeat reports both.
+        // Hence the guard, and the deadline for "nothing". A turn later, so
+        // the caller never runs inside the spawn.
+        //
+        // Not animated when someone waits: a fresh slot has nothing to slide
+        // from either way, and without a transition the cold path settles
+        // once the spawn has also seeded its first tab rather than inside
+        // the window's registration. The caller then queues behind that
+        // tab's arrival in `BrowserState`; ahead of it, an `activate` of this
+        // Space reads the window as empty and seeds a second New Tab. That
+        // also leaves the deadline nearly nothing to cover, so it can be as
+        // long as the restore's own: one that fired mid-spawn would run the
+        // caller into the very collision it waits to avoid.
+        var settled = false
+        let settleOnce = { (outcome: String) in
+            guard !settled, let onSettled else { return }
+            settled = true
+            DispatchQueue.main.async { onSettled(outcome) }
+        }
+        if onSettled != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.sessionRestoreWatchdogDeadline) {
+                settleOnce("not reported within \(Self.sessionRestoreWatchdogDeadline)s")
+            }
+        }
         slot.activate(
             spaceId: spaceId,
+            animated: onSettled == nil,
             onActivationFailed: { [weak self] in
+                defer { settleOnce("failed") }
                 guard let self else { return }
                 // Order is load-bearing, and this is the same order
                 // `performColdStartRepair` unwinds its own claim in. The
@@ -1729,9 +1793,7 @@ final class SpaceManager: ObservableObject {
                 // reopen into it.
                 _ = self.reclaimMintedSlot(slot, mintedForThisAttempt: true)
             },
-            // Only on the claim, and only because of it: claiming inherits the
-            // entry's fullscreen marker (`slotForRestoreIndex`), and
-            onSwapSettled: nil)
+            onSwapSettled: { settleOnce("registered") })
         return true
     }
 
@@ -1859,7 +1921,9 @@ final class SpaceManager: ObservableObject {
     private func beginWindowlessSessionRestore() -> Bool {
         guard let bridge = ChromiumLauncher.sharedInstance().bridge else {
             // No bridge to drive the restore; still open something.
-            return spawnPersistedSpaceWindow()
+            let spawned = spawnPersistedSpaceWindow()
+            releaseOpensWaitingForRestore(exit: "no bridge")
+            return spawned
         }
         // Re-arm the snapshot with the `restoredFromWindowId == 0` reattach
         // fallback disarmed — see `loadRestoreSnapshot(armReattachDeadline:)` for
@@ -1945,8 +2009,18 @@ final class SpaceManager: ObservableObject {
                     // spawn because it decides one more thing there — whether
                     // that window may claim the saved entry it stands for
                     // (`reopenFallbackWindowPlan`).
+                    // Raised before the call, so a settle reported from
+                    // inside it cannot be overwritten afterwards.
+                    self.isAwaitingRestoreFallbackWindow = true
                     let spawned = self.spawnPersistedSpaceWindow(
-                        restoreProducedNoWindow: restoreProducedNoWindow)
+                        restoreProducedNoWindow: restoreProducedNoWindow,
+                        onSettled: { [weak self] outcome in
+                            self?.isAwaitingRestoreFallbackWindow = false
+                            self?.releaseOpensWaitingForRestore(exit: "fallback window \(outcome)")
+                        })
+                    if !spawned {
+                        self.isAwaitingRestoreFallbackWindow = false
+                    }
                     if restoreProducedNoWindow {
                         // Loud, and the only trace this leaves: the restore
                         // succeeded on chromium's terms while not one window
@@ -1972,6 +2046,14 @@ final class SpaceManager: ObservableObject {
                 // see above).
                 self.endReopenLoadingPlacements()
                 self.recordReopenLoadingHandoff(.restoreSettled)
+                // Last: a held open must find the repaired slots above, and
+                // must not be pulled onto a loading window's forced frame. A
+                // fallback window lands a turn later at the earliest, and an
+                // open run before it activates that Space again and is refused
+                // as a repeat spawn, so its opens wait for it instead.
+                if !self.isAwaitingRestoreFallbackWindow {
+                    self.releaseOpensWaitingForRestore(exit: "restore settled")
+                }
             }
         }
         return true
@@ -2158,8 +2240,8 @@ final class SpaceManager: ObservableObject {
     /// writing and the reopen never persists at all — for the life of the
     /// process, since nothing else rewrites the record until the next layout
     /// change — while writing before the clear is a write that refuses itself
-    /// (`mayPersistSlotsSnapshot`). Neither shows up in a test; no test in this
-    /// repo constructs a `SpaceManager`. Keeping them inseparable is the guard.
+    /// (`mayPersistSlotsSnapshot`). Neither shows up in a test. Keeping them
+    /// inseparable is the guard.
     ///
     /// Called once, from the completion that reports every profile settled.
     /// A reopen that never settles never calls it, and the last complete
@@ -2191,6 +2273,7 @@ final class SpaceManager: ObservableObject {
             // cannot see any other way.
             AppLogError("[SpaceManager] windowless reopen never settled within \(Self.sessionRestoreWatchdogDeadline)s — releasing the snapshot freeze without writing")
             self.isSessionRestoreInFlight = false
+            self.releaseOpensWaitingForRestore(exit: "watchdog")
         }
         sessionRestoreWatchdog = work
         DispatchQueue.main.asyncAfter(
@@ -2438,12 +2521,144 @@ final class SpaceManager: ObservableObject {
     /// If the app is windowless with a restorable history and the switch is on,
     /// begins a session restore so a subsequently-forwarded external link lands
     /// in the restored active window instead of a bare new one. A no-op when
-    /// not eligible or a restore is already in flight; the caller queues its
-    /// URLs to forward once a window exists either way.
+    /// not eligible or a restore is already in flight; the caller then queues
+    /// its URLs to forward once a window exists, unless nothing is bringing
+    /// one (`mayForwardExternalOpenWithoutWindow`).
     func beginSessionRestoreForExternalOpenIfEligible() {
         guard isWindowlessWithHostedSlots, SessionRestorePreference.isEnabled,
               !isSessionRestoreInFlight else { return }
         beginWindowlessSessionRestore()
+    }
+
+    /// What the gate in front of a windowless open the user aimed at a Space
+    /// does with that open (chromium ADR 0020).
+    enum WindowlessOpenGate: Equatable {
+        /// Run the open at once.
+        case runNow
+        /// Hold the open until the restore in flight settles.
+        case waitForRestore
+        /// Start the restore a Dock click starts, and hold the open until it
+        /// settles.
+        case beginRestoreAndWait
+    }
+
+    /// The rule behind `runAfterWindowlessRestore`. Pure and static so it is
+    /// pinned by table (`WindowlessOpenRestoreGateTests`).
+    ///
+    /// A restore in flight holds the open even once a restored window exists:
+    /// the target Space's window can arrive after the first one, and acting
+    /// early opens a second window for that Space, while an armed lazy restore
+    /// drops Space switches until it settles. Windowless is read off the
+    /// slots, not off "about to mint a slot": with a leftover shell slot an
+    /// entry never reaches its mint.
+    static func windowlessOpenGate(isSessionRestoreInFlight: Bool,
+                                   isWindowlessWithHostedSlots: Bool,
+                                   isRestoreSwitchOn: Bool) -> WindowlessOpenGate {
+        if isSessionRestoreInFlight { return .waitForRestore }
+        return isWindowlessWithHostedSlots && isRestoreSwitchOn
+            ? .beginRestoreAndWait : .runNow
+    }
+
+    /// Opens `runAfterWindowlessRestore` holds until the restore ends.
+    private var opensWaitingForRestore: [() -> Void] = []
+
+    /// True from a settle that spawned a fallback window until that window
+    /// lands. Opens keep waiting meanwhile, as while the restore is in flight.
+    private var isAwaitingRestoreFallbackWindow = false
+
+    /// Runs `open`, an open the user aimed at a Space, once no windowless
+    /// session restore is pending: at once when there is nothing to restore,
+    /// otherwise after the restore in flight or after the one this starts,
+    /// which is the restore a Dock click starts. `entry` names the caller in
+    /// the log.
+    ///
+    /// A held open runs past this gate, so it never starts a second restore:
+    /// released by the watchdog while still windowless, it takes its ordinary
+    /// path (an existing slot, or a new one).
+    func runAfterWindowlessRestore(entry: String, _ open: @escaping () -> Void) {
+        switch Self.windowlessOpenGate(
+            isSessionRestoreInFlight: isSessionRestoreInFlight
+                || isAwaitingRestoreFallbackWindow,
+            isWindowlessWithHostedSlots: isWindowlessWithHostedSlots,
+            isRestoreSwitchOn: SessionRestorePreference.isEnabled) {
+        case .runNow:
+            open()
+        case .waitForRestore:
+            opensWaitingForRestore.append(open)
+            AppLogInfo("[SpaceManager] \(entry) waits for the session restore in flight")
+        case .beginRestoreAndWait:
+            // Queued first: with no bridge the restore releases the queue
+            // before it returns.
+            opensWaitingForRestore.append(open)
+            AppLogInfo("[SpaceManager] \(entry) while windowless — starting a session restore and waiting for it")
+            beginWindowlessSessionRestore()
+        }
+    }
+
+    /// Runs every open `runAfterWindowlessRestore` holds. Called from each way
+    /// a windowless restore ends: it settles (or, when the settle spawned a
+    /// fallback window, that window lands), its watchdog gives up, or there
+    /// is no bridge to run it. A way that does not call it leaves its opens
+    /// waiting for good. `exit` names the way in the log.
+    private func releaseOpensWaitingForRestore(exit: String) {
+        guard !opensWaitingForRestore.isEmpty else { return }
+        let opens = opensWaitingForRestore
+        // Cleared first, so an open is never run twice.
+        opensWaitingForRestore.removeAll()
+        AppLogInfo("[SpaceManager] releasing \(opens.count) open(s) that waited for the session restore (\(exit))")
+        opens.forEach { $0() }
+    }
+
+    /// True when an external open has no window to wait for: the app is
+    /// windowless and nothing is bringing a window back — no session restore
+    /// in flight, no slot owed a spawned window — and it is neither quitting
+    /// nor in a Guest-to-account transition. Forwarding the open is then what
+    /// creates its window, so `AppController` forwards one that arrived with
+    /// browser access at once instead of running out its retries. Until a
+    /// process first hosts a slot window this reads true only in a silent
+    /// launch (`isInSilentLaunch`): cold launch still waits for Chromium's
+    /// startup window, while a silent launch has none coming, so with the
+    /// restore switch off its link forwards at once.
+    ///
+    /// Logs its inputs when false, so a log bundle says why an open waited.
+    var mayForwardExternalOpenWithoutWindow: Bool {
+        let windowless = isWindowlessWithHostedSlots
+        // The promotion flag lies inside the interaction block in the login
+        // flow; it stays as a backstop for any path that sets it alone.
+        let guestTransition = SpaceSessionControllersManager.shared
+            .isGuestTransitionInteractionBlocked
+            || ApplicationState.shared.isGuestAccountPromotionInProgress
+        let mayForward = Self.mayForwardExternalOpenWithoutWindow(
+            isWindowlessWithHostedSlots: windowless,
+            isSessionRestoreInFlight: isSessionRestoreInFlight,
+            isTerminating: isTerminating,
+            isGuestTransitionInProgress: guestTransition)
+        if !mayForward {
+            AppLogDebug("[SpaceManager] external open waits for a window: windowless=\(windowless), hasEverHostedSlotWindow=\(hasEverHostedSlotWindow), inSilentLaunch=\(isInSilentLaunch), restoreInFlight=\(isSessionRestoreInFlight), terminating=\(isTerminating), guestTransition=\(guestTransition)")
+        }
+        return mayForward
+    }
+
+    /// The rule behind the property above. Pure and static so it is pinned by
+    /// table.
+    ///
+    /// `isTerminating`: a window Chromium created for the open mid-quit could
+    /// be saved into the session the next launch restores. The open is held
+    /// as it was before the fix, and is usually dropped when the process exits
+    /// before the retries run out. `isGuestTransitionInProgress`: the
+    /// transition rebinds windows against its migration receipt, and a window
+    /// built for the open meanwhile would carry Guest identifiers the receipt
+    /// does not know. The open is deferred as it was before the fix: it lands
+    /// in the window the transition reopens, or goes out on the retry timeout
+    /// if the transition outlasts it.
+    static func mayForwardExternalOpenWithoutWindow(
+        isWindowlessWithHostedSlots: Bool,
+        isSessionRestoreInFlight: Bool,
+        isTerminating: Bool,
+        isGuestTransitionInProgress: Bool
+    ) -> Bool {
+        isWindowlessWithHostedSlots && !isSessionRestoreInFlight && !isTerminating
+            && !isGuestTransitionInProgress
     }
 
     /// Walks every slot looking for one that recorded a pending spawn
@@ -2885,13 +3100,23 @@ final class SpaceManager: ObservableObject {
     enum RestoreLandingMode: Equatable {
         /// Dock reopen (R1). Only the marked landing entry lands.
         case landingOnly
-        /// Cold start (R2). Every entry that was still on screen when the
-        /// record froze lands on its own active Space. An entry the record
-        /// marks as a closed group (`isParkedOnlyEntry` on the slot tuple)
-        /// lands nothing, which is what keeps a closed group from coming
-        /// back as a window. A missing marker is treated as on-screen — the
-        /// fail-eager direction the marker itself is written in.
+        /// Cold start (R2), and the first wake after a silent launch, which
+        /// stands in for one (`reopenLandingMode`). Every entry that was
+        /// still on screen when the record froze lands on its own active
+        /// Space. An entry the record marks as a closed group
+        /// (`isParkedOnlyEntry` on the slot tuple) lands nothing, which is
+        /// what keeps a closed group from coming back as a window. A missing
+        /// marker is treated as on-screen — the fail-eager direction the
+        /// marker itself is written in.
         case everyOnScreenEntry
+    }
+
+    /// The mode a windowless reopen classifies in. The first wake after a
+    /// silent launch stands in for the cold start Chromium skipped (chromium
+    /// ADR 0019), so it brings back every group on screen at quit rather than
+    /// the one closed last. Pure and static so the choice is pinned by table.
+    static func reopenLandingMode(isInSilentLaunch: Bool) -> RestoreLandingMode {
+        isInSilentLaunch ? .everyOnScreenEntry : .landingOnly
     }
 
     /// Splits the restore snapshot's windows into the set a replay rebuilds
@@ -3115,7 +3340,10 @@ final class SpaceManager: ObservableObject {
     private func armLazyRestoreForReopen(
         _ bridge: PhiChromiumBridgeProtocol
     ) -> ArmedRestorePlan? {
-        let classification = classifyLoadedRestoreSnapshot(mode: .landingOnly)
+        // Read before any window of this reopen can register and end the
+        // silent launch.
+        let mode = Self.reopenLandingMode(isInSilentLaunch: isInSilentLaunch)
+        let classification = classifyLoadedRestoreSnapshot(mode: mode)
         let featureEnabled = Self.isLazySpaceRestoreEnabled
         let bridgeSupports = Self.bridgeSupportsLazyRestore(bridge)
         let hasSnapshotEntries = !restoreEntries.isEmpty
@@ -3148,7 +3376,7 @@ final class SpaceManager: ObservableObject {
         // Logged like the restore transitions: the park set decides what the
         // reopen deliberately does NOT bring back, which a log bundle must
         // be able to answer.
-        AppLogInfo("[SpaceManager] lazy reopen armed: \(plan.eagerWindowIds.count) eager, \(parkedGhostSpaceIdsByWindowId.count) parked, \(plan.closedGroupWindowIds.count) closed-group")
+        AppLogInfo("[SpaceManager] lazy reopen armed (\(mode)): \(plan.eagerWindowIds.count) eager, \(parkedGhostSpaceIdsByWindowId.count) parked, \(plan.closedGroupWindowIds.count) closed-group")
         return plan
     }
 
@@ -3278,8 +3506,7 @@ final class SpaceManager: ObservableObject {
                 forKey: Self.lastBoundAccountUserIDKey)
             let snapshot = userID.flatMap {
                 AccountUserDefaults.storedObject(
-                    forKey: Self.slotsRestoreSnapshotDefaultsKey,
-                    ofAccountWithUserID: $0)
+                    forKey: .slotsRestoreSnapshot, ofAccountWithUserID: $0)
                     as? [[String: Any]]
             } ?? []
             guard let preferred = Self.earlyColdStartPreferredProfiles(
@@ -3327,36 +3554,6 @@ final class SpaceManager: ObservableObject {
     /// Cleared on sign-out (`unbind`). Only a userID: the answer stays in the
     /// account's own snapshot, so there is no second copy that can go stale.
     static let lastBoundAccountUserIDKey = "PhiLastBoundAccountUserID"
-
-    /// The account-defaults key the slot snapshot is read from and written
-    /// to, given the process arguments — Chromium is launched with this very
-    /// argv, so the two sides read the same switch.
-    ///
-    /// The snapshot maps Chromium's previous-session window ids to Spaces,
-    /// and those ids only mean anything inside the Chromium user data
-    /// directory that issued them. Chromium's directory follows the bundle
-    /// while this record follows the account, so a launch pointed at another
-    /// directory (`--user-data-dir`, the shape every QA and XCTest run has)
-    /// used to rewrite the real profile's record with ids from a session it
-    /// never had — and the next real launch found every saved window
-    /// unplaceable. With the
-    /// switch present the key carries the directory, so each directory keeps
-    /// a record of its own and the real one is never touched.
-    ///
-    /// The last occurrence wins and an empty value counts as absent, which
-    /// is how Chromium's own command line reads the switch. Pure and static
-    /// so the rule is pinned by table (`LazySpaceRestoreWiringTests`).
-    static func slotsRestoreSnapshotKey(arguments: [String]) -> String {
-        let base = AccountUserDefaults.DefaultsKey.slotsRestoreSnapshot.rawValue
-        let prefix = "--user-data-dir="
-        guard let dir = arguments.last(where: { $0.hasPrefix(prefix) })?
-                .dropFirst(prefix.count), !dir.isEmpty else { return base }
-        return "\(base)@\(dir)"
-    }
-
-    /// `slotsRestoreSnapshotKey` for this process, computed once.
-    static let slotsRestoreSnapshotDefaultsKey =
-        slotsRestoreSnapshotKey(arguments: ProcessInfo.processInfo.arguments)
 
     /// The owner map a snapshot entry stores under
     /// `snapshotSpaceProfileIdsKey`. Agent Spaces are left out: the launch
@@ -3787,7 +3984,8 @@ final class SpaceManager: ObservableObject {
     /// it was parked from, so only the slot that inherited that entry may
     /// claim it. A slot that claimed no entry — Cmd+N, a spawn, a
     /// materialization — owns no ghosts and spawns fresh. Read by
-    /// `SpaceWindowSlot.activate` (the F4 ghost row).
+    /// `SpaceWindowSlot.activate` (the F4 ghost row), and by `openWindow` to
+    /// tell a materialized ghost from a fresh window.
     func parkedGhostWindowId(forSpaceId spaceId: String,
                              in slot: SpaceWindowSlot) -> Int? {
         Self.parkedGhostWindowId(in: parkedGhostEntries(for: slot),
@@ -4212,7 +4410,7 @@ final class SpaceManager: ObservableObject {
     /// `persistSlotsSnapshot` would otherwise rewrite the snapshot with the
     /// dismantled (eventually empty) layout — wiping the healthy grouping the
     /// next launch needs to reattach restored windows. Freeze persistence here.
-    private var isTerminating = false
+    private(set) var isTerminating = false
 
     /// Called when quit begins, from `AppController`'s handler for
     /// `PhiWillTryToTerminateApplicationNotification` — posted by
@@ -5078,7 +5276,7 @@ final class SpaceManager: ObservableObject {
         AppLogInfo(
             "[SpaceManager] slot snapshot persisted: \(dicts.count - parkedOnlyCount) slot(s)"
                 + (parkedOnlyCount > 0 ? ", \(parkedOnlyCount) parked-only entry(ies)" : ""))
-        userDefaults.set(dicts, forKey: Self.slotsRestoreSnapshotDefaultsKey)
+        userDefaults.set(dicts, forKey: AccountUserDefaults.DefaultsKey.slotsRestoreSnapshot.rawValue)
         return true
     }
 
@@ -5146,7 +5344,7 @@ final class SpaceManager: ObservableObject {
     /// restores from.
     fileprivate func amendPersistedSnapshotActiveSpaceId(windowId: Int, to spaceId: String) {
         guard !isTerminating, let userDefaults = boundAccount?.userDefaults else { return }
-        let key = Self.slotsRestoreSnapshotDefaultsKey
+        let key = AccountUserDefaults.DefaultsKey.slotsRestoreSnapshot.rawValue
         guard var dicts = userDefaults.object(forKey: key) as? [[String: Any]] else { return }
         for index in dicts.indices {
             guard let map = dicts[index]["windowMap"] as? [String: String],
@@ -5182,7 +5380,7 @@ final class SpaceManager: ObservableObject {
         coldStartRepairedEntryIndices.removeAll()
         pendingColdStartRepairEntryIndices.removeAll()
         guard let raw = boundAccount?.userDefaults.object(
-            forKey: Self.slotsRestoreSnapshotDefaultsKey
+            forKey: AccountUserDefaults.DefaultsKey.slotsRestoreSnapshot.rawValue
         ) as? [[String: Any]] else { return }
         // Clamp against the layout in front of the user NOW, not the one the
         // frames were recorded against — the display a slot was saved on may be
@@ -5430,18 +5628,16 @@ final class SpaceManager: ObservableObject {
     /// the currently-active Space's profile when the user takes the default
     /// one-click "+" path, or the user's explicit choice from the picker.
     ///
-    /// The new Space inherits the currently-active Space's pinned theme, which
-    /// decides the sidebar's overlay background color, so it opens looking like
-    /// the Space it was created from rather than snapping to the global default
-    /// theme. A nil pin means "follow the global theme" —
-    /// the new Space already does, so we only copy an explicit override.
+    /// `afterSpaceId` places a UI-created Space immediately after its source.
+    /// Other callers keep the append behavior. The caller also owns theme setup.
     @discardableResult
     func createSpace(name: String,
                      colorHex: String,
                      iconName: String,
                      profileId: String,
                      makeDefaultActive: Bool = true,
-                     spaceId: String? = nil) -> String? {
+                     spaceId: String? = nil,
+                     afterSpaceId: String? = nil) -> String? {
         guard acceptsStoreAction(), let account = boundAccount else { return nil }
         let newSpaceId = spaceId ?? UUID().uuidString
         guard !spaces.contains(where: { $0.spaceId == newSpaceId }) else { return nil }
@@ -5450,7 +5646,8 @@ final class SpaceManager: ObservableObject {
             name: name,
             colorHex: colorHex,
             iconName: iconName,
-            spaceId: newSpaceId
+            spaceId: newSpaceId,
+            afterSpaceId: afterSpaceId
         )
         // Optimistic in-memory insert so the new Space's pill renders this
         // runloop turn instead of waiting for the background write to commit
@@ -5458,13 +5655,28 @@ final class SpaceManager: ObservableObject {
         // SQLite fsync → NSManagedObjectContextDidSave → main-thread re-fetch),
         // which is what made "New Space" feel slow. The persisted row stays
         // authoritative: once its emission lands, `handleSpacesUpdate` replaces
-        // the presentation fields with the stored values. We mirror
-        // `LocalStore.createSpace`'s GLOBAL max+1 sortOrder (the strip is one
-        // combined list, so appending past the global max is what lands the
-        // new pill last) and reuse `getAllSpaces`'s (sortOrder, profileId,
-        // createdDate) ordering so the pill's position is identical before
-        // and after that reconciliation — no visible reposition.
-        let nextOrder = (spaces.map(\.sortOrder).max() ?? -1) + 1
+        // the presentation fields with the stored values. Mirror the store's
+        // insertion and following sort orders so reconciliation keeps every
+        // pip in place, including when the new Space uses a different profile.
+        let storedSpaces = spaces.filter { !Self.isIncognitoSpaceId($0.spaceId) }.sorted { lhs, rhs in
+            if lhs.sortOrder != rhs.sortOrder { return lhs.sortOrder < rhs.sortOrder }
+            if lhs.profileId != rhs.profileId { return lhs.profileId < rhs.profileId }
+            return lhs.createdDate < rhs.createdDate
+        }
+        let anchorIndex = afterSpaceId.flatMap { id in storedSpaces.firstIndex { $0.spaceId == id } }
+        let nextOrder = anchorIndex.map { $0 + 1 }
+            ?? ((storedSpaces.map(\.sortOrder).max() ?? -1) + 1)
+        if anchorIndex != nil {
+            for (index, space) in storedSpaces.enumerated() {
+                space.update(from: Space(
+                    spaceId: space.spaceId, profileId: space.profileId,
+                    name: space.name, colorHex: space.colorHex,
+                    iconName: space.iconName, sortOrder: index < nextOrder ? index : index + 1,
+                    createdDate: space.createdDate, updatedDate: space.updatedDate,
+                    storeIdentifier: space.storeIdentifier
+                ))
+            }
+        }
         spaces.append(Space(spaceId: newSpaceId,
                                  profileId: profileId,
                                  name: name,
@@ -5549,17 +5761,46 @@ final class SpaceManager: ObservableObject {
     /// rather than made key (`SpaceWindowSlot.orderBackSpawnedWindow`).
     /// `activate: true` is `activateInFocusedWindow` with a slot minted when
     /// there is none — the same path the AppleScript "new window" verb takes.
+    /// While windowless it restores the session first
+    /// (`runAfterWindowlessRestore`, chromium ADR 0020) and then lands in the
+    /// restored window that shows the Space, or switches the restored key
+    /// window to it. `activate: false` skips that gate: a background open is
+    /// not one the user aimed at, and must not bring their windows back.
     ///
     /// `completion` fires once with the windowId, or with an error code:
     /// `unknown_space` for a Space this side does not know, `create_failed`
     /// for a spawn the slot refused or that never registered (a spawn for
     /// the Space already in flight, a profile that failed to load, an
-    /// activation the slot dropped).
+    /// activation the slot dropped). `windowOpened` is true only for a
+    /// window this call opened fresh — seeded with one New Tab and holding
+    /// nothing of the user's. A window that already showed the Space, or a
+    /// parked ghost this call materialized, holds the user's restored tabs
+    /// and answers false.
     func openWindow(forSpaceId spaceId: String,
                     activate: Bool,
-                    completion: @escaping (_ windowId: Int?, _ error: String?) -> Void) {
+                    completion: @escaping (_ windowId: Int?, _ windowOpened: Bool,
+                                           _ error: String?) -> Void) {
+        guard activate else {
+            openWindowPastRestoreGate(forSpaceId: spaceId, activate: false,
+                                      completion: completion)
+            return
+        }
+        runAfterWindowlessRestore(
+            entry: "agent open in Space \(spaceId)"
+        ) { [weak self] in
+            self?.openWindowPastRestoreGate(forSpaceId: spaceId, activate: true,
+                                            completion: completion)
+        }
+    }
+
+    private func openWindowPastRestoreGate(
+        forSpaceId spaceId: String,
+        activate: Bool,
+        completion: @escaping (_ windowId: Int?, _ windowOpened: Bool,
+                               _ error: String?) -> Void
+    ) {
         guard spaces.contains(where: { $0.spaceId == spaceId }) else {
-            completion(nil, "unknown_space")
+            completion(nil, false, "unknown_space")
             return
         }
         let hosting = slots.filter { $0.windowsBySpaceId[spaceId] != nil }
@@ -5568,22 +5809,26 @@ final class SpaceManager: ObservableObject {
             if activate {
                 slot.activate(spaceId: spaceId)
             }
-            completion(live.windowId, nil)
+            completion(live.windowId, false, nil)
             return
         }
         let existing = keySlot ?? slots.first
         let slot = existing ?? createSlot(initialSpaceId: spaceId)
         let minted = existing == nil
-        AppLogInfo("[SpaceManager] openWindow(\(spaceId)) activate=\(activate) minted=\(minted)")
+        // Only `activate` materializes a ghost; a hidden spawn always opens
+        // fresh.
+        let materializesGhost = activate
+            && parkedGhostWindowId(forSpaceId: spaceId, in: slot) != nil
+        AppLogInfo("[SpaceManager] openWindow(\(spaceId)) activate=\(activate) minted=\(minted) ghost=\(materializesGhost)")
         let finish: (SpaceSessionController?) -> Void = { [weak self, weak slot] registered in
             guard let registered else {
                 if minted, let self, let slot {
                     _ = self.reclaimMintedSlot(slot, mintedForThisAttempt: true)
                 }
-                completion(nil, "create_failed")
+                completion(nil, false, "create_failed")
                 return
             }
-            completion(registered.windowId, nil)
+            completion(registered.windowId, !materializesGhost, nil)
         }
         if activate {
             slot.activate(
@@ -5668,7 +5913,27 @@ final class SpaceManager: ObservableObject {
     /// Kiosk supplies its single ephemeral page. Pinned / split /
     /// bookmark-backed tabs remain filtered because their per-Space persistence
     /// bindings would be stranded by a move.
+    ///
+    /// From a Kiosk while windowless it restores the session first
+    /// (`runAfterWindowlessRestore`, chromium ADR 0020). Any other source is
+    /// a window, so the app is not windowless and the move skips the gate. A
+    /// Kiosk closed while the move waits fails the source check below; one
+    /// still closing when the restore settles passes it, and the move acts on
+    /// a tab already detached and moves nothing.
     func moveTab(_ tab: Tab, toSpaceId targetSpaceId: String) {
+        guard SpaceSessionControllersManager.shared
+                .getBrowserState(for: tab.windowId)?.isKioskWindow == true else {
+            moveTabPastRestoreGate(tab, toSpaceId: targetSpaceId)
+            return
+        }
+        runAfterWindowlessRestore(
+            entry: "Kiosk open in Space \(targetSpaceId)"
+        ) { [weak self] in
+            self?.moveTabPastRestoreGate(tab, toSpaceId: targetSpaceId)
+        }
+    }
+
+    private func moveTabPastRestoreGate(_ tab: Tab, toSpaceId targetSpaceId: String) {
         guard let sourceState = SpaceSessionControllersManager.shared
                 .getBrowserState(for: tab.windowId) else {
             AppLogWarn("[SpaceManager] moveTab: no BrowserState for windowId \(tab.windowId)")
@@ -6156,7 +6421,9 @@ final class SpaceManager: ObservableObject {
     }
 
     /// Called only after every slot has finished presenting its replacement.
-    private func finishDeletingSpace(spaceId: String) {
+    /// `completion` (the pairing reset's awaitable entry only) reports whether the cascade
+    /// committed; it is called exactly once on every path.
+    private func finishDeletingSpace(spaceId: String, completion: ((Bool) -> Void)? = nil) {
         discardClaimedSpaceContent(spaceId: spaceId)
         let remainingUserSpaces = userSpaces.filter {
             $0.spaceId != spaceId && !pendingDeletionSpaceIds.contains($0.spaceId)
@@ -6211,6 +6478,7 @@ final class SpaceManager: ObservableObject {
         // but urlRulesPublisher deduplication can swallow the change (R-M3-4a-34).
         guard let account = boundAccount else {
             pendingDeletionSpaceIds.remove(spaceId)
+            completion?(false)
             return
         }
         let deletionStoreIdentifier = storeIdentifier
@@ -6231,6 +6499,7 @@ final class SpaceManager: ObservableObject {
                 guard let self, self.storeIdentifier == deletionStoreIdentifier else {
                     // The account changed under the cascade; its engine went with it.
                     if let syncUuid { PhiSpaceSyncState.shared.endLocalDeletion(syncUuid: syncUuid) }
+                    completion?(false)
                     return
                 }
                 // Only after the cascade committed: a failed cascade leaves the Space in
@@ -6245,6 +6514,7 @@ final class SpaceManager: ObservableObject {
                 self.handleSpacesUpdate(account.localStorage.getAllSpaces())
                 self.pendingDeletionSpaceIds.remove(spaceId)
                 self.reloadURLRulesFromStore()
+                completion?(true)
             } catch {
                 // Nothing was delivered, so there is nothing to roll back in sync.
                 if let syncUuid { PhiSpaceSyncState.shared.endLocalDeletion(syncUuid: syncUuid) }
@@ -6252,8 +6522,248 @@ final class SpaceManager: ObservableObject {
                     self?.pendingDeletionSpaceIds.remove(spaceId)
                 }
                 AppLogError("[SpaceManager] deleteSpaceCascade failed: \(PhiSyncLog.describe(error))")
+                completion?(false)
             }
         }
+    }
+
+    // MARK: - Pairing reset (docs/sync.md, "Replacing this Mac's data at pairing")
+
+    /// Outcome of `deleteSpaceForPairingReset`. Every refusal `deleteSpace` makes silently (or,
+    /// for an import, with an alert) is a distinct value here, so the reset can fail closed.
+    enum PairingResetSpaceDeletion: Equatable {
+        case deleted
+        /// No row: an earlier attempt already deleted it.
+        case notFound
+        /// The row is an Incognito or hidden Space.
+        case refusedNotUserSpace
+        case refusedLastUserSpace
+        case refusedAlreadyPending
+        case refusedStoreMismatch
+        case refusedImportInProgress
+        /// An agent task runs in the Space.
+        case refusedAgentTaskRunning
+        /// A retreat or the cascade failed; the Space is still there.
+        case failed
+        /// Nothing settled within the timeout, and the window close had not yet reached the cascade:
+        /// the operation is abandoned and its pending mark released. A close callback that arrives
+        /// later deletes nothing (so no sync deletion intent can come from an abandoned reset), and a
+        /// rerun may retry the Space. When the cascade had already started, it finishes on its own.
+        case timedOut
+    }
+
+    /// Outcome of `rebindDefaultSpaceForPairingReset`.
+    enum PairingResetRebind: Equatable {
+        case rebound
+        case refusedStoreMismatch
+        case refusedImportInProgress
+        case refusedAgentTaskRunning
+        case refusedUnknownProfile
+        /// The store write failed; nothing changed.
+        case failed
+        /// The row is re-bound but a window of the old Profile did not close, or the replacement
+        /// window did not arrive, within the timeout. A rerun finds the row re-bound and settles
+        /// the windows again.
+        case windowsNotSettled
+    }
+
+    /// How long one pairing-reset window operation may take before it is reported as failed. It
+    /// runs under the setup window's modal and must never hang there.
+    static let pairingResetWindowTimeout: Duration = .seconds(30)
+
+    /// The pairing reset's Space deletion: the same retreat, window close and cascade as
+    /// `deleteSpace`, with these differences. It reports a result instead of refusing silently; it
+    /// never shows an alert (an import in progress is a refusal), because it runs under the setup
+    /// window's modal; it retreats without animation and always to `default-space`, so no slide
+    /// completion or default-mode fallback timer is involved and no other doomed Space is built as
+    /// a retreat target; and it gives up after `timeout`. It also deletes agent Spaces (those of a
+    /// Profile the reset deletes), which never count toward the last-Space guard. Every other caller
+    /// keeps using `deleteSpace`. The commit is claimed once the retreats settle and before any
+    /// window closes, so after `timedOut` the late retreat closes no window and deletes nothing,
+    /// and the Space is no longer pending, so a rerun may retry it.
+    @MainActor
+    func deleteSpaceForPairingReset(spaceId: String,
+                                    timeout: Duration = SpaceManager.pairingResetWindowTimeout) async -> PairingResetSpaceDeletion {
+        guard acceptsStoreAction(), let account = boundAccount else { return .refusedStoreMismatch }
+        // Read the store, not the published list: the reset may have just recreated `default-space`,
+        // and the last-Space guard must see it.
+        let storeSpaces = account.localStorage.getAllSpaces()
+        handleSpacesUpdate(storeSpaces)
+        guard storeSpaces.contains(where: { $0.spaceId == spaceId }) else { return .notFound }
+        guard !Self.isIncognitoSpaceId(spaceId),
+              let space = spaces.first(where: { $0.spaceId == spaceId }) else { return .refusedNotUserSpace }
+        guard !pendingDeletionSpaceIds.contains(spaceId) else { return .refusedAlreadyPending }
+        guard !AgentSpaceManager.shared.isAgentSpace(spaceId) else { return .refusedAgentTaskRunning }
+        if !space.isAnyAgentSpace {
+            guard userSpaces.contains(where: { $0.spaceId != spaceId && !pendingDeletionSpaceIds.contains($0.spaceId) }) else {
+                return .refusedLastUserSpace
+            }
+        }
+        guard !ImportTargetLock.shared.isImporting(into: spaceId) else { return .refusedImportInProgress }
+        let deletionStoreIdentifier = storeIdentifier
+        pendingDeletionSpaceIds.insert(spaceId)
+        let once = PairingResetResumeOnce<PairingResetSpaceDeletion>()
+        return await withCheckedContinuation { continuation in
+            once.arm(continuation, timeout: timeout, timeoutValue: .timedOut, onAbandon: { [weak self] in
+                self?.pendingDeletionSpaceIds.remove(spaceId)
+            })
+            // The commit is claimed after the retreats settle and before any window closes: once
+            // the timeout abandoned the operation, the late close leaves the Space's windows alone.
+            closeSpaceWindows(spaceId: spaceId, animated: false,
+                              retreatTargetSpaceId: LocalStore.defaultSpaceId,
+                              proceed: { once.beginCommit() }) { [weak self] succeeded in
+                guard let self, self.storeIdentifier == deletionStoreIdentifier else {
+                    once.resume(.refusedStoreMismatch)
+                    return
+                }
+                // The timeout abandoned the operation and released the pending mark (a rerun may
+                // have claimed it since): touch nothing, and never start the cascade.
+                guard !once.isAbandoned else {
+                    AppLogWarn("[SpaceManager] pairing reset: late window close for \(spaceId) after the timeout; nothing closed, not deleting")
+                    return
+                }
+                guard succeeded, self.acceptsStoreAction(from: deletionStoreIdentifier) else {
+                    self.pendingDeletionSpaceIds.remove(spaceId)
+                    once.resume(.failed)
+                    return
+                }
+                self.finishDeletingSpace(spaceId: spaceId) { committed in
+                    once.resume(committed ? .deleted : .failed)
+                }
+            }
+        }
+    }
+
+    /// Points the default role at `spaceId` by writing the account defaults key directly. Unlike
+    /// the hand-off in `finishDeletingSpace`, it publishes nothing to the account register: the
+    /// pairing reset runs unpaired and sets the role on `default-space` before deleting the other
+    /// Spaces, so no hand-off runs at all. Returns false when the value could not be persisted.
+    @MainActor
+    @discardableResult
+    func setDefaultSpaceRoleForPairingReset(_ spaceId: String) -> Bool {
+        guard let account = boundAccount else { return false }
+        let key = AccountUserDefaults.DefaultsKey.defaultSpaceId.rawValue
+        guard account.userDefaults.string(forKey: key) != spaceId else { return true }
+        guard account.userDefaults.set(spaceId, forKey: key) else { return false }
+        publishResolvedDefaultSpaceThemeIfNeeded(spaceId: spaceId)
+        return true
+    }
+
+    /// Re-binds `default-space` to `profileId` for the pairing reset, when it is bound to a Profile
+    /// the reset deletes, and settles its windows before returning:
+    /// - a parked ghost of the Space is dropped (its tabs live only in the old Profile's session,
+    ///   which the reset deletes) instead of materialized;
+    /// - a slot showing the Space replaces its window in place on the new Profile, without
+    ///   animation, and nothing retreats (every retreat target would be the Space itself);
+    /// - a background window of the Space is closed;
+    /// - the call waits until no window of the Space remains on another Profile and every replaced
+    ///   slot shows a window on `profileId`, or reports `windowsNotSettled` after `timeout`;
+    /// - a slot whose earlier replacement never registered respawns again, so a rerun after
+    ///   `windowsNotSettled` can settle it.
+    /// The ordinary `changeProfile` refuses the default Space and is unchanged.
+    @MainActor
+    func rebindDefaultSpaceForPairingReset(toProfileId profileId: String,
+                                           timeout: Duration = SpaceManager.pairingResetWindowTimeout) async -> PairingResetRebind {
+        let spaceId = LocalStore.defaultSpaceId
+        guard acceptsStoreAction(), let account = boundAccount else { return .refusedStoreMismatch }
+        guard !ImportTargetLock.shared.isImporting(into: spaceId) else { return .refusedImportInProgress }
+        guard !AgentSpaceManager.shared.isAgentSpace(spaceId) else { return .refusedAgentTaskRunning }
+        guard ProfileManager.shared.profile(for: profileId) != nil else { return .refusedUnknownProfile }
+        dropParkedGhosts(parkedGhostSpaceIdsByWindowId.filter { $0.value == spaceId },
+                         reason: "pairingReset(rebind \(spaceId))")
+        let rebindStoreIdentifier = storeIdentifier
+        let storeRow = account.localStorage.getAllSpaces().first { $0.spaceId == spaceId }
+        if storeRow?.profileId != profileId {
+            do {
+                try await account.localStorage.rebindDefaultSpaceForPairingResetThrowing(toProfileId: profileId)
+            } catch {
+                return .failed
+            }
+        }
+        guard storeIdentifier == rebindStoreIdentifier, acceptsStoreAction(from: rebindStoreIdentifier) else {
+            return .refusedStoreMismatch
+        }
+        // The spawn path reads the binding from `spaces`; publish the committed row first.
+        handleSpacesUpdate(account.localStorage.getAllSpaces())
+        let settled = await settleDefaultSpaceWindowsForPairingReset(onProfileId: profileId, timeout: timeout)
+        return settled ? .rebound : .windowsNotSettled
+    }
+
+    /// The window half of `rebindDefaultSpaceForPairingReset`, run once the row is bound to
+    /// `profileId`. A slot still showing `default-space` with no registered window but a pending
+    /// replacement is one whose earlier respawn never registered (the activation was dropped or
+    /// the spawn stalled): it respawns again, so a rerun of the rebind can settle it. A slot that
+    /// moved to another Space after such a failure closes the old window it still holds. Returns
+    /// false when the windows did not settle within `timeout`.
+    @MainActor
+    func settleDefaultSpaceWindowsForPairingReset(onProfileId profileId: String, timeout: Duration) async -> Bool {
+        let spaceId = LocalStore.defaultSpaceId
+        var replacedSlots: [SpaceWindowSlot] = []
+        for slot in slots {
+            if slot.activeSpaceId == spaceId, slot.windowController(for: spaceId) == nil,
+               slot.hasPendingReplacement(for: spaceId) {
+                slot.respawnWindow(forSpaceId: spaceId, animated: false, retryingStalledReplacement: true)
+                replacedSlots.append(slot)
+                continue
+            }
+            if slot.activeSpaceId != spaceId, slot.hasPendingReplacement(for: spaceId) {
+                // The user left the Space after a failed replacement: the old window would
+                // otherwise stay live on the old Profile until the next manual switch.
+                slot.closePendingReplacement(for: spaceId)
+            }
+            guard let controller = slot.windowController(for: spaceId), controller.profileId != profileId else { continue }
+            if slot.activeSpaceId == spaceId {
+                slot.respawnWindow(forSpaceId: spaceId, animated: false)
+                replacedSlots.append(slot)
+            } else {
+                slot.evictWindow(for: spaceId)
+                slot.closeRetiredWindow(controller)
+            }
+        }
+        return await waitForPairingReset(timeout: timeout) { [weak self] in
+            guard let self else { return false }
+            let stale = SpaceSessionControllersManager.shared.getAllWindows().contains {
+                $0.spaceId == spaceId && $0.profileId != profileId
+            }
+            let replaced = replacedSlots.allSatisfy { slot in
+                !self.slots.contains { $0 === slot } || slot.windowController(for: spaceId)?.profileId == profileId
+            }
+            return !stale && replaced
+        }
+    }
+
+    /// The Profiles of the live windows showing `default-space`. The pairing reset re-runs the rebind
+    /// when one of them is a Profile it deletes (an earlier rebind committed but its windows did not
+    /// settle).
+    @MainActor
+    func defaultSpaceWindowProfileIdsForPairingReset() -> Set<String> {
+        Set(SpaceSessionControllersManager.shared.getAllWindows()
+            .filter { $0.spaceId == LocalStore.defaultSpaceId }.map(\.profileId))
+    }
+
+    /// Waits until no live window is bound to any of `profileIds` (window teardown after a Space
+    /// deletion is asynchronous), up to `timeout`. Returns the Profiles that still have a window.
+    @MainActor
+    func profilesWithLiveWindowsForPairingReset(_ profileIds: Set<String>,
+                                                timeout: Duration = SpaceManager.pairingResetWindowTimeout) async -> Set<String> {
+        func bound() -> Set<String> {
+            Set(SpaceSessionControllersManager.shared.getAllWindows().map(\.profileId)).intersection(profileIds)
+        }
+        guard !profileIds.isEmpty else { return [] }
+        _ = await waitForPairingReset(timeout: timeout) { bound().isEmpty }
+        return bound()
+    }
+
+    /// Polls `condition` on the main actor every 100 ms until it holds or `timeout` passes.
+    @MainActor
+    private func waitForPairingReset(timeout: Duration, until condition: () -> Bool) async -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        while !condition() {
+            guard clock.now < deadline else { return false }
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        return true
     }
 
     /// Closes every live window this Space has, across all slots — the
@@ -6261,7 +6771,16 @@ final class SpaceManager: ObservableObject {
     /// PERSISTENT agent task completes: the task's window must go, but the
     /// Space row (and its tagged rows) stays in the switcher for the user,
     /// and for a later task to re-bind to.
-    func closeSpaceWindows(spaceId: String, completion: ((Bool) -> Void)? = nil) {
+    /// `animated: false` (the pairing reset) retreats without the slide, so nothing waits on a
+    /// Core Animation completion or its fallback timer.
+    /// `retreatTargetSpaceId` (the pairing reset) forces where every slot retreats to; when it is
+    /// not available the retreat fails rather than falling back to another Space.
+    /// `proceed` (the pairing reset) is asked once every retreat has settled and before any window
+    /// is evicted or closed; false leaves every window of the Space as it is and completes with
+    /// false.
+    func closeSpaceWindows(spaceId: String, animated: Bool = true, retreatTargetSpaceId: String? = nil,
+                           proceed: (() -> Bool)? = nil,
+                           completion: ((Bool) -> Void)? = nil) {
         let closingSlots = slots
         let deletionStoreIdentifier = storeIdentifier
         // Visible can lag active during a cold/failed switch. Both must leave
@@ -6280,6 +6799,10 @@ final class SpaceManager: ObservableObject {
                   !self.slots.contains(where: {
                       $0.activeSpaceId == spaceId || $0.visibleController?.spaceId == spaceId
                   }) else {
+                completion?(false)
+                return
+            }
+            if let proceed, !proceed() {
                 completion?(false)
                 return
             }
@@ -6309,13 +6832,20 @@ final class SpaceManager: ObservableObject {
             }
             let preferred = Self.isIncognitoSpaceId(spaceId)
                 ? currentDefaultSpaceId : (slot.lastRegularSpaceId ?? currentDefaultSpaceId)
-            guard let target = candidates.first(where: { $0.spaceId == preferred })
-                ?? candidates.first(where: { $0.spaceId == currentDefaultSpaceId })
-                ?? candidates.first else {
+            let resolvedTarget: Space?
+            if let retreatTargetSpaceId {
+                resolvedTarget = candidates.first(where: { $0.spaceId == retreatTargetSpaceId })
+            } else {
+                resolvedTarget = candidates.first(where: { $0.spaceId == preferred })
+                    ?? candidates.first(where: { $0.spaceId == currentDefaultSpaceId })
+                    ?? candidates.first
+            }
+            guard let target = resolvedTarget else {
                 finish(false)
                 continue
             }
             slot.activate(spaceId: target.spaceId,
+                          animated: animated,
                           onActivationFailed: { finish(false) },
                           onSwapSettled: { finish(true) })
         }
@@ -6594,6 +7124,39 @@ final class SpaceManager: ObservableObject {
 
     // MARK: - Per-Space theme
 
+    func themePalette(forSpaceId spaceId: String) -> ThemePalette? {
+        boundAccount?.userDefaults.spaceThemePalettes()[spaceId]
+    }
+
+    /// Previews a pointer edit in the Space's windows without writing account
+    /// preferences or broadcasting application-wide theme changes per event.
+    /// The editor commits through setThemePalette when tracking ends.
+    func previewThemePalette(_ palette: ThemePalette, forSpaceId spaceId: String, expectedStoreIdentifier: UUID?) {
+        guard acceptsStoreAction(from: expectedStoreIdentifier), boundAccount != nil else { return }
+        MainActor.assumeIsolated {
+            let theme = palette.applying(to: resolvedTheme(forSpaceId: spaceId))
+            for slot in slots {
+                if let controller = slot.windowController(for: spaceId) {
+                    controller.browserState.themeContext.setTheme(theme)
+                }
+            }
+        }
+    }
+
+    /// Persists one linked palette and broadcasts through the existing
+    /// per-Space theme path, including every window presenting that Space.
+    func setThemePalette(_ palette: ThemePalette, forSpaceId spaceId: String, expectedStoreIdentifier: UUID? = nil) {
+        guard acceptsStoreAction(from: expectedStoreIdentifier),
+              let account = boundAccount else { return }
+        var palettes = account.userDefaults.spaceThemePalettes()
+        guard palettes[spaceId] != palette else { return }
+        palettes[spaceId] = palette
+        guard account.userDefaults.setSpaceThemePalettes(palettes) else { return }
+        publishResolvedDefaultSpaceThemeIfNeeded(spaceId: spaceId)
+        reapplyResolvedTheme(forSpaceId: spaceId)
+        postSpaceThemeDidChange(spaceId: spaceId)
+    }
+
     /// Returns the pinned theme id stored for `spaceId`, or nil when the
     /// Space has no entry yet (legacy "Follow Global" Spaces awaiting the
     /// one-shot migration, and runtime-only Spaces that were never themed).
@@ -6622,6 +7185,10 @@ final class SpaceManager: ObservableObject {
         guard acceptsStoreAction(from: expectedStoreIdentifier) else { return }
         guard let account = boundAccount else { return }
         var map = account.userDefaults.spaceThemeIds()
+        var palettes = account.userDefaults.spaceThemePalettes()
+        if palettes.removeValue(forKey: spaceId) != nil {
+            guard account.userDefaults.setSpaceThemePalettes(palettes) else { return }
+        }
         if let themeId {
             map[spaceId] = themeId
         } else {
@@ -6680,6 +7247,9 @@ final class SpaceManager: ObservableObject {
     /// The overlay saturation the Space's slider should display: the custom
     /// value when one is stored, else the resolved registry theme's value.
     func effectiveOverlaySaturation(forSpaceId spaceId: String, appearance: Appearance) -> CGFloat {
+        if let palette = themePalette(forSpaceId: spaceId) {
+            return CGFloat(OverlaySaturationScale.saturation(forSlider: palette.saturation * 100))
+        }
         if let custom = overlaySaturation(forSpaceId: spaceId, appearance: appearance) {
             return custom
         }
@@ -6698,6 +7268,14 @@ final class SpaceManager: ObservableObject {
     /// resolved theme to live windows.
     func setOverlaySaturation(_ saturation: CGFloat, forSpaceId spaceId: String, appearance: Appearance, expectedStoreIdentifier: UUID? = nil) {
         guard acceptsStoreAction(from: expectedStoreIdentifier) else { return }
+        if let palette = themePalette(forSpaceId: spaceId) {
+            setThemePalette(ThemePalette(
+                hue: palette.hue,
+                saturation: OverlaySaturationScale.sliderValue(forSaturation: Double(saturation)) / 100,
+                brightness: palette.brightness, colorCount: palette.colorCount
+            ), forSpaceId: spaceId, expectedStoreIdentifier: expectedStoreIdentifier)
+            return
+        }
         guard let account = boundAccount else { return }
         let clampedSaturation = min(max(saturation, 0.1), 0.9)
         var map = account.userDefaults.spaceThemeSaturations()
@@ -6743,6 +7321,7 @@ final class SpaceManager: ObservableObject {
 
     /// The position the Pure-theme slider should display.
     func effectivePureThemeSliderValue(forSpaceId spaceId: String, appearance: Appearance) -> Double {
+        if let palette = themePalette(forSpaceId: spaceId) { return (1 - palette.brightness) * 100 }
         if let custom = pureThemeSliderValue(forSpaceId: spaceId) {
             return custom
         }
@@ -6764,6 +7343,11 @@ final class SpaceManager: ObservableObject {
     /// light and dark brightness ranges.
     func setPureThemeSliderValue(_ sliderValue: Double, forSpaceId spaceId: String, expectedStoreIdentifier: UUID? = nil) {
         guard acceptsStoreAction(from: expectedStoreIdentifier) else { return }
+        if let palette = themePalette(forSpaceId: spaceId) {
+            setThemePalette(palette.settingBrightness(1 - sliderValue / 100),
+                            forSpaceId: spaceId, expectedStoreIdentifier: expectedStoreIdentifier)
+            return
+        }
         guard let account = boundAccount else { return }
         let clampedSliderValue = min(max(sliderValue, 0), 100)
         var map = account.userDefaults.spacePureThemeSliderValues()
@@ -6838,8 +7422,9 @@ final class SpaceManager: ObservableObject {
 
     /// Whether the Space has a theme id, saturation, or Pure brightness that
     /// its windows must pin. Legacy opacity records are deliberately ignored
-    /// because ThemeSnapshot V2 fixes overlay alpha at 0.8.
+    /// because ThemeSnapshot V2 uses the standard overlay alpha.
     fileprivate func hasThemeCustomization(forSpaceId spaceId: String) -> Bool {
+        if themePalette(forSpaceId: spaceId) != nil { return true }
         if themeId(forSpaceId: spaceId) != nil {
             return true
         }
@@ -6854,9 +7439,16 @@ final class SpaceManager: ObservableObject {
     /// comes back.
     func clearThemeRecords(forSpaceId spaceId: String) {
         guard let account = boundAccount else { return }
+        var palettes = account.userDefaults.spaceThemePalettes()
+        var changed = false
+        if palettes.removeValue(forKey: spaceId) != nil {
+            changed = account.userDefaults.setSpaceThemePalettes(palettes)
+        }
         var pins = account.userDefaults.spaceThemeIds()
-        var changed = pins.removeValue(forKey: spaceId) != nil
-        if changed { account.userDefaults.setSpaceThemeIds(pins) }
+        if pins.removeValue(forKey: spaceId) != nil {
+            account.userDefaults.setSpaceThemeIds(pins)
+            changed = true
+        }
         var opacities = account.userDefaults.spaceOverlayOpacities()
         if opacities.removeValue(forKey: spaceId) != nil {
             account.userDefaults.setSpaceOverlayOpacities(opacities)
@@ -6998,6 +7590,22 @@ final class SpaceManager: ObservableObject {
     }
 
 
+    /// Whether a rule targeting `spaceId` may route now: the generic
+    /// Incognito and Kiosk targets always can, a user Space only while it is
+    /// live (not deleted or hidden). The routing push and the App rule path
+    /// share this predicate.
+    func isLiveURLRuleTarget(_ spaceId: String) -> Bool {
+        Self.isLiveURLRuleTarget(spaceId, liveTargets: Set(spaces.map(\.spaceId)))
+    }
+
+    private static func isLiveURLRuleTarget(_ spaceId: String,
+                                            liveTargets: Set<String>) -> Bool {
+        isRoutableRuleTarget(spaceId)
+            && (spaceId == incognitoRuleTargetId
+                || spaceId == kioskRuleTargetId
+                || liveTargets.contains(spaceId))
+    }
+
     /// Flattens the rules and the live spaceId→windowId
     /// map and hands both to the Chromium bridge via the new
     /// `setSpaceRoutingTable:spaceWindowMap:` method. Idempotent — Chromium
@@ -7025,12 +7633,13 @@ final class SpaceManager: ObservableObject {
         // is the whole predicate; do NOT consult any sync mapping state here
         // (RR-R9). Excluded rules stay in the store and in the editor: the
         // target coming back re-arms them.
+        // App rules match the sender of an external open, which only Swift
+        // sees (`AppController.application(_:open:)`); Chromium would read
+        // their `app:` host as an exact host. Never push them.
         let liveTargets = Set(spaces.map(\.spaceId))
         let effectiveRules = cachedURLRules.filter {
-            Self.isRoutableRuleTarget($0.spaceId)
-                && ($0.spaceId == Self.incognitoRuleTargetId
-                    || $0.spaceId == Self.kioskRuleTargetId
-                    || liveTargets.contains($0.spaceId))
+            $0.sourceAppBundleId == nil
+                && Self.isLiveURLRuleTarget($0.spaceId, liveTargets: liveTargets)
         }
         var rulesPayload: [[String: Any]] = effectiveRules.map { rule in
             var entry: [String: Any] = [
@@ -7239,8 +7848,28 @@ final class SpaceManager: ObservableObject {
     /// Opens external URLs directly in the Space selected by a URL Rule.
     /// This entry point deliberately bypasses Chromium's external-link Kiosk
     /// preference and exempts each created tab from being routed a second time.
+    /// While windowless it restores the session first
+    /// (`runAfterWindowlessRestore`); with the Kiosk preference off the
+    /// restore has already settled before the link got here.
     @MainActor
     func openExternalURLs(
+        _ urlStrings: [String],
+        inURLRuleTargetSpaceId targetSpaceId: String
+    ) {
+        runAfterWindowlessRestore(
+            entry: "external link for Space \(targetSpaceId)"
+        ) { [weak self] in
+            self?.openExternalURLsPastRestoreGate(
+                urlStrings,
+                inURLRuleTargetSpaceId: targetSpaceId
+            )
+        }
+    }
+
+    /// `openExternalURLs` without its gate, for a caller that has passed the
+    /// gate already.
+    @MainActor
+    func openExternalURLsPastRestoreGate(
         _ urlStrings: [String],
         inURLRuleTargetSpaceId targetSpaceId: String
     ) {
@@ -7431,6 +8060,9 @@ final class SpaceManager: ObservableObject {
             let registeredBase = manager.registeredThemes[resolvedThemeId(forSpaceId: spaceId)]
                 ?? manager.currentTheme
             let base = ThemeColorAdjustment.applyingStandardAlpha(to: registeredBase)
+            if let palette = themePalette(forSpaceId: spaceId) {
+                return palette.applying(to: base)
+            }
             if base.id == Theme.pure.id {
                 return applyingPureThemeBrightness(forSpaceId: spaceId, to: base)
             }
@@ -9142,17 +9774,11 @@ final class SpaceWindowSlot: ObservableObject {
 
         let previousSpaceId = activeSpaceId
 
-        // Agent Space post-hook: leaving an agent-owned Space orders its window
-        // out, and macOS occlusion then marks its WebContents hidden. Have the
-        // manager re-assert agent-mode visibility shortly after the swap so the
-        // agent's renderer keeps painting off screen.
-        if let previousSpaceId, previousSpaceId != spaceId {
-            MainActor.assumeIsolated {
-                AgentSpaceManager.shared.userDidLeave(spaceId: previousSpaceId)
-            }
-        }
-
-        timing.mark("leaving_agent_hook.end")
+        // Leaving an agent Space needs no hook here: the hide that concealing
+        // its page tree hands Chromium is undone on the Chromium side while the
+        // agent drives (PhiWindowState::IsAgentDriven), so the agent's renderer
+        // keeps painting off screen whenever and however the Space leaves the
+        // screen, a switch or not.
         if spaceId != activeSpaceId {
             if animated, let previousSpaceId {
                 preparedStrip = prepareNewIncognitoSelection(fromSpaceId: previousSpaceId,
@@ -9561,8 +10187,12 @@ final class SpaceWindowSlot: ObservableObject {
     /// tab's title on the window. `inPlaceholderMode` is passed in because
     /// `BrowserState` publishes that flag before it changes.
     func retitleShell(presenting controller: SpaceSessionController, inPlaceholderMode: Bool) {
-        shell?.window.title = (inPlaceholderMode ? nil : controller.hostedChromiumWindow?.title)
+        guard let window = shell?.window else { return }
+        let title = (inPlaceholderMode ? nil : controller.hostedChromiumWindow?.title)
             ?? manager?.spaces.first(where: { $0.spaceId == controller.spaceId })?.name ?? "Phi"
+        // Reassigning the same title still invalidates native titlebar layout.
+        guard window.title != title else { return }
+        window.title = title
     }
 
     /// Puts `controller`'s content in the shell and makes it the slot's
@@ -9677,7 +10307,14 @@ final class SpaceWindowSlot: ObservableObject {
                                 onSwapSettled: (() -> Void)?) {
         let timing = timingForSpaceSwitch(spaceId: spaceId)
         timing?.mark("hosted.begin")
-        let transition: HostedTransition? = animated
+        // An empty slot has nothing to slide from, and on the cold path a
+        // transition would settle inside the window's registration, ahead of
+        // the spawn's seed: a caller that puts a page in the window there
+        // (a Kiosk moved into a fresh window) is still unknown to
+        // `BrowserState`, so the seed lands on top and takes focus. Without
+        // a transition the cold path settles after the seed; the live and
+        // dormant paths settle at once from an empty slot either way.
+        let transition: HostedTransition? = animated && visibleController != nil
             ? HostedTransition(direction: direction, onSwapSettled: onSwapSettled)
             : nil
         if windowsBySpaceId[spaceId] == nil, dormantSessionsBySpaceId[spaceId] == nil {
@@ -9690,12 +10327,23 @@ final class SpaceWindowSlot: ObservableObject {
         if let target = windowsBySpaceId[spaceId] {
             timing?.preparation = "live"
             timing?.mark("target.live")
+            var emptyLiveSpaceOpensOmniBox = false
             if target.browserState.tabs.isEmpty,
                !MainActor.assumeIsolated({
                    AgentSpaceManager.shared.isAgentSpace(spaceId)
                }) {
                 timing?.mark("live.initial_tab.begin")
-                target.browserState.createQuickLookupTab()
+                // Same rule as the spawn seed: a new tab is auto-created only
+                // under the New Tab Page "New tab behavior". Under Omnibox the
+                // window stays (or is put) in placeholder mode and the omnibox
+                // opens over it once the Space is presented.
+                if let bridge = ChromiumLauncher.sharedInstance().bridge,
+                   Self.emptyWindowOpensOmniBox(bridge: bridge, windowId: Int64(target.windowId)) {
+                    emptyLiveSpaceOpensOmniBox = true
+                    AppLogInfo("[SpaceWindowSlot] activate(\(spaceId)): empty live Space opens the omnibox, no seed tab")
+                } else {
+                    target.browserState.createQuickLookupTab()
+                }
                 timing?.mark("live.initial_tab.end")
             }
             if visibleController === target {
@@ -9706,6 +10354,12 @@ final class SpaceWindowSlot: ObservableObject {
                 if transition == nil {
                     onSwapSettled?()
                 }
+            }
+            if emptyLiveSpaceOpensOmniBox {
+                // Opens now when the session is already on screen; otherwise
+                // marks the omnibox as owed and `completePresentationInShell`
+                // opens it.
+                target.openOmniBoxForEmptyWindowIfConfigured()
             }
             return
         }
@@ -9946,8 +10600,47 @@ final class SpaceWindowSlot: ObservableObject {
     /// flipped before), and the first tab is seeded afterwards.
     private var hostedSpawnTimings: [String: SpaceSwitchTiming] = [:]
 
+    /// Generation of the latest hosted spawn attempt per Space, bumped when an
+    /// attempt claims `pendingSpawnSpaceIds` in `spawnHostedSession` and when
+    /// `abandonStalledSpawn` gives a stalled attempt up. An attempt whose
+    /// profile load calls back after its generation moved on creates no
+    /// window and leaves the mark alone. A window of an abandoned attempt that
+    /// registers anyway is queued for close by `registerWindow`'s replace path.
+    private var hostedSpawnGenerationBySpaceId: [String: Int] = [:]
+
+    /// The latest hosted spawn attempt's generation for `spaceId` (0 before
+    /// the first attempt).
+    func hostedSpawnGeneration(for spaceId: String) -> Int {
+        hostedSpawnGenerationBySpaceId[spaceId] ?? 0
+    }
+
+    /// Gives up a spawn of `spaceId` that is marked in flight but stalled (its
+    /// profile load never called back or its window never registered): the
+    /// in-flight mark is removed so a new attempt can claim it, and the
+    /// generation moves on so the stalled attempt's late callback creates
+    /// nothing. Only the pairing reset's retry calls it.
+    func abandonStalledSpawn(for spaceId: String) {
+        guard pendingSpawnSpaceIds.remove(spaceId) != nil else { return }
+        hostedSpawnGenerationBySpaceId[spaceId, default: 0] += 1
+        AppLogInfo("[SpaceWindowSlot] abandonStalledSpawn(\(spaceId)): stalled spawn given up; generation \(hostedSpawnGenerationBySpaceId[spaceId] ?? 0)")
+    }
+
     func timingForHostedSpawn(spaceId: String) -> SpaceSwitchTiming? {
         hostedSpawnTimings[spaceId]
+    }
+
+    /// Whether a freshly spawned, empty window should open the omnibox instead
+    /// of being seeded with a new tab: the "New tab behavior" setting is
+    /// Omnibox AND Chromium put the window into placeholder mode (which it
+    /// refuses for windows that cannot hold one, e.g. Incognito — those keep
+    /// the seed tab). A new tab is auto-created only under New Tab Page.
+    static func emptyWindowOpensOmniBox(bridge: PhiChromiumBridgeProtocol, windowId: Int64) -> Bool {
+        guard !PhiPreferences.GeneralSettings.openNewTabPageOnCmdT.loadValue(),
+              bridge.responds(to: #selector(PhiChromiumBridgeProtocol
+                  .enterPlaceholderModeIfEmpty(forWindowId:))) else {
+            return false
+        }
+        return bridge.enterPlaceholderModeIfEmpty(forWindowId: windowId)
     }
 
     private func spawnHostedSession(spaceId: String,
@@ -9974,6 +10667,20 @@ final class SpaceWindowSlot: ObservableObject {
         }
         guard let manager else {
             onActivationFailed?()
+            return
+        }
+        // Both callers spawn only for a Space with no window, a turn before
+        // this runs. A window registered in that turn came from a second
+        // activation whose profile was loaded, so its spawn registered
+        // synchronously; spawning again would replace that window in
+        // `registerWindow` and close it with whatever was just moved into it.
+        if let registered = windowsBySpaceId[spaceId] {
+            AppLogInfo("[SpaceWindowSlot] spawnHostedSession(\(spaceId)): window \(registered.windowId) already registered, not spawning again")
+            if activeSpaceId == spaceId {
+                onSpawned(registered)
+            } else {
+                onActivationFailed?()
+            }
             return
         }
         if pendingSpawnSpaceIds.contains(spaceId) {
@@ -10006,8 +10713,14 @@ final class SpaceWindowSlot: ObservableObject {
         let isIncognitoSpace = SpaceManager.isIncognitoSpaceId(spaceId)
         let previous = visibleController
         let inheritedFrame = resolveInheritedFrame(from: previous)
+        let generation = hostedSpawnGeneration(for: spaceId) + 1
         let spawn: () -> Void = { [weak self, weak previous, weak manager] in
             guard let self else {
+                onActivationFailed?()
+                return
+            }
+            guard self.hostedSpawnGeneration(for: spaceId) == generation else {
+                AppLogInfo("[SpaceWindowSlot] spawnHostedSession(\(spaceId)): attempt \(generation) abandoned; not creating a window")
                 onActivationFailed?()
                 return
             }
@@ -10049,6 +10762,13 @@ final class SpaceWindowSlot: ObservableObject {
                                             customGuid: nil,
                                             focusAfterCreate: index == 0)
                     }
+                } else if SpaceWindowSlot.emptyWindowOpensOmniBox(bridge: bridge,
+                                                                  windowId: windowIdNumber.int64Value) {
+                    // Omnibox "New tab behavior": no seed tab. The window
+                    // starts in placeholder mode and the session opens the
+                    // omnibox once it is presented
+                    // (`openOmniBoxForEmptyWindowIfConfigured`).
+                    AppLogInfo("[SpaceWindowSlot] spawnHostedSession(\(spaceId)): empty Space opens the omnibox, no seed tab")
                 } else {
                     if let state = self.windowsBySpaceId[spaceId]?.browserState,
                        state.isIncognito {
@@ -10071,13 +10791,17 @@ final class SpaceWindowSlot: ObservableObject {
             onSpawned(registered)
         }
         pendingSpawnSpaceIds.insert(spaceId)
+        hostedSpawnGenerationBySpaceId[spaceId] = generation
         timing?.mark("profile.load.begin")
         if isIncognitoSpace {
             bridge.ensureIncognitoSpaceProfileLoaded { [weak self] success in
                 timing?.mark(success ? "profile.load.ready" : "profile.load.failed")
                 guard success else {
                     AppLogWarn("[SpaceWindowSlot] ensureIncognitoSpaceProfileLoaded failed; not spawning")
-                    self?.pendingSpawnSpaceIds.remove(spaceId)
+                    // An abandoned attempt must not clear a newer attempt's mark.
+                    if self?.hostedSpawnGeneration(for: spaceId) == generation {
+                        self?.pendingSpawnSpaceIds.remove(spaceId)
+                    }
                     onActivationFailed?()
                     return
                 }
@@ -10088,7 +10812,9 @@ final class SpaceWindowSlot: ObservableObject {
                 timing?.mark(success ? "profile.load.ready" : "profile.load.failed")
                 guard success else {
                     AppLogWarn("[SpaceWindowSlot] ensureProfileLoaded failed for \(pid); not spawning")
-                    self?.pendingSpawnSpaceIds.remove(spaceId)
+                    if self?.hostedSpawnGeneration(for: spaceId) == generation {
+                        self?.pendingSpawnSpaceIds.remove(spaceId)
+                    }
                     onActivationFailed?()
                     return
                 }
@@ -10758,7 +11484,7 @@ final class SpaceWindowSlot: ObservableObject {
             contentHost.backdrop.animateFill(from: fromFill, duration: duration, startTime: CACurrentMediaTime())
         }
         CATransaction.commit()
-        fallback = Timer.scheduledTimer(withTimeInterval: duration + Self.swapFinalizeFallbackMargin, repeats: false) { _ in
+        fallback = scheduleCommonModesFallbackTimer(after: duration + Self.swapFinalizeFallbackMargin) {
             finalize()
         }
     }
@@ -11086,7 +11812,7 @@ final class SpaceWindowSlot: ObservableObject {
             }
             // Keep the outgoing band intact while a cold session is built.
             // Starting its motion now would slide into an empty destination.
-            fallbackTimer = Timer.scheduledTimer(withTimeInterval: duration + 0.5, repeats: false) { [weak self] _ in
+            fallbackTimer = scheduleCommonModesFallbackTimer(after: duration + 0.5) { [weak self] in
                 self?.settle()
             }
         }
@@ -11094,7 +11820,7 @@ final class SpaceWindowSlot: ObservableObject {
         private func startBandAnimations() {
             startLeavingChrome()
             fallbackTimer?.invalidate()
-            fallbackTimer = Timer.scheduledTimer(withTimeInterval: duration + 0.5, repeats: false) { [weak self] _ in
+            fallbackTimer = scheduleCommonModesFallbackTimer(after: duration + 0.5) { [weak self] in
                 self?.settle()
             }
             leavingBandContainer.layer?.masksToBounds = true
@@ -12462,7 +13188,29 @@ final class SpaceWindowSlot: ObservableObject {
     /// `pendingCloseOnReplacementBySpaceId`): a profile load can make the
     /// spawn complete asynchronously, and closing up front would leave the
     /// slot window-less if the spawn fails.
-    func respawnWindow(forSpaceId spaceId: String) {
+    ///
+    /// With `retryingStalledReplacement`, a call that finds the Space still
+    /// active with no registered window but a pending replacement retries
+    /// it: the earlier activation was dropped or its spawn stalled, and the
+    /// old window is still on screen. It activates again; the pending old
+    /// window stays queued, so the replacement's registration still closes
+    /// it. A spawn still marked in flight (`pendingSpawnSpaceIds`) is given
+    /// up first (`abandonStalledSpawn`): a spawn that never registers leaves
+    /// the mark set, and the only caller (the pairing reset's rebind) retries
+    /// after waiting its whole timeout, when a spawn still marked in flight is
+    /// a stalled one. Its late profile-load callback creates nothing, and a
+    /// window of it that registers anyway is queued for close like any
+    /// replaced window. Without the flag this state is left alone, as the
+    /// profile-change path always did.
+    func respawnWindow(forSpaceId spaceId: String, animated: Bool = true,
+                       retryingStalledReplacement: Bool = false) {
+        if retryingStalledReplacement, activeSpaceId == spaceId, windowsBySpaceId[spaceId] == nil,
+           hasPendingReplacement(for: spaceId) {
+            AppLogInfo("[SpaceWindowSlot] respawnWindow(\(spaceId)): replacement never registered (spawn in flight: \(pendingSpawnSpaceIds.contains(spaceId))); activating again")
+            abandonStalledSpawn(for: spaceId)
+            activate(spaceId: spaceId, animated: animated)
+            return
+        }
         guard activeSpaceId == spaceId, let old = windowsBySpaceId[spaceId] else {
             // The slot moved on (user switched Spaces in the gap) or the
             // window is already gone — just retire any leftover window;
@@ -12476,7 +13224,23 @@ final class SpaceWindowSlot: ObservableObject {
         AppLogInfo("[SpaceWindowSlot] respawnWindow(\(spaceId)): replacing window \(old.windowId) in place")
         evictWindow(for: spaceId, removeSlotIfEmpty: false)
         pendingCloseOnReplacementBySpaceId[spaceId] = old
-        activate(spaceId: spaceId)
+        activate(spaceId: spaceId, animated: animated)
+    }
+
+    /// Whether a respawn's old window for `spaceId` is still waiting for its
+    /// replacement to register (`pendingCloseOnReplacementBySpaceId`).
+    func hasPendingReplacement(for spaceId: String) -> Bool {
+        pendingCloseOnReplacementBySpaceId[spaceId] != nil
+    }
+
+    /// Closes a respawn's old window for `spaceId` that still waits for its
+    /// replacement although this slot has moved to another Space: no
+    /// replacement will register here until the user returns to the Space,
+    /// which then spawns on the Space's current binding.
+    func closePendingReplacement(for spaceId: String) {
+        guard let old = pendingCloseOnReplacementBySpaceId.removeValue(forKey: spaceId) else { return }
+        AppLogInfo("[SpaceWindowSlot] closePendingReplacement(\(spaceId)): closing window \(old.windowId); slot is on \(activeSpaceId ?? "nil")")
+        closeRetiredWindow(old)
     }
 
     /// First Space in STRIP order (`manager.spaces`) that has a live
@@ -13172,7 +13936,7 @@ extension Notification.Name {
 /// - **A flat fill of the sidebar's theme colour shows nothing, measured.**
 ///   The obvious build — one `CALayer` filled with `windowOverlayBackground` —
 ///   was built first. On the default theme it is invisible: Pure's light
-///   overlay is white at the fixed 0.8 overlay alpha over a white
+///   overlay is white at the standard overlay alpha over a white
 ///   `windowBackgroundColor`, so the two tones are one tone. The real sidebar's
 ///   separation (measured on a real reopen: 220 against the content's 253 on
 ///   the same row) comes from its `NSVisualEffectView` material. So the band is
@@ -14030,5 +14794,59 @@ final class ReopenLoadingHandoff {
     private func tearDown() -> Outcome {
         isTornDown = true
         return .tearDown
+    }
+}
+
+/// A one-shot switch-animation fallback timer scheduled in the common run-loop modes. The default
+/// mode alone is starved while a modal session runs (the sync setup window), which would hold a
+/// Space retreat until the modal closes whenever Core Animation drops the slide's completion.
+private func scheduleCommonModesFallbackTimer(after interval: TimeInterval,
+                                              _ fire: @escaping () -> Void) -> Timer {
+    let timer = Timer(timeInterval: interval, repeats: false) { _ in fire() }
+    RunLoop.main.add(timer, forMode: .common)
+    return timer
+}
+
+/// Resumes a pairing-reset continuation exactly once: with the operation's result, or with
+/// `timeoutValue` when `timeout` passes first. When the timeout fires before the operation's
+/// callback claimed the commit (`beginCommit()`), the operation is abandoned: `onAbandon` runs and
+/// every later `beginCommit()` answers false. Main-actor only.
+@MainActor
+final class PairingResetResumeOnce<Value> {
+    private var continuation: CheckedContinuation<Value, Never>?
+    private var timer: Task<Void, Never>?
+    private(set) var isAbandoned = false
+    private var isCommitting = false
+
+    func arm(_ continuation: CheckedContinuation<Value, Never>, timeout: Duration, timeoutValue: Value,
+             onAbandon: @escaping @MainActor () -> Void = {}) {
+        self.continuation = continuation
+        // Strong on purpose: the operation's own callback may never run, and the timeout must
+        // still resume the caller.
+        timer = Task { @MainActor in
+            try? await Task.sleep(for: timeout)
+            guard !Task.isCancelled else { return }
+            if !self.isCommitting {
+                self.isAbandoned = true
+                onAbandon()
+            }
+            self.resume(timeoutValue)
+        }
+    }
+
+    /// The operation's callback claims the commit before changing anything. False once the timeout
+    /// abandoned the operation; a later timeout then only resumes `timeoutValue`.
+    func beginCommit() -> Bool {
+        guard !isAbandoned else { return false }
+        isCommitting = true
+        return true
+    }
+
+    func resume(_ value: Value) {
+        guard let continuation else { return }
+        self.continuation = nil
+        timer?.cancel()
+        timer = nil
+        continuation.resume(returning: value)
     }
 }

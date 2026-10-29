@@ -23,6 +23,9 @@ final class AccountKeyManagerTests: XCTestCase {
             var maxGetDeviceEnvelopeInFlight = 0
             var revokedDeviceKeyIds: [String] = []
             var revokeError: Error?
+            var resetCalls: [(operationId: UUID, deviceKeyId: String)] = []
+            var resetError: Error?
+            var beforeResetOnce: (() async -> Void)?
             var joinRequests: [String: JoinRequestDTO] = [:]
             var pendingSummaries: [JoinRequestSummaryDTO] = []
             var postJoinError: Error?
@@ -130,6 +133,32 @@ final class AccountKeyManagerTests: XCTestCase {
             try locked { s in
                 if let error = s.revokeError { throw error }
                 s.revokedDeviceKeyIds.append(deviceKeyId)
+            }
+        }
+
+        /// Every reset request is recorded, refused or not, so a test can assert the
+        /// operation UUID a retry reused.
+        var resetCalls: [(operationId: UUID, deviceKeyId: String)] { locked { $0.resetCalls } }
+        var resetError: Error? {
+            get { locked { $0.resetError } }
+            set { locked { $0.resetError = newValue } }
+        }
+        /// Runs once inside the next reset request, before it is recorded, so a test can
+        /// hold the request in flight.
+        var beforeResetOnce: (() async -> Void)? {
+            get { locked { $0.beforeResetOnce } }
+            set { locked { $0.beforeResetOnce = newValue } }
+        }
+        func resetAccount(operationId: UUID, deviceKeyId: String) async throws {
+            let hook = locked { s -> (() async -> Void)? in
+                let hook = s.beforeResetOnce
+                s.beforeResetOnce = nil
+                return hook
+            }
+            if let hook { await hook() }
+            try locked { s in
+                s.resetCalls.append((operationId, deviceKeyId))
+                if let error = s.resetError { throw error }
             }
         }
 

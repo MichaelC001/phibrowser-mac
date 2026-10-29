@@ -516,13 +516,14 @@ class SidebarHeaderView: NSView, TitlebarAwareHitTestable {
             return
         }
         // Keep a small gap after the leading chrome group.
-        if !isFloating && abs(sidebarButtonLeftOffset - (x + 10)) < 0.01 { return }
+        if abs(sidebarButtonLeftOffset - (x + 10)) < 0.01 { return }
         AppLogDebug("[SidebarHeader] updateSidebarButtonLeftConstraint update offset=\(x + 10)")
         sidebarButtonLeftOffset = x + 10
         sidebarButtonLeftConstraint?.update(offset: sidebarButtonLeftOffset)
         upgradeButtonLeftConstraint?.update(offset: sidebarButtonLeftOffset)
+        // A titlebar frame notification can arrive during layout. Let AppKit
+        // coalesce this constraint update instead of laying out recursively.
         needsLayout = true
-        layoutSubtreeIfNeeded()
     }
 
     /// Realigns the sidebar button when the zoom button changes frame, which

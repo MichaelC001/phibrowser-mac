@@ -180,10 +180,14 @@ final class OmniBoxContainerViewController: NSViewController {
         }
     }
 
-    /// After the overlay is removed from the window, replay the click through the window so
-    /// AppKit performs normal hit testing and tracking (native buttons, embedded views, etc.).
+    /// After the overlay is removed from the window, replay the click so AppKit performs
+    /// normal hit testing and tracking (native buttons, embedded views, etc.).
     /// `NSControl.performClick` and direct `mouseDown`/`mouseUp` on a pre-hit-tested view are
-    /// unreliable here (e.g. async delivery vs `currentEvent` / control tracking).
+    /// unreliable here (e.g. async delivery vs `currentEvent` / control tracking). The pair is
+    /// posted to the event queue rather than sent straight to the window: a control that
+    /// tracks a press pulls its release from the queue, and only a queued release — with the
+    /// target window's own coordinates — ends that tracking as a click. The physical release
+    /// of the original click goes to the overlay's panel and means nothing to the target.
     private static func forwardFirstClickToUnderlyingContent(
         at locationInWindow: NSPoint,
         in window: NSWindow,
@@ -237,8 +241,8 @@ final class OmniBoxContainerViewController: NSViewController {
             pressure: 0.0
         ) else { return }
 
-        targetWindow.sendEvent(mouseDown)
-        targetWindow.sendEvent(mouseUp)
+        NSApp.postEvent(mouseDown, atStart: false)
+        NSApp.postEvent(mouseUp, atStart: false)
     }
     
     
@@ -266,7 +270,15 @@ final class OmniBoxContainerViewController: NSViewController {
                                         userInfo: ["visible": true, "surface": "omnibox",
                                                    "windowId": browserState?.windowId as Any])
     }
-    
+
+    /// Turns an omnibox that is already up into the centered pane picker of
+    /// `BrowserState.pendingSplitPreview`, as a fresh open would present it.
+    /// Bypasses `hideOmniBox`, which would end the preview.
+    func representAsSplitPanePicker() {
+        omniBoxController?.reset()
+        showOmniBox(fromAddressBar: false)
+    }
+
     func hideOmniBox(fromAddressBar: Bool = false) {
         // At hide START, not completion: the overlay is on its way out, and
         // anything that deferred to it may take key back behind the fade.
@@ -275,6 +287,7 @@ final class OmniBoxContainerViewController: NSViewController {
                                         userInfo: ["visible": false, "surface": "omnibox",
                                                    "windowId": browserState?.windowId as Any])
         focusingTabObserver = nil
+        browserState?.endSplitPreview()
         guard animationOn else {
            hideOmniBoxWithoutAnimation()
             return
@@ -380,13 +393,22 @@ final class OmniBoxContainerViewController: NSViewController {
                 needsShowAnimation = false
                 hasShown = true
             }
+        } else if !view.bounds.isEmpty {
+            // A restored/reconfigured header may not have a usable anchor yet.
+            // Keep the address-bar navigation target, but present a centered box.
+            showFromAddressBar = false
+            self.addressView = nil
+            updateOmniBoxFrame(size)
+            omniBoxView.alphaValue = 1
+            hasShown = true
         }
 
     }
     
     private func calculateFrameRelativeToAddressView(size: NSSize, addressView: NSView) -> NSRect? {
         let parentBounds = view.bounds
-        guard parentBounds.width > 0, parentBounds.height > 0 else { return nil }
+        guard parentBounds.width > 0, parentBounds.height > 0,
+              !addressView.bounds.isEmpty else { return nil }
 
         // The overlay lives in a child panel while the address bar lives in
         // the browser window — `NSView.convert` is only defined within one

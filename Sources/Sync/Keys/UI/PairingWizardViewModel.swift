@@ -6,16 +6,21 @@
 import Combine
 import Foundation
 
-enum PairingWizardStep: Equatable { case profiles, spaces }
+/// The wizard's pages as the step bar names them. `.method` chooses merge or "use your account's data";
+/// `.confirm` is the latter's confirmation page, which its status and error pages keep marked.
+enum PairingWizardStep: Equatable { case method, profiles, spaces, confirm }
 
-/// Two Retry destinations from error. No backToConfirm: resume describes a recomputable destination, either
-/// reload or retained step-2 selections, rather than remembering the source page.
+/// Retry destinations from error. No backToConfirm: resume describes a recomputable destination (reload,
+/// retained step-2 selections, or the replace sequence) rather than remembering the source page.
 enum ErrorResume: Equatable {
     /// At least one of the two loads failed in start(); Retry reruns start().
     case reload
     /// Submission failed on step-2 Space decisions. Retry returns to spaces with both steps' selections
     /// intact; the user presses Finish again, and idempotency makes replay safe.
     case backToSpaces
+    /// "Use your account's data" stopped part-way. Retry runs the replace sequence again; every step of it
+    /// is idempotent, so it picks up where it stopped.
+    case resumeReplace
 }
 
 enum PairingWizardPhase: Equatable {
@@ -26,6 +31,12 @@ enum PairingWizardPhase: Equatable {
     /// selections; spaceSelections remains the sole mutable state, so Back restores nothing. Empty arrays are
     /// invalid because Finish skips confirmation without differences.
     case confirmOverwrite([SpaceOverwriteDiff])
+    /// The sync method step: merge, or replace this Mac's data with the account's.
+    case method(PairingDataSummary)
+    /// Confirmation of "use your account's data", naming the extra local Profiles it deletes.
+    case confirmReplaceLocal(ReplaceLocalReview)
+    /// The replace sequence is running (its own status page, so switches over phases stay exhaustive).
+    case replacingLocal
     case submitting
     case done
     case error(message: String, resume: ErrorResume)
@@ -55,6 +66,9 @@ enum PairingWizardStrings {
     static let applyFailed = NSLocalizedString("sync.pairing.error.applyFailed",
         value: "Couldn’t finish setting up sync. Nothing was lost — check your connection and retry.",
         comment: "Sync setup - error shown when the chosen matches could not be applied")
+    static let replaceLocalFailed = NSLocalizedString("sync.pairing.error.replaceLocalFailed",
+        value: "Couldn’t finish replacing this Mac’s data. Retry picks up where it stopped — nothing else changes until it’s done.",
+        comment: "Sync setup - error shown when removing this Mac's data before downloading the account's data stopped part-way")
 }
 
 /// Result.Failure must conform to Error; String does not. Wrap the message that will be rendered.
@@ -98,6 +112,44 @@ private final class PreviewRace: @unchecked Sendable {
 final class PairingWizardViewModel: ObservableObject {
     @Published private(set) var phase: PairingWizardPhase = .loading
     @Published private(set) var step: PairingWizardStep = .profiles
+    /// Which pages this load shows; nil until both loads succeed. See PairingFlowPlan.
+    @Published private(set) var plan: PairingFlowPlan?
+
+    /// The method the user picked on the sync method step. `.merge` unless the step shows and the user
+    /// picks otherwise, or a replace that already started is resumed (`methodLocked`).
+    @Published var selectedMethod: SyncMethod = .merge
+    /// A replace already started (its resume marker exists): the method cannot change and the confirmation
+    /// page offers no Back.
+    @Published private(set) var methodLocked = false
+    /// The confirmation page's content while "use your account's data" is selected past the method step.
+    @Published private(set) var replaceReview: ReplaceLocalReview?
+
+    /// The pages the step bar lists, in order. Empty while loading and when the wizard completes on its own.
+    var visibleSteps: [PairingWizardStep] { plan?.steps(for: selectedMethod) ?? [] }
+
+    /// Back from the Spaces page exists only when the Profiles page is shown.
+    var canGoBackToProfiles: Bool { plan?.showsProfiles ?? true }
+
+    /// The Spaces page offers Back when there is a page before it: Profiles, or the method step.
+    var canGoBackFromSpaces: Bool { canGoBackToProfiles || plan?.showsMethod == true }
+
+    /// The method step is shown and not locked, so the pages after it can return to it.
+    var canGoBackToMethod: Bool { !methodLocked && plan?.showsMethod == true }
+
+    /// The method step's primary button reads Finish (nothing follows a merge) rather than Continue.
+    var methodStepFinishes: Bool { plan?.finishesAtMethodStep(for: selectedMethod) ?? false }
+
+    /// "Use your account's data" is offered: the local data reset is wired for this load. Without it the
+    /// method step is not shown and its second card is hidden, so Retry can never loop on a reset that
+    /// cannot run.
+    @Published private(set) var replaceAvailable = false
+
+    /// The confirmation page's Replace is available: nothing is running, the reset is wired and the
+    /// account's default Profile can be adopted.
+    var canReplace: Bool {
+        sessionActive && !isApplying && !isPreparing && replaceAvailable
+            && replaceReview.map { !$0.defaultUnavailable } == true
+    }
 
     /// Lift step-1 mutable state from ProfilePairingView into bindings (§5.3), allowing the footer to read
     /// allRowsDecided inputs and decisions after moving the primary button.
@@ -111,6 +163,12 @@ final class PairingWizardViewModel: ObservableObject {
     /// property, never restore cross-object reads (§6.5; PairingWizardView.actions).
     @Published private(set) var isApplying = false
 
+    /// True while the wizard submits a pairing that showed no page at all, so the status page must not say
+    /// "Applying your choices". The title follows the plan: no page shown means "Setting up sync…". Every
+    /// fallback to a page goes through `revealingProfiles()`, so the title cannot drift from what the user
+    /// saw. A Merge chosen on the method step counts as a choice, because that step is part of the plan.
+    var submitsWithoutChoices: Bool { plan?.autoCompletes == true }
+
     /// Created by the wizard (moved from AppModalPairingHost.present); this reference is read-only.
     let keyLayer: KeyLayerViewModel
 
@@ -118,6 +176,11 @@ final class PairingWizardViewModel: ObservableObject {
     private let pairableLocalSpaces: () -> [PhiLocalSpace]
     private let themeDisplayName: (String) -> String?
     private let loadDeadline: Duration
+    /// The local data reset bound to the controller, or nil when unavailable (docs/sync.md, "Replacing this
+    /// Mac's data at pairing"). Read for the inventory on every load and used by `replaceLocal`.
+    private let localReset: @MainActor (SyncKeyController) -> (any LocalPhiResetting)?
+    /// `PairingFlowPlan.methodStepEnabled` unless a test pins it.
+    private let methodStepEnabled: Bool
 
     /// Default shared with init and exactly equal to PhiSyncEngine.previewDeadlineMs; both deadlines must
     /// match (see loadAccountSpaces). Raising only one lets UI abandon a still-paging preview occupying the
@@ -161,8 +224,23 @@ final class PairingWizardViewModel: ObservableObject {
         loadedLocals = []
         loadedRemotes = []
         profileDecisions = []
+        plan = nil
+        resetMethodState()
         spacesInput = SpacePairingModel.Input(locals: [], accountSpaces: [], localProfileNames: [:], accountProfileNames: [:])
         return true
+    }
+
+    /// The sync method step's state, discarded by every load and by leaving. The resume marker is not
+    /// touched: a replace that already started resumes on the next load.
+    private func resetMethodState() {
+        selectedMethod = .merge
+        methodLocked = false
+        replaceReview = nil
+        methodSummary = nil
+        localInventory = nil
+        lockedDeleteProfileIds = []
+        replaceExpectedExtraIds = []
+        replaceAvailable = false
     }
 
     private func sessionIsCurrent(_ controller: SyncKeyController) -> Bool {
@@ -175,6 +253,9 @@ final class PairingWizardViewModel: ObservableObject {
     private var previewDeletedProfileTagHashes: Set<String> = []
     /// Account names from the latest preview's live Profile entities, by uuid (see `liveRemotes`).
     private var previewProfileNames: [String: String] = [:]
+    /// The account's bookmark, pinned tab and URL rule counts from the latest preview; nil when the
+    /// preview could not count a kind.
+    private var previewItemCounts: (bookmarks: Int?, pinnedTabs: Int?, urlRules: Int?) = (nil, nil, nil)
     private var loadedLocals: [PairingLocal] = []
     private var loadedRemotes: [RemoteProfile] = []
     private var profileDecisions: [PairingDecision] = []
@@ -184,19 +265,32 @@ final class PairingWizardViewModel: ObservableObject {
     private var spacesInput = SpacePairingModel.Input(locals: [], accountSpaces: [],
                                                       localProfileNames: [:],
                                                       accountProfileNames: [:])
+    /// The method step's counts, kept for Back.
+    private var methodSummary: PairingDataSummary?
+    /// The local reset's inventory from the latest load; nil when it could not be read.
+    private var localInventory: LocalPhiInventory?
+    /// The Profiles a started replace deletes (from its resume marker), used while `methodLocked`.
+    private var lockedDeleteProfileIds: Set<String> = []
+    /// The extra local Profiles the confirmation page was built from, minus those already registered by a
+    /// replace attempt. The replace preflight compares the account's current extras against this set.
+    private var replaceExpectedExtraIds: Set<String> = []
 
     init(keyLayer: KeyLayerViewModel,
          previewAccountSpaces: @escaping () async -> Result<PhiAccountSpacePreview, PhiSpacePreviewError>,
          pairableLocalSpaces: @escaping () -> [PhiLocalSpace],
          themeDisplayName: @escaping (String) -> String?,
          loadDeadline: Duration = PairingWizardViewModel.defaultLoadDeadline,
-         gate: ProfilePairingGate? = nil) {
+         gate: ProfilePairingGate? = nil,
+         localReset: @escaping @MainActor (SyncKeyController) -> (any LocalPhiResetting)? = { _ in nil },
+         methodStepEnabled: Bool = PairingFlowPlan.methodStepEnabled) {
         self.gate = gate ?? .shared
         self.keyLayer = keyLayer
         self.previewAccountSpaces = previewAccountSpaces
         self.pairableLocalSpaces = pairableLocalSpaces
         self.themeDisplayName = themeDisplayName
         self.loadDeadline = loadDeadline
+        self.localReset = localReset
+        self.methodStepEnabled = methodStepEnabled
     }
 
     // MARK: - Derived models
@@ -234,6 +328,9 @@ final class PairingWizardViewModel: ObservableObject {
         previewSkippedEntityCount = 0
         previewDeletedProfileTagHashes = []
         previewProfileNames = [:]
+        previewItemCounts = (nil, nil, nil)
+        plan = nil
+        resetMethodState()
         loadGeneration += 1
         let generation = loadGeneration
         phase = .loading
@@ -276,6 +373,7 @@ final class PairingWizardViewModel: ObservableObject {
             previewSkippedEntityCount = preview.skippedEntityCount
             previewDeletedProfileTagHashes = preview.deletedProfileTagHashes
             previewProfileNames = preview.profileNames
+            previewItemCounts = (preview.bookmarkCount, preview.pinnedTabCount, preview.urlRuleCount)
             let remotes = liveRemotes(accountRemotes)
             loadedLocals = locals
             loadedRemotes = remotes
@@ -284,16 +382,73 @@ final class PairingWizardViewModel: ObservableObject {
                                           controller: controller)
             seedSpaceSelections(controller: controller)
             step = .profiles
-            phase = .profiles(locals: locals, remotes: remotes)
-            if shouldCompleteNewAccount, previewSkippedEntityCount == 0, remotes.isEmpty, accountSpaces.isEmpty {
-                continueToSpaces()
-                addAllAsNew()
-                await finish(controller: controller)
-            } else if locals.isEmpty, remotes.allSatisfy({ $0.name == nil }) {
-                continueToSpaces()
+            let plan = makePlan(locals: locals, remotes: remotes, accountSpaces: accountSpaces,
+                                controller: controller)
+            self.plan = plan
+            if let marker = controller.pairingLocalResetMarker() {
+                // A replace already started on this device key: resume it rather than offer a merge, which
+                // would union the leftovers of a partial reset into the account.
+                resumeReplace(deleting: marker.deleteProfileIds, controller: controller)
+            } else if plan.showsMethod {
+                // Includes a method-only plan, which does not complete on its own.
+                let summary = methodSummary ?? makeSummary(controller: controller)
+                step = .method
+                phase = .method(summary)
+                logStep()
+            } else if plan.showsProfiles {
+                phase = .profiles(locals: locals, remotes: remotes)
+                logStep()
+            } else {
+                // The hidden Profiles page stands for its automatic decisions: every readable account Profile
+                // nobody claimed is created on this Mac (docs/sync.md, "Pairing page plan").
+                profileRemoteChoices = PairingFlowPlan.autoRemoteChoices(
+                    locals: locals, remotes: remotes, selections: profileSelections)
+                if plan.autoCompletes {
+                    await submitWithoutSpacesPage(controller: controller)
+                } else {
+                    continueToSpaces()      // Logs the step.
+                    if step != .spaces { revealProfilesPage() }
+                }
             }
-            logStep()
         }
+    }
+
+    // MARK: - Sync method step
+
+    /// The method step's primary action. Merge enters the merge pages the plan shows (or finishes when there
+    /// are none); "use your account's data" opens its confirmation page. Nothing is written here.
+    func continueFromMethod(controller: SyncKeyController) async {
+        guard case .method = phase, sessionActive, !isPreparing, !isApplying else { return }
+        switch selectedMethod {
+        case .useAccount:
+            showReplaceReview(controller: controller)
+        case .merge:
+            guard let plan else { return }
+            if plan.showsProfiles {
+                step = .profiles
+                phase = .profiles(locals: loadedLocals, remotes: loadedRemotes)
+                logStep()
+                return
+            }
+            // The hidden Profiles page stands for its automatic decisions (docs/sync.md, "Pairing page plan").
+            profileRemoteChoices = PairingFlowPlan.autoRemoteChoices(
+                locals: loadedLocals, remotes: loadedRemotes, selections: profileSelections)
+            if plan.showsSpaces {
+                continueToSpaces()      // Logs the step.
+                if step != .spaces { revealProfilesPage() }
+            } else {
+                await submitWithoutSpacesPage(controller: controller)
+            }
+        }
+    }
+
+    /// Back to the method step from the first merge page or the confirmation page. Selections made on the
+    /// later pages stay. Refused while locked to a started replace.
+    func backToMethod() {
+        guard !isPreparing, !isApplying, canGoBackToMethod, let methodSummary else { return }
+        step = .method
+        phase = .method(methodSummary)
+        logStep()
     }
 
     // MARK: - Step 1
@@ -301,7 +456,20 @@ final class PairingWizardViewModel: ObservableObject {
     /// Continue only validates, freezes decisions and moves to spaces. No network, mapping writes or
     /// enrollment changes.
     func continueToSpaces() {
-        guard sessionActive, !isPreparing, !isApplying, profileRowsDecided else { return }
+        guard canLeaveProfiles else { return }
+        freezeProfileDecisions()
+        step = .spaces
+        phase = .spaces(spacesInput)
+        logStep()
+    }
+
+    /// Continue's preconditions: decided rows, no submission in progress.
+    private var canLeaveProfiles: Bool {
+        sessionActive && !isPreparing && !isApplying && profileRowsDecided
+    }
+
+    /// Freezes the Profile decisions and recomputes Space suggestions from them, without changing the page.
+    private func freezeProfileDecisions() {
         profileDecisions = profileModel.decisions()
         var profileMappings = mappedProfileUuids
         for decision in profileDecisions {
@@ -311,13 +479,20 @@ final class PairingWizardViewModel: ObservableObject {
         for id in explicitSpaceChoices { base[id] = spaceSelections[id] }
         spaceSelections = SpacePairingModel(input: spacesInput, selections: base)
             .suggestingSameNames(profileMappings: profileMappings, excluding: explicitSpaceChoices)
-        step = .spaces
-        phase = .spaces(spacesInput)
-        logStep()
+    }
+
+    /// The Profiles page's primary action: Continue to the Spaces page, or Finish when that page is hidden.
+    func continueFromProfiles(controller: SyncKeyController) async {
+        guard plan?.showsSpaces == false else { continueToSpaces(); return }
+        guard canLeaveProfiles else { return }
+        await submitWithoutSpacesPage(controller: controller)
     }
 
     func backToProfiles() {
         guard !isPreparing, !isApplying else { return }
+        // A hidden Profiles page is never navigated to: Back from the Spaces page then returns to the method
+        // step when it shows, and is not offered otherwise (canGoBackFromSpaces).
+        guard canGoBackToProfiles else { backToMethod(); return }
         step = .profiles
         phase = .profiles(locals: loadedLocals, remotes: loadedRemotes)
         logStep()
@@ -362,7 +537,9 @@ final class PairingWizardViewModel: ObservableObject {
     /// Confirmation exits. Back restores nothing because spaceSelections was never changed.
     func backFromConfirmation() {
         guard !isPreparing, !isApplying else { return }
-        phase = .spaces(spacesInput)
+        // Never to a hidden Spaces page: the previous shown page instead (Profiles, else the method step).
+        guard plan?.showsSpaces == false else { phase = .spaces(spacesInput); return }
+        backToProfiles()
     }
 
     func applyConfirmedOverwrite(controller: SyncKeyController) async {
@@ -378,7 +555,14 @@ final class PairingWizardViewModel: ObservableObject {
         case .backToSpaces:
             // Do not rerun start here: it clears spacesInput and step-2 assignments. Idempotent mapping writes
             // do not preserve user selections.
+            guard plan?.showsSpaces != false else {
+                // No Spaces page to return to: submit the same decisions again behind the status page.
+                await submitWithoutSpacesPage(controller: controller)
+                return
+            }
             phase = .spaces(spacesInput)
+        case .resumeReplace:
+            await replaceLocal(controller: controller)
         }
     }
 
@@ -411,6 +595,7 @@ final class PairingWizardViewModel: ObservableObject {
                 loadedLocals = locals
                 loadedRemotes = remotes
                 reseedProfileSelections(locals: locals, remotes: remotes)
+                plan = plan?.revealingProfiles()
                 phase = .profiles(locals: locals, remotes: remotes)
             } else {
                 // Candidate reload also failed; Retry must rerun both loads.
@@ -471,6 +656,214 @@ final class PairingWizardViewModel: ObservableObject {
         logApplied(spaceMaps: spaceMaps, spaceMints: spaceMints, ok: true)
     }
 
+    // MARK: - Replacing this Mac's data
+
+    /// "Use your account's data" (docs/sync.md, "Sync method and replacing this Mac's data"), inside the
+    /// same single submission as a merge (R-D6-3): the durable resume marker, then the local reset, then the
+    /// Profile decisions, then enrollment. Nothing is created before the reset: a Profile created while a
+    /// force-quit interrupts the reset could be left half-persisted by Chromium beside its durable mapping
+    /// (acceptance SYNC-P22, 2026-10-20). Every step is idempotent, so Retry reruns the whole sequence and
+    /// picks up where it stopped. Never writes keyLayer.phase (R-D6-11).
+    func replaceLocal(controller: SyncKeyController) async {
+        // 0. Reject reentrant submission (a double-click) the same way applyDecisions does.
+        guard canReplace, sessionIsCurrent(controller) else {
+            AppLogInfo("[phi-sync] pairing wizard: a replace is already running or unavailable; ignoring")
+            return
+        }
+        guard let reset = localReset(controller) else {
+            AppLogWarn("[phi-sync] pairing wizard replace: the local data reset is unavailable")
+            phase = .error(message: PairingWizardStrings.replaceLocalFailed, resume: .resumeReplace)
+            return
+        }
+        let deleting = replaceDeleteProfileIds
+
+        // 1. Account-side preflight, with the progress indicator in the footer.
+        isPreparing = true
+        let valid = await validateReview(for: .useAccount, deleting: deleting, controller: controller)
+        isPreparing = false
+        guard valid, sessionIsCurrent(controller) else { return }
+
+        // 2.
+        step = .confirm
+        phase = .replacingLocal
+        isApplying = true
+        defer { isApplying = false }
+        // Profiles being deleted get no decision; the reset deletes them.
+        let decisions = PairingFlowPlan.replaceDecisions(locals: loadedLocals, remotes: loadedRemotes,
+                                                         deleting: deleting)
+
+        // 3. The durable intent, before anything local is removed or created: from here on, setup resumes
+        // this replace. A failure here has lost nothing.
+        do {
+            try controller.savePairingLocalResetMarker(deleteProfileIds: deleting)
+        } catch {
+            AppLogWarn("[phi-sync] pairing wizard replace: the resume marker was not saved")
+            phase = .error(message: PairingWizardStrings.applyFailed, resume: .resumeReplace)
+            logReplaced(decisions: decisions.count, deleting: deleting.count, stage: "marker", ok: false)
+            return
+        }
+        methodLocked = true
+        lockedDeleteProfileIds = deleting
+
+        // From here on the reset may have run, so "Nothing was lost" no longer holds: every failure below
+        // reports the replace as unfinished, the marker stays, and Retry resumes it.
+        // 4. The local reset.
+        do {
+            try await reset.clear(LocalResetRequest(deleteProfileIds: deleting))
+        } catch {
+            AppLogWarn("[phi-sync] pairing wizard replace: the local reset stopped "
+                       + "(\(PhiSyncLog.describe(error)))")
+            phase = .error(message: PairingWizardStrings.replaceLocalFailed, resume: .resumeReplace)
+            logReplaced(decisions: decisions.count, deleting: deleting.count, stage: "clear", ok: false)
+            return
+        }
+        guard sessionIsCurrent(controller) else { return }
+
+        // 5. No Space mappings: the default Space keeps its constant identity, and it must be the only
+        // pairable Space left. Anything else means the reset did not finish.
+        guard pairableLocalSpaces().allSatisfy({ $0.spaceId == LocalStore.defaultSpaceId }) else {
+            AppLogWarn("[phi-sync] pairing wizard replace: Spaces other than the default remain")
+            phase = .error(message: PairingWizardStrings.replaceLocalFailed, resume: .resumeReplace)
+            logReplaced(decisions: decisions.count, deleting: deleting.count, stage: "verify", ok: false)
+            return
+        }
+
+        // 6. Profile decisions (network): the Default and name-matched Profiles adopt, every readable
+        // unclaimed account Profile is created on this Mac. A rerun skips what an earlier attempt applied.
+        guard await keyLayer.applyPairingDecisions(decisions, controller: controller) else {
+            guard sessionIsCurrent(controller) else { return }
+            phase = .error(message: PairingWizardStrings.replaceLocalFailed, resume: .resumeReplace)
+            logReplaced(decisions: decisions.count, deleting: deleting.count, stage: "profiles", ok: false)
+            return
+        }
+        guard sessionIsCurrent(controller) else { return }
+        // Successful decisions change the next candidate load. Advance the snapshot after the profile
+        // decisions so a Retry preflight does not mistake this progress for an account change.
+        await advanceReplaceSnapshot(deleting: deleting, controller: controller)
+        guard sessionIsCurrent(controller) else { return }
+
+        // 7. Open the gate only once every remaining local Profile is mapped. Completion clears the marker.
+        do {
+            guard sessionIsCurrent(controller), controller.localProfiles().allSatisfy({
+                controller.profileKeys.mappedGlobalUuid(forProfileId: $0.profileId) != nil
+            }) else { throw SyncPairingPersistenceError.writeFailed }
+            try gate.completeEnrollment(verifiedDeviceKeyID: controller.manager.deviceKeyProviderForTesting.deviceKeyId())
+        } catch {
+            phase = .error(message: PairingWizardStrings.replaceLocalFailed, resume: .resumeReplace)
+            logReplaced(decisions: decisions.count, deleting: deleting.count, stage: "enrollment", ok: false)
+            return
+        }
+        await controller.resolveMappings()
+        guard sessionIsCurrent(controller) else { return }
+        phase = .done
+        logReplaced(decisions: decisions.count, deleting: deleting.count, stage: "done", ok: true)
+    }
+
+    /// Advances the replace's review snapshot after its Profile decisions succeed, by reloading the
+    /// candidates as the merge path does: the account side keeps listing readable Profiles (the ones just
+    /// registered included), so predicting the next load is not reliable. A failed reload falls back to the
+    /// prediction and never fails the replace.
+    private func advanceReplaceSnapshot(deleting: Set<String>, controller: SyncKeyController) async {
+        let generation = loadGeneration
+        let freshKeys = KeyLayerViewModel(manager: controller.manager)
+        await freshKeys.startPairing(controller: controller)
+        guard generation == loadGeneration, sessionIsCurrent(controller) else { return }
+        let reloaded: Bool
+        if case .pairingProfiles(let locals, let remotes) = freshKeys.phase {
+            let live = liveRemotes(remotes)
+            loadedLocals = locals
+            loadedRemotes = live
+            replaceExpectedExtraIds = Set(PairingFlowPlan.extraLocals(locals: locals, remotes: live)
+                .map(\.profileId)).subtracting(deleting)
+            reloaded = true
+        } else {
+            loadedLocals.removeAll { !deleting.contains($0.profileId) }
+            loadedRemotes.removeAll { $0.name != nil }
+            replaceExpectedExtraIds = []
+            reloaded = false
+        }
+        AppLogInfo("[phi-sync] pairing wizard replace: snapshot reload ok=\(reloaded)")
+    }
+
+    /// The local Profiles the replace deletes: every extra local Profile the confirmation page lists, or the
+    /// started replace's own list (its resume marker) while locked.
+    private var replaceDeleteProfileIds: Set<String> {
+        if methodLocked { return lockedDeleteProfileIds }
+        return Set(replaceReview?.extraLocals.map(\.profileId) ?? [])
+    }
+
+    /// Lands on the confirmation page of a replace that already started: the method is locked, and the
+    /// Profiles it deletes come from its resume marker.
+    private func resumeReplace(deleting deleteProfileIds: Set<String>, controller: SyncKeyController) {
+        selectedMethod = .useAccount
+        methodLocked = true
+        lockedDeleteProfileIds = deleteProfileIds
+        AppLogInfo("[phi-sync] pairing wizard: resuming a started replace "
+                   + "deleting=\(deleteProfileIds.count)")
+        showReplaceReview(controller: controller)
+    }
+
+    private func showReplaceReview(controller: SyncKeyController) {
+        let review = makeReplaceReview(controller: controller)
+        replaceReview = review
+        // Every extra local Profile, not only the listed ones: on a locked page the list is the marker's.
+        replaceExpectedExtraIds = Set(PairingFlowPlan.extraLocals(locals: loadedLocals, remotes: loadedRemotes)
+            .map(\.profileId))
+        step = .confirm
+        phase = .confirmReplaceLocal(review)
+        logStep()
+    }
+
+    private func makeReplaceReview(controller: SyncKeyController) -> ReplaceLocalReview {
+        let inventory = localInventory
+        let removedSpaces = inventory?.nonDefaultSpaceIds.count
+            ?? spacesInput.locals.filter { $0.spaceId != LocalStore.defaultSpaceId }.count
+        // A started replace deletes exactly its marker's Profiles; a Profile created after the marker was
+        // written is kept and registered, so it is not listed.
+        let deleting = methodLocked
+            ? loadedLocals.filter { !$0.isDefault && lockedDeleteProfileIds.contains($0.profileId) }
+            : PairingFlowPlan.extraLocals(locals: loadedLocals, remotes: loadedRemotes)
+        return ReplaceLocalReview(
+            removed: PairingDataSummary.Counts(profiles: deleting.count, spaces: removedSpaces,
+                                               bookmarks: inventory?.bookmarks,
+                                               pinnedTabs: inventory?.pinnedTabs,
+                                               urlRules: inventory?.urlRules),
+            downloaded: makeSummary(controller: controller).account,
+            extraLocals: deleting,
+            defaultUnavailable: PairingFlowPlan.defaultNeedsChoice(locals: loadedLocals, remotes: loadedRemotes))
+    }
+
+    /// Both sides' counts for the method step. This Mac: every local Profile, every pairable Space (the
+    /// default included) and the reset's inventory. The account: its unclaimed Profiles plus the local ones
+    /// already mapped to it, its Spaces plus the default Space the preview leaves out, and the preview's
+    /// bookmark, pinned tab and URL rule counts (nil, so named only, when the preview could not count them).
+    private func makeSummary(controller: SyncKeyController) -> PairingDataSummary {
+        let localProfileCount = controller.localProfiles().count
+        let inventory = localInventory
+        return PairingDataSummary(
+            local: PairingDataSummary.Counts(profiles: localProfileCount, spaces: spacesInput.locals.count,
+                                             bookmarks: inventory?.bookmarks,
+                                             pinnedTabs: inventory?.pinnedTabs,
+                                             urlRules: inventory?.urlRules),
+            account: PairingDataSummary.Counts(
+                profiles: loadedRemotes.count + max(0, localProfileCount - loadedLocals.count),
+                spaces: spacesInput.accountSpaces.count + 1,
+                bookmarks: previewItemCounts.bookmarks, pinnedTabs: previewItemCounts.pinnedTabs,
+                urlRules: previewItemCounts.urlRules))
+    }
+
+    /// The reset's inventory, or nil when the reset is unavailable or its counts cannot be read.
+    private func readInventory(controller: SyncKeyController) -> LocalPhiInventory? {
+        guard let reset = localReset(controller) else { return nil }
+        do {
+            return try reset.inventory(deleting: [])
+        } catch {
+            AppLogWarn("[phi-sync] pairing wizard: the local inventory could not be read "
+                       + "(\(PhiSyncLog.describe(error)))")
+            return nil
+        }
+    }
+
     /// Return true only when this call mints a new UUID on first addAsNew application; claims and
     /// already-satisfied replays return false, preserving §9.1 metadata counts.
     ///
@@ -525,6 +918,18 @@ final class PairingWizardViewModel: ObservableObject {
     /// A review authorizes only the values the user saw. Changed data returns to fresh
     /// choices before any mapping write, including when the prior page had no differences.
     func validateCurrentReview(controller: SyncKeyController) async -> Bool {
+        await validateReview(for: .merge, controller: controller)
+    }
+
+    /// The submission preflight of either method: both loads again, compared with what the user reviewed.
+    ///
+    /// - Merge compares everything, local Spaces included, and returns to the Profiles page on a change.
+    /// - "Use your account's data" compares only the account side (account Profiles, account Spaces, the
+    ///   preview's skipped count) and the set of extra local Profiles, minus those it deletes. Local Spaces are
+    ///   not compared: they are what it removes, and after a partial reset a Retry would otherwise never match.
+    ///   A change returns to the confirmation page with fresh data.
+    private func validateReview(for method: SyncMethod, deleting deleteProfileIds: Set<String> = [],
+                                controller: SyncKeyController) async -> Bool {
         let generation = loadGeneration
         let freshKeys = KeyLayerViewModel(manager: controller.manager)
         async let profileLoad: Void = freshKeys.startPairing(controller: controller)
@@ -534,13 +939,39 @@ final class PairingWizardViewModel: ObservableObject {
         guard generation == loadGeneration, sessionIsCurrent(controller) else { return false }
         guard case .pairingProfiles(let locals, let reloaded) = freshKeys.phase,
               case .success(let spaces) = result else {
-            phase = .error(message: PairingWizardStrings.previewFailed, resume: .reload)
+            phase = .error(message: PairingWizardStrings.previewFailed,
+                           resume: method == .merge ? .reload : .resumeReplace)
             return false
         }
         previewDeletedProfileTagHashes = spaces.deletedProfileTagHashes
         previewProfileNames = spaces.profileNames
+        // Informational only: deliberately not part of the account-side comparison below.
+        previewItemCounts = (spaces.bookmarkCount, spaces.pinnedTabCount, spaces.urlRuleCount)
         let remotes = liveRemotes(reloaded)
         let fresh = makeSpacesInput(accountSpaces: spaces.spaces, remotes: remotes, controller: controller)
+        if method == .useAccount {
+            let freshExtras = Set(PairingFlowPlan.extraLocals(locals: locals, remotes: remotes).map(\.profileId))
+            guard remotes == loadedRemotes, fresh.accountSpaces == spacesInput.accountSpaces,
+                  spaces.skippedEntityCount == previewSkippedEntityCount,
+                  freshExtras.subtracting(deleteProfileIds)
+                    == replaceExpectedExtraIds.subtracting(deleteProfileIds) else {
+                previewSkippedEntityCount = spaces.skippedEntityCount
+                loadedLocals = locals
+                loadedRemotes = remotes
+                reseedProfileSelections(locals: locals, remotes: remotes)
+                spacesInput = fresh
+                seedSpaceSelections(controller: controller)
+                profileDecisions = []
+                plan = makePlan(locals: locals, remotes: remotes, accountSpaces: spaces.spaces,
+                                controller: controller)
+                // §9.1: booleans only.
+                AppLogInfo("[phi-sync] pairing wizard replace: the account changed; review again "
+                           + "locked=\(methodLocked)")
+                showReplaceReview(controller: controller)
+                return false
+            }
+            return true
+        }
         guard locals == loadedLocals, remotes == loadedRemotes, fresh == spacesInput,
               spaces.skippedEntityCount == previewSkippedEntityCount else {
             previewSkippedEntityCount = spaces.skippedEntityCount
@@ -550,6 +981,9 @@ final class PairingWizardViewModel: ObservableObject {
             spacesInput = fresh
             seedSpaceSelections(controller: controller)
             profileDecisions = []
+            // Changed data is reviewed from the Profiles page, even when the fresh plan would hide it.
+            plan = makePlan(locals: locals, remotes: remotes, accountSpaces: spaces.spaces,
+                            controller: controller).revealingProfiles()
             step = .profiles
             phase = .profiles(locals: locals, remotes: remotes)
             return false
@@ -682,11 +1116,78 @@ final class PairingWizardViewModel: ObservableObject {
         }
     }
 
+    // MARK: - Page plan
+
+    private func makePlan(locals: [PairingLocal], remotes: [RemoteProfile],
+                          accountSpaces: [PhiAccountSpaceSummary],
+                          controller: SyncKeyController) -> PairingFlowPlan {
+        let previewComplete = previewSkippedEntityCount == 0
+        replaceAvailable = localReset(controller) != nil
+        localInventory = readInventory(controller: controller)
+        let facts = PairingFlowFacts(
+            isBrandNewAccount: PairingFlowPlan.isBrandNewAccount(
+                createdByThisFlow: shouldCompleteNewAccount, previewComplete: previewComplete,
+                remotes: remotes, accountSpaces: accountSpaces),
+            previewComplete: previewComplete,
+            // An unreadable inventory is unknown, which counts as data.
+            localHasReplaceableData: PairingFlowPlan.localHasReplaceableData(
+                localProfileIds: controller.localProfiles().map(\.profileId),
+                localSpaces: spacesInput.locals,
+                ownedItemsPresent: PairingFlowPlan.ownedItemsPresent(localInventory)),
+            profilesNeedDecision: PairingFlowPlan.profilesNeedDecision(locals: locals, remotes: remotes),
+            profilesHaveRows: PairingFlowPlan.profilesHaveRows(locals: locals, remotes: remotes),
+            spacesNeedDecision: PairingFlowPlan.spacesNeedDecision(spacesInput))
+        let plan = PairingFlowPlan.make(facts, methodStepEnabled: methodStepEnabled && replaceAvailable)
+        // The method step's counts follow every refresh of the inventory and the loaded candidates.
+        methodSummary = makeSummary(controller: controller)
+        // §9.1: booleans only.
+        AppLogInfo("[phi-sync] pairing wizard plan: method=\(plan.showsMethod) "
+                   + "profiles=\(plan.showsProfiles) spaces=\(plan.showsSpaces) "
+                   + "auto=\(plan.autoCompletes) new_account=\(facts.isBrandNewAccount) "
+                   + "complete=\(previewComplete) inventory=\(localInventory != nil)")
+        return plan
+    }
+
+    /// Submits with the Spaces page hidden: the plan auto-completes, or the Profiles page was the last page.
+    /// The status page shows from the start, including during the preflight in applyDecisions, which runs
+    /// unchanged: every submission re-reads the account before writing anything.
+    private func submitWithoutSpacesPage(controller: SyncKeyController) async {
+        if step != .spaces {
+            // Freezes the Profile decisions (auto or chosen) the same way Continue does, without publishing a
+            // Spaces page that is not part of the plan.
+            guard canLeaveProfiles else { revealProfilesPage(); return }
+            freezeProfileDecisions()
+            step = .spaces
+        }
+        // Brand-new account only: its hidden Space rows are added as new. Otherwise there are no rows.
+        addAllAsNew()
+        phase = .submitting
+        logStep()
+        await finish(controller: controller)
+        // finish and its preflight return without changing the page only when they refuse: a superseded or
+        // busy session. Never leave a status page up with nothing running behind it.
+        guard phase == .submitting, !isApplying, !isPreparing else { return }
+        // §9.1: booleans only.
+        AppLogInfo("[phi-sync] pairing wizard: finish refused, revealing profiles "
+                   + "current=\(sessionIsCurrent(controller))")
+        revealProfilesPage()
+    }
+
+    /// Fallback to the Profiles page when a hidden page's automatic decisions could not be used.
+    private func revealProfilesPage() {
+        plan = plan?.revealingProfiles()
+        step = .profiles
+        phase = .profiles(locals: loadedLocals, remotes: loadedRemotes)
+        logStep()
+    }
+
     // MARK: - §9.1 logs (counts and booleans only)
 
     private func logStep() {
         let undecided: Int
         switch step {
+        case .method, .confirm:
+            undecided = 0
         case .profiles:
             let live = profileModel
             undecided = loadedRemotes.filter {
@@ -696,9 +1197,23 @@ final class PairingWizardViewModel: ObservableObject {
         case .spaces:
             undecided = spaceModel.rows.count - spaceModel.decisions().count
         }
-        AppLogInfo("[phi-sync] pairing wizard: step=\(step == .profiles ? "profiles" : "spaces") "
+        AppLogInfo("[phi-sync] pairing wizard: step=\(Self.logName(for: step)) "
                    + "locals=\(spacesInput.locals.count) "
                    + "account_spaces=\(spacesInput.accountSpaces.count) undecided=\(undecided)")
+    }
+
+    private static func logName(for step: PairingWizardStep) -> String {
+        switch step {
+        case .method: return "method"
+        case .profiles: return "profiles"
+        case .spaces: return "spaces"
+        case .confirm: return "confirm"
+        }
+    }
+
+    private func logReplaced(decisions: Int, deleting: Int, stage: String, ok: Bool) {
+        AppLogInfo("[phi-sync] pairing wizard replaced: profile_decisions=\(decisions) "
+                   + "profiles_deleted=\(deleting) stage=\(stage) ok=\(ok)")
     }
 
     private func logApplied(spaceMaps: Int, spaceMints: Int, ok: Bool) {

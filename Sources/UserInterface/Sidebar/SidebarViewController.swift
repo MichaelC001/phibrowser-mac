@@ -43,7 +43,7 @@ final class SpacesStripHostingView: ThemedHostingView {
     /// and SwiftUI declined it. `SpacesStripReorderSurface` owns the reorder
     /// drag for that reason, and carries its own veto for the pip slots it
     /// claims. The hit view's answer is the one that decides: every ancestor
-    /// here — `ColoredVisualEffectView`, `_NSSplitViewItemViewWrapper`,
+    /// here — `BackdropContainerView`, `_NSSplitViewItemViewWrapper`,
     /// `NSThemeFrame` — returns true, and the window still stayed put.
     override var mouseDownCanMoveWindow: Bool { false }
 
@@ -489,8 +489,10 @@ class SidebarViewController: NSViewController, BrowserThemeContextProviding {
                 manager: NotificationCardManager.shared,
                 layoutMode: .sidebar,
                 presentation: messageCardPresentation,
-                onRun: { card in
-                    NotificationCardManager.shared.decide(card: card, decision: .accept)
+                onRun: { [weak self] card in
+                    NotificationCardManager.shared.accept(card) { conversationId in
+                        await self?.state.showCardConversationInAIChatPanel(conversationId) ?? false
+                    }
                 },
                 onDismiss: { _ in
                     NotificationCardManager.shared.hideCard()
@@ -553,7 +555,7 @@ class SidebarViewController: NSViewController, BrowserThemeContextProviding {
     // MARK: - Lifecycle
     
     override func loadView() {
-        let view = SidebarFileDropView()
+        let view = SidebarFileDropView(paintsBackdrop: paintsOwnBackdrop)
         view.onOpenFiles = { [weak self] urls in
             guard let self else { return false }
             for (index, url) in urls.enumerated() {
@@ -561,8 +563,6 @@ class SidebarViewController: NSViewController, BrowserThemeContextProviding {
             }
             return true
         }
-        view.themedBackgroundColor = .windowOverlayBackground
-        view.material = .fullScreenUI
         let trackingArea = NSTrackingArea(
             rect: .zero,
             options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
@@ -747,8 +747,9 @@ class SidebarViewController: NSViewController, BrowserThemeContextProviding {
         // In top-navigation layouts, 42.5pt leaves the Space strip exactly
         // 8pt above the next sidebar band once the 5pt header spacer below is
         // included. The half point follows the legacy header controls' 15.5pt
-        // top alignment.
-        let base: CGFloat = addressInSidebar ? 80 : 42.5
+        // top alignment. With the address bar in the sidebar, 79pt leaves 3pt
+        // under it, so the band below starts 8pt under the bar.
+        let base: CGFloat = addressInSidebar ? 79 : 42.5
         let spacesBandHeight = SpacesStripView.sidebarHeight + 8
         let headerHeight = base + (spacesEnabled ? spacesBandHeight : 0)
         headerHeightConstraint?.update(offset: headerHeight)
@@ -787,9 +788,9 @@ class SidebarViewController: NSViewController, BrowserThemeContextProviding {
     
     private func setupStackView() {
         // Added before mainStackView so it stays behind every stack item.
-        // The ColoredVisualEffectView's own `colorView` is already pinned
-        // at the back by NSVisualEffectView.commonInit, so the tint sits
-        // between the theme fill (below) and the content stack (above).
+        // The root's backdrop always sits at the very back
+        // (`BackdropContainerView`), so the tint sits between the theme
+        // fill (below) and the content stack (above).
         view.addSubview(spaceTintBackgroundView)
         spaceTintBackgroundView.snp.makeConstraints { make in
             make.edges.equalToSuperview()
@@ -989,14 +990,19 @@ class SidebarViewController: NSViewController, BrowserThemeContextProviding {
             }
             .store(in: &cancellables)
         
-        NotificationCardManager.shared.$currentIndex
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                if NotificationCardManager.shared.currentCard != nil {
-                    self?.updateMessageCardHeight()
-                }
+        // Re-measure whenever the shown card can change size: paging, a new card,
+        // or a card replaced in place (a working card's progress or its result).
+        Publishers.Merge(
+            NotificationCardManager.shared.$currentIndex.map { _ in () },
+            NotificationCardManager.shared.$allCards.map { _ in () }
+        )
+        .receive(on: DispatchQueue.main)
+        .sink { [weak self] in
+            if NotificationCardManager.shared.currentCard != nil {
+                self?.updateMessageCardHeight()
             }
-            .store(in: &cancellables)
+        }
+        .store(in: &cancellables)
 
         bindSpaceTintToSlot()
 
@@ -1512,7 +1518,8 @@ class SidebarViewController: NSViewController, BrowserThemeContextProviding {
             manager: .shared,
             profileManager: .shared,
             initialProfileId: initialProfileId,
-            initialThemeId: state.themeContext.currentTheme.id
+            initialThemeId: state.themeContext.currentTheme.id,
+            afterSpaceId: state.spaceId
         ) { [weak self] restorePreviewTheme in
             self?.dismissCreateSpaceOverlay(
                 restorePreviewTheme: restorePreviewTheme
@@ -1548,6 +1555,8 @@ class SidebarViewController: NSViewController, BrowserThemeContextProviding {
         // in recordings. Within-window frosts the sidebar content this sheet
         // covers and renders entirely in-process, so captures match the screen.
         let backdrop = ColoredVisualEffectView()
+        backdrop.usesThemePalette = true
+        backdrop.paletteCoordinateView = view
         backdrop.themedBackgroundColor = .windowOverlayBackground
         backdrop.material = .fullScreenUI
         backdrop.blendingMode = .withinWindow
@@ -1573,6 +1582,8 @@ class SidebarViewController: NSViewController, BrowserThemeContextProviding {
         var headerBackdrop: ColoredVisualEffectView?
         if anchorsBelowStrip, let stripRow {
             let piece = ColoredVisualEffectView()
+            piece.usesThemePalette = true
+            piece.paletteCoordinateView = view
             piece.themedBackgroundColor = .windowOverlayBackground
             piece.material = .fullScreenUI
             piece.blendingMode = .withinWindow
@@ -1870,7 +1881,7 @@ extension SidebarViewController: SpaceSwitchBandSurface {
     }
 
     func setSpaceSwitchBackdropHidden(_ hidden: Bool) {
-        (view as? ColoredVisualEffectView)?.suppressesBackdrop = hidden || !paintsOwnBackdrop
+        (view as? BackdropContainerView)?.paintsBackdrop = !hidden && paintsOwnBackdrop
         spaceTintBackgroundView.isHidden = hidden || !paintsOwnBackdrop
     }
 }

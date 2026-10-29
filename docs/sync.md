@@ -26,14 +26,18 @@ client resolves it for each request instead of retaining the pre-join ID.
 Invalidation fails closed in memory even if its persistence fails.
 
 First-device setup states that the recovery code is shown only once. **I've saved
-it** discards the display and opens an empty confirmation page. The existing
+it** opens an empty confirmation page. While that window stays open, the page's
+**Back** button returns to the display of the same code, which the setup model
+holds in memory until verification; nothing is regenerated and the pending flag
+stays set. The existing
 recovery-code decoder and account-envelope decryption verify the supplied code;
 only successful verification and durable clearing of the pending flag permit
 Profile/Space matching. A valid checksum alone is insufficient. No recovery code
 or derived secret is persisted. Wrong input and transport/storage failures retain
 the confirmation page and keep sync off. Re-entry can be deferred by closing the
 window; reopening or restarting requires confirmation even when device-key unlock
-succeeds. The one-time display itself still cannot be dismissed. Full pairing
+succeeds, and offers no Back: the code left memory with the window. The one-time
+display itself still cannot be dismissed. Full pairing
 remains a separate prerequisite for native writes and Chromium ready-key exposure.
 If bootstrap throws before returning a code, the pending flag is cleared: a lost
 account-creation response must not claim that the user saved an unseen code.
@@ -178,6 +182,27 @@ Ordinary previews never
 repair persisted sync metadata or depend on background sync to repair it while
 enrollment is incomplete.
 
+The same scan (`previewAccountSpaces()`) also counts the account's live
+bookmarks, pinned tabs and URL rules for the sync method step
+(`PhiAccountSpacePreview.bookmarkCount`, `pinnedTabCount`, `urlRuleCount`), with
+no extra request. Each client tag hash counts once, at its highest version, since
+a full scan may deliver an entity more than once. A tombstone at that version
+removes it, and a bookmark folder never counts. The counts are what will land on
+this Mac, so items whose owner Space or Profile is tombstoned or refused are left
+out (older clients left a deleted Space's items live, R-M3-4a-78):
+- A bookmark's Space is its root ancestor's `space_uuid`. A deleted parent folder
+  lifts the child to its own Space's root; a parent the account does not hold
+  parks it, so it does not count.
+- A pin's owner is its Space or Profile; an App-scope pin always counts.
+- A URL rule counts only when its target Space is not deleted or refused (a rule
+  with an empty or dead target stays parked); reserved targets count.
+The filter runs after the scan, because an owner's tombstone may arrive on a
+later page than its items. Other landing validation is not applied. When the
+latest version of any entity cannot be decrypted, all three counts are nil: its
+kind is unknown, so any of them could be short, and the wizard names those kinds
+instead of showing a wrong number. An entity of a kind newer than this build is
+none of the three and does not clear them.
+
 Native `not_my_birthday` handling preserves cursors, baselines, mappings, and
 local browsing data. It records `requiresReconfiguration` in the account's
 `sync/marker.json` and stops native data rounds, including after restart. Retry,
@@ -185,7 +210,7 @@ reopening settings, and Finish later cannot reset this state. Settings → Sync
 shows **Set up sync again**, with confirmation before cleanup. Chromium's
 existing protocol-error recovery is unchanged.
 
-Explicit reconfiguration and successful **Remove this device from sync** share
+Explicit reconfiguration and successful **Remove this Mac from sync** share
 one native cleanup path in `SyncKeyController`. Remote self-revocation succeeds
 before removal touches local state; rejection leaves local state intact. Cleanup
 retires the engine, journals its intent, durably withdraws enrollment, discards
@@ -200,9 +225,82 @@ removal. If writing the journal itself fails, the coordinator retains the pendin
 intent for the current process and keeps the native engine paused. Account switches fence post-await global writes and preserve pending
 account journals. Setup re-fetches server state and all matching must complete
 before sync becomes eligible again.
+**Reset sync** is the removal's branch for the account's last active device
+(design: sync-service `docs/design/2026-10-26-reset-sync.md`). Settings → Sync
+shows one row in its **Removal** section. When the pane's device list shows this
+Mac as the account's only active device, the row is **Reset sync** with a
+destructive **Reset…** button; otherwise it is **Remove this Mac from sync**.
+The list is only a hint: the server's check at reset time is the authority. If
+the list was stale and the removal answers 409 `last_device`, the same row flips
+to **Reset sync**. The setup window has no device list and keeps the
+remove-first flow: after a 409 `last_device` it disables the removal and offers
+**Remove this device and delete all sync data**. Both ask again in a
+destructive `NSAlert` before anything is sent.
+`SyncKeyController.resetSyncAndRemoveThisDevice()` then follows the same
+server-first rule as the removal:
+
+1. It writes a client-generated operation UUID to the marker journal as
+   `resetOperationId`, reusing one already there, before the request.
+2. It calls `PUT /keys/v1/reset-operations/{operation}` with this device's key
+   id. The server deletes every sync row of the account; it keeps no receipt
+   and answers a retry from the account's state, so a retry after a lost
+   success answers `reset` again.
+3. On `reset` it runs the shared cleanup above with device removal (rotation
+   included); the marker deletion at its end drops the UUID. The device then
+   unlocks to the first-device setup, because `GET /keys/v1/account` answers
+   404. The cleanup is the self-revoke one, unchanged. Chromium's per-Profile
+   sync metadata is kept inert, as after a self-revoke: the key withdrawal
+   stops each Profile's engine, and Chromium clears that metadata itself at the
+   next setup, because the Profiles are registered under new UUIDs and the
+   namespace change restarts the engine from scratch.
+4. 409 `not_last_device` and 404 `device_not_found` deleted nothing. The
+   journal forgets the UUID, local state stays and the ordinary removal is
+   enabled again. The UI shows fixed copy: for `not_last_device`, that another
+   device joined and nothing was deleted; for `device_not_found`, the "removal
+   unavailable" copy. Settings → Sync then reloads its device list without
+   stopping the poll, so the row flips back to **Remove this Mac from sync**.
+5. Any other failure keeps the UUID for the next attempt; the UI copy is fixed
+   and details go only to the log.
+
+A journaled operation is an unfinished reconfiguration: from the moment
+`resetOperationId` is written, `SyncKeyController.requiresReconfiguration` is
+true, also while the request is in flight. A reset whose answer this Mac never
+recorded (lost response, crash before the cleanup journal) therefore needs no
+engine round to surface. After a relaunch the envelope answers 404, so there is
+no account key and no round, but Settings → Sync shows **Set up sync again**
+instead of the first-device setup, the setup window refuses to start
+(`returnToSettings`), and an account switch away and back keeps the journal.
+Its confirmation names the deletion (`sync.reconfigure.resumeResetBody`)
+instead of saying the synced data is kept. Without this rule, a same-account
+first-device setup followed by the stale marker's `not_my_birthday` would
+replay the journaled UUID against the freshly created account. In-process, the
+same reset can also surface as `not_my_birthday` on the next round, because it
+deleted the account's store birthday. Either way, **Set up sync again**
+resumes it: `reconfigureSync()` needs only the token and the device key id. It
+retries the journaled operation with the same UUID and, on `reset`, runs the
+cleanup with device removal; a refusal turns it back into an ordinary
+reconfiguration, and any other failure leaves sync paused for another attempt. The client maps a refusal only from its body `code`: the
+legacy revoke's 409 is `lastActiveDevice` only for `last_device`, and any other
+409 is an ordinary failure.
+
 Login initialization requested during cleanup is deferred until cleanup exits,
 then resolves the current account again. Multiple requests coalesce; sign-out
 does not resurrect a previous account, and removal alone does not request startup.
+
+Account deletion (Settings → Account, `AccountDeletionLocalDataRemoval`) is not
+a sync cleanup path. Its finalize deletes the account-scoped device key item
+(`device-x25519-v1:<sub>`) of the account that booked the deletion and makes no
+revoke or reset call. The booking's subject is captured before the request is
+sent and re-checked when the response arrives, before a renewed token is
+reused, before the code is submitted and before the finalize. Under a different
+sign-in each of these refuses before acting and drops the booking; a finalize
+refusal runs no cleanup. Reopening the flow under another account drops the
+stale booking and starts a fresh request. The account's server rows are removed by the account-deletion
+orchestrator through sync-service's account purge, not by the Mac. The legacy
+shared item `device-x25519-v1` stays untouched. A later registration with the
+same Auth0 `sub` is therefore a fresh first-device enrollment. Unlike self-revoke,
+which must rotate the key, deletion may leave the item absent because the server
+no longer holds a device row for it.
 
 Withdrawing eligibility synchronously blocks
 in-flight native writes, stops the invalidation schedule, and notifies Chromium.
@@ -323,6 +421,244 @@ runs; a round admitted before the episode finishes under the partial behaviour
 existing row from being created again, and a deletion of such a Space arriving
 from the account is applied); Chromium keeps syncing the mapped Profiles for the
 first 15 seconds; the reason is per pass, not per Profile.
+
+### Pairing page plan
+
+After both loads succeed, the wizard decides once which pages to show
+(`PairingFlowPlan`, a pure function of the loaded candidates and the preview).
+A page shows only when it asks the user something:
+
+| Page | Shown when |
+| --- | --- |
+| Sync method | The account is not brand new and this Mac has replaceable data (see "Sync method and replacing this Mac's data") |
+| Profiles | A non-default local Profile is unmapped; or the local Default is unmapped, has no readable account default to be fixed to, and any unclaimed account Profile exists (readable or not: an unreadable one may be the account default, so the Default is never registered without the page); or a readable unclaimed account Profile cannot be created on this Mac. With an incomplete preview, also whenever the page would list anything |
+| Spaces | A non-default pairable local Space exists. With an incomplete preview, also when the Profiles page would list nothing |
+
+- A brand-new account (created by this flow, a complete preview, no account
+  Profiles and no account Spaces) shows no page: every local Profile registers
+  and every local Space is added as new.
+- When no page shows, the wizard completes on its own. It shows the submitting
+  status page from the start, titled "Setting up sync…" because the user made no
+  choices (the view model derives this from the plan: `autoCompletes`, so any
+  fallback that reveals a page switches back to "Applying your choices…"), and
+  the submission preflight still re-reads the account; there is no exception to "every submission preflight fetches new
+  candidates". An incomplete preview never completes on its own and never
+  decides Profiles automatically.
+- When the Profiles page is hidden, its decisions are automatic: the local
+  Default takes its fixed account default or registers, and every readable
+  unclaimed account Profile is created on this Mac (never the authoritative
+  account default). A Mac with only default data that joins an account with
+  data therefore sees no page, and the account's Profiles and Spaces appear.
+- When the Spaces page is hidden, the Profiles page's primary button is Finish,
+  and Retry after a failed Space step submits again behind the status page.
+- Back from the Spaces page appears only when the Profiles page is shown. A
+  preflight that finds changed candidates, or a failed Profile step, always
+  returns to the Profiles page and adds it to the plan. So does a submission
+  behind the status page that is refused without starting (a superseded or busy
+  session): the status page never stays up with nothing running behind it.
+- The step bar lists only the pages the plan shows for the selected method,
+  numbered in order. It keeps its height while loading and when no page shows.
+- The Profiles and Spaces rules above are the merge path. When the sync method
+  step shows, it comes first, and the wizard does not complete on its own even if
+  merging would ask nothing more.
+
+### Sync method and replacing this Mac's data
+
+The sync method step asks how this Mac joins an account that already holds data:
+**Merge this Mac with your account** (the default, marked Recommended), or **Use
+your account's data**, which replaces this Mac's Spaces, bookmarks, pinned tabs,
+URL rules and synced settings with the account's. There is no option that
+overwrites the account with this Mac's data.
+
+**When it shows.** The local data reset is available (without it the option is
+never offered, so a Retry can never loop on a reset that cannot run), the account
+is not brand new, and this Mac has replaceable data: a non-default user-assignable Profile, a non-default pairable Space, or any
+bookmark (other than the empty per-Space roots), bookmark folder, pinned tab or
+URL rule. The counts come from the reset's own inventory
+(`PhiLocalDataReset.inventory()`, reached through the setup window's host), so
+they match exactly what "use your account's data" removes. When the inventory
+cannot be read, emptiness cannot be proven and the step shows. The agent fallback
+Profile, agent Spaces and Incognito Spaces never count. A Mac with only default
+data never sees the step; the merge path then decides everything automatically.
+
+**The page.** A comparison card shows one line per side, for example "This Mac ·
+2 profiles · 4 Spaces · 130 bookmarks · 8 pinned tabs · 3 URL rules" and "Your
+account · 1 profile · 6 Spaces · 120 bookmarks · 8 pinned tabs · 3 URL rules". This Mac's
+Spaces include the default Space; the account's Profiles are its unclaimed
+Profiles plus this Mac's Profiles already mapped to it, and its Spaces include
+the default Space the preview leaves out. The account's bookmarks, pinned tabs and
+URL rules are the pairing preview's counts (see "Enrollment and setup"); a kind the
+preview could not count is listed by name ("Bookmarks"), never as zero. The
+confirmation's "Downloaded from your account" card uses the same counts. Below are the two
+radio cards; the arrow keys move the selection, and Return is the footer's
+primary button.
+
+- With **Merge**, the primary button is Continue to the Profiles or Spaces page
+  the plan shows, or Finish when neither shows (the automatic merge decisions
+  are then applied behind the status page). Back from the first merge page
+  returns to the method step.
+- With **Use your account's data**, the step bar reads "1 Sync method · 2
+  Confirm" and Continue opens the confirmation page. Nothing is written by the
+  method step or by Continue.
+
+**The confirmation page** lists what is removed from this Mac and what is
+downloaded from the account. The "Removed from this Mac" card names the
+Profiles the account has none for (non-default and not matched by name) in one
+row, "1 profile: Scratch" or "2 profiles: Scratch, Work2", captioned "Its (Their)
+history, extensions and site data on this Mac are deleted too.", then non-default
+Spaces (whose open tabs close), bookmarks, pinned tabs, URL rules and synced
+settings; rows with nothing to remove are hidden. There is no per-Profile
+choice: "use your account's data" always deletes every such extra Profile with
+its Chromium data, and whoever wants to keep a local Profile chooses Merge
+(decided 2026-10-20, superseding the earlier keep-or-delete picker). A
+name-matched Profile adopts its account Profile and is never deleted; the
+Default is never deleted. The
+footer has "Replace this Mac's data" (bordered, no keyboard shortcut) left of
+Back, which takes Return and is disabled while the preflight runs. If the local
+Default is unmapped and the account has Profiles but no readable default one,
+Replace is disabled with a note pointing to Merge or Finish later: the Default
+could otherwise register a second account default.
+
+**Replace sequence** (`PairingWizardViewModel.replaceLocal`), inside the same
+single submission as a merge:
+
+| # | Step | On failure |
+| --- | --- | --- |
+| 1 | Preflight: reload the account's Profiles and Spaces and compare only the account side (account Profiles, account Spaces, the preview's skipped count) and the set of extra local Profiles, minus those being deleted. Local Spaces are not compared: they are what the replace removes, and a Retry after a partial reset would otherwise never match. The footer shows a progress indicator | A change returns to the confirmation page with fresh data, including a fresh list of the Profiles to delete; nothing is written. A failed load shows an error whose Retry runs the sequence again |
+| 2 | The status page "Replacing this Mac's data…" shows; closing, Escape, Finish later and Remove are refused while it runs | — |
+| 3 | The resume marker `sync.pairingLocalReset` is written with the Profiles to delete. Nothing local has been removed or created yet | Error "Couldn't finish setting up sync. Nothing was lost…", Retry |
+| 4 | The local reset (`PhiLocalDataReset.clear`, see the next section) | Error "Couldn't finish replacing this Mac's data. Retry picks up where it stopped…", Retry |
+| 5 | The default Space must be the only pairable Space left; no Space mapping is written (the default Space keeps its constant identity) | Treated as an unfinished reset: the same error, Retry |
+| 6 | Profile decisions: the Default and name-matched Profiles adopt, every readable unclaimed account Profile is created on this Mac; the extra Profiles being deleted get no decision (on a resumed replace, an extra Profile created after the marker was written registers instead, see below). A rerun skips what an earlier attempt applied: an adopted or created Profile is mapped, so the candidate load no longer offers it, and a decision already applied is treated as done. After the decisions succeed, the reviewed snapshot is advanced by reloading the candidates (a failed reload falls back to predicting them), so a Retry preflight does not read this progress as an account change | "Couldn't finish replacing this Mac's data…"; the marker stays; Retry |
+| 7 | Enrollment completes once every remaining local Profile is mapped (a Profile whose deletion failed blocks it), which clears the marker; then the mappings resolve and the window closes | "Couldn't finish replacing this Mac's data…"; the marker stays; Retry |
+
+"Nothing was lost" applies only to the preflight and a failed marker save. From
+step 4 on, local data may already be gone, so every failure reports the replace as
+unfinished. The Profile decisions run after the reset, never before it (decided
+2026-10-20 after acceptance SYNC-P22): a Profile created just before a force-quit
+can be left half-persisted by Chromium (its directory without `Preferences`, absent
+from `Local State`) while its Phi row and mapping are durable, and the reset is the
+long, interruptible part of the replace. The extra Profiles are deleted before the
+account's Profiles are created, so a created Profile never collides with one being
+deleted.
+
+Every step is idempotent, so Retry reruns the whole sequence and picks up where
+it stopped. The account's data lands with the first replay after the gate opens
+(see "Pairing and initial catch-up"); the Sync pane shows the initial sync in
+progress, which can take a few minutes for a large account.
+
+**Leaving and resuming.** Finish later (or Escape, or closing the window) on the
+method step or the confirmation discards the selected method; the
+next setup starts at the method step with Merge selected. Leaving from an error
+page after step 3 is allowed (an offline Mac must not be trapped) and keeps the
+marker. While a marker exists for this device key, every later setup opens
+directly on the confirmation page, locked to "use your account's data" with no
+Back; Replace resumes the sequence. A resume after a crash between the reset and
+enrollment finds no extra Space left and the account's Profiles possibly partly
+adopted or created; its preflight compares against a fresh load taken by that
+setup, and its Profile decisions cover only what is still unmapped. The marker's Profile list is authoritative:
+the locked page names exactly the marker's Profiles still on this Mac, and only
+they are deleted. A Profile created on this Mac after the marker was written is
+not listed and not deleted; it is registered with the account. Without
+the marker, a restart after a partial reset would offer a merge that unions the
+leftovers into the account. **Remove this device from sync** stays available on
+the error page; after a partial reset it leaves a partly emptied, unpaired Mac,
+which is the user's explicit choice, and the confirmed cleanup clears the marker.
+
+The re-drive that rescues a stuck load never restarts the method step, the
+confirmation, the replace status page or its error page.
+
+### Replacing this Mac's data at pairing
+
+"Use your account's data" empties this Mac's Phi data before enrollment completes,
+so the first replay lands the account without merging. The reset is
+`PhiLocalDataReset`, reached through `SyncKeyController.localDataReset()`; the
+setup wizard calls it in step 4 of the replace sequence above and reads its
+inventory to decide whether the sync method step shows.
+
+The reset runs only while the device is unpaired, which is what makes it safe:
+no data round runs before enrollment completes, so none of its deletions is
+published. It fails closed, with a typed error and before changing anything, unless
+all of these hold:
+
+| Precondition | Meaning |
+| --- | --- |
+| Unpaired, usable session | The enrollment is not paired; the controller is unlocked, not retired, on the current account, not running a removal or account reset, and no reconfiguration is pending. Leaving the account and replacing this Mac's data are mutually exclusive: the setup window also disables its footer while its removal or reset request is in flight |
+| No sync history | No Space or Profile cursor with an account entity, no progress marker or store birthday, no bookmark, pin or rule cursor with an entity or baseline, a readable and empty Profile deletion journal |
+| Nothing running | No import into any Space; no agent task in a Space the reset deletes or in any Space of a Profile it deletes |
+| Profiles | The Profile list is readable; the Default Profile and non-assignable Profiles (the agent fallback) are never deletable; every Profile being deleted is unmapped |
+
+The unpaired/session and import checks are repeated before every destructive step.
+
+The steps, in order:
+
+1. The default role is written to `default-space` directly, so no hand-off runs
+   when the other Spaces go.
+2. If the `default-space` row is missing, it is recreated on the Default Profile
+   with its bookmark root. The store must keep one user Space, and the ordinary
+   first-launch bootstrap refuses to resurrect the row while other Spaces exist.
+3. If `default-space` is bound to a Profile being deleted, it is re-bound to
+   the Default Profile and its windows are settled before anything else happens:
+   a parked ghost of it is dropped, a slot showing it replaces its window in place
+   on the Default Profile without animation, a background window of it is closed,
+   and the reset waits (bounded) until no window of it remains on the old Profile.
+   The row is committed before the windows, so a rebind whose windows did not
+   settle leaves the row on the Default Profile; this step also runs when any live
+   window of `default-space` is still on a Profile being deleted, so a rerun
+   settles those windows again.
+4. In one transaction: every pinned-tab row in every scope (dormant copies
+   included), every bookmark and folder except the canonical per-Space roots, and
+   every URL rule row are deleted. Rules are hard-deleted, soft-deleted ones
+   included: a Space deletion only soft-deletes its rules, and a soft row could be
+   revived by landing.
+5. Every other user Space is deleted with its windows and tabs, through
+   `SpaceManager.deleteSpaceForPairingReset`. It reports a result instead of
+   refusing silently, never shows an alert (an import is a refusal), retreats
+   without animation and always to `default-space`, and gives up after 30
+   seconds with a typed failure. A timeout before the window close reached the
+   cascade abandons the deletion: the late close callback deletes nothing (so
+   no sync deletion intent can come from it), and the Space is no longer pending,
+   so a rerun retries it. A Profile being deleted loses its agent
+   Spaces with it (they are device-local and its Chromium data goes anyway); the
+   agent Spaces of kept Profiles and Incognito Spaces are untouched. The default
+   Space is emptied, never removed; its open tabs stay.
+6. Only after that, each Profile the user chose is deleted with
+   `ProfileDeletionSync.pairingReset`: no journal, no tombstone, its local rows
+   removed (a failed cleanup fails the deletion), its Chromium profile directory
+   deleted. The reset first waits (bounded) for the deleted Spaces' windows to
+   close and fails closed if a window is still bound to the Profile; a mapped
+   Profile, or one a Space row still binds, is refused. A Profile Chromium no
+   longer lists was deleted by an earlier attempt: only its leftover store rows
+   are swept, so a crash between the two converges on the next run. Before the
+   first deletion, every Profile still listed is excluded from registration (see
+   "Chromium account and key lifecycle"), so no mapping pass registers it once
+   enrollment completes.
+   Kept Profiles end with zero Spaces, which is a valid state; no placeholder
+   Space is created, because one would be published as a new account Space.
+7. Space mappings for rows that no longer exist are removed, and the settings
+   adoption state is cleared: the cursor keys (`hasAdopted` included) and the
+   per-key sidecars, never the values. The first pull then adopts the account's
+   settings wholesale; keys the account lacks keep their local value.
+
+The reset then verifies its postconditions: nothing left to count, `default-space`
+is the only user Space and is not bound to a deleted Profile, no agent Space of a
+deleted Profile remains, the chosen Profiles are gone from Chromium and from the
+store, no Space mapping other than `default-space` remains, and the device is
+still unpaired without sync history. Every step re-reads state and skips work
+already done, so a rerun after a crash or a failed step converges. The counts
+(`LocalStore.phiDataCounts`, surfaced as `LocalPhiInventory`) cover exactly the
+rows the reset deletes, so a fresh install (default Space, Default Profile, empty
+bookmark roots) counts as empty. A failed count read is an error, never zero.
+
+The account-scoped defaults key `sync.pairingLocalReset` records a started reset:
+`{v: 1, deviceKeyID, deleteProfileIds, startedAtMs}`. It is separate from
+`sync.pairingEnrollment`, which is rebuilt on every write. A marker from another
+device key is ignored. It is cleared whenever a paired enrollment record is
+persisted or loaded (completion, legacy verification, the launch after a crash
+between the two writes) and by the confirmed local cleanup (device removal and reconfiguration), which fails and
+keeps its journal if the marker cannot be removed. Deferring setup never clears
+it. An account switch needs no clearing: the key lives in that account's own
+defaults.
 
 ### Profile pairing and the default profile
 
@@ -796,6 +1132,22 @@ the deletion until a later pass finds it older than the previous pass and no loc
 Profile with that basename; a new Profile reusing the basename then resolves
 normally.
 
+A Profile the pairing reset deletes (see "Replacing this Mac's data at pairing")
+is unmapped, so it has no key to withdraw, but it must never be registered or
+twinned: a mapping pass reads the Profile list once, before its network calls,
+and checks the pairing gate only after them, so a pass that read the list before
+the deletion can resume after enrollment opened the gate and register the deleted
+Profile as a new account Profile (acceptance SYNC-P22, 2026-10-20). The reset
+therefore names every Profile it is about to delete to
+`SyncKeyController.excludeFromRegistration` before deleting any. An excluded
+Profile is left out of the pass like a withdrawn one (not registered, not
+twinned, not counted as unmapped for `needsPairing` or the pause evidence), and
+the registration loop re-checks the exclusion after its awaits. The exclusion
+records the mapping pass sequence and ends only when a pass that started after
+it reads an enumerated Profile list without the Profile; passes run one at a
+time, so no pass that read the older list is still running then. It is held in
+memory only: after a relaunch the deleted Profile is gone from every list.
+
 ## Profile loading
 
 Chromium runs a Profile's sync only while the Profile is loaded, and
@@ -839,6 +1191,11 @@ this device (a known limitation).
 The Space pairing page lists unmatched account Spaces even when this Mac has
 only its default Space. Those account Spaces are added automatically after
 pairing; they do not require placeholder local Spaces or manual mappings.
+
+A first replay into a store emptied by the pairing reset (see "Replacing this
+Mac's data at pairing") emits no tombstones: with empty cursor tables there is no
+baseline for any deletion to be derived from. The account's default identity is
+adopted wholesale onto the emptied `default-space`.
 
 When the Space gate opens, the coordinator waits for the engine's queued gate
 transition before requesting catch-up through the invalidation scheduler. A
@@ -993,6 +1350,20 @@ settings, Spaces, bookmarks, pinned tabs and URL rules.
   user-data backup therefore restores the marker that belongs to that backup,
   and the replay it triggers re-lands the missing rows instead of emitting
   tombstones for them.
+- `marker.json` also carries the confirmed cleanup's journal fields
+  (`requiresReconfiguration`, `removalPending`, `resetOperationId`). The first
+  two are written by `SyncKeyController` only after the engine is retired.
+  `resetOperationId` is written before the reset request, while the engine may
+  still run, so the engine never takes it from its in-memory mirror: every
+  engine save carries the value on disk forward (`saveMarkerFile`). Without that
+  a round landing during the request would erase the UUID.
+- `PhiSyncMarkerStore.update` is the only read-modify-write path for
+  `marker.json`. It holds a per-file lock across load, mutation and save, so
+  the engine's carry-forward and the controller's journal writes
+  (`journalResetOperation`, the refusal path of `requestAccountReset`, and the
+  cleanup journal in `clearLocalSyncState`) cannot interleave and lose a field.
+  A plain `save` is only for a whole-file write by a single owner, such as the
+  legacy migration.
 - Known limitation: the first whole-scale adoption of settings is not
   atomic, so a crash between "values written" and "adoption flag written"
   replays the page and performs that adoption a second time. This remains a limitation of the native adoption sequence.
@@ -1955,6 +2326,22 @@ The engine must preserve these persistence, retry and account-isolation rules.
   arming from it (`PhiSyncEngine.armSpaceReplayIfNeeded`). The two files
   cannot commit atomically, and the opposite order let an incremental pull
   finalize a drain over the entities the shut episode walked past.
+- **Inbound acceptance version.** A refused arrival records nothing and the
+  shared marker walks past it, so relaxing a refusal predicate alone never
+  delivers what an older build refused. `PhiSpaceSyncTable` therefore carries
+  `inboundAcceptanceVersion`, compared with the build's
+  `PhiSpaceSyncTable.currentInboundAcceptanceVersion`.
+
+  | Rule | Behaviour |
+  |---|---|
+  | When to bump | Whenever an inbound refusal predicate of any kind is relaxed. The constant's doc comment keeps the version history. |
+  | Older table | A table without the key decodes as 0. A downgrade re-encodes it without the key, so the next upgrade replays again. |
+  | Fresh table | Starts at the current version; its first live pull is already a full replay. |
+  | Trigger | A version below the current one is a third trigger of `armSpaceReplayIfNeeded`, the gate-opening replay. It persists the nil marker, then latches the version with the drain flags in one table write. |
+  | Failure | A failed marker write leaves everything unchanged. A failed table write leaves the version unlatched with a nil marker. Either reports `cursorSaveFailed` and the next live pull arms again. |
+  | Cost | One full re-download of data type 2000 per account per device per bump. Landing is idempotent, and publication waits for the drain like any guard-1 replay. |
+  | Scope | The table is per account, so each account latches separately. A gated-off account latches when its gate opens. |
+
 - **A loss observed at round entry stands.** Publication treats an owned
   cursor table as lost when the store reported loss at round entry, even if
   the landing in between wrote a non-empty file back; otherwise cursor-less
@@ -2221,6 +2608,14 @@ written" restart window falls on them.
   `urlRuleChangesPublisher()` (debounced in the store, deduplicated on value
   snapshots), never through the UI publisher. The coordinator subscribes with a
   bare sink and tears the subscription down with the engine.
+- An App rule ([URL rules](url-rules.md)) is an ordinary rule whose `host` is
+  `app:<bundle id>`; the wire format and schema are unchanged. Only the Mac
+  client evaluates it, for external opens, and it is never pushed to Chromium.
+  The inbound host refusal accepts that one colon (`URLRuleKind.isSourceAppHost`).
+  Clients that predate App rules refuse the host as `malformedHost`, so they
+  neither show nor route it, and their marker walks past the entity. After
+  upgrading, the acceptance-version replay lands them (see "Inbound
+  acceptance version").
 
 ## Source and verification
 
@@ -2234,7 +2629,16 @@ the rules above.
 Focused suites in [Tests/PhiBrowserTests/Sync](../Tests/PhiBrowserTests/Sync)
 cover pairing, marker persistence, failed/paginated pulls, merges, logical
 clocks, status and account retirement. Store-level suites cover throwing writes,
-rollback and migration. Use the [testing guide](testing.md) for hosted execution;
+rollback and migration. The pairing reset is covered by `PhiLocalDataResetTests`
+(preconditions, order, reruns, postconditions), `LocalStorePairingResetTests` (the
+store wipe, forced `default-space`, counts), `SyncPairingLocalResetMarkerTests`
+(the marker and its clearing hooks), `SelfRevokeTests` (cleanup clears the marker;
+the controller's no-history check; the account reset's journal, cleanup and
+refusals) and the first-replay cases in
+`PhiSyncEngineSpaceTests` and `PhiSyncEngineOwnedItemsTests`. The account reset is also covered by `DevicesSettingRemoveDeviceTests` (the
+offer and its outcomes), `KeyEnvelopeAPIClientTests` (body-code mapping) and the
+hostless `build-scripts/test-sync-pairing.sh` (journal, resume) and
+`test-sync-devices.sh` (wire mapping). Use the [testing guide](testing.md) for hosted execution;
 compiling an XCTest bundle does not execute it.
 
 The [convergence harness](../Tests/SyncConvergence/README.md) exercises production

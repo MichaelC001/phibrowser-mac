@@ -444,24 +444,34 @@ class WebContentHeader: NSView {
         let provider = headerThemeProvider
         let theme = provider.currentTheme
         let fallbackAppearance = provider.currentAppearance
-        let fallback = ThemedColor.windowBackground.resolve(theme: theme, appearance: fallbackAppearance)
+        let fallback = theme.extensionSurfaceBackground(for: fallbackAppearance)
         let tab = currentTab
-        let canApplyPageColor = tab?.hasWebContent == true
-            && tab?.isNTP != true
+        let canApplyPageStyle = tab?.hasWebContent == true
             && tab?.crashState == nil
             && !BookmarkManagerRoute.matches(tab?.url)
             && owningBrowserState?.isInPlaceholderMode != true
             && owningBrowserState?.groupOverviewState == nil
             && tab.map { owningBrowserState?.splitGroup(forTabId: $0.guid) == nil } == true
-        let background = canApplyPageColor
+        let usesExtensionSurface = tab == nil
+            || tab?.isNTP == true
+            || tab?.url?.isLocalUrlString == true
+            || tab?.hasWebContent == false
+            || tab?.crashState != nil
+            || BookmarkManagerRoute.matches(tab?.url)
+            || owningBrowserState?.isInPlaceholderMode == true
+            || owningBrowserState?.groupOverviewState != nil
+        let pageBackground = canApplyPageStyle && !usesExtensionSurface
             ? tab?.pageColor.map { Self.compositePageColor($0, over: fallback) }
             : nil
-        let pageAppearance: Appearance? = background.map {
+        // Share the NTP/Chat surface when page colors are unavailable, including
+        // the address bar and adjacent chrome that consume this presentation.
+        let background = pageBackground ?? fallback
+        let pageAppearance: Appearance? = pageBackground.map {
             $0.isLight() ? .light : .dark
         }
 
         // Own both layer colors here so a theme binding cannot overwrite the page override.
-        layer?.backgroundColor = (background ?? fallback).cgColor
+        layer?.backgroundColor = background.cgColor
         bottomSeparator.layer?.backgroundColor = ThemedColor.separator.resolve(
             theme: theme, appearance: pageAppearance ?? fallbackAppearance
         ).cgColor

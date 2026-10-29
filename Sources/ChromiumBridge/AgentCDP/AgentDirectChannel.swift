@@ -7,6 +7,10 @@ import CryptoKit
 import Darwin
 import Foundation
 
+extension Notification.Name {
+    static let agentCDPPeerDidDisconnect = Notification.Name("agentCDPPeerDidDisconnect")
+}
+
 /// Direct Swift-side transport for `agentSpace.*` calls.
 ///
 /// The management and lifecycle surface (Spaces, profiles, URL rules,
@@ -214,6 +218,13 @@ final class AgentDirectChannelRegistry {
             pending[requestId] = nil
         }
         lock.unlock()
+        // A driver's paired browser connection can reset compositor overrides
+        // as it detaches, including on hidden Chat tabs that do not emit the
+        // user-Space operating callbacks. Reconcile app-owned page state after
+        // the connection teardown has returned to the main queue.
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: .agentCDPPeerDidDisconnect, object: nil)
+        }
     }
 
     func closeAll() {

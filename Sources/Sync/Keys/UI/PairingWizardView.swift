@@ -6,8 +6,8 @@
 import AppKit
 import SwiftUI
 
-/// Modal root for the pairing wizard (§6): step bar, content, fixed footer, status pages, D7 overwrite
-/// confirmation and self-revoke exit.
+/// Modal root for the pairing wizard (§6): step bar, content, fixed footer, status pages, the sync method
+/// step, D7 overwrite confirmation, the replace confirmation and self-revoke exit.
 ///
 /// Keep confirmation as a container page like loading/error/submitting, sharing footer, exit and chrome
 /// instead of duplicating footer state. All rendered differences come from SpaceOverwriteDiff; this view owns
@@ -17,12 +17,17 @@ struct PairingWizardView: View {
     let controller: SyncKeyController
     let onDismiss: () -> Void
 
-    /// A nonnil note disables removal because this is the account's last active device. Keep it sticky for
-    /// this window: the modal cannot add a second device. Carried from ProfilePairingGateView.
+    /// A nonnil note disables removal because this is the account's last active device, and offers the
+    /// account reset instead. Cleared only when the server refuses the reset (another device appeared, or
+    /// the account was re-enrolled without this Mac), which makes the ordinary removal worth retrying.
     @State private var removeBlockedNote: String?
-    /// Transient removal failure (offline, 5xx, Keychain), shown in the same slot without disabling retry.
-    /// Clear at each new attempt.
+    /// Transient removal or reset failure (offline, 5xx, Keychain), shown under the note without
+    /// disabling retry. Clear at each new attempt.
     @State private var removeErrorNote: String?
+    /// A removal or the account reset is in flight. Every footer control (both destructive buttons,
+    /// Add all as new, Finish later and the phase actions) is inert until it returns, so no setup step
+    /// (in particular "Replace this Mac's data") can start while this Mac is leaving the account.
+    @State private var isLeaving = false
 
     init(viewModel: PairingWizardViewModel, controller: SyncKeyController,
          onDismiss: @escaping () -> Void) {
@@ -35,7 +40,7 @@ struct PairingWizardView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            PairingStepBar(step: viewModel.step)
+            PairingStepBar(steps: viewModel.visibleSteps, current: viewModel.step)
             Divider()
             content
                 .disabled(viewModel.isPreparing || viewModel.isApplying)
@@ -89,12 +94,35 @@ struct PairingWizardView: View {
                     model: SpacePairingModel(input: input, selections: viewModel.spaceSelections))
                     .padding(24)
             }
+        case .method(let summary):
+            ScrollView(.vertical) {
+                SyncMethodStepView(summary: summary, selection: $viewModel.selectedMethod,
+                                   offersUseAccount: viewModel.replaceAvailable)
+                    .padding(24)
+            }
         case .confirmOverwrite(let items):
             confirmationPage(items)
+        case .confirmReplaceLocal(let review):
+            ScrollView(.vertical) {
+                ReplaceLocalConfirmView(review: review)
+                    .padding(24)
+            }
+        case .replacingLocal:
+            statusPage(message: NSLocalizedString("sync.pairing.replacing.local",
+                                                  value: "Replacing this Mac’s data…",
+                                                  comment: "Sync setup - progress title while this Mac's data is removed and replaced with the account's"),
+                       detail: NSLocalizedString("sync.pairing.replacing.detail",
+                                                 value: "Keep Phi open. This can take a few minutes.",
+                                                 comment: "Sync setup - detail shown while this Mac's data is being replaced with the account's"),
+                       showsProgress: true)
         case .submitting:
-            statusPage(message: NSLocalizedString("sync.pairing.submitting",
-                                                  value: "Applying your choices…",
-                                                  comment: "Sync setup - progress title while the chosen matches are applied"),
+            statusPage(message: viewModel.submitsWithoutChoices
+                           ? NSLocalizedString("sync.pairing.submitting.auto",
+                                               value: "Setting up sync…",
+                                               comment: "Sync setup - progress title while a pairing that needed no choices is completed")
+                           : NSLocalizedString("sync.pairing.submitting",
+                                               value: "Applying your choices…",
+                                               comment: "Sync setup - progress title while the chosen matches are applied"),
                        showsProgress: true)
         case .done:
             statusPage(message: nil, showsProgress: true).onAppear {
@@ -330,6 +358,9 @@ struct PairingWizardView: View {
                 Spacer(minLength: 0)
                 actions
             }
+            // Leaving and setting up are mutually exclusive: nothing here may start while a removal or
+            // reset request is in flight.
+            .disabled(isLeaving)
             // The app-modal's sole alternative exit appears on every page, including confirmation.
             Button(NSLocalizedString("sync.pairing.removeThisDevice",
                                      value: "Remove this device from sync…",
@@ -337,9 +368,17 @@ struct PairingWizardView: View {
                 confirmAndRemoveThisDevice()
             }
             .buttonStyle(.bordered)
-            .disabled(removeBlockedNote != nil || viewModel.isApplying || viewModel.isPreparing)
-            if let note = removeBlockedNote ?? removeErrorNote {
-                Text(note).font(.callout).themedForeground(.textSecondary)
+            .disabled(removeBlockedNote != nil || isLeaving || viewModel.isApplying || viewModel.isPreparing)
+            if let removeBlockedNote {
+                Text(removeBlockedNote).font(.callout).themedForeground(.textSecondary)
+                Button(SelfRevokeStrings.resetOffer, role: .destructive) {
+                    confirmAndResetSync()
+                }
+                .buttonStyle(.bordered)
+                .disabled(isLeaving || viewModel.isApplying || viewModel.isPreparing)
+            }
+            if let removeErrorNote {
+                Text(removeErrorNote).font(.callout).themedForeground(.textSecondary)
             }
         }
         .padding(.horizontal, 24)
@@ -354,9 +393,31 @@ struct PairingWizardView: View {
     @ViewBuilder
     private var actions: some View {
         switch viewModel.phase {
+        case .method:
+            // Finish when merging leads to no further page; "use your account's data" always continues to its
+            // confirmation.
+            Button(viewModel.methodStepFinishes
+                   ? NSLocalizedString("sync.pairing.finish", value: "Finish", comment: "Sync setup - button that applies the chosen matches")
+                   : NSLocalizedString("sync.pairing.method.continue", value: "Continue", comment: "Sync setup method step - button that moves on from choosing how this Mac syncs")) {
+                Task { await viewModel.continueFromMethod(controller: controller) }
+            }
+            .buttonStyle(.borderedProminent)
+            .keyboardShortcut(.defaultAction)
+            .disabled(viewModel.isPreparing || viewModel.isApplying)
         case .profiles:
-            Button(NSLocalizedString("sync.pairing.continue", value: "Continue", comment: "Sync setup - button that moves from profile matching to Space matching")) {
-                viewModel.continueToSpaces()
+            if viewModel.canGoBackToMethod {
+                Button(NSLocalizedString("sync.pairing.back",
+                                         value: "Back",
+                                         comment: "Sync setup - button that returns to the previous step")) {
+                    viewModel.backToMethod()
+                }
+                .buttonStyle(.bordered)
+            }
+            // Finish when the Spaces page is hidden: Continue would lead nowhere.
+            Button(viewModel.plan?.showsSpaces == false
+                   ? NSLocalizedString("sync.pairing.finish", value: "Finish", comment: "Sync setup - button that applies the chosen matches")
+                   : NSLocalizedString("sync.pairing.continue", value: "Continue", comment: "Sync setup - button that moves from profile matching to Space matching")) {
+                Task { await viewModel.continueFromProfiles(controller: controller) }
             }
             .buttonStyle(.borderedProminent)
             .keyboardShortcut(.defaultAction)
@@ -366,12 +427,15 @@ struct PairingWizardView: View {
             .disabled(!viewModel.profileRowsDecided
                       || viewModel.phase == .loading || viewModel.phase == .submitting)
         case .spaces:
-            Button(NSLocalizedString("sync.pairing.back",
-                                     value: "Back",
-                                     comment: "Sync setup - button that returns to the previous step")) {
-                viewModel.backToProfiles()
+            // Back goes to the Profiles page, or to the method step when the Profiles page is hidden.
+            if viewModel.canGoBackFromSpaces {
+                Button(NSLocalizedString("sync.pairing.back",
+                                         value: "Back",
+                                         comment: "Sync setup - button that returns to the previous step")) {
+                    viewModel.backToProfiles()
+                }
+                .buttonStyle(.bordered)
             }
-            .buttonStyle(.bordered)
             Button(NSLocalizedString("sync.pairing.finish", value: "Finish", comment: "Sync setup - button that applies the chosen matches")) {
                 Task { await viewModel.finish(controller: controller) }
             }
@@ -397,6 +461,30 @@ struct PairingWizardView: View {
             }
             .buttonStyle(.borderedProminent)
             .keyboardShortcut(.defaultAction)
+        case .confirmReplaceLocal:
+            if viewModel.isPreparing {
+                // The account-side preflight before anything is written.
+                ProgressView().controlSize(.small)
+            }
+            // The destructive action has no key equivalent and sits left of Back, which takes Return (as on
+            // the D7 page). Back is hidden once a replace has started: it can only be resumed.
+            Button(NSLocalizedString("sync.pairing.replaceLocal.apply",
+                                     value: "Replace this Mac’s data",
+                                     comment: "Sync setup replace confirmation - button that deletes this Mac's data and downloads the account's")) {
+                Task { await viewModel.replaceLocal(controller: controller) }
+            }
+            .buttonStyle(.bordered)
+            .disabled(!viewModel.canReplace)
+            if viewModel.canGoBackToMethod {
+                Button(NSLocalizedString("sync.pairing.back",
+                                         value: "Back",
+                                         comment: "Sync setup - button that returns to the previous step")) {
+                    viewModel.backToMethod()
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+                .disabled(viewModel.isPreparing)
+            }
         case .error:
             Button(NSLocalizedString("sync.pairing.retry", value: "Retry", comment: "Sync setup - button that retries after an error")) {
                 Task { await viewModel.retry(controller: controller) }
@@ -405,7 +493,7 @@ struct PairingWizardView: View {
             .keyboardShortcut(.defaultAction)
             .disabled(!Self.retryEnabled(for: viewModel.phase,
                                          isSubmitting: viewModel.isApplying))
-        case .loading, .submitting, .done:
+        case .loading, .submitting, .replacingLocal, .done:
             EmptyView()
         }
     }
@@ -418,13 +506,15 @@ struct PairingWizardView: View {
         !isSubmitting
     }
 
-    /// Confirm again, then retire before cleanup. Do not preflight device count: this client has no list
-    /// endpoint. Request removal directly and disable on refusal, as in
-    /// ProfilePairingGateView.confirmAndRemoveThisDevice.
+    /// Confirm again, then retire before cleanup. Do not preflight the device count: the server decides
+    /// `last_device` under its lock, so request removal directly and disable on refusal. `isLeaving`
+    /// keeps the rest of the footer inert while the request is in flight.
     private func confirmAndRemoveThisDevice() {
-        guard SelfRevokeStrings.confirmRemoval() else { return }
+        guard !isLeaving, SelfRevokeStrings.confirmRemoval() else { return }
         removeErrorNote = nil
+        isLeaving = true
         Task { @MainActor in
+            defer { isLeaving = false }
             do {
                 try await controller.removeThisDeviceFromSync()
                 onDismiss()
@@ -433,6 +523,31 @@ struct PairingWizardView: View {
             } catch {
                 // R12: detailed errors go only to logs; UI uses fixed text.
                 AppLogWarn("[phi-sync] self-revoke failed (\(PhiSyncLog.describe(error)))")
+                removeErrorNote = SelfRevokeStrings.removalUnavailable
+            }
+        }
+    }
+
+    /// The account reset, offered only after a `last_device` refusal. The second confirmation is a
+    /// synchronous `NSAlert` that awaits nothing while up. Success leaves setup like a removal does.
+    /// `isLeaving` keeps the rest of the footer inert while the request is in flight.
+    private func confirmAndResetSync() {
+        guard !isLeaving, SelfRevokeStrings.confirmReset() else { return }
+        removeErrorNote = nil
+        isLeaving = true
+        Task { @MainActor in
+            defer { isLeaving = false }
+            do {
+                try await controller.resetSyncAndRemoveThisDevice()
+                onDismiss()
+            } catch KeyAPIError.notLastDevice, KeyAPIError.deviceNotFound {
+                // Nothing was deleted and this is no longer the last device (or no longer
+                // enrolled): the ordinary removal is the next step, so it is enabled again.
+                removeBlockedNote = nil
+                removeErrorNote = SelfRevokeStrings.removalUnavailable
+            } catch {
+                // R12: detailed errors go only to logs; UI uses fixed text.
+                AppLogWarn("[phi-sync] account reset failed (\(PhiSyncLog.describe(error)))")
                 removeErrorNote = SelfRevokeStrings.removalUnavailable
             }
         }

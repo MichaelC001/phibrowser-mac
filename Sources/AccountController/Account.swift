@@ -337,6 +337,7 @@ class AccountController {
             }
             account.userDefaults.set(nil, forKey: .cachedProfile)
             account.userDefaults.set(nil, forKey: .cachedUserName)
+            AgentAvatarStore.forget(userID: account.userID)
         }
         avatarPNG = nil
         avatarPNGOwnerID = nil

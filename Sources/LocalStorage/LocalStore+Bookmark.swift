@@ -6,6 +6,7 @@
 import Foundation
 import SwiftData
 import Combine
+import CoreData
 
 enum BookmarkPinConversionError: Error {
     case invalidSource
@@ -1527,13 +1528,19 @@ extension LocalStore {
     /// Publishes bookmark changes from the underlying store, scoped to a Space.
     /// Pre-Spaces rows are backfilled to `LocalStore.defaultSpaceId` by the
     /// V5→V6 migration, so this filter is total — no nil-equivalence rule.
+    /// Consumers that maintain an indexed projection can opt into visit-only
+    /// deliveries on the main queue. Other consumers keep receiving snapshots.
     func bookmarksPublisher(profileId: String,
-                            spaceId: String = LocalStore.defaultSpaceId) -> AnyPublisher<[TabDataModel], Never> {
+                            spaceId: String = LocalStore.defaultSpaceId,
+                            onLastSeenChange: (([TabDataModel]) -> Void)? = nil) -> AnyPublisher<[TabDataModel], Never> {
         guard mainContext != nil else {
             return Just([]).eraseToAnyPublisher()
         }
 
         let subject = CurrentValueSubject<[TabDataModel], Never>([])
+        let saveEvidence = BookmarkSaveEvidence()
+        var currentGuids = Set<String>()
+        var hasSnapshot = false
         let fetchBookmarks: () -> [TabDataModel]? = { [weak self] in
             // Guest migration releases the source container before its window
             // controllers are rebound. A save from the target account can
@@ -1544,36 +1551,62 @@ extension LocalStore {
             do {
                 let bookmarkRaw = TabDataType.bookmark.rawValue
                 let folderRaw = TabDataType.bookmarkFolder.rawValue
-                let predicate = #Predicate<TabDataModel> { $0.type == bookmarkRaw || $0.type == folderRaw }
+                let predicate = #Predicate<TabDataModel> {
+                    ($0.type == bookmarkRaw || $0.type == folderRaw)
+                        && $0.profile?.profileId == profileId
+                        && $0.spaceId == spaceId
+                }
                 let sortBy: [SortDescriptor<TabDataModel>] = [SortDescriptor(\.createdDate)]
                 let descriptor = FetchDescriptor<TabDataModel>(
                     predicate: predicate,
                     sortBy: sortBy
                 )
-                let bookmarks: [TabDataModel] = try context.fetch(descriptor)
-                return bookmarks.filter {
-                    $0.profile?.profileId == profileId && $0.spaceId == spaceId
-                }
+                return try context.fetch(descriptor)
             } catch {
                 AppLogError("Failed to fetch bookmarks for publisher: \(error)")
-                return []
+                return nil
             }
         }
         
         if let bookmarks = fetchBookmarks() {
+            hasSnapshot = true
+            currentGuids = Set(bookmarks.map(\.guid))
             subject.send(bookmarks)
         }
         
         let notificationCenter = NotificationCenter.default
         let cancellable = notificationCenter
             .publisher(for: .NSManagedObjectContextDidSave)
-            .filter { Self.notificationContainsChanges($0, matching: {
-                guard $0.entity.name == TabDataModel.entityName, let type = Self.tabType(from: $0) else { return false }
-                return type == TabDataType.bookmark.rawValue || type == TabDataType.bookmarkFolder.rawValue
-            }) }
+            // Read Core Data objects only on the saving queue; deliver value evidence to main.
+            .compactMap { saveEvidence.consume($0) }
             .receive(on: DispatchQueue.main)
-            .sink { _ in
+            .sink { [weak self] change in
+                if hasSnapshot, case .lastSeen(let guids) = change, let onLastSeenChange {
+                    let affected = Array(currentGuids.intersection(guids))
+                    guard !affected.isEmpty, let context = self?.mainContext else { return }
+                    do {
+                        let bookmarkRaw = TabDataType.bookmark.rawValue
+                        let descriptor = FetchDescriptor<TabDataModel>(predicate: #Predicate {
+                            affected.contains($0.guid) && $0.type == bookmarkRaw
+                                && $0.profile?.profileId == profileId && $0.spaceId == spaceId
+                        })
+                        // Read from this subscription's store, never from the notifying context:
+                        // another account's store can contain the same GUID. Only changed rows
+                        // are fetched; no full tree projection or opened-state reconciliation.
+                        let rows = try context.fetch(descriptor)
+                        if !rows.isEmpty { onLastSeenChange(rows) }
+                        return
+                    } catch {
+                        AppLogError("Failed to fetch bookmark visit metadata: \(error)")
+                        // A failed fast path must not hide an update from the ordinary path.
+                    }
+                }
+                // A failed full read leaves the last projection intact but invalidates
+                // membership evidence. A later visit must retry instead of skipping it.
+                hasSnapshot = false
                 guard let bookmarks = fetchBookmarks() else { return }
+                hasSnapshot = true
+                currentGuids = Set(bookmarks.map(\.guid))
                 subject.send(bookmarks)
             }
         
@@ -1769,6 +1802,37 @@ extension LocalStore {
             }
         }
         return guids
+    }
+
+    // MARK: Pairing reset (docs/sync.md, "Replacing this Mac's data at pairing")
+
+    /// Bookmark nodes, and folders other than the canonical roots: exactly the rows
+    /// `deleteBookmarksExceptRootsBody` removes. A fresh install has only empty roots, so both
+    /// counts are zero there.
+    func bookmarkCountsExcludingRoots(in context: ModelContext) throws -> (bookmarks: Int, folders: Int) {
+        let bookmarkRaw = TabDataType.bookmark.rawValue
+        let folderRaw = TabDataType.bookmarkFolder.rawValue
+        let bookmarks = try context.fetchCount(FetchDescriptor<TabDataModel>(
+            predicate: #Predicate<TabDataModel> { $0.type == bookmarkRaw }))
+        let roots = try canonicalRootGuids(in: context)
+        let folders = try context.fetch(FetchDescriptor<TabDataModel>(
+            predicate: #Predicate<TabDataModel> { $0.type == folderRaw }))
+            .filter { !roots.contains($0.guid) }.count
+        return (bookmarks, folders)
+    }
+
+    /// Deletes every bookmark and folder row except the canonical roots, which stay as the empty
+    /// per-Space trees the account's bookmarks land under. Only the pairing reset calls this, and only
+    /// while the device is unpaired, so no tombstone can follow from it.
+    func deleteBookmarksExceptRootsBody(in context: ModelContext) throws {
+        let bookmarkRaw = TabDataType.bookmark.rawValue
+        let folderRaw = TabDataType.bookmarkFolder.rawValue
+        let roots = try canonicalRootGuids(in: context)
+        for row in try context.fetch(FetchDescriptor<TabDataModel>(
+            predicate: #Predicate<TabDataModel> { $0.type == bookmarkRaw || $0.type == folderRaw }
+        )) where !roots.contains(row.guid) {
+            context.delete(row)
+        }
     }
 }
 
@@ -2736,3 +2800,78 @@ extension LocalStore {
     }
 }
 #endif
+
+/// Capture changed keys before Core Data clears them at didSave. Only proven
+/// visit-only updates take the fast path; every other bookmark edit reloads.
+/// This evidence is subscription-owned, like SyncSaveEvidence, and never passes
+/// managed objects across queues. It does not change persistence or sync signals.
+private final class BookmarkSaveEvidence {
+    enum Change {
+        case reload
+        case lastSeen(Set<String>)
+    }
+
+    private struct Row {
+        let previousType: Int?
+        let keys: Set<String>
+    }
+    private final class Capture {
+        var rows: [NSManagedObjectID: Row] = [:]
+    }
+    private let lock = NSLock()
+    private let captures = NSMapTable<NSManagedObjectContext, Capture>(
+        keyOptions: .weakMemory, valueOptions: .strongMemory)
+    private var observer: NSObjectProtocol?
+
+    init() {
+        observer = NotificationCenter.default.addObserver(
+            forName: .NSManagedObjectContextWillSave, object: nil, queue: nil
+        ) { [weak self] notification in
+            guard let self, let context = notification.object as? NSManagedObjectContext else { return }
+            let capture = Capture()
+            for object in context.updatedObjects.union(context.deletedObjects) where object.entity.name == TabDataModel.entityName {
+                capture.rows[object.objectID] = Row(
+                    previousType: object.committedValues(forKeys: ["type"])["type"] as? Int,
+                    keys: Set(object.changedValues().keys))
+            }
+            self.lock.lock()
+            self.captures.setObject(capture, forKey: context)
+            self.lock.unlock()
+        }
+    }
+
+    func consume(_ notification: Notification) -> Change? {
+        guard let context = notification.object as? NSManagedObjectContext else { return .reload }
+        lock.lock()
+        let capture = captures.object(forKey: context)
+        captures.removeObject(forKey: context)
+        lock.unlock()
+        var visits = Set<String>()
+        for key in [NSInsertedObjectsKey, NSDeletedObjectsKey, NSUpdatedObjectsKey] {
+            for object in notification.userInfo?[key] as? Set<NSManagedObject> ?? [] {
+                // Profile relationship-derived membership can change without a tab scalar edit.
+                if object.entity.name == ProfileModel.entityName { return .reload }
+                guard object.entity.name == TabDataModel.entityName else { continue }
+                let row = capture?.rows[object.objectID]
+                guard let type = LocalStore.tabType(from: object) else { return .reload }
+                // Without pre-save evidence a tab may have just left the bookmark domain.
+                if key != NSInsertedObjectsKey, row?.previousType == nil { return .reload }
+                let isBookmark: (Int?) -> Bool = {
+                    $0 == TabDataType.bookmark.rawValue || $0 == TabDataType.bookmarkFolder.rawValue
+                }
+                guard isBookmark(type) || isBookmark(row?.previousType) else { continue }
+                guard key == NSUpdatedObjectsKey, let row else { return .reload }
+                guard row.keys.isSubset(of: ["lastSeen", "updatedDate"]) else { return .reload }
+                if row.keys.contains("lastSeen"), type == TabDataType.bookmark.rawValue {
+                    guard let guid = object.value(forKey: "guid") as? String else { return .reload }
+                    visits.insert(guid)
+                }
+            }
+        }
+        return visits.isEmpty ? nil : .lastSeen(visits)
+    }
+
+    deinit {
+        if let observer { NotificationCenter.default.removeObserver(observer) }
+    }
+}

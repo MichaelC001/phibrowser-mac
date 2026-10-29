@@ -143,4 +143,24 @@ final class PeekPanelAppearFlightTests: XCTestCase {
         // Not a shrink: a card as wide as the panel has nothing to fly out of.
         XCTAssertNil(transform(pressAt: press, startWidth: panel.width))
     }
+
+    func testExpansionStartsAtThePeekFrameForEveryBackingLayerAnchor() throws {
+        let source = CGRect(x: 240, y: 180, width: 760, height: 600)
+        let destination = CGRect(x: 120, y: 140, width: 1080, height: 720)
+        for anchor in [CGPoint.zero, CGPoint(x: 0.5, y: 0.5), CGPoint(x: 1, y: 1)] {
+            let transform = try XCTUnwrap(PeekPanelController.expansionTransform(
+                from: source, to: destination, anchorPoint: anchor))
+            let displayed = startCard(transform, panelSize: destination.size, anchorPoint: anchor)
+                .offsetBy(dx: destination.minX, dy: destination.minY)
+            XCTAssertEqual(displayed.minX, source.minX, accuracy: 0.001)
+            XCTAssertEqual(displayed.minY, source.minY, accuracy: 0.001)
+            XCTAssertEqual(displayed.width, source.width, accuracy: 0.001)
+            XCTAssertEqual(displayed.height, source.height, accuracy: 0.001)
+        }
+    }
+
+    func testExpansionRefusesAnEmptySourceOrDestination() {
+        XCTAssertNil(PeekPanelController.expansionTransform(from: .zero, to: panel, anchorPoint: .zero))
+        XCTAssertNil(PeekPanelController.expansionTransform(from: panel, to: .zero, anchorPoint: .zero))
+    }
 }

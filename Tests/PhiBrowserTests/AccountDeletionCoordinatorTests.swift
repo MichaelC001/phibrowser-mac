@@ -27,7 +27,8 @@ final class AccountDeletionCoordinatorTests: XCTestCase {
         beginCredentialDeletion: AccountDeletionCoordinator.BeginCredentialDeletion? = nil,
         clearInitialCredentials: AccountDeletionCoordinator.ClearInitialCredentials? = nil,
         clearCredentials: AccountDeletionCoordinator.ClearCredentials? = nil,
-        clearLocalData: AccountDeletionCoordinator.ClearLocalData? = nil
+        clearLocalData: AccountDeletionCoordinator.ClearLocalData? = nil,
+        currentAuth0Subject: @escaping AccountDeletionCoordinator.CurrentAuth0Subject = { "auth0|test-subject" }
     ) -> AccountDeletionCoordinator {
         let coordinator = AccountDeletionCoordinator(
             requestDeletion: requestDeletion,
@@ -48,10 +49,11 @@ final class AccountDeletionCoordinatorTests: XCTestCase {
                 self?.destructiveEdgeEvents.append("clearCredentials")
                 await clearCredentials?()
             },
-            clearLocalData: { [weak self] in
+            clearLocalData: { [weak self] auth0Sub in
                 self?.destructiveEdgeEvents.append("clearLocalData")
-                await clearLocalData?()
+                await clearLocalData?(auth0Sub)
             },
+            currentAuth0Subject: currentAuth0Subject,
             quit: { [weak self] in self?.destructiveEdgeEvents.append("quit") },
             now: now,
             makeIdempotencyKey: makeIdempotencyKey
@@ -790,7 +792,7 @@ final class AccountDeletionCoordinatorTests: XCTestCase {
 
     func testFinalizeClearsCredentialsBeforeAndAfterLongLocalDataRemoval() async {
         var resumeLocalDataRemoval: CheckedContinuation<Void, Never>?
-        let coordinator = makeCoordinator(clearLocalData: {
+        let coordinator = makeCoordinator(clearLocalData: { _ in
             await withCheckedContinuation { resumeLocalDataRemoval = $0 }
         })
 
@@ -856,6 +858,290 @@ final class AccountDeletionCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.state, .finalizing)
     }
 
+    private static let fullFinalizeOrder = [
+        "beginCredentialDeletion",
+        "announceAccountDeleted",
+        "clearInitialCredentials",
+        "clearLocalData",
+        "clearCredentials",
+        "quit",
+    ]
+
+    func testFinalizeHandsLocalDataClearTheSubjectCapturedAtBooking() async {
+        var storedSubject: String? = "auth0|A"
+        var receivedSubjects: [String?] = []
+        let coordinator = makeCoordinator(
+            clearInitialCredentials: { storedSubject = nil },
+            clearLocalData: { auth0Sub in receivedSubjects.append(auth0Sub) },
+            currentAuth0Subject: { storedSubject }
+        )
+
+        await coordinator.start()
+        await coordinator.submitCode("123456")
+        await coordinator.finalizeDeletion()
+
+        XCTAssertNil(storedSubject, "The initial credential clear removed the subject source")
+        XCTAssertEqual(
+            receivedSubjects, ["auth0|A"],
+            "The booked subject reaches the local-data clear regardless of the credential clear"
+        )
+        XCTAssertEqual(destructiveEdgeEvents, Self.fullFinalizeOrder)
+    }
+
+    func testFinalizeAfterSignOutUsesTheBookedSubject() async {
+        var storedSubject: String? = "auth0|A"
+        var receivedSubjects: [String?] = []
+        let coordinator = makeCoordinator(
+            clearLocalData: { auth0Sub in receivedSubjects.append(auth0Sub) },
+            currentAuth0Subject: { storedSubject }
+        )
+
+        await coordinator.start()
+        await coordinator.submitCode("123456")
+        storedSubject = nil
+        await coordinator.finalizeDeletion()
+
+        XCTAssertEqual(
+            receivedSubjects, ["auth0|A"],
+            "With nobody signed in, the booked account's finalize proceeds"
+        )
+        XCTAssertEqual(destructiveEdgeEvents, Self.fullFinalizeOrder)
+    }
+
+    func testFinalizeBookedWithoutSubjectStillClearsLocalDataAndQuits() async {
+        var receivedSubjects: [String?] = []
+        let coordinator = makeCoordinator(
+            clearLocalData: { auth0Sub in receivedSubjects.append(auth0Sub) },
+            currentAuth0Subject: { nil }
+        )
+
+        await coordinator.start()
+        await coordinator.submitCode("123456")
+        await coordinator.finalizeDeletion()
+
+        XCTAssertEqual(receivedSubjects, [nil])
+        XCTAssertEqual(
+            destructiveEdgeEvents, Self.fullFinalizeOrder,
+            "A missing subject skips only the device key step, never the finalize"
+        )
+    }
+
+    func testFinalizeUnderAnotherSignInIsRefusedAndDropsTheBooking() async {
+        var storedSubject: String? = "auth0|A"
+        var clearLocalDataCalls = 0
+        var keys = ["key-A", "key-B"]
+        var requestedKeys: [String] = []
+        let coordinator = makeCoordinator(
+            requestDeletion: { key in
+                requestedKeys.append(key)
+                return .verificationCodeSent(requestID: "req-\(requestedKeys.count)")
+            },
+            makeIdempotencyKey: { keys.removeFirst() },
+            clearLocalData: { _ in clearLocalDataCalls += 1 },
+            currentAuth0Subject: { storedSubject }
+        )
+
+        await coordinator.start()
+        await coordinator.submitCode("123456")
+        storedSubject = "auth0|B"
+        await coordinator.finalizeDeletion()
+
+        XCTAssertEqual(destructiveEdgeEvents, [], "No edge may run for another account")
+        XCTAssertEqual(clearLocalDataCalls, 0)
+        XCTAssertEqual(coordinator.state, .failed(.service(.unauthorized)))
+
+        coordinator.cancel()
+        XCTAssertEqual(coordinator.state, .idle)
+        await coordinator.start()
+        XCTAssertEqual(requestedKeys, ["key-A", "key-B"], "The fresh start mints a new key")
+        XCTAssertEqual(coordinator.state, .awaitingVerificationCode(requestID: "req-2", error: nil))
+        XCTAssertEqual(destructiveEdgeEvents, [])
+    }
+
+    func testStartUnderAnotherSignInDropsTheBookingAndRequestsAfresh() async {
+        var storedSubject: String? = "auth0|A"
+        var keys = ["key-A", "key-B"]
+        var requestedKeys: [String] = []
+        let coordinator = makeCoordinator(
+            requestDeletion: { key in
+                requestedKeys.append(key)
+                return .verificationCodeSent(requestID: "req-\(requestedKeys.count)")
+            },
+            makeIdempotencyKey: { keys.removeFirst() },
+            currentAuth0Subject: { storedSubject }
+        )
+
+        await coordinator.start()
+        await coordinator.submitCode("123456")
+        XCTAssertEqual(coordinator.state, .requestSubmitted)
+        storedSubject = "auth0|B"
+        await coordinator.start()
+
+        XCTAssertEqual(requestedKeys, ["key-A", "key-B"])
+        XCTAssertEqual(coordinator.state, .awaitingVerificationCode(requestID: "req-2", error: nil))
+        XCTAssertEqual(destructiveEdgeEvents, [])
+    }
+
+    func testStartUnderTheBookingAccountKeepsTheBooking() async {
+        var requestCallCount = 0
+        let coordinator = makeCoordinator(
+            requestDeletion: { _ in
+                requestCallCount += 1
+                return .verificationCodeSent(requestID: "req-1")
+            }
+        )
+
+        await coordinator.start()
+        await coordinator.submitCode("123456")
+        await coordinator.start()
+
+        XCTAssertEqual(requestCallCount, 1)
+        XCTAssertEqual(coordinator.state, .requestSubmitted)
+    }
+
+    func testAlreadyRunningBindsTheSubjectAndRefusesAnotherSignIn() async {
+        var storedSubject: String? = "auth0|A"
+        let coordinator = makeCoordinator(
+            requestDeletion: { _ in .deletionAlreadyRunning },
+            currentAuth0Subject: { storedSubject }
+        )
+
+        await coordinator.start()
+        XCTAssertEqual(coordinator.state, .deletionAlreadyRunning)
+        storedSubject = "auth0|B"
+        await coordinator.finalizeDeletion()
+
+        XCTAssertEqual(destructiveEdgeEvents, [])
+        XCTAssertEqual(coordinator.state, .failed(.service(.unauthorized)))
+    }
+
+    func testAlreadyRunningArrivingAfterASignInChangeIsDiscarded() async {
+        var storedSubject: String? = "auth0|A"
+        var releaseRequest: CheckedContinuation<AccountDeletionRequestOutcome, Never>?
+        let coordinator = makeCoordinator(
+            requestDeletion: { _ in await withCheckedContinuation { releaseRequest = $0 } },
+            currentAuth0Subject: { storedSubject }
+        )
+
+        let start = Task { await coordinator.start() }
+        await waitUntil { releaseRequest != nil }
+        storedSubject = "auth0|B"
+        releaseRequest?.resume(returning: .deletionAlreadyRunning)
+        await start.value
+
+        XCTAssertEqual(coordinator.state, .failed(.service(.unauthorized)))
+        await coordinator.finalizeDeletion()
+        XCTAssertEqual(destructiveEdgeEvents, [], "A's outcome must never become B's booking")
+        XCTAssertEqual(coordinator.state, .failed(.service(.unauthorized)))
+    }
+
+    func testCodeSentArrivingAfterASignInChangeIsDiscarded() async {
+        var storedSubject: String? = "auth0|A"
+        var releaseRequest: CheckedContinuation<AccountDeletionRequestOutcome, Never>?
+        let coordinator = makeCoordinator(
+            requestDeletion: { _ in await withCheckedContinuation { releaseRequest = $0 } },
+            currentAuth0Subject: { storedSubject }
+        )
+
+        let start = Task { await coordinator.start() }
+        await waitUntil { releaseRequest != nil }
+        storedSubject = "auth0|B"
+        releaseRequest?.resume(returning: .verificationCodeSent(requestID: "req-A"))
+        await start.value
+
+        XCTAssertEqual(coordinator.state, .failed(.service(.unauthorized)))
+        XCTAssertFalse(recordedStates.contains(.awaitingVerificationCode(requestID: "req-A", error: nil)))
+        XCTAssertEqual(destructiveEdgeEvents, [])
+    }
+
+    func testBookingKeepsThePreSendSubjectWhenSignedOutInFlight() async {
+        var storedSubject: String? = "auth0|A"
+        var releaseRequest: CheckedContinuation<AccountDeletionRequestOutcome, Never>?
+        var receivedSubjects: [String?] = []
+        let coordinator = makeCoordinator(
+            requestDeletion: { _ in await withCheckedContinuation { releaseRequest = $0 } },
+            clearLocalData: { auth0Sub in receivedSubjects.append(auth0Sub) },
+            currentAuth0Subject: { storedSubject }
+        )
+
+        let start = Task { await coordinator.start() }
+        await waitUntil { releaseRequest != nil }
+        storedSubject = nil
+        releaseRequest?.resume(returning: .verificationCodeSent(requestID: "req-A"))
+        await start.value
+        XCTAssertEqual(coordinator.state, .awaitingVerificationCode(requestID: "req-A", error: nil))
+
+        storedSubject = "auth0|A"
+        await coordinator.submitCode("123456")
+        XCTAssertEqual(coordinator.state, .requestSubmitted)
+        await coordinator.finalizeDeletion()
+
+        XCTAssertEqual(receivedSubjects, ["auth0|A"], "The binding is the pre-send subject")
+        XCTAssertEqual(destructiveEdgeEvents, Self.fullFinalizeOrder)
+    }
+
+    func testRenewalUnderAnotherSignInIsNotRetried() async {
+        var storedSubject: String? = "auth0|A"
+        var requestCallCount = 0
+        let coordinator = makeCoordinator(
+            requestDeletion: { _ in
+                requestCallCount += 1
+                throw AccountDeletionServiceError.unauthorized
+            },
+            renewCredentials: {
+                storedSubject = "auth0|B"
+                return true
+            },
+            currentAuth0Subject: { storedSubject }
+        )
+
+        await coordinator.start()
+
+        XCTAssertEqual(requestCallCount, 1, "A token renewed under B must not resend A's request")
+        XCTAssertEqual(coordinator.state, .failed(.service(.unauthorized)))
+        XCTAssertEqual(destructiveEdgeEvents, [])
+    }
+
+    func testSubmitCodeUnderAnotherSignInIsRefused() async {
+        var storedSubject: String? = "auth0|A"
+        var verifyCallCount = 0
+        let coordinator = makeCoordinator(
+            verifyDeletion: { _, _ in verifyCallCount += 1 },
+            currentAuth0Subject: { storedSubject }
+        )
+
+        await coordinator.start()
+        storedSubject = "auth0|B"
+        await coordinator.submitCode("123456")
+
+        XCTAssertEqual(verifyCallCount, 0, "A's request id must never be verified with B's token")
+        XCTAssertEqual(coordinator.state, .failed(.service(.unauthorized)))
+        XCTAssertEqual(destructiveEdgeEvents, [])
+    }
+
+    func testResendUnderAnotherSignInIsRefused() async {
+        var storedSubject: String? = "auth0|A"
+        var clock = Date(timeIntervalSince1970: 1_000_000)
+        var requestCallCount = 0
+        let coordinator = makeCoordinator(
+            requestDeletion: { _ in
+                requestCallCount += 1
+                return .verificationCodeSent(requestID: "req-\(requestCallCount)")
+            },
+            now: { clock },
+            currentAuth0Subject: { storedSubject }
+        )
+
+        await coordinator.start()
+        clock = clock.addingTimeInterval(AccountDeletionCoordinator.resendCooldown + 1)
+        storedSubject = "auth0|B"
+        await coordinator.resendCode()
+
+        XCTAssertEqual(requestCallCount, 1)
+        XCTAssertEqual(coordinator.state, .failed(.service(.unauthorized)))
+        XCTAssertEqual(destructiveEdgeEvents, [])
+    }
+
     func testFinalizeStopsWhenCredentialSafetyPreflightFails() async {
         let coordinator = makeCoordinator(beginCredentialDeletion: { false })
 
@@ -890,7 +1176,7 @@ final class AccountDeletionCoordinatorTests: XCTestCase {
 
     func testFinalizeWhileFinalizeInFlightIsIgnored() async {
         var resumeLocalDataRemoval: CheckedContinuation<Void, Never>?
-        let coordinator = makeCoordinator(clearLocalData: {
+        let coordinator = makeCoordinator(clearLocalData: { _ in
             await withCheckedContinuation { resumeLocalDataRemoval = $0 }
         })
 
@@ -921,7 +1207,7 @@ final class AccountDeletionCoordinatorTests: XCTestCase {
 
     func testCancelDuringFinalizeIsIgnored() async {
         var resumeLocalDataRemoval: CheckedContinuation<Void, Never>?
-        let coordinator = makeCoordinator(clearLocalData: {
+        let coordinator = makeCoordinator(clearLocalData: { _ in
             await withCheckedContinuation { resumeLocalDataRemoval = $0 }
         })
 
@@ -948,7 +1234,7 @@ final class AccountDeletionCoordinatorTests: XCTestCase {
                 requestCallCount += 1
                 return .verificationCodeSent(requestID: "req-1")
             },
-            clearLocalData: {
+            clearLocalData: { _ in
                 await withCheckedContinuation { resumeLocalDataRemoval = $0 }
             }
         )

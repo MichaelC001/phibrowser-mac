@@ -29,15 +29,6 @@ struct SpacesSettingsView: View {
     /// The selected scope is saved but this Mac has not finished rearranging its pinned tabs; the
     /// follower keeps retrying (B-3 stage 1, design 3.1).
     @State private var pinnedTabScopeCompletesInBackground = false
-    /// Resolved theme id and color-component slider position for the selected
-    /// Space, loaded on selection and updated optimistically (the persistence
-    /// stores do not republish `spaces`, so unlike icon/profile these need
-    /// local state).
-    @State private var spaceThemeId: String = Theme.default.id
-    @State private var spaceThemeSliderValue: Double = 0
-
-    @Environment(\.phiAppearance) private var appearance
-
     /// Drag-reorder state, mirroring SpacesStripView's picker: `orderedIds` is
     /// the live snapshot rearranged as a drag hovers across rows; the persisted
     /// renumbering is written once, on drop, via `SpaceManager.reorder`.
@@ -92,25 +83,11 @@ struct SpacesSettingsView: View {
             if let sel = selectedSpaceId, ids.contains(sel) { return }
             selectInitialSpace()
         }
-        // Resync theme controls when the selected Space is edited from
-        // another surface (General pane, sidebar picker, Spaces menu), the
-        // global theme registry changes, or the appearance flips (the
-        // color-component slider edits the current theme's value).
-        .onReceive(NotificationCenter.default.publisher(for: .spaceThemeDidChange)) { _ in
-            syncThemeControls()
-        }
         .onChange(of: spaceManager.storeIdentifier) { _, _ in
             draggingSpaceId = nil
             orderedIds = listedSpaces.map(\.spaceId)
             selectedSpaceId = nil
             selectInitialSpace()
-            syncThemeControls()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .themeDidChange)) { _ in
-            syncThemeControls()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .appearanceDidChange)) { _ in
-            syncThemeControls()
         }
         // The pin-scope picker owns State that remote changes otherwise leave stale, letting a later selection
         // roll every device back. Read the newly landed mirror key, not store.pinnedTabScope(): the
@@ -401,18 +378,11 @@ struct SpacesSettingsView: View {
                 .frame(maxHeight: .infinity)
 
                 SettingsDetailCard {
-                    colorRow(space.spaceId)
-                    SettingsRowDivider()
-                    SettingsDetailRow(NSLocalizedString("settings.spaces.theme.saturationLabel", value: "Saturation", comment: "Spaces settings - theme saturation row label for the per-Space window colors")) {
-                        ThemeOpacitySliderView(
-                            value: themeSliderBinding(space.spaceId),
-                            trackColor: themeSliderTrackColor(space.spaceId),
-                            borderColor: ThemedColor.border.resolve(theme: displayedTheme, appearance: appearance),
-                            trackStyle: themeSliderTrackStyle,
-                            width: Self.themeSliderWidth
-                        )
-                        .frame(width: Self.themeSliderWidth, height: 20)
-                    }
+                    ThemeColorSettingsRow(
+                        spaceId: space.spaceId,
+                        title: NSLocalizedString("settings.spaces.theme.colorLabel", value: "Color", comment: "Spaces settings - theme color row label")
+                    )
+                    .id(space.spaceId)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -696,135 +666,9 @@ struct SpacesSettingsView: View {
 
     private func select(_ spaceId: String) {
         selectedSpaceId = spaceId
-        syncThemeControls()
-    }
-
-    /// Loads the selected Space's resolved theme id and effective color
-    /// component into the local control state.
-    private func syncThemeControls() {
-        guard let spaceId = selectedSpaceId else { return }
-        spaceThemeId = spaceManager.resolvedThemeId(forSpaceId: spaceId)
-        let appearance = ThemeManager.shared.currentAppearance
-        if spaceThemeId == Theme.pure.id {
-            spaceThemeSliderValue = spaceManager.effectivePureThemeSliderValue(
-                forSpaceId: spaceId,
-                appearance: appearance
-            )
-        } else {
-            let saturation = spaceManager.effectiveOverlaySaturation(
-                forSpaceId: spaceId,
-                appearance: appearance
-            )
-            spaceThemeSliderValue = OverlaySaturationScale.sliderValue(
-                forSaturation: Double(saturation)
-            )
-        }
     }
 
     // MARK: - Detail bindings
-
-    private static let themeSliderWidth: CGFloat = 200
-    private static let themeSwatchDiameter: CGFloat = 16
-    private static let themeSwatchRingDiameter: CGFloat = 20
-    private static let themeSwatchSpacing: CGFloat = 10
-    private static let themeSwatchTitleFontSize: CGFloat = 10
-
-    private var themeSliderTrackStyle: ThemeSliderTrackStyle {
-        spaceThemeId == Theme.pure.id ? .pureBrightness(appearance) : .saturation
-    }
-
-    /// Inline theme swatch row mirroring the General pane's Color row: one
-    /// dot per built-in theme, the Space's resolved theme ringed with its
-    /// name captioned underneath. Compact sizing so all eight dots fit the
-    /// narrower detail card.
-    private func colorRow(_ spaceId: String) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            Text(NSLocalizedString("settings.spaces.theme.colorLabel", value: "Color", comment: "Spaces settings - theme color row label"))
-                .font(.system(size: 13))
-                .themedForeground(.textPrimary)
-                // The swatch row eats most of the card width; never let the
-                // label wrap into a vertical letter stack.
-                .lineLimit(1)
-                .fixedSize()
-
-            Spacer(minLength: 8)
-
-            HStack(alignment: .top, spacing: Self.themeSwatchSpacing) {
-                ForEach(ThemeManager.shared.orderedThemes, id: \.id) { theme in
-                    ThemeSwatchView(
-                        fillColor: theme == .pure
-                            ? .white
-                            : Color(theme.color(for: .themeColor, appearance: appearance)),
-                        ringColor: Color(theme.color(for: .themeColor, appearance: appearance)),
-                        selected: spaceThemeId == theme.id,
-                        title: theme.name,
-                        showsContrastBorder: theme == .pure,
-                        dotDiameter: Self.themeSwatchDiameter,
-                        ringDiameter: Self.themeSwatchRingDiameter,
-                        titleFontSize: Self.themeSwatchTitleFontSize,
-                        action: { [storeIdentifier = spaceManager.storeIdentifier] in
-                            guard spaceManager.acceptsStoreAction(from: storeIdentifier) else { return }
-                            selectTheme(theme.id, for: spaceId)
-                        }
-                    )
-                    .frame(width: Self.themeSwatchDiameter)
-                }
-            }
-        }
-        .padding(.vertical, 12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private func selectTheme(_ themeId: String, for spaceId: String) {
-        guard spaceThemeId != themeId else { return }
-        spaceThemeId = themeId
-        // For the default Space this also switches the global theme
-        // (SpaceManager keeps that invariant).
-        spaceManager.setTheme(forSpaceId: spaceId, themeId: themeId)
-        // Saturation and Pure brightness are stored separately, so switching
-        // themes restores the selected theme kind's previous adjustment.
-        syncThemeControls()
-    }
-
-    private func themeSliderBinding(_ spaceId: String) -> Binding<Double> {
-        let storeIdentifier = spaceManager.storeIdentifier
-        return Binding(
-            get: { spaceThemeSliderValue },
-            set: { newValue in
-                guard spaceManager.acceptsStoreAction(from: storeIdentifier) else { return }
-                spaceThemeSliderValue = newValue
-                if spaceManager.resolvedThemeId(forSpaceId: spaceId) == Theme.pure.id {
-                    spaceManager.setPureThemeSliderValue(
-                        newValue,
-                        forSpaceId: spaceId
-                    )
-                } else {
-                    let saturation = OverlaySaturationScale.saturation(
-                        forSlider: newValue
-                    )
-                    spaceManager.setOverlaySaturation(
-                        CGFloat(saturation),
-                        forSpaceId: spaceId,
-                        appearance: ThemeManager.shared.currentAppearance
-                    )
-                }
-            }
-        )
-    }
-
-    /// The gradient base behind the color-component slider.
-    private func themeSliderTrackColor(_ spaceId: String) -> NSColor {
-        spaceManager.resolvedTheme(forSpaceId: spaceId)
-            .color(for: .windowOverlayBackground, appearance: appearance)
-    }
-
-    /// The selected Space's theme instance, for chrome derived from it
-    /// (the saturation slider's border color).
-    private var displayedTheme: Theme {
-        ThemeManager.shared.registeredThemes[spaceThemeId]
-            ?? Theme.builtInThemes.first(where: { $0.id == spaceThemeId })
-            ?? ThemeManager.shared.currentTheme
-    }
 
     private func profileBinding(_ spaceId: String) -> Binding<String> {
         let storeIdentifier = spaceManager.storeIdentifier

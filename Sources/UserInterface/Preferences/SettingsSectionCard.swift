@@ -94,7 +94,19 @@ struct SettingsDefaultBadge: View {
     var onAccent: Bool = false
 
     var body: some View {
-        Text(NSLocalizedString("settings.defaultBadge", value: "Default", comment: "Settings - badge marking the default Space or Profile"))
+        SettingsBadge(text: NSLocalizedString("settings.defaultBadge", value: "Default", comment: "Settings - badge marking the default Space or Profile"),
+                      onAccent: onAccent)
+    }
+}
+
+/// The small capsule pill behind `SettingsDefaultBadge`, for other short labels
+/// in the same style (the sync setup's "Recommended").
+struct SettingsBadge: View {
+    let text: String
+    var onAccent: Bool = false
+
+    var body: some View {
+        Text(text)
             .font(.system(size: 10, weight: .medium))
             .themedForeground(onAccent ? ThemedColor(.white) : .textSecondary)
             // Never wrap or compress: under tight row width (e.g. the Spaces list
@@ -108,5 +120,77 @@ struct SettingsDefaultBadge: View {
                 onAccent ? Color.white.opacity(0.2) : Color.secondary.opacity(0.15),
                 in: Capsule()
             )
+    }
+}
+
+/// Shared Color row for General and per-Space settings. Reading a legacy
+/// theme must not create a palette or replace its saved color adjustments.
+struct ThemeColorSettingsRow: View {
+    let spaceId: String
+    let title: String
+
+    @ObservedObject private var spaceManager = SpaceManager.shared
+    @Environment(\.phiAppearance) private var appearance
+    @State private var theme = Theme.default
+    @State private var showsEditor = false
+
+    var body: some View {
+        Button {
+            showsEditor = true
+        } label: {
+            HStack(spacing: 12) {
+                Text(title)
+                    .font(.system(size: 13))
+                    .themedForeground(.textPrimary)
+                Spacer(minLength: 12)
+                HStack(spacing: 2) {
+                    Circle()
+                        .fill(LinearGradient(
+                            colors: Self.indicatorColors(theme: theme, appearance: appearance).map { Color(cgColor: $0) },
+                            startPoint: .top,
+                            endPoint: .bottom
+                        ))
+                        .overlay { Circle().themedStroke(.border) }
+                        .frame(width: 20, height: 20)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11, weight: .medium))
+                        .themedForeground(.textPrimary)
+                        .frame(width: 20, height: 20)
+                }
+                .accessibilityHidden(true)
+            }
+            .padding(.vertical, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("settings.theme.colorPicker")
+        .popover(isPresented: $showsEditor, arrowEdge: .trailing) {
+            SpaceThemeEditorView(spaceId: spaceId) { showsEditor = false }
+                .environment(\.phiTheme, theme)
+                .environment(\.phiAppearance, appearance)
+        }
+        .onAppear(perform: refreshTheme)
+        .onReceive(NotificationCenter.default.publisher(for: .spaceThemeDidChange)) { notification in
+            guard notification.userInfo?["spaceId"] as? String == spaceId else { return }
+            refreshTheme()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .themeDidChange)) { _ in refreshTheme() }
+        .onChange(of: spaceManager.storeIdentifier) { _, _ in
+            showsEditor = false
+            refreshTheme()
+        }
+        .onDisappear { showsEditor = false }
+    }
+
+    static func indicatorColors(theme: Theme, appearance: Appearance) -> [CGColor] {
+        let colors = (theme.navigationPalette?.colors(for: appearance)
+            ?? [theme.color(for: .windowOverlayBackground, appearance: appearance)])
+            .map { $0.withAlphaComponent(1) }
+        return colors.count > 1 ? ColoredVisualEffectView.gradientColors(colors) : colors.map(\.cgColor)
+    }
+
+    private func refreshTheme() {
+        theme = spaceManager.resolvedTheme(forSpaceId: spaceId)
     }
 }

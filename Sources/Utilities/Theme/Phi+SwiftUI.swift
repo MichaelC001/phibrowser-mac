@@ -47,6 +47,7 @@ public final class ThemeObserver: ObservableObject {
     @Published public var appearance: Appearance
     
     private var subscription: AnyObject?
+    private weak var boundSource: ThemeStateProvider?
     private var generation: UInt = 0
     
     public init(themeSource: ThemeStateProvider = ThemeManager.shared) {
@@ -58,6 +59,10 @@ public final class ThemeObserver: ObservableObject {
     /// Rebinds this observer to a different theme source without replacing the object.
     /// Existing SwiftUI environment references stay valid.
     public func rebind(to source: ThemeStateProvider) {
+        // Reused hosting views reenter the same window during scrolling.
+        // Keep their live subscription without invalidating unchanged content.
+        guard boundSource !== source || theme !== source.currentTheme ||
+                appearance != source.currentAppearance else { return }
         AppLogDebug("[ThemeDebug] rebind: source=\(type(of: source)), theme=\(source.currentTheme.id), appearance=\(source.currentAppearance)")
         self.theme = source.currentTheme
         self.appearance = source.currentAppearance
@@ -65,11 +70,22 @@ public final class ThemeObserver: ObservableObject {
     }
     
     private func bindSubscription(to source: ThemeStateProvider) {
+        boundSource = source
         generation &+= 1
         let expectedGeneration = generation
-        self.subscription = source.subscribe { [weak self] theme, appearance in
+        self.subscription = source.subscribe { [weak self, weak source] theme, appearance in
+            // Appearance is UI state. Deliver an actual change immediately
+            // on the main thread, while keeping initial view binding deferred.
+            if Thread.isMainThread, let self, self.generation == expectedGeneration,
+               self.appearance != appearance {
+                self.theme = theme
+                self.appearance = appearance
+                return
+            }
             DispatchQueue.main.async {
-                guard let self, self.generation == expectedGeneration else { return }
+                guard let self, self.generation == expectedGeneration,
+                      source?.currentAppearance == appearance,
+                      source?.currentTheme === theme else { return }
                 self.theme = theme
                 self.appearance = appearance
             }

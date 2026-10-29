@@ -46,11 +46,12 @@ tree, and each is handled at the moment the Space withdraws
   (`BrowserState.windowController`), never through the shell's window
   controller, which is whichever Space is presented.
 - Anything that needs the window the user sees — the Dock's reopen, an
-  agent's whole-window capture — maps a hosted Browser to the shell
-  presenting it (`GetBrowserWindows` in the app controller) or composes the
-  Space's resident trees in the shell's layout
-  (`AgentSpaceRouter.renderWindow`), because the Browser's own NSWindow is
-  never shown and a hidden tree draws nothing into a bitmap.
+  agent's whole-window capture or page-area measurement — maps a hosted
+  Browser to the shell presenting it (`GetBrowserWindows` in the app
+  controller) or lays the Space's resident trees out in the shell's layout
+  (`AgentSpaceRouter.renderWindow`, `AgentSpaceRouter.pageAreaSize`),
+  because the Browser's own NSWindow is never shown and a hidden tree draws
+  nothing into a bitmap.
 
 ## Sidebar geometry ownership
 
@@ -223,6 +224,10 @@ One robustness rule applies to the tag:
 | false | true | (ignored) | drop only — the controller leaves the map with no side effects. |
 
 The `wasVisible == false && isTabDriven == false` row is why the cascade is **not** gated on `wasVisible` alone: in the slot's native tab group `visibleController` can lag AppKit's actually-selected tab, so a real window-driven close can arrive on a controller that isn't the tracked visible one. Gating the cascade on `wasVisible` only let that close slip through and strand the slot's other Spaces with live tabs. Background closes that must NOT cascade (`deleteSpace` / `changeProfile` / `respawnWindow`) evict the controller first, so they early-return on the identity guard and never reach this branch.
+
+**A respawn whose replacement never registered is retried by the pairing reset.** `respawnWindow` evicts the old window and keeps it on screen until the replacement registers. When the activation is dropped or the spawn fails, the slot stays on the Space with no registered window and the old window waits in the pending-close map. The pairing reset's `default-space` rebind treats such a slot as one to replace: `respawnWindow(retryingStalledReplacement: true)` activates the Space again, keeping the old window queued for close. A spawn still marked in flight (`pendingSpawnSpaceIds`) is given up first with `abandonStalledSpawn`: a spawn whose profile load never calls back or whose window never registers leaves the mark set, and the rebind only retries after waiting its whole timeout, so a spawn still marked in flight is a stalled one. Abandoning removes the mark and moves the slot's per-Space spawn generation on; the stalled attempt's late profile-load callback then creates no window and leaves the new attempt's mark alone, and a window of it that registers anyway is queued for close like any replaced window. A slot that left the Space after such a failure (the user chose "Finish later" and switched Spaces) still holds the old window in the pending-close map; the rebind closes it with `closePendingReplacement`, and the Space spawns on its new Profile when the user returns to it. The profile-change path never passes the flag and leaves both states alone. A Retry after `windowsNotSettled` can therefore settle the windows.
+
+**The pairing reset's deletion checks the abandon state before any window closes.** `deleteSpaceForPairingReset` passes `proceed` to `closeSpaceWindows`, which asks it after every retreat has settled and before it evicts or closes a window of the Space. Once the timeout abandoned the deletion, the late retreat closes nothing and deletes nothing, so a timed-out deletion changes neither windows nor store rows.
 
 After the body, if `windowsBySpaceId.isEmpty` the slot removes itself from `SpaceManager.slots`. Emptying the last slot does **not** quit the app: it stays alive with no windows on screen, so the Dock icon can reopen the group. `removeSlot` shrinks the restore snapshot on its way out, and that write is a no-op when this was the last slot — `persistSlotsSnapshot` never overwrites a saved snapshot with an empty one, which is exactly what freezes the final layout for the reopen to restore from.
 

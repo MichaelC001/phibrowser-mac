@@ -53,7 +53,7 @@ and separate Profiles. Exercise expanded and floating sidebar modes.
 | --- | --- |
 | Warm and cold switches | Correct content and sidebar appear without a visible backing window; queued commands target the requested Space |
 | Geometry | Resize/collapse state survives a switch, while a second shell retains independent geometry |
-| Floating sidebar | Remains complete across visited/unvisited Spaces; dismissal and invisible hit areas do not block the page |
+| Floating sidebar | Remains complete across visited/unvisited Spaces; dismissal and invisible hit areas do not block the page; opens and takes clicks over a page in content fullscreen, in a standalone Incognito window too, whose host sits on the window's content view over the page area as the shell's does |
 | Close and before-unload | Closing one session or the entire shell respects the correct scope and veto recovery |
 | Incognito and agent sessions | Existing isolation and lifecycle rules remain independent of regular Space presentation |
 | Find, omnibox and tab search | Keyboard focus and overlay coordinates belong to the visible host |
@@ -70,6 +70,13 @@ separate prerequisites. Reset a test site's permission when testing its prompt;
 a remembered decision can correctly suppress presentation.
 
 ### Content surface
+
+On New Tab, `WebContentHostView` fills fractional AppKit bounds with an enclosing
+whole-DIP content frame, both at mount and during layout. Chromium's integer viewport
+otherwise rounds the page down, leaving a narrow unpainted strip beside the
+native header when a sidebar divider sits on a half point. The host keeps its
+original clipping bounds. Navigating away restores exact host-sized frames;
+manually docked DevTools bounds remain exempt from the automatic frame sync.
 
 With the framework's `PhiContentSurface` feature on, Chromium hands each hosted
 session or standalone Incognito window one content surface view right after

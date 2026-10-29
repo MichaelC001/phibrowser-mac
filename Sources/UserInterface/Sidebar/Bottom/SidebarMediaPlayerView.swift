@@ -292,22 +292,6 @@ struct SidebarMediaPlayerView: View {
         ThemedColor.textSecondary.swiftUIColor(theme: theme, appearance: appearance)
     }
 
-    private var background: Color {
-        // The sidebar itself uses windowOverlayBackground. Tint only this
-        // card, preserving the user's sidebar palette and saturation setting.
-        let sidebar = ThemedColor.windowOverlayBackground.resolve(
-            theme: theme, appearance: appearance)
-        // Keep a stable opaque surface in both compact and expanded layouts.
-        let alpha: CGFloat = 1
-        // An achromatic Pure sidebar has no hue to saturate; keep it neutral.
-        let saturation = sidebar.hsbSaturationComponent > 0.01
-            ? min(sidebar.hsbSaturationComponent + 0.12, 1) : 0
-        let colored = sidebar.withHSBSaturation(saturation, alpha: alpha)
-        let brightness = min(max(colored.hsbBrightnessComponent
-                                 + (appearance.isLight ? -0.03 : 0.05), 0), 1)
-        return Color(nsColor: colored.withHSBBrightness(brightness, alpha: alpha))
-    }
-
     var body: some View {
         Group {
             // Resident cards keep drawing while the active sidebar changes.
@@ -365,7 +349,7 @@ struct SidebarMediaPlayerView: View {
                 .frame(maxHeight: .infinity)
                 .background {
                     if controller.backgroundSourceCount > 1 {
-                        RoundedRectangle(cornerRadius: 9).fill(background)
+                        RoundedRectangle(cornerRadius: 9).fill(.regularMaterial)
                             .overlay(RoundedRectangle(cornerRadius: 9).stroke(secondary.opacity(0.3)))
                             .padding(.horizontal, 4).offset(y: -4)
                             .opacity(0.65)
@@ -373,7 +357,7 @@ struct SidebarMediaPlayerView: View {
                         .accessibilityHidden(true)
                         .accessibilityIdentifier("sidebarMedia.stack")
                     }
-                    RoundedRectangle(cornerRadius: 9).fill(background)
+                    RoundedRectangle(cornerRadius: 9).fill(.regularMaterial)
                 }
                 .overlay(RoundedRectangle(cornerRadius: 9)
                     .stroke(ThemedColor.border.swiftUIColor(theme: theme,

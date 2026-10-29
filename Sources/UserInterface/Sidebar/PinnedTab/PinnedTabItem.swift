@@ -39,7 +39,13 @@ private final class PinnedPeekBadgeView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
-        layer?.masksToBounds = true
+        clipsToBounds = false
+        layer?.masksToBounds = false
+        let plateShadow = NSShadow()
+        plateShadow.shadowColor = NSColor.black.withAlphaComponent(0.14)
+        plateShadow.shadowBlurRadius = 2
+        plateShadow.shadowOffset = NSSize(width: 0, height: -1)
+        shadow = plateShadow
         updateBackground()
 
         faviconView.imageScaling = .scaleProportionallyUpOrDown

@@ -55,18 +55,14 @@ class PageOverlayView: NSView {
 extension WebContentContainerViewController {
     func installPageOverlay(_ overlay: PageOverlayView) {
         // AppKit hit testing follows subview order, independently of layer z.
-        // In standalone windows the sidebar is a sibling here; in hosted
-        // windows the shell already places it above this whole page tree.
-        let sidebar = floatingSidebarHost.view
+        // The floating sidebar is mounted above this whole page tree.
         if let higher = view.subviews.first(where: {
             $0 !== overlay && (($0 as? PageOverlayView)?.stackingRank ?? .min) > overlay.stackingRank
         }) {
             view.addSubview(overlay, positioned: .below, relativeTo: higher)
             return
         }
-        view.addSubview(overlay,
-                        positioned: sidebar.superview === view ? .below : .above,
-                        relativeTo: sidebar.superview === view ? sidebar : nil)
+        view.addSubview(overlay, positioned: .above, relativeTo: nil)
     }
 }
 
@@ -162,5 +158,33 @@ enum PageOverlayDevToolsDock {
                                y: host.bounds.height - bounds.origin.y - bounds.size.height,
                                width: bounds.size.width,
                                height: bounds.size.height)
+    }
+}
+
+/// Vibrancy suppression for the views a page overlay hosts its tab in (the
+/// page, docked DevTools). Chromium's web views allow vibrancy, so under the
+/// window's visual-effect views AppKit composites them with its Plus Lighter
+/// filter, which adds the overlay's backing onto every pixel and washes a
+/// dark page and its images out. The host view forwards its subview changes
+/// here, and each hosted view has the filter stripped as `WebContentHostView`
+/// does for a tab's page; that view itself is not reused because its frame
+/// sync would undo the page frame `PageOverlayDevToolsDock` lays out.
+final class PageOverlayVibrancySuppressor {
+    private var filterObservers: [ObjectIdentifier: NSKeyValueObservation] = [:]
+
+    deinit {
+        filterObservers.values.forEach { $0.invalidate() }
+    }
+
+    func didAddSubview(_ subview: NSView) {
+        let key = ObjectIdentifier(subview)
+        guard filterObservers[key] == nil else { return }
+        subview.wantsLayer = true
+        guard let layer = subview.layer else { return }
+        filterObservers[key] = WebContentHostView.observeVibrancyFilter(on: layer)
+    }
+
+    func willRemoveSubview(_ subview: NSView) {
+        filterObservers.removeValue(forKey: ObjectIdentifier(subview))?.invalidate()
     }
 }

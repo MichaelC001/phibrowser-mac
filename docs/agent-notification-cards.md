@@ -74,5 +74,6 @@ console.log(reply.notificationId)
 The Swift path is `AgentDirectConnection.route` → `ExtensionMessageRouter` →
 `NotificationCardManager.handleAgentRequest` → the existing card queue and views.
 Decisions use `ExtensionMessaging.broadcastToAgent` and the principal-scoped
-`AgentDirectChannelRegistry.broadcast` overload. The legacy extension
-`notification` request and response envelope are unchanged.
+`AgentDirectChannelRegistry.broadcast` overload. The extension
+`notification` request and response envelope, including working cards and
+revoke, is described in [Notification cards](notification-cards.md).

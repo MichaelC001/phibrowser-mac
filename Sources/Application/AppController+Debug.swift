@@ -16,6 +16,10 @@ private final class DebugWindowDelegate: NSObject, NSWindowDelegate {
 }
 
 private enum DebugWindowStore {
+    #if DEBUG
+    static var cardWindow: NSWindow?
+    static var cardDelegate: DebugWindowDelegate?
+    #endif
     static var sentryWindow: NSWindow?
     static var sentryDelegate: DebugWindowDelegate?
 
@@ -102,6 +106,11 @@ extension AppController {
                                          keyEquivalent: "")
         debugSentryItem.target = self
         debugMenu.addItem(debugSentryItem)
+        #if DEBUG
+        let cardItem = NSMenuItem(title: "Holographic Card…", action: #selector(showHolographicCardDebugWindow(_:)), keyEquivalent: "")
+        cardItem.target = self
+        debugMenu.addItem(cardItem)
+        #endif
         
         let deeplinkItem = NSMenuItem(title: "Trigger Deeplink...",
                                       action: #selector(triggerDeeplink(_:)),
@@ -130,6 +139,14 @@ extension AppController {
         )
         sendCardItem.target = self
         debugMenu.addItem(sendCardItem)
+
+        let sendWorkingCardItem = NSMenuItem(
+            title: "Send Test Working Card",
+            action: #selector(sendTestWorkingCard(_:)),
+            keyEquivalent: ""
+        )
+        sendWorkingCardItem.target = self
+        debugMenu.addItem(sendWorkingCardItem)
 
         let sendExtMsgItem = NSMenuItem(
             title: "Send Extension Message...",
@@ -372,6 +389,49 @@ extension AppController {
         )
     }
 
+    /// Walks one task through a working card's life: shown, updated twice in
+    /// place, then replaced by its result card under the same `task_id`.
+    @objc func sendTestWorkingCard(_ sender: Any?) {
+        let taskId = "debug-working-\(UUID().uuidString)"
+        func send(_ payload: [String: Any], messageId: String) {
+            var payload = payload
+            payload["task_id"] = taskId
+            payload["timestamp"] = Int64(Date().timeIntervalSince1970 * 1000)
+            payload["expires_at"] = Int64((Date().timeIntervalSince1970 + 120) * 1000)
+            let envelope: [String: Any] = [
+                "action": "notification.card.request",
+                "messageId": messageId,
+                "payload": payload,
+            ]
+            guard let data = try? JSONSerialization.data(withJSONObject: envelope),
+                  let json = String(data: data, encoding: .utf8) else { return }
+            _ = PhiChromiumCoordinator.shared.handleExtensionMessage(
+                "notification", payload: json,
+                requestId: "debug-request-\(UUID().uuidString)", senderId: "debug-extension")
+        }
+        let title = "Search web comments and reviews about the Phi Browser"
+        let steps = [
+            "Opening search results",
+            "Reading 12 reviews on product forums",
+            "Comparing what people liked and disliked",
+        ]
+        for (index, step) in steps.enumerated() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(index * 4)) {
+                send(["kind": "working", "title": title, "description": step],
+                     messageId: "\(taskId):working")
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(steps.count * 4)) {
+            send([
+                "kind": "action",
+                "task_type": "research",
+                "title": title,
+                "description": "The comments I found lean positive, but there isn't enough here to call it a broad consensus.",
+                "button_title": "View details",
+            ], messageId: "\(taskId):report")
+        }
+    }
+
 #if DEBUG
     @MainActor
     @objc func openImagePreviewDemo(_ sender: Any?) {
@@ -412,6 +472,30 @@ extension AppController {
         }
     }
     
+    #if DEBUG
+    @MainActor @objc func showHolographicCardDebugWindow(_ sender: Any?) {
+        if let window = DebugWindowStore.cardWindow {
+            window.makeKeyAndOrderFront(nil)
+            return
+        }
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 820, height: 640),
+            styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
+        window.title = "Holographic Card Debug"
+        window.isReleasedWhenClosed = false
+        window.contentViewController = HolographicCardDebugViewController()
+        let delegate = DebugWindowDelegate()
+        delegate.onClose = {
+            DebugWindowStore.cardWindow = nil
+            DebugWindowStore.cardDelegate = nil
+        }
+        window.delegate = delegate
+        DebugWindowStore.cardWindow = window
+        DebugWindowStore.cardDelegate = delegate
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+    }
+    #endif
+
     @MainActor @objc func showSentryDebugWindow(_ sender: Any?) {
         if let window = DebugWindowStore.sentryWindow {
             window.makeKeyAndOrderFront(nil)

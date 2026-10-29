@@ -106,6 +106,13 @@ final class DevicesSettingHostingViewController: NSViewController {
                 throw DevicesRemoveDeviceError.syncControllerUnavailable
             }
             try await controller.removeThisDeviceFromSync()
+        }, reset: { [weak self] in
+            // Same binding rule as the removal above.
+            guard let controller = self?.syncKeyController else {
+                AppLogWarn("[phi-sync] account reset: no shared sync key controller")
+                throw DevicesRemoveDeviceError.syncControllerUnavailable
+            }
+            try await controller.resetSyncAndRemoveThisDevice()
         }, onRemoved: { [weak self] in
             // `unlockState` lives on `DevicesSettingViewModel` and only moves when
             // `loadAll()` runs, so the pane is refreshed by hand here: the poll is
@@ -114,6 +121,12 @@ final class DevicesSettingHostingViewController: NSViewController {
             // pane to `.needsJoin` and "Set up sync on this device" comes back.
             await self?.viewModel.stopPolling()
             await self?.viewModel.loadAll()
+        }, onRefused: { [weak self] in
+            // The server refused the reset (another device joined, or this Mac is
+            // no longer enrolled) and deleted nothing. Re-read the device list so
+            // the Removal row flips back to "Remove this Mac from sync"; the
+            // device is still enrolled, so the poll keeps running.
+            await self?.viewModel.refreshDevices()
         })
     }
 
@@ -177,7 +190,9 @@ final class DevicesSettingHostingViewController: NSViewController {
         guard !viewModel.isReconfiguring else { return }
         if controller.requiresReconfiguration {
             viewModel.isReconfiguring = true
-            guard SyncReconfigurationStrings.confirm() else { viewModel.isReconfiguring = false; return }
+            guard SyncReconfigurationStrings.confirm(resumingReset: controller.resetResumePending) else {
+                viewModel.isReconfiguring = false; return
+            }
             let accountID = AccountController.shared.account?.userID
             let model = viewModel
             Task { @MainActor [weak self] in

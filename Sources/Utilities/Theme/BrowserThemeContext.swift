@@ -160,10 +160,16 @@ public final class BrowserThemeContext: NSObject, ThemeStateProvider {
             }
         
         let appearanceCancellable = appearancePublisher
-            .receive(on: DispatchQueue.main)
             .sink { [weak self] appearance in
-                guard let self else { return }
-                action(self.currentTheme, appearance)
+                if Thread.isMainThread {
+                    guard let self else { return }
+                    action(self.currentTheme, appearance)
+                } else {
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self else { return }
+                        action(self.currentTheme, appearance)
+                    }
+                }
             }
         
         return CompoundObservation([
@@ -204,7 +210,6 @@ public final class BrowserThemeContext: NSObject, ThemeStateProvider {
             .store(in: &cancellables)
 
         NotificationCenter.default.publisher(for: .appearanceDidChange, object: manager)
-            .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 guard let self, self.mirrorsSharedAppearance else { return }
                 let sharedChoice = manager.userAppearanceChoice

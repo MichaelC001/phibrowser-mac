@@ -18,6 +18,10 @@ class OmniBoxViewModel: ObservableObject {
     private let searchCoordinator = OmniBoxSearchCoordinator()
     private let keywordSearchURLBuilder: (String, String) -> String?
     private let searchEngineSpaceShortcutProvider: () -> Bool
+    /// Hands a chosen match (its result line and open disposition) to
+    /// Chromium, which opens it. Tests substitute a recorder: the peek paths
+    /// must never reach it.
+    private let suggestionSelector: (Int, PhiOmniboxSuggestionDisposition) -> Void
     @Published private(set) var isSearchEngineSpaceShortcutEnabled = false
     private(set) var preventInlineCompletion: Bool = false
     
@@ -35,9 +39,23 @@ class OmniBoxViewModel: ObservableObject {
     /// `opennedFromCurrentTab`, which still describes where the omnibox was
     /// opened from — the Cmd+L toggle reads that.
     private var opensSubmissionInNewTab = false
+    /// The tab an address-bar open describes and a submission navigates:
+    /// the page in front of the user (`BrowserState.pageCommandTarget`), so
+    /// a presented peek's tab rather than the opener behind the panel.
     var currentTab: Tab?
+    /// Whether `currentTab` was a presented peek when the omnibox was aimed
+    /// at it. A peek can close under the omnibox without a focus change
+    /// (page JS `window.close()`, teardown): its opener stays focused, so
+    /// only this flag tells the dismissal sink and a late submission that
+    /// the target is gone.
+    private var targetsPresentedPeek = false
     private var openedFromGroupOverview = false
     private(set) var openTraceSession: OmniBoxTraceSession?
+
+    /// Picking the pane of `BrowserState.pendingSplitPreview`.
+    var isChoosingSplitPane: Bool {
+        browserState.pendingSplitPreview?.isCommitted == false
+    }
 
     /// The submission target: the focused tab itself, or a fresh tab.
     private var navigatesCurrentTab: Bool {
@@ -67,7 +85,8 @@ class OmniBoxViewModel: ObservableObject {
     
     init(configuration: OmniBoxConfiguration = .default, windowState: BrowserState,
          keywordSearchURLBuilder: ((String, String) -> String?)? = nil,
-         searchEngineSpaceShortcutProvider: (() -> Bool)? = nil) {
+         searchEngineSpaceShortcutProvider: (() -> Bool)? = nil,
+         suggestionSelector: ((Int, PhiOmniboxSuggestionDisposition) -> Void)? = nil) {
         self.configuration = configuration
         self.browserState = windowState
         let bridge = chromiumBridge
@@ -81,6 +100,9 @@ class OmniBoxViewModel: ObservableObject {
             guard let bridge,
                   bridge.responds(to: #selector(PhiChromiumBridgeProtocol.isSearchEngineSpaceShortcutEnabled(forWindowId:))) else { return false }
             return bridge.isSearchEngineSpaceShortcutEnabled(forWindowId: windowId)
+        }
+        self.suggestionSelector = suggestionSelector ?? { line, disposition in
+            bridge?.selectSuggestion(atLine: line, windowId: windowId, disposition: disposition)
         }
         setupBindings()
     }
@@ -110,6 +132,25 @@ class OmniBoxViewModel: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] suggestions, originalString in
                 self?.handleIncomingSuggestions(suggestions, for: originalString)
+            }
+            .store(in: &cancellables)
+
+        // The page an address-bar open describes can vanish without a focus
+        // change: a presented peek closing itself (page JS `window.close()`,
+        // teardown) leaves its opener focused, so the container's focus
+        // observer that dismisses the omnibox never fires. Dismiss here
+        // instead — a submission must never fall through to the opener
+        // behind the gone panel. `@Published` emits before storing, so the
+        // sink judges the value it is handed.
+        browserState.peekState.$peeksByOpener
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] peeksByOpener in
+                guard let self, self.targetsPresentedPeek, let currentTab = self.currentTab,
+                      !peeksByOpener.values.contains(where: { $0.guid == currentTab.guid }) else { return }
+                AppLogInfo("omni: presented peek \(currentTab.guid) closed under the omnibox — dismissing")
+                self.targetsPresentedPeek = false
+                self.delegate?.omniBoxDidClear()
             }
             .store(in: &cancellables)
     }
@@ -154,6 +195,7 @@ class OmniBoxViewModel: ObservableObject {
             return
         }
         currentTab = tab
+        targetsPresentedPeek = browserState.peekState.peekTab(withId: tab.guid) != nil
         // Opening the omnibox via the address bar (sidebar or webcontent) always represents
         // the current tab as the navigation target, including NTP — typing a URL should
         // replace the blank NTP rather than spawn a new tab.
@@ -187,6 +229,7 @@ class OmniBoxViewModel: ObservableObject {
 
     func updateStatusForGroupOverview() {
         currentTab = nil
+        targetsPresentedPeek = false
         opennedFromCurrentTab = false
         opensSubmissionInNewTab = false
         openedFromGroupOverview = true
@@ -203,6 +246,7 @@ class OmniBoxViewModel: ObservableObject {
             return
         }
         currentTab = tab
+        targetsPresentedPeek = tab.map { browserState.peekState.peekTab(withId: $0.guid) != nil } ?? false
         openedFromGroupOverview = false
         opensSubmissionInNewTab = tab.map { browserState.addressBarNavigationOpensNewTab(for: $0) } ?? false
         if tab?.isNTP == true || tab?.url == "about:blank" {
@@ -369,9 +413,35 @@ class OmniBoxViewModel: ObservableObject {
     }
 
     private func selectSuggestion(_ suggestion: OmniBoxSuggestion, commandKeyPressed: Bool) {
+        // Chromium would open the match in a tab of its own; the previewed
+        // split pane needs the destination instead.
+        if isChoosingSplitPane {
+            openURL(suggestion.url.isEmpty
+                    ? URLProcessor.processUserInput(state.inputText) : suggestion.url,
+                    switchToTab: suggestion.hasTabMatch,
+                    commandKeyPressed: commandKeyPressed)
+            return
+        }
         let disposition = suggestionDisposition(for: suggestion, commandKeyPressed: commandKeyPressed)
         AppLogDebug("omni: select suggestion line: \(suggestion.index), disposition: \(disposition.rawValue)")
         if disposition == .currentTab, let currentTab {
+            // Chromium opens a CURRENT_TAB match in the strip-active tab. A
+            // peek's tab is never strip-active (its opener stays active
+            // beneath the panel), so a submission aimed at the peek would
+            // load into the opener, hidden behind the panel. Navigate the
+            // peeked page directly instead; the match skips Chromium's
+            // shortcut learning, as any native navigation does. Decided by
+            // the flag, not by the peek still being presented: a peek that
+            // closed meanwhile must drop the submission (navigateCurrentTab),
+            // never hand it to Chromium and so to the opener.
+            if targetsPresentedPeek {
+                let url = suggestion.url.isEmpty
+                    ? URLProcessor.processUserInput(state.inputText) : suggestion.url
+                AppLogDebug("omni: navigating presented peek \(currentTab.guid) natively: \(url)")
+                navigateCurrentTab(to: url)
+                finishNavigationAction()
+                return
+            }
             browserState.closePeekForAddressBarNavigation(openerTabId: currentTab.guid)
             browserState.closeReaderOverlayForAddressBarNavigation(originTabId: currentTab.guid)
         }
@@ -381,9 +451,7 @@ class OmniBoxViewModel: ObservableObject {
         if disposition == .newForegroundTab {
             claimUpcomingNewTab()
         }
-        chromiumBridge?.selectSuggestion(atLine: suggestion.index,
-                                         windowId: browserState.windowId.int64Value,
-                                         disposition: disposition)
+        suggestionSelector(suggestion.index, disposition)
         finishNavigationAction()
     }
 
@@ -406,6 +474,11 @@ class OmniBoxViewModel: ObservableObject {
             Task { @MainActor [browserState] in
                 browserState.createTabInCurrentOverviewGroup(url: url)
             }
+        } else if switchToTab, commandKeyPressed,
+                  browserState.commitSplitPreview(pairingTabWithURL: url) {
+            // Hold-⌘ on an open tab pairs that tab into the previewed split.
+        } else if browserState.commitSplitPreview(url: url) {
+            // The submission opens as the previewed split pane.
         } else if switchToTab {
             if commandKeyPressed {
                 browserState.openTab(url)
@@ -440,6 +513,15 @@ class OmniBoxViewModel: ObservableObject {
     }
 
     private func navigateCurrentTab(to url: String) {
+        if targetsPresentedPeek, let currentTab,
+           browserState.peekState.peekTab(withId: currentTab.guid) == nil {
+            // The peek closed under the omnibox and Enter landed before the
+            // dismissal sink did: the page this submission was aimed at is
+            // gone, so drop it rather than navigate the opener behind the
+            // vanished panel (or a dead web contents).
+            AppLogInfo("omni: presented peek \(currentTab.guid) is gone — dropping the submission")
+            return
+        }
         if let currentTab, let wrapper = currentTab.webContentWrapper {
             browserState.closePeekForAddressBarNavigation(openerTabId: currentTab.guid)
             browserState.closeReaderOverlayForAddressBarNavigation(originTabId: currentTab.guid)
@@ -472,6 +554,7 @@ class OmniBoxViewModel: ObservableObject {
     private func finishNavigationAction() {
         opennedFromCurrentTab = false
         opensSubmissionInNewTab = false
+        targetsPresentedPeek = false
         openedFromGroupOverview = false
         delegate?.omniBoxDidClear()
         
@@ -493,6 +576,7 @@ class OmniBoxViewModel: ObservableObject {
     func reset() {
         opennedFromCurrentTab = false
         opensSubmissionInNewTab = false
+        targetsPresentedPeek = false
         openedFromGroupOverview = false
         searchCoordinator.reset()
         suggestionsQuery = nil

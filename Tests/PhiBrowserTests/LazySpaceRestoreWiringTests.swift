@@ -42,6 +42,10 @@ import XCTest
 ///     reopen, the external-link restore and the reopen loading windows,
 ///     which counted SLOTS until one empty shell latched it shut for the
 ///     rest of the run;
+///   * whether an external open may forward without a window
+///     (`mayForwardExternalOpenWithoutWindow`) — with session restore off
+///     nothing brought a window back, so the link waited out ~4s of retries
+///     for a window only its own forward creates;
 ///   * which snapshot windows a by-profile claim may take over
 ///     (`fallbackClaimIndex`) — restore's own stand-in window claims by
 ///     profile with no grace period, and consuming a parked window's entry
@@ -862,15 +866,19 @@ final class LazySpaceRestoreWiringTests: XCTestCase {
     /// what made a floor under all of them necessary.
     ///
     /// The defaults describe the windowless state; each test flips one input.
+    /// The silent-launch row flips two, because that state exists only before
+    /// a slot window has been hosted.
     private static func windowless(
         hasEverHostedSlotWindow: Bool = true,
         slots: [(hostsWindow: Bool, awaitsSpawnedWindow: Bool)] = [],
-        liveNonShadowWindowCount: Int = 0
+        liveNonShadowWindowCount: Int = 0,
+        isInSilentLaunch: Bool = false
     ) -> Bool {
         SpaceManager.isWindowlessWithHostedSlots(
             hasEverHostedSlotWindow: hasEverHostedSlotWindow,
             slots: slots,
-            liveNonShadowWindowCount: liveNonShadowWindowCount)
+            liveNonShadowWindowCount: liveNonShadowWindowCount,
+            isInSilentLaunch: isInSilentLaunch)
     }
 
     func testNoSlotAndNoWindowIsTheWindowlessState() {
@@ -943,6 +951,16 @@ final class LazySpaceRestoreWiringTests: XCTestCase {
             slots: [(hostsWindow: false, awaitsSpawnedWindow: false)]))
     }
 
+    func testASilentLaunchIsWindowlessBeforeItHostsAWindow() {
+        // The Phi Chat app started the browser with no startup window, so the
+        // cold start never ran (chromium ADR 0019). Left to Chromium's reopen,
+        // the first Dock click opened one plain window and none of the windows
+        // open at quit came back; the first external link waited out the
+        // retries for a window nothing was bringing.
+        XCTAssertTrue(Self.windowless(
+            hasEverHostedSlotWindow: false, isInSilentLaunch: true))
+    }
+
     func testAWindowOutsideEverySlotIsStillAWindow() {
         // A standalone Incognito window lives in no slot, so the slot inputs
         // read "windowless" while the user is looking at a browser window;
@@ -950,6 +968,88 @@ final class LazySpaceRestoreWiringTests: XCTestCase {
         // this count (`liveNonShadowWindowCount`), which is what lets an agent
         // Space's hidden host reach the windowless paths at all.
         XCTAssertFalse(Self.windowless(liveNonShadowWindowCount: 1))
+    }
+
+    // MARK: - Whether the process is still in its silent launch
+
+    func testASilentLaunchThatHasHostedNoWindowIsInTheSilentLaunchState() {
+        XCTAssertTrue(SpaceManager.isInSilentLaunch(
+            chromiumReportsSilentLaunch: true, hasEverHostedSlotWindow: false))
+    }
+
+    func testTheFirstHostedWindowEndsTheSilentLaunchState() {
+        // However it arrived: the restore, an extension's window, a move out
+        // of the Kiosk window. The ordinary reopen rules apply from here.
+        XCTAssertFalse(SpaceManager.isInSilentLaunch(
+            chromiumReportsSilentLaunch: true, hasEverHostedSlotWindow: true))
+    }
+
+    func testALaunchChromiumDoesNotReportAsSilentNeverIs() {
+        // A cold launch, the hidden login item, and a framework without the
+        // query all keep today's rules.
+        XCTAssertFalse(SpaceManager.isInSilentLaunch(
+            chromiumReportsSilentLaunch: false, hasEverHostedSlotWindow: false))
+    }
+
+    // MARK: - Whether an external open may forward without a window
+
+    /// An external open waits for a registered window so it lands in a
+    /// restored or spawned one. With session restore off and every window
+    /// closed nothing brings one back, and the link waited out the forward
+    /// retries (~4s) for a window only its own forward creates.
+    ///
+    /// The defaults describe that state; each test flips one input.
+    private static func forwardsWithoutWindow(
+        isWindowlessWithHostedSlots: Bool = true,
+        isSessionRestoreInFlight: Bool = false,
+        isTerminating: Bool = false,
+        isGuestTransitionInProgress: Bool = false
+    ) -> Bool {
+        SpaceManager.mayForwardExternalOpenWithoutWindow(
+            isWindowlessWithHostedSlots: isWindowlessWithHostedSlots,
+            isSessionRestoreInFlight: isSessionRestoreInFlight,
+            isTerminating: isTerminating,
+            isGuestTransitionInProgress: isGuestTransitionInProgress)
+    }
+
+    func testAWindowlessAppWithNothingComingForwardsAtOnce() {
+        // The defect: this state used to wait out the retries.
+        XCTAssertTrue(Self.forwardsWithoutWindow())
+    }
+
+    func testARestoreInFlightIsWaitedFor() {
+        // Session restore on: the link belongs in the restored active window,
+        // and a bare window created first would race the restore.
+        XCTAssertFalse(Self.forwardsWithoutWindow(isSessionRestoreInFlight: true))
+    }
+
+    func testAnAppThatIsNotWindowlessKeepsTheOrdinaryGate() {
+        // Covers cold launch (`hasEverHostedSlotWindow` false) and a slot
+        // still owed a spawned window, both folded into this input.
+        XCTAssertFalse(Self.forwardsWithoutWindow(isWindowlessWithHostedSlots: false))
+    }
+
+    func testAQuitInProgressForwardsNothingEarly() {
+        // A window created mid-quit could be saved into the next session.
+        XCTAssertFalse(Self.forwardsWithoutWindow(isTerminating: true))
+    }
+
+    func testASilentLaunchWithNoRestoreInFlightForwardsAtOnce() {
+        // The restore switch off: nothing restores, so no window is coming
+        // and the link's own forward creates one. With the switch on, the
+        // restore in flight holds it (`testARestoreInFlightIsWaitedFor`).
+        XCTAssertTrue(Self.forwardsWithoutWindow(
+            isWindowlessWithHostedSlots: Self.windowless(
+                hasEverHostedSlotWindow: false, isInSilentLaunch: true)))
+    }
+
+    func testAGuestTransitionKeepsTheWait() {
+        // A window built for the open mid-transition would carry Guest
+        // identifiers the migration receipt cannot rebind. This pins the rule
+        // only: the instance property feeds the input from app-wide state
+        // (`SpaceSessionControllersManager.shared`, `ApplicationState.shared`)
+        // that no test can stage.
+        XCTAssertFalse(Self.forwardsWithoutWindow(isGuestTransitionInProgress: true))
     }
 
     // MARK: - Which snapshot windows a by-profile claim may take over
@@ -1362,47 +1462,5 @@ final class LazySpaceRestoreWiringTests: XCTestCase {
         XCTAssertEqual(Self.repairDecision(
             entryWindowMap: [11: "space-b"]
         ), .none)
-    }
-
-    // MARK: - Which record a launch reads and writes
-
-    /// The slot snapshot maps Chromium's previous-session window ids to
-    /// Spaces, and those ids only mean anything inside the Chromium user data
-    /// directory that issued them. Chromium's directory follows the bundle
-    /// while this record follows the account, so a launch pointed at another
-    /// directory (`--user-data-dir`, the QA and XCTest shape) rewrote the
-    /// real profile's record with ids from a session it never had — and the
-    /// next real launch found every saved window unplaceable. The key carries
-    /// the explicit directory so each directory keeps its own record.
-
-    func testTheSnapshotKeyIsUnchangedWithoutAnExplicitUserDataDir() {
-        XCTAssertEqual(
-            SpaceManager.slotsRestoreSnapshotKey(
-                arguments: ["Phi", "--enable-features=TabStripUnification"]),
-            "slotsRestoreSnapshot")
-    }
-
-    func testAnExplicitUserDataDirScopesTheSnapshotKey() {
-        XCTAssertEqual(
-            SpaceManager.slotsRestoreSnapshotKey(
-                arguments: ["Phi", "--user-data-dir=/tmp/r11-fresh"]),
-            "slotsRestoreSnapshot@/tmp/r11-fresh")
-    }
-
-    func testTheLastUserDataDirSwitchWins() {
-        // Chromium's command line keeps the last value of a repeated switch;
-        // the key follows the directory Chromium actually opens.
-        XCTAssertEqual(
-            SpaceManager.slotsRestoreSnapshotKey(
-                arguments: ["Phi", "--user-data-dir=/a", "--user-data-dir=/b"]),
-            "slotsRestoreSnapshot@/b")
-    }
-
-    func testAnEmptyUserDataDirSwitchLeavesTheKeyUnscoped() {
-        // Chromium treats an empty value as "use the default directory".
-        XCTAssertEqual(
-            SpaceManager.slotsRestoreSnapshotKey(
-                arguments: ["Phi", "--user-data-dir="]),
-            "slotsRestoreSnapshot")
     }
 }

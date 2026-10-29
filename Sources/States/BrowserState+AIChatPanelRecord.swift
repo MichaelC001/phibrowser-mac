@@ -226,6 +226,61 @@ extension BrowserState {
         createAIChatTab(for: chatIdentifier(for: tab), chromeTabId: tab.guid)
     }
 
+    /// Shows saved conversation `conversationId` in the AI Chat panel of the
+    /// focused tab, expanding the panel and opening it on that conversation,
+    /// or reloading an open panel onto it (an unsent draft there is lost).
+    /// Returns false, changing nothing, where no panel can show it: AI off,
+    /// incognito, the group overview, placeholder mode, a window this state
+    /// no longer backs, or a page without the chat such as the new tab page.
+    /// The caller checks that this window's Profile may read the conversation.
+    @MainActor
+    func showConversationInAIChatPanel(_ conversationId: String) -> Bool {
+        guard UUID(uuidString: conversationId) != nil,
+              PhiPreferences.AISettings.phiAIEnabled.loadValue(),
+              !isIncognito, !isInPlaceholderMode, groupOverviewState == nil,
+              SpaceSessionControllersManager.shared.getBrowserState(for: windowId) === self,
+              let tab = focusingTab else { return false }
+        let partner = splitGroup(forTabId: tab.guid)?.partnerTabId(of: tab.guid)
+            .flatMap { partnerId in tabs.first { $0.guid == partnerId } }
+        guard tab.aiChatEnabled || partner?.aiChatEnabled == true else { return false }
+
+        let identifier = chatIdentifier(for: tab)
+        if let panel = aiChatTabs[identifier] {
+            if AIChatPanelRecord.conversationId(fromPanelURL: panel.url) != conversationId {
+                let boundTabId = self.tab(forChatIdentifier: identifier)?.guid ?? tab.guid
+                panel.webContentWrapper?.navigate(
+                    toURL: Self.aiChatPanelURL(chromeTabId: boundTabId, conversationId: conversationId))
+            }
+        } else {
+            pendingAIChatConversations[identifier] = conversationId
+        }
+        prepareAIChatSidebarOpen(trigger: .button)
+        setAIChatCollapsed(for: tab, collapsed: false)
+        AppLogInfo("[AIChat] showing conversation \(conversationId) in the panel of tabId=\(tab.guid)")
+        return true
+    }
+
+    /// Shows a notification card's conversation in this window's AI Chat
+    /// panel when this window's Profile may read it: the conversation belongs
+    /// to no Profile or to this one. Asks phi-agent for the owner first, so a
+    /// conversation is never opened where the panel would find it missing.
+    /// Returns false when it was not shown, for the caller's fallback.
+    @MainActor
+    func showCardConversationInAIChatPanel(_ conversationId: String) async -> Bool {
+        let owner: String?
+        do {
+            owner = try await APIClient.shared.getChatOwnerProfileId(chatId: conversationId)
+        } catch {
+            AppLogInfo("[AIChat] card conversation owner unknown, not opening in the panel: \(error)")
+            return false
+        }
+        guard owner == nil || owner == profileId else {
+            AppLogInfo("[AIChat] card conversation belongs to another Profile, not opening in the panel")
+            return false
+        }
+        return showConversationInAIChatPanel(conversationId)
+    }
+
     /// The AI switch turned off and every panel tab is gone: no page tab
     /// keeps a record or a conversation waiting for its panel tab, so undo
     /// close brings no panel back. Every tab is cleared, not only the ones

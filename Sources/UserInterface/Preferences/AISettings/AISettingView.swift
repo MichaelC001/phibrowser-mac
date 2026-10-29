@@ -60,6 +60,7 @@ struct AISettingView: View {
                 PhiSentinelSectionView(enabled: aiFeaturesAvailable)
                 NewTabPageSectionView(enabled: aiFeaturesAvailable)
                 AISidebarSectionView(enabled: aiFeaturesAvailable)
+                EmailProtectionSectionView(enabled: aiFeaturesAvailable)
                 ExternalConnectorsSectionView(
                     connectorViewModel: connectorViewModel,
                     enabled: aiFeaturesAvailable
@@ -321,6 +322,32 @@ private struct NewTabPageSectionView: View {
             }
         }
         .onChange(of: enableProactiveSuggestionsOnNTP) {
+            notifyNativeSettingsChanged()
+        }
+    }
+}
+
+// MARK: - Email Protection Section
+
+private struct EmailProtectionSectionView: View {
+    @AppStorage(PhiPreferences.AISettings.enableEmailProtection.rawValue)
+    private var enableEmailProtection: Bool = PhiPreferences.AISettings.enableEmailProtection.defaultValue
+
+    let enabled: Bool
+
+    var body: some View {
+        AISectionView(
+            title: NSLocalizedString("settings.ai.emailProtection.sectionTitle", value: "Email Protection", comment: "AI settings - Section title for email phishing and scam detection")
+        ) {
+            AIContainerView {
+                AIToggleRow(
+                    title: NSLocalizedString("settings.ai.emailProtection.enableToggle", value: "Enable email protection", comment: "AI settings - Toggle to enable AI detection of phishing and scam emails"),
+                    isOn: $enableEmailProtection,
+                    enabled: enabled
+                )
+            }
+        }
+        .onChange(of: enableEmailProtection) {
             notifyNativeSettingsChanged()
         }
     }

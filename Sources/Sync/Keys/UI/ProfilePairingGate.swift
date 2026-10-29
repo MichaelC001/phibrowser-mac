@@ -44,13 +44,28 @@ final class ProfilePairingGate {
     private(set) var enrollmentGeneration = UUID()
     var isPaired: Bool { enrollment.isPaired }
     var spaceReplayToken: UUID? { enrollment.spaceReplayToken }
+    /// Clears the account's `sync.pairingLocalReset` marker once enrollment is paired
+    /// (docs/sync.md, "Replacing this Mac's data at pairing"); answers whether the removal
+    /// persisted. Bound with the enrollment record.
+    private var clearLocalResetMarker: (() -> Bool)?
 
     func configureEnrollment(deviceKeyID: String, recordData: Data?,
                              saveRecord: @escaping (Data) -> Bool,
-                             legacyEvidence: SyncPairingLegacyEvidence? = nil) throws {
+                             legacyEvidence: SyncPairingLegacyEvidence? = nil,
+                             clearLocalResetMarker: (() -> Bool)? = nil) throws {
         enrollmentGeneration = UUID()
+        self.clearLocalResetMarker = clearLocalResetMarker
         try enrollment.configure(deviceKeyID: deviceKeyID, recordData: recordData,
                                  saveRecord: saveRecord, legacyEvidence: legacyEvidence)
+        // Every path to a persisted paired record clears the marker: the legacy verification
+        // above, and a launch after a crash between completion and the clear below.
+        if isPaired { clearLocalResetMarkerAfterPairing() }
+    }
+
+    private func clearLocalResetMarkerAfterPairing() {
+        guard let clearLocalResetMarker else { return }
+        let cleared = clearLocalResetMarker()
+        AppLogInfo("[phi-sync] pairing reset marker cleared after pairing: \(cleared)")
     }
 
     var requiresRecoveryConfirmation: Bool { enrollment.requiresRecoveryConfirmation }
@@ -67,6 +82,8 @@ final class ProfilePairingGate {
 
     func completeEnrollment(verifiedDeviceKeyID: String? = nil) throws {
         try enrollment.setPaired(true, verifiedDeviceKeyID: verifiedDeviceKeyID, replaySpaces: true)
+        // Only after the paired record persisted: a failed completion keeps the reset resumable.
+        clearLocalResetMarkerAfterPairing()
         NotificationCenter.default.post(name: .phiSyncPairingStateDidChange, object: self)
     }
 
@@ -110,6 +127,7 @@ final class ProfilePairingGate {
     func stop() {
         enrollmentGeneration = UUID()
         enrollment = SyncPairingEnrollment()
+        clearLocalResetMarker = nil
         observers.forEach { NotificationCenter.default.removeObserver($0) }
         observers.removeAll()
         if isPresented { modalHost?.dismiss(); isPresented = false }
@@ -210,6 +228,9 @@ final class AppModalPairingHost: NSObject, ProfilePairingModalHost, NSWindowDele
     private let previewAccountSpaces: () async -> Result<PhiAccountSpacePreview, PhiSpacePreviewError>
     private let pairableLocalSpaces: () -> [PhiLocalSpace]
     private let themeDisplayName: (String) -> String?
+    /// The local data reset for the wizard's inventory and "use your account's data" (docs/sync.md,
+    /// "Sync method and replacing this Mac's data").
+    private let localReset: @MainActor (SyncKeyController) -> (any LocalPhiResetting)?
 
     /// True for exactly as long as THIS host's `runModal` call is on the stack.
     ///
@@ -257,13 +278,16 @@ final class AppModalPairingHost: NSObject, ProfilePairingModalHost, NSWindowDele
          pairableLocalSpaces: @escaping () -> [PhiLocalSpace]
              = { MainActor.assumeIsolated { PhiChromiumCoordinator.shared.pairableLocalSpaces() } },
          themeDisplayName: @escaping (String) -> String?
-             = { id in MainActor.assumeIsolated { ThemeManager.shared.registeredThemes[id]?.name } }) {
+             = { id in MainActor.assumeIsolated { ThemeManager.shared.registeredThemes[id]?.name } },
+         localReset: @escaping @MainActor (SyncKeyController) -> (any LocalPhiResetting)?
+             = { $0.localDataReset() }) {
         self.scheduler = scheduler
         self.runModal = runModal
         self.stopModal = stopModal
         self.previewAccountSpaces = previewAccountSpaces
         self.pairableLocalSpaces = pairableLocalSpaces
         self.themeDisplayName = themeDisplayName
+        self.localReset = localReset
         super.init()
     }
 
@@ -282,7 +306,8 @@ final class AppModalPairingHost: NSObject, ProfilePairingModalHost, NSWindowDele
             keyLayer: KeyLayerViewModel(manager: controller.manager),
             previewAccountSpaces: previewAccountSpaces,
             pairableLocalSpaces: pairableLocalSpaces,
-            themeDisplayName: themeDisplayName)
+            themeDisplayName: themeDisplayName,
+            localReset: localReset)
         let setup = KeyLayerViewModel(manager: controller.manager)
         self.setupModel = setup
         let root = SyncSetupView(keyModel: setup, wizard: viewModel, controller: controller,
@@ -344,15 +369,17 @@ final class AppModalPairingHost: NSObject, ProfilePairingModalHost, NSWindowDele
     }
 
     /// Re-drive rescues stuck loading, not refreshes user input (R-D6-11). Allow only loading and
-    /// error/reload; reject profiles, spaces, confirmOverwrite, submitting and done.
-    /// Confirmation is interactive and must retain
-    /// differences/selections; error/backToSpaces also holds completed step-2 choices. Reusing KeyLayerPhase's
-    /// broad error rule would call start each minute and erase that state.
+    /// error/reload; reject the method step, profiles, spaces, both confirmations, submitting, replacing and
+    /// done. Confirmation is interactive and must retain differences/selections; error/backToSpaces also
+    /// holds completed step-2 choices, and error/resumeReplace the replace in progress. Reusing
+    /// KeyLayerPhase's broad error rule would call start each minute and erase that state.
     static func reloadAllowed(for phase: PairingWizardPhase) -> Bool {
         switch phase {
         case .loading: return true
         case .error(_, let resume): return resume == .reload
-        case .profiles, .spaces, .confirmOverwrite, .submitting, .done: return false
+        case .method, .profiles, .spaces, .confirmOverwrite, .confirmReplaceLocal, .submitting, .replacingLocal,
+             .done:
+            return false
         }
     }
 

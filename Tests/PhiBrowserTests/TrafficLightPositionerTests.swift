@@ -9,7 +9,7 @@ import XCTest
 
 @MainActor
 final class TrafficLightPositionerTests: XCTestCase {
-    func testMatchingInsetsPreserveEveryLayoutRowCenterAndNativeButtonSpacing() throws {
+    func testLayoutAlignmentPreservesEveryRowCenterAndNativeButtonSpacing() throws {
         let window = makeWindow()
         defer { window.close() }
         let buttons = try windowButtons(in: window)
@@ -18,11 +18,16 @@ final class TrafficLightPositionerTests: XCTestCase {
 
         for (layout, expectedCenter) in [(LayoutMode.performance, CGFloat(20)), (.balanced, 27.5), (.comfortable, 22)] {
             let positioner = TrafficLightPositioner(window: window,
-                centerFromWindowTop: SpaceSessionController.chromeRowCenter(for: layout))
+                centerFromWindowTop: SpaceSessionController.chromeRowCenter(for: layout),
+                centerFromWindowLeading: layout == .balanced ? 22 : nil)
             positioner.start()
             let frames = buttons.map { $0.convert($0.bounds, to: nil) }
             let topInset = window.frame.height - frames[0].maxY
-            XCTAssertEqual(frames[0].minX, topInset, accuracy: 0.01, "\(layout)")
+            if layout == .balanced {
+                XCTAssertEqual(frames[0].midX, 22, accuracy: 0.01)
+            } else {
+                XCTAssertEqual(frames[0].minX, topInset, accuracy: 0.01, "\(layout)")
+            }
             for index in buttons.indices {
                 XCTAssertEqual(window.frame.height - frames[index].midY, expectedCenter, accuracy: 0.01)
                 XCTAssertEqual(frames[index].minX - frames[0].minX,

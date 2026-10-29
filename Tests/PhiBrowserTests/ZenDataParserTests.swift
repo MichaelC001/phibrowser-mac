@@ -1412,4 +1412,22 @@ final class ZenDataParserTests: XCTestCase {
         XCTAssertTrue(source.spaces.isEmpty)
         XCTAssertTrue(BrowserMigrationPreview.hasNothingToMigrate(rows: rows(source)))
     }
+
+    /// A session file can list one workspace more than once; the migration keys
+    /// Spaces by id, so a repeat would reach the wizard's preview twice (Z5).
+    func testAWorkspaceListedTwiceComesOutOnce() throws {
+        let spaces = try spaces("""
+        {"spaces": [
+            {"uuid": "{c9765e2d-5e9b-452e-8143-2786748c8d23}", "name": "Home"},
+            {"uuid": "{9438b3f9-b6e7-41d9-8c70-61e1fedea9e9}", "name": "Work"},
+            {"uuid": "{c9765e2d-5e9b-452e-8143-2786748c8d23}", "name": "Home again"}
+        ]}
+        """)
+
+        XCTAssertEqual(spaces.map(\.id), [
+            "{c9765e2d-5e9b-452e-8143-2786748c8d23}",
+            "{9438b3f9-b6e7-41d9-8c70-61e1fedea9e9}",
+        ])
+        XCTAssertEqual(spaces.map(\.name), ["Home", "Work"])
+    }
 }

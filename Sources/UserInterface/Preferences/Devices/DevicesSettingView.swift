@@ -44,10 +44,14 @@ struct DevicesSettingView: View {
                         }
                     }
                 case .needsJoin:
-                    SettingsDetailCard {
-                        row(NSLocalizedString("sync.devices.notSetUp", value: "This device isn’t set up for sync yet.", comment: "Devices settings - shown when this device has not joined sync")) {
-                            actionButton(NSLocalizedString("sync.devices.setUp", value: "Set up sync on this device", comment: "Devices settings - button that starts sync setup on this device")) {
-                                onJoinThisDevice()
+                    // A pending reconfiguration (for example a journaled account reset after a
+                    // relaunch) wins: its card above is the only way forward.
+                    if !viewModel.requiresReconfiguration {
+                        SettingsDetailCard {
+                            row(NSLocalizedString("sync.devices.notSetUp", value: "This device isn’t set up for sync yet.", comment: "Devices settings - shown when this device has not joined sync")) {
+                                actionButton(NSLocalizedString("sync.devices.setUp", value: "Set up sync on this device", comment: "Devices settings - button that starts sync setup on this device")) {
+                                    onJoinThisDevice()
+                                }
                             }
                         }
                     }
@@ -583,42 +587,70 @@ struct DevicesSettingView: View {
         }
     }
 
-    /// The pane's only destructive action, at the bottom and in the same
-    /// secondary style as every other button on the pane. The confirmation, its
-    /// copy and the `last_device` note all come from `SelfRevokeStrings`, shared
-    /// with the pairing gate's exit of the same name.
+    /// Whether the loaded device list shows this Mac as the account's only
+    /// active device. `viewModel.devices` already holds only active, unrevoked
+    /// devices; an empty or unloaded list means false.
+    private var isOnlyActiveDevice: Bool {
+        viewModel.devices.count == 1 && viewModel.devices[0].deviceKeyID == viewModel.currentDeviceID
+    }
+
+    /// The pane's destructive action, at the bottom: one standard row (title,
+    /// one-line description, trailing button) in one of two variants. When the
+    /// device list shows this Mac as the only active device, or after the
+    /// server's 409 `last_device` refusal of a removal sent from a stale list,
+    /// the row is "Reset sync" with a destructive button. Otherwise it is
+    /// "Remove this Mac from sync". The server re-checks at reset time; its 409
+    /// `not_last_device` shows a fixed error and reloads the device list, which
+    /// flips the row back to the removal. Only error notes are rendered: the
+    /// model's informational `last_device` note is covered by the reset
+    /// description. The confirmations come from `SelfRevokeStrings`, shared
+    /// with the pairing gate's exit.
     private var removeDeviceSection: some View {
-        section(NSLocalizedString("sync.recovery.title", value: "Recovery and removal", comment: "Recovery guidance and device removal")) {
+        let showsReset = isOnlyActiveDevice || removeModel.showsResetOffer
+        return section(NSLocalizedString("sync.removal.sectionTitle", value: "Removal", comment: "Sync settings - header of the section that removes this Mac from sync")) {
             SettingsDetailCard {
-                HStack(alignment: .center, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        hintText(NSLocalizedString("sync.recovery.explanation", value: "To join on another device, approve its request here or use your saved recovery code. The code is shown only when sync is first set up.", comment: "Explain existing recovery options without offering retrieval"))
-                        if let note = removeModel.note {
-                            // `note` carries two different kinds of line: the standing
-                            // `last_device` explanation (informational) and a transient
-                            // failure the user has to notice and retry. The latter is
-                            // coloured like every other error on this pane.
-                            if removeModel.noteIsError {
-                                errorText(note)
-                            } else {
-                                hintText(note)
+                if showsReset {
+                    row(NSLocalizedString("sync.removal.resetRowTitle", value: "Reset sync", comment: "Sync settings - title of the row, shown when this Mac is the account's only active device, that removes it and deletes all of the account's sync data")) {
+                        hintText(NSLocalizedString("sync.removal.resetRowDescription", value: "This is the only device set up for sync. Resetting removes this Mac from sync and deletes all sync data stored for this account. Your local browsing data stays on this Mac.", comment: "Sync settings - description under the Reset sync row"))
+                        removalErrorNote
+                    } control: {
+                        HStack(spacing: 12) {
+                            if removeModel.isRemoving {
+                                ProgressView().controlSize(.small)
                             }
+                            Button(NSLocalizedString("sync.removal.resetRowAction", value: "Reset…", comment: "Sync settings - destructive button on the Reset sync row; opens the delete-all-sync-data confirmation"), role: .destructive) {
+                                Task { await removeModel.requestReset(confirm: SelfRevokeStrings.confirmReset) }
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .disabled(!removeModel.canRequestReset || viewModel.isReconfiguring)
                         }
                     }
-                    Spacer(minLength: 12)
-                    if removeModel.isRemoving {
-                        ProgressView().controlSize(.small)
+                } else {
+                    row(NSLocalizedString("sync.removal.rowTitle", value: "Remove this Mac from sync", comment: "Sync settings - title of the row that removes this Mac from sync")) {
+                        hintText(NSLocalizedString("sync.removal.rowDescription", value: "This Mac will stop syncing. Your local browsing data stays on this Mac.", comment: "Sync settings - description under the row that removes this Mac from sync"))
+                        removalErrorNote
+                    } control: {
+                        HStack(spacing: 12) {
+                            if removeModel.isRemoving {
+                                ProgressView().controlSize(.small)
+                            }
+                            actionButton(NSLocalizedString("sync.removal.rowAction", value: "Remove…", comment: "Sync settings - button on the row that removes this Mac from sync; opens a confirmation")) {
+                                Task { await removeModel.requestRemoval(confirm: SelfRevokeStrings.confirmRemoval) }
+                            }
+                            .disabled(!removeModel.canRequestRemoval || viewModel.isReconfiguring)
+                        }
                     }
-                    actionButton(NSLocalizedString("sync.devices.removeThisDevice",
-                                                   value: "Remove this device from sync…",
-                                                   comment: "Devices settings - button that removes this device from sync")) {
-                        Task { await removeModel.requestRemoval(confirm: SelfRevokeStrings.confirmRemoval) }
-                    }
-                    .disabled(!removeModel.canRequestRemoval || viewModel.isReconfiguring)
                 }
-                .padding(.vertical, 12)
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
+        }
+    }
+
+    /// A removal or reset failure, under the Removal row's description.
+    @ViewBuilder
+    private var removalErrorNote: some View {
+        if removeModel.noteIsError, let note = removeModel.note {
+            errorText(note)
         }
     }
 

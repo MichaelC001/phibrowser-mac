@@ -64,56 +64,10 @@ struct GeneralSettingView: View {
 private struct ThemeSectionView: View {
     @ObservedObject private var spaceManager = SpaceManager.shared
 
-    @State private var selectedThemeId: String = ThemeManager.shared.currentTheme.id
-    @State private var sliderValue: Double = {
-        let manager = ThemeManager.shared
-        let overlayColor = manager.currentTheme.color(
-            for: .windowOverlayBackground,
-            appearance: manager.currentAppearance
-        )
-        if manager.currentTheme.id == Theme.pure.id {
-            return PureThemeBrightnessScale.sliderValue(
-                forBrightness: Double(overlayColor.hsbBrightnessComponent),
-                appearance: manager.currentAppearance
-            )
-        }
-        return OverlaySaturationScale.sliderValue(
-            forSaturation: Double(overlayColor.hsbSaturationComponent)
-        )
-    }()
-
     @AppStorage(PhiPreferences.ThemeSettings.selectionTintEnabled.rawValue)
     private var selectionTintEnabled: Bool = true
 
-    @Environment(\.phiAppearance) private var appearance
-
-    private var themes: [Theme] {
-        ThemeManager.shared.orderedThemes
-    }
-
-    private var selectedTheme: Theme {
-        themes.first(where: { $0.id == selectedThemeId }) ?? ThemeManager.shared.currentTheme
-    }
-
-    private var sliderTrackColor: NSColor {
-        selectedTheme.color(for: .windowOverlayBackground, appearance: appearance)
-    }
-
-    private var sliderBorderColor: NSColor {
-        ThemedColor.border.resolve(theme: selectedTheme, appearance: appearance)
-    }
-
-    private var usesBrightnessControl: Bool {
-        selectedThemeId == Theme.pure.id
-    }
-
-    private var sliderTrackStyle: ThemeSliderTrackStyle {
-        usesBrightnessControl ? .pureBrightness(appearance) : .saturation
-    }
-
-    /// These controls edit the DEFAULT Space. With a single Space that is
-    /// the whole browser; once more Spaces exist, each one carries its own
-    /// color adjustment, so the rows lock and defer to the Spaces pane.
+    /// With multiple Spaces, edit each Space's colors in the Spaces pane.
     private var themeEditingLocked: Bool {
         spaceManager.userSpaces.count > 1
     }
@@ -122,45 +76,11 @@ private struct ThemeSectionView: View {
         GeneralSectionView(title: NSLocalizedString("settings.general.theme.sectionTitle", value: "Theme", comment: "General settings - Theme section title")) {
             GeneralContainerView {
                 VStack(spacing: 0) {
-                    Group {
-                        HStack(alignment: .top, spacing: 12) {
-                            Text(NSLocalizedString("settings.general.theme.colorTitle", value: "Color", comment: "General settings - Theme color row title"))
-                                .font(.system(size: 13))
-                                .themedForeground(.textPrimary)
-
-                            Spacer(minLength: 12)
-
-                            HStack(alignment: .top, spacing: 13) {
-                                ForEach(themes, id: \.id) { theme in
-                                    ThemeColorItemView(
-                                        theme: theme,
-                                        selected: selectedThemeId == theme.id,
-                                        action: { selectTheme(theme) }
-                                    )
-                                }
-                            }
-                        }
-                        .padding(.vertical, 12)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-
-                        Divider()
-                        
-                        GeneralRowView(title: NSLocalizedString("settings.general.theme.opacityTitle", value: "Saturation", comment: "General settings - Theme saturation row title for adjusting the selected theme overlay color")) {
-                            ThemeOpacitySliderView(
-                                value: Binding(
-                                    get: { sliderValue },
-                                    set: { newValue in
-                                        sliderValue = newValue
-                                        handleSliderValueChanged(newValue)
-                                    }
-                                ),
-                                trackColor: sliderTrackColor,
-                                borderColor: sliderBorderColor,
-                                trackStyle: sliderTrackStyle
-                            )
-                            .frame(width: 324, height: 20)
-                        }
-                    }
+                    ThemeColorSettingsRow(
+                        spaceId: spaceManager.currentDefaultSpaceId,
+                        title: NSLocalizedString("settings.general.theme.colorTitle", value: "Color", comment: "General settings - Theme color row title")
+                    )
+                    .id(spaceManager.currentDefaultSpaceId)
                     .disabled(themeEditingLocked)
                     .opacity(themeEditingLocked ? 0.4 : 1.0)
 
@@ -180,18 +100,6 @@ private struct ThemeSectionView: View {
                     }
                 }
             }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .themeDidChange)) { _ in
-            syncThemeControls()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .appearanceDidChange)) { _ in
-            syncSliderValue()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .spaceThemeDidChange)) { _ in
-            syncThemeControls()
-        }
-        .onAppear {
-            syncThemeControls()
         }
     }
 
@@ -216,63 +124,6 @@ private struct ThemeSectionView: View {
         }
         .padding(.vertical, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private func selectTheme(_ theme: Theme) {
-        guard selectedThemeId != theme.id else { return }
-
-        selectedThemeId = theme.id
-        // This control edits the default Space; SpaceManager also switches
-        // the global theme to it so non-browser chrome and pre-Space
-        // fallbacks stay in step.
-        SpaceManager.shared.setTheme(forSpaceId: SpaceManager.shared.currentDefaultSpaceId, themeId: theme.id)
-        syncSliderValue()
-    }
-
-    private func handleSliderValueChanged(_ newSliderValue: Double) {
-        let appearance = ThemeManager.shared.currentAppearance
-        let themeId = SpaceManager.shared.resolvedThemeId(forSpaceId: SpaceManager.shared.currentDefaultSpaceId)
-        if themeId == Theme.pure.id {
-            SpaceManager.shared.setPureThemeSliderValue(
-                newSliderValue,
-                forSpaceId: SpaceManager.shared.currentDefaultSpaceId
-            )
-        } else {
-            let saturation = CGFloat(
-                OverlaySaturationScale.saturation(forSlider: newSliderValue)
-            )
-            SpaceManager.shared.setOverlaySaturation(
-                saturation,
-                forSpaceId: SpaceManager.shared.currentDefaultSpaceId,
-                appearance: appearance
-            )
-        }
-    }
-
-    private func syncThemeControls() {
-        selectedThemeId = SpaceManager.shared.resolvedThemeId(forSpaceId: SpaceManager.shared.currentDefaultSpaceId)
-        syncSliderValue()
-    }
-
-    private func syncSliderValue() {
-        let appearance = ThemeManager.shared.currentAppearance
-        let themeId = SpaceManager.shared.resolvedThemeId(forSpaceId: SpaceManager.shared.currentDefaultSpaceId)
-        let newSliderValue: Double
-        if themeId == Theme.pure.id {
-            newSliderValue = SpaceManager.shared.effectivePureThemeSliderValue(
-                forSpaceId: SpaceManager.shared.currentDefaultSpaceId,
-                appearance: appearance
-            )
-        } else {
-            let saturation = SpaceManager.shared.effectiveOverlaySaturation(
-                forSpaceId: SpaceManager.shared.currentDefaultSpaceId,
-                appearance: appearance
-            )
-            newSliderValue = OverlaySaturationScale.sliderValue(
-                forSaturation: Double(saturation)
-            )
-        }
-        sliderValue = newSliderValue
     }
 }
 
@@ -763,33 +614,6 @@ private struct GeneralRowView<Accessory: View>: View {
         }
         .padding(.vertical, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
-private struct ThemeColorItemView: View {
-    let theme: Theme
-    let selected: Bool
-    let action: () -> Void
-
-    @Environment(\.phiAppearance) private var appearance
-
-    private var swatchColor: Color {
-        if theme == .pure {
-            return .white
-        }
-        return Color(theme.color(for: .themeColor, appearance: appearance))
-    }
-
-    var body: some View {
-        ThemeSwatchView(
-            fillColor: swatchColor,
-            ringColor: Color(theme.color(for: .themeColor, appearance: appearance)),
-            selected: selected,
-            title: theme.name,
-            showsContrastBorder: theme == .pure,
-            action: action
-        )
-        .frame(width: 30)
     }
 }
 

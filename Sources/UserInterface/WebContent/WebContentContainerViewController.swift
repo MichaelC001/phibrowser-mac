@@ -44,6 +44,13 @@ class WebContentContainerViewController: NSViewController {
         currentWebContentController?.restoreFocusAfterPresentation()
     }
 
+    /// Hands keyboard focus to the presented page, as after the extension
+    /// side panel closes. The floating sidebar calls this when it hides over
+    /// a fullscreen page.
+    func focusWebContent() {
+        currentWebContentController?.focusWebContent()
+    }
+
     /// Hosted mode: the session's tree is about to be hidden or removed.
     /// See `WebContentViewController.collapseContentFullscreenForConcealment`.
     func collapseContentFullscreenForConcealment() {
@@ -56,9 +63,11 @@ class WebContentContainerViewController: NSViewController {
         didSet {
             guard currentWebContentController !== oldValue else { return }
             bindCurrentHeaderPageColorPresentation()
+            bindCurrentPageFrameBackground()
         }
     }
     private var currentHeaderPageColorCancellable: AnyCancellable?
+    private var currentPageFrameBackgroundCancellable: AnyCancellable?
 
     /// The visible tab's web-content panel size, or nil when nothing is
     /// mounted (placeholder mode, window still restoring). See
@@ -70,6 +79,82 @@ class WebContentContainerViewController: NSViewController {
     /// view also spans the window margins and the tab strip, which the card
     /// excludes. See `WebContentViewController.pageCardView`.
     var currentPageCardView: NSView? { currentWebContentController?.pageCardView }
+
+    private var pendingPageMount: (tabId: Int, completion: (NSView) -> Void)?
+
+    /// Page overlays hand off a live WebContents only after its destination
+    /// host is mounted and laid out in the same window.
+    func whenPageIsMounted(tabId: Int, perform completion: @escaping (NSView) -> Void) {
+        if let controller = currentWebContentController,
+           controller.associatedTab?.guid == tabId, controller.webPanelView.window != nil {
+            completion(controller.webPanelView)
+        } else {
+            pendingPageMount = (tabId, completion)
+        }
+    }
+
+    func cancelPageMountWait(tabId: Int) {
+        if pendingPageMount?.tabId == tabId { pendingPageMount = nil }
+    }
+
+    private var isPeekBackgroundDeemphasized = false
+
+    /// Animate the common ancestor of the page chrome and Chromium content
+    /// surface. Transforming only the page card would leave surface-backed
+    /// web content at full size. Page overlays are siblings of this container.
+    func setPeekBackgroundDeemphasized(_ deemphasized: Bool, animated: Bool) {
+        guard isPeekBackgroundDeemphasized != deemphasized else { return }
+        isPeekBackgroundDeemphasized = deemphasized
+        updatePeekBackgroundPresentation(animated: animated)
+    }
+
+    private func updatePeekBackgroundPresentation(animated: Bool) {
+        guard let layer = contentContainer.layer else { return }
+        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let scale: CGFloat = isPeekBackgroundDeemphasized && !reduceMotion ? 0.99 : 1
+        let opacity: CGFloat = isPeekBackgroundDeemphasized ? 0.5 : 1
+        let cardRect = currentPageCardView.map { $0.convert($0.bounds, to: contentContainer) }
+            ?? contentContainer.bounds
+        // AppKit backing layers need not anchor at (0.5, 0.5). Compensate
+        // without changing their anchor or Auto Layout's page geometry.
+        let center = CGPoint(x: cardRect.midX, y: cardRect.midY)
+        let anchor = CGPoint(x: layer.bounds.minX + layer.bounds.width * layer.anchorPoint.x,
+                             y: layer.bounds.minY + layer.bounds.height * layer.anchorPoint.y)
+        let transform = CATransform3DScale(
+            CATransform3DMakeTranslation((center.x - anchor.x) * (1 - scale),
+                                        (center.y - anchor.y) * (1 - scale), 0),
+            scale, scale, 1)
+        guard !CATransform3DEqualToTransform(layer.transform, transform)
+                || contentContainer.alphaValue != opacity else { return }
+
+        let fromTransform = layer.presentation()?.transform ?? layer.transform
+        let fromOpacity = layer.presentation()?.opacity ?? Float(contentContainer.alphaValue)
+        layer.removeAnimation(forKey: "phiPeekBackgroundScale")
+        layer.removeAnimation(forKey: "phiPeekBackgroundFade")
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        layer.transform = transform
+        contentContainer.alphaValue = opacity
+        if animated {
+            let timing = CAMediaTimingFunction(name: .easeOut)
+            let shrink = CABasicAnimation(keyPath: "transform")
+            shrink.fromValue = NSValue(caTransform3D: fromTransform)
+            shrink.toValue = NSValue(caTransform3D: transform)
+            shrink.duration = 0.2
+            shrink.timingFunction = timing
+            if !reduceMotion {
+                layer.add(shrink, forKey: "phiPeekBackgroundScale")
+            }
+
+            let fade = CABasicAnimation(keyPath: "opacity")
+            fade.fromValue = fromOpacity
+            fade.toValue = Float(opacity)
+            fade.duration = 0.2
+            fade.timingFunction = timing
+            layer.add(fade, forKey: "phiPeekBackgroundFade")
+        }
+        CATransaction.commit()
+    }
 
     /// `tabId`'s pane card when it is in the mounted split; nil otherwise.
     func currentSplitPaneCardView(forTabId tabId: Int) -> NSView? {
@@ -175,14 +260,11 @@ class WebContentContainerViewController: NSViewController {
     /// NSDraggingDestination callbacks never fire in that mode.
     var splitTabDropContainer: SplitTabDropContainer { contentContainer }
 
-    /// NTP-colored backdrop pinned under every other subview of
+    /// Header-matched loading backdrop pinned under every other subview of
     /// `contentContainer`, tracing the page panel's exact geometry
     /// (`WebContentViewController.splitViewContainer`: same insets, corner
-    /// radius, and `.contentOverlayBackground` fill). Visible in the
-    /// zero-tab gap of a freshly spawned Space window whose seed NTP hasn't
-    /// mounted yet: without it that gap shows the window background, so the
-    /// page area pops from window color to NTP color when the tab lands; with
-    /// it the page area reads as an NTP from the first frame. Once a content
+    /// radius). Uses the header's default extension surface so the loading
+    /// area matches the header while the first tab is mounting. Once a content
     /// surface is installed the page card above it is clear, and this
     /// backdrop shows through wherever the page has not painted: before a
     /// cold page's first frame, under an evicted frame, in a split's gap
@@ -193,7 +275,7 @@ class WebContentContainerViewController: NSViewController {
         view.wantsLayer = true
         view.layer?.cornerCurve = .continuous
         view.layer?.cornerRadius = LiquidGlassCompatible.webContentContainerCornerRadius
-        view.phiLayer?.setBackgroundColor(ThemedColor.contentOverlayBackground)
+        view.phiLayer?.setBackgroundColor(ThemedColor.extensionSurfaceBackground)
         return view
     }()
 
@@ -286,7 +368,7 @@ class WebContentContainerViewController: NSViewController {
     private var closingAIChatGhostView: NSView?
 
     /// Companion of the panel slot: fills the content frame's interior
-    /// around the panel card with the same `contentOverlayBackground` that
+    /// around the panel card with the same `separatedContentFrameBackground` that
     /// `splitViewContainer` paints behind the page and chat cards, so the
     /// panel reads as a sub-card inside one frame (AI Chat parity) instead
     /// of floating on the window background. Sits just above
@@ -364,15 +446,11 @@ class WebContentContainerViewController: NSViewController {
         }
         placeholderShell?.paintsOwnBackdrop = pagesPaintOwnBackdrop
         guard isViewLoaded else { return }
-        (view as? ColoredVisualEffectView)?.suppressesBackdrop = !paintsOwnBackdrop
+        (view as? BackdropContainerView)?.paintsBackdrop = paintsOwnBackdrop
     }
 
     override func loadView() {
-        let view = ColoredVisualEffectView()
-        view.themedBackgroundColor = .windowOverlayBackground
-        view.material = .fullScreenUI
-        view.wantsLayer = true
-        self.view = view
+        self.view = BackdropContainerView(paintsBackdrop: paintsOwnBackdrop)
         applyBackdropPainting()
     }
     
@@ -442,8 +520,6 @@ class WebContentContainerViewController: NSViewController {
                 }
             }
         }
-        
-        setupFloatingSidebar()
 
         // Add titlebar aware area
         view.addSubview(titleAwareArea)
@@ -554,6 +630,29 @@ class WebContentContainerViewController: NSViewController {
                     appearance: presentation.appearance
                 )
             }
+    }
+
+    /// Content-surface windows draw the shared frame below Chromium, while
+    /// non-surface windows draw it in the page controller's split container.
+    private func bindCurrentPageFrameBackground() {
+        currentPageFrameBackgroundCancellable = nil
+        let apply: (Bool) -> Void = { [weak self] separated in
+            guard let self else { return }
+            // Without a content surface the split container paints the frame;
+            // keep this backing opaque so the black alpha is not applied twice.
+            self.pageAreaBackdrop.phiLayer?.setBackgroundColor(
+                separated && self.hasContentSurface
+                    ? .separatedContentFrameBackground : .extensionSurfaceBackground
+            )
+        }
+        guard let controller = currentWebContentController else {
+            apply(false)
+            return
+        }
+        apply(controller.isPageCardSeparated)
+        currentPageFrameBackgroundCancellable = controller.$isPageCardSeparated
+            .removeDuplicates()
+            .sink(receiveValue: apply)
     }
 
     // MARK: - Agent transcript dock
@@ -715,7 +814,7 @@ class WebContentContainerViewController: NSViewController {
         // corners for the same reason while the panel is open (see
         // WebContentViewController.updateLeftContainerStyle).
         backdrop.layer?.maskedCorners = [.layerMaxXMinYCorner, .layerMaxXMaxYCorner]
-        backdrop.phiLayer?.setBackgroundColor(ThemedColor.contentOverlayBackground)
+        backdrop.phiLayer?.setBackgroundColor(ThemedColor.separatedContentFrameBackground)
         view.addSubview(backdrop, positioned: .above, relativeTo: contentContainer)
         extensionSidePanelFrameBackdrop = backdrop
         return backdrop
@@ -870,6 +969,9 @@ class WebContentContainerViewController: NSViewController {
 
     override func viewDidLayout() {
         super.viewDidLayout()
+        if isPeekBackgroundDeemphasized {
+            updatePeekBackgroundPresentation(animated: false)
+        }
         updateContentOuterBorder()
         updateStatusURLPosition()
     }
@@ -1410,11 +1512,17 @@ class WebContentContainerViewController: NSViewController {
             controller.hasContentSurface = true
         }
         placeholderShell?.hasContentSurface = true
+        bindCurrentPageFrameBackground()
         applyBackdropPainting()
         updatePageAreaBackdropCorners(panelDocked: browserState?.extensionSidePanel != nil)
         contentSurfaceHosting = ContentSurfaceHosting(container: contentContainer,
                                                       surfaceView: hostingView,
-                                                      browserState: browserState)
+                                                      browserState: browserState) { [weak self] in
+            // Cached, unmounted controllers are not children. Use the mounted
+            // controllers rather than focusingTab, which can lead the UI.
+            self?.children.compactMap { $0 as? WebContentViewController }
+                .flatMap(\.contentSurfaceTabs) ?? []
+        }
         AppLogInfo("[ContentSurface] [Container] installed windowId=\(browserState?.windowId ?? -1)")
     }
 
@@ -1989,6 +2097,10 @@ class WebContentContainerViewController: NSViewController {
         // previous size until the next viewDidLayout corrects it.
         view.layoutSubtreeIfNeeded()
         updateContentOuterBorder()
+        if let pending = pendingPageMount, pending.tabId == controller.associatedTab?.guid {
+            pendingPageMount = nil
+            pending.completion(controller.webPanelView)
+        }
     }
 
     /// Removes every tab view except `controller`'s from `contentContainer`.

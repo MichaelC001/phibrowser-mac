@@ -56,6 +56,11 @@ class SpaceSessionController: NSWindowController {
     var isPresentedOrLegacy: Bool { !isHosted || isPresented }
     
     var omniBoxContainerViewController: OmniBoxContainerViewController?
+    /// Omnibox "New tab behavior": the window entered placeholder mode while
+    /// not on screen (a Space spawned empty, a new window before its reveal),
+    /// so the omnibox it owes opens once the session is presented. See
+    /// `openOmniBoxForEmptyWindowIfConfigured`.
+    var omniBoxOwedForEmptyWindow = false
     
     var searchTabsContainerViewController: SearchTabsContainerViewController?
     
@@ -127,6 +132,37 @@ class SpaceSessionController: NSWindowController {
     /// window's view hierarchy beneath it.
     private(set) var omniBoxHostPanel: NSPanel?
     private var omniBoxHostResizeObserver: NSObjectProtocol?
+    /// Follows the box's frame while the panel hosts it: the panel is shrunk
+    /// to the box, so it must move and grow with it (suggestions, resizes).
+    private var omniBoxFrameObserver: NSObjectProtocol?
+    /// Dismisses the panel-hosted omnibox on a press in any other window.
+    /// The panel covers only the box, so that press is a real click on the
+    /// control beneath, not one the overlay swallowed and has to replay.
+    private var omniBoxOutsideClickMonitor: Any?
+    /// Room the panel keeps around the box for its shadow and the 1.1× scale
+    /// of the show/hide animation. Stays inside the page area for the usual
+    /// box width, so the sidebar and header are never under the panel.
+    private static let omniBoxHostPanelMargin: CGFloat = 60
+    /// While set, the omnibox is hosted inside the window's own view tree
+    /// instead of the host panel, and its backdrop lets every click outside
+    /// the box fall through to the view beneath (`EventBlockBgView.
+    /// clickThroughOutside`): Space pips, the Space swipe, pinned tabs,
+    /// bookmarks and the header's buttons all take the click directly, and
+    /// the omnibox dismisses alongside it. A click replayed from the panel
+    /// never satisfied press-tracking controls, so the panel is only used
+    /// when it must float above a Peek or Reader panel
+    /// (`omniBoxNeedsFloatingHost`). Decided per open in `toggleOmniBox`;
+    /// cleared when the omnibox hides.
+    var omniBoxOverlayClicksThrough = false
+
+    /// Peek and Reader are child windows above the shell, so an omnibox hosted
+    /// in the window's view tree would sit beneath them: those opens keep the
+    /// floating host panel.
+    var omniBoxNeedsFloatingHost: Bool {
+        let focusingTab = browserState.focusingTab
+        return browserState.visiblePeek(focusingTab: focusingTab) != nil
+            || !browserState.visibleReaderOverlays(focusingTab: focusingTab).isEmpty
+    }
 
     var centeredOmniBoxHorizontalInset: CGFloat { 0 }
 
@@ -174,6 +210,34 @@ class SpaceSessionController: NSWindowController {
             window.addChildWindow(panel, ordered: .above)
         }
         panel.ignoresMouseEvents = false
+        if let box = omniBoxContainerViewController?.omniBoxController?.view {
+            box.postsFrameChangedNotifications = true
+            if let observer = omniBoxFrameObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+            omniBoxFrameObserver = NotificationCenter.default.addObserver(
+                forName: NSView.frameDidChangeNotification,
+                object: box,
+                queue: .main
+            ) { [weak self] _ in
+                self?.syncOmniBoxHostPanelFrame()
+            }
+        }
+        if omniBoxOutsideClickMonitor == nil {
+            omniBoxOutsideClickMonitor = NSEvent.addLocalMonitorForEvents(
+                matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+            ) { [weak self] event in
+                guard let self, let panel = self.omniBoxHostPanel, event.window !== panel,
+                      self.omniBoxContainerViewController?.hasShown == true else { return event }
+                // The click proceeds untouched; the omnibox leaves one turn later.
+                DispatchQueue.main.async { [weak self] in
+                    guard let container = self?.omniBoxContainerViewController,
+                          container.hasShown else { return }
+                    container.hideOmniBox()
+                }
+                return event
+            }
+        }
         syncOmniBoxHostPanelFrame()
         panel.makeKeyAndOrderFront(nil)
         return panel
@@ -186,14 +250,46 @@ class SpaceSessionController: NSWindowController {
               omniBoxContainerViewController?.hasShown != true else { return }
         panel.parent?.removeChildWindow(panel)
         panel.orderOut(nil)
+        if let observer = omniBoxFrameObserver {
+            NotificationCenter.default.removeObserver(observer)
+            omniBoxFrameObserver = nil
+        }
+        if let monitor = omniBoxOutsideClickMonitor {
+            NSEvent.removeMonitor(monitor)
+            omniBoxOutsideClickMonitor = nil
+        }
     }
 
-    private func syncOmniBoxHostPanelFrame() {
+    /// The panel covers the box alone, not the content area: everything
+    /// around the box stays a real, clickable part of the window beneath. The
+    /// backdrop inside the panel still spans the whole content area — offset
+    /// so it lines up with the window — which is what lets the omnibox lay
+    /// itself out exactly as it does when hosted in the window; the panel
+    /// merely clips that layout to the box plus a margin for its shadow.
+    func syncOmniBoxHostPanelFrame() {
         guard let window = self.window,
               let panel = omniBoxHostPanel,
               let contentView = window.contentView else { return }
-        let inWindow = contentView.convert(contentView.bounds, to: nil)
-        panel.setFrame(window.convertToScreen(inWindow), display: true)
+        let fullInWindow = contentView.convert(contentView.bounds, to: nil)
+        let fullOnScreen = window.convertToScreen(fullInWindow)
+        var region = fullOnScreen
+        if let box = omniBoxContainerViewController?.omniBoxController?.view,
+           box.superview != nil, !box.frame.isEmpty {
+            // The backdrop's coordinate space is the content area's.
+            let boxInBackdrop = box.convert(box.bounds, to: omnibackgroundView)
+            region = NSRect(x: fullOnScreen.minX + boxInBackdrop.minX,
+                            y: fullOnScreen.minY + boxInBackdrop.minY,
+                            width: boxInBackdrop.width,
+                            height: boxInBackdrop.height)
+                .insetBy(dx: -Self.omniBoxHostPanelMargin, dy: -Self.omniBoxHostPanelMargin)
+                .intersection(fullOnScreen)
+            if region.isEmpty { region = fullOnScreen }
+        }
+        panel.setFrame(region, display: true)
+        omnibackgroundView.frame = NSRect(x: fullOnScreen.minX - region.minX,
+                                          y: fullOnScreen.minY - region.minY,
+                                          width: fullOnScreen.width,
+                                          height: fullOnScreen.height)
     }
     
     lazy var omnibackgroundView: EventBlockBgView = {
@@ -391,6 +487,7 @@ class SpaceSessionController: NSWindowController {
     private func setupHostedSession() {
         observeChromiumWindowClose()
         observeChromiumWindowTitle()
+        observePlaceholderModeForOmniBox()
         browserState.themeContext.themeAppearancePublisher
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _, _ in
@@ -447,6 +544,28 @@ class SpaceSessionController: NSWindowController {
     private func retitleShell(inPlaceholderMode: Bool) {
         guard isPresented else { return }
         slot?.retitleShell(presenting: self, inPlaceholderMode: inPlaceholderMode)
+    }
+
+    /// Placeholder mode under the Omnibox "New tab behavior" means the window
+    /// has nothing in it on purpose — no tab was auto-created — so the omnibox
+    /// opens over it. Both setup paths install this once; `cancellables` dies
+    /// with the controller.
+    private func observePlaceholderModeForOmniBox() {
+        browserState.$isInPlaceholderMode
+            .removeDuplicates()
+            .sink { [weak self] inPlaceholderMode in
+                guard let self else { return }
+                if inPlaceholderMode {
+                    // `@Published` emits from willSet: the property still reads
+                    // false inside this sink, so act once the write has landed.
+                    DispatchQueue.main.async { [weak self] in
+                        self?.openOmniBoxForEmptyWindowIfConfigured()
+                    }
+                } else {
+                    self.omniBoxOwedForEmptyWindow = false
+                }
+            }
+            .store(in: &cancellables)
     }
 
     /// Builds and hosts the dormant session's tree hidden, so a first switch
@@ -538,6 +657,7 @@ class SpaceSessionController: NSWindowController {
 
     private func setupWindow() {
         guard let window = self.window else { return }
+        observePlaceholderModeForOmniBox()
         
         window.contentView?.removeFromSuperview()
         
@@ -765,6 +885,13 @@ class SpaceSessionController: NSWindowController {
             make.edges.equalToSuperview()
         }
 
+        // A standalone window's floating panel goes after the window-wide
+        // views above, as a hosted shell keeps its panel above the whole
+        // session: the panel draws over them, so it takes the clicks where
+        // it covers them too.
+        mainSplitViewController.webContentContainerViewController
+            .setupFloatingSidebar(in: mainSplitViewController)
+
         // A peek's appear flight starts from the press that opened it, which
         // is long gone by the time the panel is built — start recording now.
         peekOriginTracker = PeekOriginTracker(
@@ -886,6 +1013,7 @@ class SpaceSessionController: NSWindowController {
                         $0.setEclipsedByInWindowOverlay(visible)
                     }
                     if !visible {
+                        self.omniBoxOverlayClicksThrough = false
                         self.retireOmniBoxHostPanelIfIdle()
                     }
                 } else {
@@ -1205,6 +1333,9 @@ class SpaceSessionController: NSWindowController {
             self.mainSplitViewController.webContentContainerViewController.restoreFocusAfterPresentation()
             self.reshowOverlayPanelsAfterPresent()
         }
+        if omniBoxOwedForEmptyWindow {
+            openOmniBoxForEmptyWindowIfConfigured()
+        }
     }
 
     /// The peek and reader sinks only act while presented, so a session
@@ -1509,7 +1640,8 @@ class SpaceSessionController: NSWindowController {
         trafficLightPositioner?.stop(restoringPlacement: true)
         let positioner = TrafficLightPositioner(
             window: window,
-            centerFromWindowTop: Self.chromeRowCenter(for: layoutMode)
+            centerFromWindowTop: Self.chromeRowCenter(for: layoutMode),
+            centerFromWindowLeading: layoutMode == .balanced ? 22 : nil
         )
         trafficLightPositioner = positioner
         trafficLightLayoutMode = layoutMode

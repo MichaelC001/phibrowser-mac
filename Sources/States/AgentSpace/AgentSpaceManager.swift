@@ -939,24 +939,6 @@ final class AgentSpaceManager: ObservableObject {
         Task { try? await APIClient.shared.setAgentSpacePresence(taskId: taskId, userPresent: true) }
     }
 
-    /// The user switched away from the agent Space's window. Ordering the
-    /// window out makes macOS occlusion mark its WebContents hidden, and the
-    /// one-shot visibility forcing in Chromium only re-fires on tab insertion
-    /// or active-tab change — so re-assert agent mode shortly after the swap to
-    /// keep the agent's renderer painting off screen.
-    func userDidLeave(spaceId: String) {
-        guard let task = tasksBySpaceId[spaceId], task.ownership == .agent,
-              task.windowId != 0 else { return }
-        let windowId = task.windowId
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
-            guard let self,
-                  let current = self.tasksBySpaceId[spaceId],
-                  current.ownership == .agent, current.windowId == windowId else { return }
-            ChromiumLauncher.sharedInstance().bridge?
-                .setAgentMode(true, windowId: Int64(windowId))
-        }
-    }
-
     /// The user takes control (interrupt). Order: synchronous Chromium flag →
     /// extension broadcast → phi-agent HTTP (`.phiAgent` tasks only). Local
     /// state stays `.user` even if the HTTP call fails (local enforcement

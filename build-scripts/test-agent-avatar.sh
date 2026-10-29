@@ -25,8 +25,11 @@ class APIClient {
 '''
 (build / 'API.swift').write_text('import Foundation\n' + models + '\nenum APIError: Error { case invalidResponse; case httpError(statusCode: Int) }\n' + stubs + methods + '\n}')
 view = (root / 'Sources/UserInterface/Notifications/NotificationMessageCardView.swift').read_text()
-view = view[view.index('private struct NotificationCardAgentAvatarView'):view.index('\n#if DEBUG\n/// Interactive preview wrapper')].replace('private struct NotificationCardAgentAvatarView', 'struct NotificationCardAgentAvatarView')
-(build / 'AvatarView.swift').write_text('import SwiftUI\nimport AppKit\nclass ApplicationState { static let shared = ApplicationState(); var isAuthenticated = false }\nfunc AppLogError(_ message: String) {}\nfunc AppLogWarn(_ message: String) {}\n' + view)
+view = view[view.index('private struct NotificationCardAgentAvatarView'):view.index('\n// MARK: - Working Card')].replace('private struct NotificationCardAgentAvatarView', 'struct NotificationCardAgentAvatarView')
+manager = (root / 'Sources/Notifications/MessageCard/NotificationCardManager.swift').read_text()
+load = manager[manager.index('    /// Fetches avatar bytes and decodes them'):manager.index("    /// Drops the account's avatar from memory and disk.")]
+store = '@MainActor enum AgentAvatarStore {\n    static func cachedImage() -> NSImage? { nil }\n    static func refresh() async -> NSImage? { nil }\n' + load + '}\n'
+(build / 'AvatarView.swift').write_text('import SwiftUI\nimport AppKit\nfunc AppLogError(_ message: String) {}\nfunc AppLogWarn(_ message: String) {}\n' + store + view)
 PY
 xcrun swiftc -swift-version 5 -parse-as-library -module-cache-path "$build/modules" "$build/API.swift" "$build/AvatarView.swift" "$repo/Tests/AgentAvatar/main.swift" -o "$build/tests"
 "$build/tests"

@@ -278,7 +278,11 @@ enum ZenDataParserTool {
 
     static func parseSession(json: Data) throws -> Session {
         let file = try JSONDecoder().decode(SessionFile.self, from: json)
-        let spaces = (file.spaces ?? []).map { record -> Space in
+        // A session file can list one workspace more than once; everything
+        // downstream keys Spaces by this id, so the first occurrence wins.
+        var seenSpaceIDs = Set<String>()
+        let spaces = (file.spaces ?? []).compactMap { record -> Space? in
+            guard seenSpaceIDs.insert(record.uuid).inserted else { return nil }
             let trimmed = (record.name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             return Space(
                 id: record.uuid,

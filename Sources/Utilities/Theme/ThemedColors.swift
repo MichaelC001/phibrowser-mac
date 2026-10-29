@@ -37,13 +37,22 @@ public extension ThemedColor {
     /// Default window background color.
     static let windowBackground = ThemedColor(role: .windowBackground)
 
-    /// Opaque content overlay background shared by the bookmark bar and split views.
-    static let contentOverlayBackground = ThemedColor { theme, appearance in
-        if appearance.isLight {
-            return .white
-        } else {
-            return windowOverlayBackground.resolve(theme: theme, appearance: appearance).withAlphaComponent(1)
-        }
+    /// Neutral background for the omnibox and tab search, independent of Space theme colors.
+    static let searchPanelBackground = ThemedColor(lightHex: 0xFFFFFF, darkHex: 0x383838)
+
+    /// Neutral content overlay background, independent of Space theme colors.
+    static let contentOverlayBackground = ThemedColor(lightHex: 0xFFFFFF, darkHex: 0x212121)
+
+    /// Default page backing and split gaps, matching the header's fallback surface.
+    static let extensionSurfaceBackground = ThemedColor { theme, appearance in
+        theme.extensionSurfaceBackground(for: appearance)
+    }
+
+    /// Shared frame around separated page and Chat/panel cards.
+    static let separatedContentFrameBackground = ThemedColor { _, appearance in
+        appearance.isDark
+            ? NSColor.black.withAlphaComponent(0.60)
+            : NSColor.white.withAlphaComponent(0.60)
     }
 
     /// Background for tabs in the temporary multi-selection (excluding the active tab).

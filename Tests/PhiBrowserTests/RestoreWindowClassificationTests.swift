@@ -581,4 +581,44 @@ final class RestoreWindowClassificationTests: XCTestCase {
 
         XCTAssertEqual(result.eagerWindowIds, [1])
     }
+
+    // MARK: - The first wake after a silent launch takes the cold-start rule
+
+    // A silent launch skipped the cold start, so its first windowless wake
+    // stands in for it (chromium ADR 0019): every group on screen at quit
+    // comes back on its own active Space, and a closed group still does not.
+
+    /// Two groups on screen at quit, plus one the user had closed before it.
+    private func classifyReopen(isInSilentLaunch: Bool)
+        -> SpaceManager.RestoreWindowClassification {
+        classifyMarked(
+            slots: [
+                (activeSpaceId: "space-a",
+                 windowMap: [1: "space-a", 2: "space-b"],
+                 isLandingEntry: true, isParkedOnlyEntry: false),
+                (activeSpaceId: "space-c",
+                 windowMap: [3: "space-c"],
+                 isLandingEntry: false, isParkedOnlyEntry: false),
+                (activeSpaceId: "space-d",
+                 windowMap: [4: "space-d"],
+                 isLandingEntry: false, isParkedOnlyEntry: true),
+            ],
+            liveSpaceIds: ["space-a", "space-b", "space-c", "space-d"],
+            mode: SpaceManager.reopenLandingMode(isInSilentLaunch: isInSilentLaunch))
+    }
+
+    func testTheFirstWakeAfterASilentLaunchBringsBackEveryGroupOnScreen() {
+        XCTAssertEqual(
+            classifyReopen(isInSilentLaunch: true).eagerWindowIds, [1, 3])
+    }
+
+    func testTheFirstWakeAfterASilentLaunchLeavesAClosedGroupClosed() {
+        XCTAssertEqual(
+            classifyReopen(isInSilentLaunch: true).closedGroupWindowIds, [4])
+    }
+
+    func testAReopenOutsideASilentLaunchStillBringsBackOneGroup() {
+        XCTAssertEqual(
+            classifyReopen(isInSilentLaunch: false).eagerWindowIds, [1])
+    }
 }

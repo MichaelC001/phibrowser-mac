@@ -251,6 +251,7 @@ final class ShellSidebarHostViewController: NSViewController, BrowserThemeContex
     override func loadView() {
         let view = ColoredVisualEffectView()
         view.themedBackgroundColor = .windowOverlayBackground
+        view.usesThemePalette = true
         view.material = .fullScreenUI
         view.blendingMode = .behindWindow
         self.view = view
@@ -425,6 +426,7 @@ final class ShellContentHostViewController: NSViewController, BrowserThemeContex
     override func loadView() {
         let view = ColoredVisualEffectView()
         view.themedBackgroundColor = .windowOverlayBackground
+        view.usesThemePalette = true
         view.material = .fullScreenUI
         view.blendingMode = .behindWindow
         view.autoresizesSubviews = true

@@ -1031,6 +1031,11 @@ class SpaceSessionControllersManager: MainBrowserWindowLookup {
         }
         activeWindowController = windowController
         AppLogDebug("window did become key window: \(windowController.windowId)")
+        // A legacy window that entered placeholder mode before it was shown
+        // (⌘N under the Omnibox "New tab behavior") opens its omnibox now.
+        if windowController.omniBoxOwedForEmptyWindow {
+            windowController.openOmniBoxForEmptyWindowIfConfigured()
+        }
     }
 
     /// Hosted-window mode: a shell became key — its presented session is now

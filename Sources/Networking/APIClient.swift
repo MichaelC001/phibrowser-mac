@@ -178,10 +178,20 @@ class APIClient {
     private func stagedOnboardingToken(
         accountUserID: String
     ) async throws -> String {
-        let stagedToken = await MainActor.run {
+        var stagedToken = await MainActor.run {
             AuthManager.shared.stagedOnboardingAccessToken(
                 expectedUserID: accountUserID
             )
+        }
+        if stagedToken == nil {
+            // Resuming onboarding after relaunch can leave the staged
+            // credential unloaded or expired; restore or renew it once.
+            _ = await AuthManager.shared.getActiveCredentials()
+            stagedToken = await MainActor.run {
+                AuthManager.shared.stagedOnboardingAccessToken(
+                    expectedUserID: accountUserID
+                )
+            }
         }
         guard let stagedToken, !stagedToken.isEmpty else {
             throw APIError.invalidRequest(
@@ -279,6 +289,7 @@ class APIClient {
     private func sendPhiAgentRequest(
         path: String,
         method: String = "GET",
+        headers extraHeaders: [String: String] = [:],
         body: Data? = nil,
         timeout: TimeInterval? = nil
     ) async throws -> PhiAgentHTTPResponse {
@@ -288,7 +299,7 @@ class APIClient {
             headers: [
                 "Authorization": "Bearer \(token)",
                 "Content-Type": "application/json",
-            ],
+            ].merging(extraHeaders) { _, extra in extra },
             body: body,
             timeout: timeout
         ))
@@ -363,6 +374,25 @@ class APIClient {
             throw APIError.httpError(statusCode: response.statusCode)
         }
         return try JSONDecoder().decode(VideoGistArticle.self, from: response.body)
+    }
+
+    /// The browser Profile that owns conversation `chatId`, or nil when it
+    /// belongs to none and any Profile may show it. Read with the global chat
+    /// scope, so a conversation another Profile owns is still found.
+    func getChatOwnerProfileId(chatId: String) async throws -> String? {
+        guard let encoded = chatId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
+              !encoded.contains("/") else {
+            throw APIError.invalidRequest(message: "Invalid conversation id.")
+        }
+        let response = try await sendPhiAgentRequest(
+            path: "/api/v1/chats/\(encoded)",
+            headers: ["x-phi-chat-scope": "global"]
+        )
+        guard (200...299).contains(response.statusCode) else {
+            throw APIError.httpError(statusCode: response.statusCode)
+        }
+        struct ChatOwner: Decodable { let profileId: String? }
+        return try JSONDecoder().decode(ChatOwner.self, from: response.body).profileId
     }
 
     func getAgentAvatarImageData() async throws -> AgentAvatarImagePayload {

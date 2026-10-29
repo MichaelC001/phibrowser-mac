@@ -35,6 +35,35 @@ extension SpaceSessionController {
         }
     }
     
+    /// Omnibox "New tab behavior": a window with nothing in it gets no
+    /// auto-created tab — Chromium puts it in placeholder mode instead, whether
+    /// the last tab just closed, a Space was opened empty, or ⌘N opened a new
+    /// window — and this opens the omnibox over the placeholder, as ⌘T would.
+    /// Under New Tab Page nothing happens here: those windows get a tab.
+    /// A window not yet on screen (a spawn before its reveal) owes the open
+    /// until `completePresentationInShell` or the first key-window pass.
+    func openOmniBoxForEmptyWindowIfConfigured() {
+        guard browserState.isInPlaceholderMode,
+              !PhiPreferences.GeneralSettings.openNewTabPageOnCmdT.loadValue(),
+              !MainActor.assumeIsolated({ AgentSpaceManager.shared.isAgentOwned(browserState.spaceId) }) else {
+            omniBoxOwedForEmptyWindow = false
+            return
+        }
+        guard isPresentedOrLegacy, window?.isVisible == true else {
+            omniBoxOwedForEmptyWindow = true
+            return
+        }
+        omniBoxOwedForEmptyWindow = false
+        // One turn later: placeholder entry is delivered inside Chromium's
+        // strip mutation (or the spawn's synchronous bridge call), and the
+        // omnibox host panel must not attach mid-callback.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.browserState.isInPlaceholderMode, self.isPresentedOrLegacy,
+                  self.omniBoxContainerViewController?.hasShown != true else { return }
+            self.toggleOmniBox(fromAddressBar: false)
+        }
+    }
+
     func handleCloseTab() -> Bool {
         if dismissLibraryIfVisible() { return true }
         if searchTabsContainerViewController?.hasShown ?? false {
@@ -86,6 +115,19 @@ extension SpaceSessionController {
         toggleOmniBox(fromAddressBar: true, addressView: addressView)
     }
     
+    /// The omnibox that picks the pane of `BrowserState.pendingSplitPreview`.
+    /// Without it nothing could end the preview, so it ends here instead.
+    func presentSplitPreviewOmniBox() {
+        if omniBoxContainerViewController?.hasShown == true {
+            omniBoxContainerViewController?.representAsSplitPanePicker()
+        } else {
+            toggleOmniBox(fromAddressBar: false)
+        }
+        if omniBoxContainerViewController?.hasShown != true {
+            browserState.endSplitPreview()
+        }
+    }
+
     @IBAction func selectTabWithIndex(_ index: Int) {
         browserState.selectTabWithIndex(index)
     }
@@ -108,27 +150,78 @@ extension SpaceSessionController {
                 addressViewPresent: addressView != nil
             )
             
-            // The omnibox host stays above Reader, Peek and the browser's
-            // other content (see attachAndShowOmniBoxHostPanel).
-            if let hostView = attachAndShowOmniBoxHostPanel()?.contentView {
+            // The omnibox normally lives in the window's own tree, like tab
+            // search, with a backdrop that owns nothing but the box: a click
+            // anywhere else lands on the real control and dismisses the
+            // omnibox at the same time. Only above a Peek or Reader panel does
+            // it need the host panel, which floats over those child windows
+            // (see attachAndShowOmniBoxHostPanel) and is shrunk to the box so
+            // outside clicks stay real there too.
+            omniBoxOverlayClicksThrough = !omniBoxNeedsFloatingHost
+            let hostView: NSView?
+            if omniBoxOverlayClicksThrough {
+                hostView = isHosted ? shellSplit?.view : contentViewController?.view
+                omnibackgroundView.clickThroughOutside = { [weak self] in
+                    self?.omniBoxContainerViewController?.omniBoxController?.view
+                }
+                omnibackgroundView.clickedThroughOutside = { [weak self] in
+                    // One turn later: the click is mid-dispatch to the view
+                    // beneath, and the overlay must not leave the hierarchy
+                    // under it.
+                    DispatchQueue.main.async {
+                        guard let container = self?.omniBoxContainerViewController,
+                              container.hasShown else { return }
+                        container.hideOmniBox()
+                    }
+                }
+            } else {
+                hostView = attachAndShowOmniBoxHostPanel()?.contentView
+                omnibackgroundView.clickThroughOutside = nil
+                omnibackgroundView.clickedThroughOutside = nil
+            }
+            if let hostView {
+                // Resolve the shell and address-bar geometry before mounting
+                // the overlay or asking its text field to become first responder.
+                hostView.layoutSubtreeIfNeeded()
+                if omniBoxOverlayClicksThrough {
+                    omnibackgroundView.frame = hostView.bounds
+                }
                 hostView.addSubview(omnibackgroundView)
-                omnibackgroundView.snp.remakeConstraints { make in
-                    make.edges.equalToSuperview()
+                if omniBoxOverlayClicksThrough {
+                    omnibackgroundView.snp.remakeConstraints { make in
+                        make.edges.equalToSuperview()
+                    }
+                } else {
+                    // The panel is sized to the box; the backdrop keeps the
+                    // content area's size and is placed by
+                    // `syncOmniBoxHostPanelFrame`, not by its superview.
+                    omnibackgroundView.snp.removeConstraints()
+                    omnibackgroundView.translatesAutoresizingMaskIntoConstraints = true
+                    omnibackgroundView.autoresizingMask = []
+                    syncOmniBoxHostPanelFrame()
                 }
 
                 // Add omniBox container to background view
                 if let containerView = omniBoxContainerViewController?.view {
+                    containerView.frame = omnibackgroundView.bounds
                     omnibackgroundView.addSubview(containerView)
                     containerView.snp.remakeConstraints { make in
                         make.edges.equalToSuperview()
                     }
                 }
+                hostView.layoutSubtreeIfNeeded()
+            } else {
+                AppLogWarn("[Omnibox] cannot present without a host for window \(windowId)")
+                return
             }
             if fromAddressBar {
                 if browserState.groupOverviewState != nil {
                     omniBoxContainerViewController?.omniBoxController?
                         .updateStatusForGroupOverview()
-                } else if let tab = browserState.focusingTab {
+                } else if let tab = browserState.pageCommandTarget {
+                    // The page in front of the user — the peek when one is
+                    // up, else the focused tab: Cmd+L shows, selects and
+                    // copies its URL, and a submission navigates it.
                     omniBoxContainerViewController?.omniBoxController?.updateStatus(
                         with: tab,
                         suppressAutomaticSearch: true
@@ -148,7 +241,7 @@ extension SpaceSessionController {
                 omniBoxContainerViewController?.omniBoxController?
                     .updateStatusForGroupOverview()
                 omniBoxContainerViewController?.omniBoxController?.requestAtonce(source: .manualRefresh)
-            } else if let tab = browserState.focusingTab {
+            } else if let tab = browserState.pageCommandTarget {
                 omniBoxContainerViewController?.omniBoxController?.updateStatus(
                     with: tab,
                     suppressAutomaticSearch: true

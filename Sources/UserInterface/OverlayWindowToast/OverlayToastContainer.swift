@@ -181,8 +181,10 @@ struct OverlayToastContainer: View {
                 NotificationMessageCardView(
                     manager: viewModel.notificationCardManager,
                     layoutMode: .legacy,
-                    onRun: { card in
-                        NotificationCardManager.shared.decide(card: card, decision: .accept)
+                    onRun: { [browserState = viewModel.browserState] card in
+                        NotificationCardManager.shared.accept(card) { [weak browserState] conversationId in
+                            await browserState?.showCardConversationInAIChatPanel(conversationId) ?? false
+                        }
                     },
                     onDismiss: { _ in
                         NotificationCardManager.shared.hideCard()

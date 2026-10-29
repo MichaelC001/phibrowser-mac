@@ -164,6 +164,7 @@ struct LibrarySpacesView: View {
         return CreateSpacePanel(style: .library, manager: manager, profileManager: .shared,
                                 initialProfileId: browserState.profileId,
                                 initialThemeId: browserState.themeContext.currentTheme.id,
+                                afterSpaceId: browserState.spaceId,
                                 onClose: { restorePreview in
                                     AppLogInfo("[LibrarySpaces] create.close restorePreview=\(restorePreview)")
                                     isCreating = false

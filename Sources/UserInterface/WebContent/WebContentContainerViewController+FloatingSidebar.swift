@@ -15,12 +15,14 @@ extension WebContentContainerViewController {
     var floatingSidebarContainerView: NSView? { floatingSidebarHost.floatingSidebarContainerView }
     var floatingSidebarViewController: FloatingSidebarViewController? { floatingSidebarHost.floatingSidebarViewController }
 
-    func setupFloatingSidebar() {
-        // A prewarmed hosted tree has no window controller yet. Its parent
-        // already knows that the eventual shell owns the floating panel.
-        guard (parent as? MainSplitViewController)?.isHosted != true,
-              browserState?.windowController?.isHosted != true, let browserState else { return }
-        standaloneFloatingSidebarHost.install(in: self, over: view)
+    /// A standalone window mounts its host on the window's content view,
+    /// over this page area, as a hosted shell mounts its own: a page in
+    /// content fullscreen lifts into an overlay there, and the panel must be
+    /// that overlay's sibling to open over it. A hosted tree, prewarmed ones
+    /// included, uses the shell's panel instead.
+    func setupFloatingSidebar(in mainSplit: MainSplitViewController) {
+        guard !mainSplit.isHosted, let browserState else { return }
+        standaloneFloatingSidebarHost.install(in: mainSplit, over: view)
         standaloneFloatingSidebarHost.present(browserState)
     }
 }

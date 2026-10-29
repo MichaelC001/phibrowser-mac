@@ -88,7 +88,21 @@ final class SyncKeyController {
     private var cleaningLocalState = false
     private let runtimeRequiresReconfiguration: () -> Bool
     private let runtimeRemovalPending: () -> Bool
-    var requiresReconfiguration: Bool { markerStore?.load().requiresReconfiguration == true || runtimeRequiresReconfiguration() }
+    /// True while confirmed cleanup is unfinished. A journaled account reset counts: its
+    /// `resetOperationId` is the durable mark of a reset whose outcome this Mac has not
+    /// recorded yet, so it must resume through Set up sync again (`reconfigureSync()`) and
+    /// never be replayed against an account set up afresh. While the reset request is in
+    /// flight the flag is momentarily true as well, which keeps the pairing reset out.
+    var requiresReconfiguration: Bool {
+        let journal = markerStore?.load()
+        return journal?.requiresReconfiguration == true || journal?.resetOperationId != nil
+            || runtimeRequiresReconfiguration()
+    }
+
+    /// Whether Set up sync again will finish a journaled account reset (and so delete the
+    /// account's sync data) rather than only clear this Mac's sync setup. The confirmation
+    /// copy follows it.
+    var resetResumePending: Bool { markerStore?.load().resetOperationId != nil }
 
     private let isPairingComplete: @MainActor () -> Bool
     /// `ProfileManager.isProfileListEnumerated`: until the list has been read once, an
@@ -115,6 +129,15 @@ final class SyncKeyController {
     /// notifyChromium keeps the controller independent of Account/LocalStore and lets self-revocation tests
     /// avoid the real database.
     private let clearAllSyncIds: (@Sendable () async throws -> Void)?
+    /// The account's `sync.pairingLocalReset` marker (docs/sync.md, "Replacing this Mac's data at
+    /// pairing"). Nil means unwired/test construction.
+    private let localResetMarker: SyncPairingLocalResetMarkerStore?
+    /// Local data access for the pairing reset, wired by the coordinator. Nil means unwired/test
+    /// construction, and `localDataReset()` then answers nil.
+    private let localResetAccess: PhiLocalDataReset.LocalAccess?
+    /// The Profile deletion journal the reset's no-history check reads. Defaults to the facade's
+    /// account-bound store; nil from it means the journal cannot be read.
+    private let profileDeletionIntents: @MainActor () -> (any PhiProfileDeletionIntentStore)?
 
     /// What an announcement says about the two pairing predicates it arrives
     /// with. `false, false` is produced by all three cases and means something
@@ -252,6 +275,11 @@ final class SyncKeyController {
          isCurrentAccount: @escaping () -> Bool = { true },
          runtimeRequiresReconfiguration: @escaping () -> Bool = { false },
          runtimeRemovalPending: @escaping () -> Bool = { false },
+         localResetMarker: SyncPairingLocalResetMarkerStore? = nil,
+         localResetAccess: PhiLocalDataReset.LocalAccess? = nil,
+         profileDeletionIntents: @escaping @MainActor () -> (any PhiProfileDeletionIntentStore)? = {
+             PhiSpaceSyncState.shared.profileDeletionIntentStore
+         },
          unlockRetryDelay: @escaping (Int) -> Duration = SyncKeyController.defaultUnlockRetryDelay) {
         self.isPairingComplete = isPairingComplete
         self.unlockRetryDelay = unlockRetryDelay
@@ -277,6 +305,9 @@ final class SyncKeyController {
         self.ownedItemStores = ownedItemStores
         self.markerStore = markerStore
         self.clearAllSyncIds = clearAllSyncIds
+        self.localResetMarker = localResetMarker
+        self.localResetAccess = localResetAccess
+        self.profileDeletionIntents = profileDeletionIntents
     }
 
     /// While true, `profileSyncInfo` answers nil for every Profile; setting it
@@ -320,6 +351,28 @@ final class SyncKeyController {
     /// the entry until a pass prunes it, so a pass that was suspended meanwhile cannot restore it.
     func finishProfileKeyWithdrawal(profileId: String) {
         profileIdsBeingDeleted.remove(profileId)
+    }
+
+    /// Local Profiles the pairing reset deletes (docs/sync.md, "Replacing this Mac's data at
+    /// pairing"), keyed by the pass sequence when the reset named them. Such a Profile is unmapped,
+    /// so `withdrawProfileKey` never sees it, yet a pass must neither register nor twin it: a pass
+    /// reads the Profile list once, before its network calls, and checks the pairing gate after
+    /// them, so a pass that read the list before the deletion resumes after enrollment opened the
+    /// gate and still names the deleted Profile (acceptance SYNC-P22, 2026-10-20). An entry leaves
+    /// only when a pass that started after the reset named it reads an enumerated list without the
+    /// Profile; passes run one at a time, so no pass that could still name it is running then.
+    private var registrationExcludedAtPass: [String: UInt64] = [:]
+
+    /// The Profiles `excludeFromRegistration` named that no pass has seen gone yet.
+    var registrationExcludedProfileIds: Set<String> { Set(registrationExcludedAtPass.keys) }
+
+    /// Called by the pairing reset before it deletes `profileId`.
+    func excludeFromRegistration(profileId: String) {
+        registrationExcludedAtPass[profileId] = passSequence
+    }
+
+    private func isExcludedFromRegistration(_ profileId: String) -> Bool {
+        registrationExcludedAtPass[profileId] != nil
     }
 
     /// Hot path: the bridge delegate calls this on every Chromium pull.
@@ -383,6 +436,74 @@ final class SyncKeyController {
         spaceKeys?.allMappings() ?? [:]
     }
 
+    // MARK: - Replacing this Mac's data at pairing (docs/sync.md, "Enrollment and setup")
+
+    /// The resume marker for this device key, or nil.
+    func pairingLocalResetMarker() -> SyncPairingLocalResetMarker? {
+        guard let deviceKeyId = try? manager.deviceKeyProviderForTesting.deviceKeyId() else { return nil }
+        return localResetMarker?.load(deviceKeyID: deviceKeyId)
+    }
+
+    /// Records that the reset is starting, before anything local is removed.
+    func savePairingLocalResetMarker(deleteProfileIds: Set<String>,
+                                     startedAt: Date = Date()) throws {
+        guard let localResetMarker else { throw SyncPairingLocalResetMarkerError.writeFailed }
+        let deviceKeyId = try manager.deviceKeyProviderForTesting.deviceKeyId()
+        try localResetMarker.save(SyncPairingLocalResetMarker(
+            deviceKeyID: deviceKeyId, deleteProfileIds: deleteProfileIds,
+            startedAtMs: Int64((startedAt.timeIntervalSince1970 * 1000).rounded())))
+    }
+
+    /// The local data reset bound to this controller's sync state, or nil when this controller was
+    /// built without the stores the preconditions read (tests, unwired construction): without them
+    /// the reset could not prove that nothing it deletes reaches the account.
+    func localDataReset() -> PhiLocalDataReset? {
+        guard let localResetAccess, let spaceStateStore, let markerStore else { return nil }
+        let ownedItemStores = ownedItemStores
+        let profileDeletionIntents = profileDeletionIntents
+        return PhiLocalDataReset(sync: PhiLocalDataReset.SyncAccess(
+            isPaired: { [weak self] in self?.isPairingComplete() ?? true },
+            // A removal or account reset in flight (`cleaningLocalState`) is not a usable
+            // session: this Mac is leaving the account, so the pairing reset must not start.
+            isSessionUsable: { [weak self] in
+                guard let self else { return false }
+                return !self.isRetired && !self.cleaningLocalState && self.manager.currentARK != nil
+                    && !self.requiresReconfiguration && self.isCurrentAccount()
+            },
+            syncHistory: {
+                var history: [PhiLocalDataReset.SyncHistory] = []
+                let table = spaceStateStore.load()
+                if table.cursors.values.contains(where: { $0.entityId?.isEmpty == false }) {
+                    history.append(.spaceCursor)
+                }
+                if table.profileCursors.values.contains(where: { $0.entityId?.isEmpty == false }) {
+                    history.append(.profileCursor)
+                }
+                let marker = markerStore.load()
+                if marker.marker != nil || !marker.storeBirthday.isEmpty { history.append(.marker) }
+                if ownedItemStores.contains(where: { store in
+                    store.load(hadRecords: table.hadRecords).table.cursors.values
+                        .contains { !$0.entityId.isEmpty || $0.reconciled != nil }
+                }) {
+                    history.append(.ownedItemCursor)
+                }
+                // No journal store means the journal cannot be read: fail closed.
+                if profileDeletionIntents()?.load().isEmpty != true {
+                    history.append(.profileDeletionJournal)
+                }
+                return history
+            },
+            isProfileMapped: { [weak self] in self?.profileKeys.mappedGlobalUuid(forProfileId: $0) != nil },
+            spaceMappings: { [weak self] in self?.allSpaceMappings() ?? [:] },
+            removeSpaceMapping: { [weak self] in self?.removeSpaceMapping(forSpaceId: $0) },
+            clearSettingsAdoption: { [weak self] in
+                guard let self, self.isCurrentAccount() else { return }
+                Self.clearSettingsAdoptionState(self.engineDefaults)
+            },
+            excludeFromRegistration: { [weak self] in self?.excludeFromRegistration(profileId: $0) }),
+            local: localResetAccess)
+    }
+
     /// User-confirmed removal revokes remotely before touching local sync metadata.
     /// Last-device and transport errors leave local data and enrollment unchanged.
     func removeThisDeviceFromSync() async throws {
@@ -395,15 +516,84 @@ final class SyncKeyController {
         try await clearLocalSyncState(removingDevice: true)
     }
 
+    /// The account reset, offered only after `removeThisDeviceFromSync()` was refused with
+    /// `last_device` and the user confirmed a second time. Server first, like self-revoke:
+    /// the operation UUID is journaled, the server deletes the account's sync data, and
+    /// only then does the shared cleanup run. A refusal (`notLastDevice`, `deviceNotFound`)
+    /// deleted nothing, so local state stays and the journal forgets the operation; any
+    /// other failure keeps the UUID so the next attempt retries the same operation.
+    ///
+    /// The journaled UUID is the durable "unfinished" mark: from the moment it is written,
+    /// `requiresReconfiguration` is true. After a lost response or a crash, a relaunched
+    /// Mac (envelope gone, so `.needsJoin`, no ARK, no engine round) therefore offers Set up
+    /// sync again, which resumes the operation, and the setup window refuses to start.
+    func resetSyncAndRemoveThisDevice() async throws {
+        guard !isRetired, !cleaningLocalState else { throw CancellationError() }
+        cleaningLocalState = true
+        defer { cleaningLocalState = false }
+        let deviceKeyId = try manager.deviceKeyProviderForTesting.deviceKeyId()
+        let operationId = markerStore?.load().resetOperationId ?? UUID()
+        try journalResetOperation(operationId)
+        try await requestAccountReset(operationId: operationId, deviceKeyId: deviceKeyId)
+        guard !isRetired, isCurrentAccount() else { throw CancellationError() }
+        try await clearLocalSyncState(removingDevice: true)
+    }
+
     /// Called only after explicit reconfiguration confirmation. Ordinary setup/retry
-    /// never calls this method. A partial removal also resumes through this path.
+    /// never calls this method. A partial removal also resumes through this path, and so
+    /// does an account reset whose outcome this Mac never recorded (a lost response, or a
+    /// crash between the server's answer and the end of cleanup): the journaled operation
+    /// is retried first with the same UUID. The server answers a finished reset with
+    /// `reset` again, and a refusal turns this back into an ordinary reconfiguration.
+    /// A journaled UUID alone is enough to get here (see `requiresReconfiguration`); the
+    /// resume needs only the token and the device key id, not the account key.
     func reconfigureSync() async throws {
         guard !isRetired, !cleaningLocalState, isCurrentAccount(), requiresReconfiguration else {
             throw CancellationError()
         }
         cleaningLocalState = true
         defer { cleaningLocalState = false }
-        try await clearLocalSyncState(removingDevice: markerStore?.load().removalPending == true || runtimeRemovalPending())
+        var removingDevice = markerStore?.load().removalPending == true || runtimeRemovalPending()
+        if let operationId = markerStore?.load().resetOperationId {
+            do {
+                let deviceKeyId = try manager.deviceKeyProviderForTesting.deviceKeyId()
+                try await requestAccountReset(operationId: operationId, deviceKeyId: deviceKeyId)
+                removingDevice = true
+            } catch KeyAPIError.notLastDevice, KeyAPIError.deviceNotFound {
+                AppLogInfo("[phi-sync] pending account reset was refused; reconfiguring without it")
+            }
+            guard !isRetired, isCurrentAccount() else { throw CancellationError() }
+        }
+        try await clearLocalSyncState(removingDevice: removingDevice)
+    }
+
+    /// Records the reset's operation UUID before the request goes out. Nil `markerStore`
+    /// is unwired/test construction, which has no journal to write.
+    /// The write goes through `update`, because the engine may save the same file meanwhile.
+    private func journalResetOperation(_ operationId: UUID) throws {
+        guard let markerStore else { return }
+        guard markerStore.load().resetOperationId != operationId else { return }
+        guard markerStore.update({ $0.resetOperationId = operationId }) else {
+            throw NativeSyncResetError.cleanupFailed
+        }
+    }
+
+    /// Sends the journaled reset. The server's two refusals deleted nothing, so the journal
+    /// forgets the operation before the refusal propagates; every other error leaves it.
+    private func requestAccountReset(operationId: UUID, deviceKeyId: String) async throws {
+        do {
+            try await profileKeys.resetAccount(operationId: operationId, deviceKeyId: deviceKeyId)
+            AppLogInfo("[phi-sync] account reset accepted by the server")
+        } catch let error as KeyAPIError {
+            switch error {
+            case .notLastDevice, .deviceNotFound: break
+            default: throw error
+            }
+            AppLogInfo("[phi-sync] account reset refused (\(PhiSyncLog.describe(error)))")
+            // A failed save leaves a UUID the server will refuse again; nothing depends on it.
+            markerStore?.update { $0.resetOperationId = nil }
+            throw error
+        }
     }
 
     private func clearLocalSyncState(removingDevice: Bool) async throws {
@@ -415,12 +605,15 @@ final class SyncKeyController {
         // Keep the account-scoped marker as a cleanup journal until every other
         // step succeeds. Its original birthday and progress token remain intact.
         if let markerStore {
-            var journal = markerStore.load()
-            journal.requiresReconfiguration = true
-            journal.removalPending = removingDevice
-            guard markerStore.save(journal) else { throw NativeSyncResetError.cleanupFailed }
+            let journaled = markerStore.update { journal in
+                journal.requiresReconfiguration = true
+                journal.removalPending = removingDevice
+            }
+            guard journaled else { throw NativeSyncResetError.cleanupFailed }
         }
         try invalidateEnrollment()
+        // A pairing reset in progress belongs to the enrollment just invalidated.
+        guard localResetMarker?.clear() != false else { throw NativeSyncResetError.cleanupFailed }
         try manager.discardLocalRegistration()
         clearResolved()
         if removingDevice { try deviceKeyRotator?.rotateForCurrentAccount() }
@@ -438,13 +631,8 @@ final class SyncKeyController {
         // The async storage write belongs to the captured account. Never clear the
         // next account's global engine defaults or facade after an account switch.
         guard isCurrentAccount() else { throw CancellationError() }
-        for key in PhiSyncEngine.stateKeys + PhiSyncEngine.legacyMarkerStateKeys + ["phi.sync.requiresReconfiguration"] {
-            engineDefaults.removeObject(forKey: key)
-        }
-        for key in engineDefaults.dictionaryRepresentation().keys
-            where key.hasSuffix(SyncableSettings.timestampSuffix) || key.hasSuffix(SyncableSettings.valueSuffix) {
-            engineDefaults.removeObject(forKey: key)
-        }
+        Self.clearSettingsAdoptionState(engineDefaults, alsoRemoving: PhiSyncEngine.legacyMarkerStateKeys
+                                            + ["phi.sync.requiresReconfiguration"])
         // This mirrored value is a sync UUID, not the user's local default Space.
         engineDefaults.removeObject(forKey: PhiDefaultSpaceMirror.key)
         if let spaceStateStore, !spaceStateStore.save(PhiSpaceSyncTable()) {
@@ -461,6 +649,20 @@ final class SyncKeyController {
         }
         completed = true
         AppLogInfo("[phi-sync] confirmed local sync cleanup completed")
+    }
+
+    /// Drops the settings engine's account cursor (`stateKeys`, `hasAdopted` included) and every
+    /// per-key timestamp/value sidecar, keeping the settings' values. The next pull then adopts
+    /// the account's settings wholesale. Shared by the confirmed cleanup above and the pairing
+    /// reset (docs/sync.md, "Replacing this Mac's data at pairing"). Idempotent.
+    static func clearSettingsAdoptionState(_ defaults: UserDefaults, alsoRemoving extraKeys: [String] = []) {
+        for key in PhiSyncEngine.stateKeys + extraKeys {
+            defaults.removeObject(forKey: key)
+        }
+        for key in defaults.dictionaryRepresentation().keys
+            where key.hasSuffix(SyncableSettings.timestampSuffix) || key.hasSuffix(SyncableSettings.valueSuffix) {
+            defaults.removeObject(forKey: key)
+        }
     }
 
     /// Startup/login entry: unlock without UI, then resolve mappings and ping.
@@ -765,7 +967,16 @@ final class SyncKeyController {
         withdrawnAtPass = withdrawnAtPass.filter { id, seq in
             seq >= previousStart || localIds.contains(id) || profileIdsBeingDeleted.contains(id)
         }
-        let locals = allLocals.filter { !profileIdsBeingDeleted.contains($0.profileId) }
+        // Every exclusion was recorded before this pass started (passes are single-flight), so a
+        // Profile it names that this list no longer holds is gone. An unread list proves nothing.
+        if isProfileListEnumerated() {
+            registrationExcludedAtPass = registrationExcludedAtPass.filter { id, seq in
+                seq >= startedAt || localIds.contains(id)
+            }
+        }
+        let locals = allLocals.filter {
+            !profileIdsBeingDeleted.contains($0.profileId) && !isExcludedFromRegistration($0.profileId)
+        }
         var unmappedLocals: [(profileId: String, displayName: String)] = []
         var hasUnknownLocal = false
         // Every failure this pass met, by class (BH-15). Any transient one holds
@@ -873,6 +1084,9 @@ final class SyncKeyController {
                     // Review A11: every registration is a network write sealed with this
                     // controller's ARK; none may start once the account is gone.
                     guard !isRetired else { return }
+                    // Checked now, not only when the list was read: the pairing reset may have
+                    // deleted this Profile while the pass was suspended.
+                    guard !isExcludedFromRegistration(local.profileId) else { continue }
                     do {
                         let rec = try await profileKeys.registerLocalProfile(
                             profileId: local.profileId, displayName: local.displayName,
@@ -911,7 +1125,9 @@ final class SyncKeyController {
             // hold both predicates and the unmapped set.
         } else {
             let claimedAfter = Set(next.values.map { $0.uuid })
-            let stillUnmapped = locals.filter { next[$0.profileId] == nil }
+            let stillUnmapped = locals.filter {
+                next[$0.profileId] == nil && !isExcludedFromRegistration($0.profileId)
+            }
             // The account Profile of a Profile being deleted here is neither unclaimed nor owed.
             var stillUnclaimed = remoteUuids.subtracting(claimedAfter).subtracting(uuidsBeingDeleted)
             // A registry row with no live Profile entity is not an account Profile this Mac lacks.
@@ -1021,7 +1237,7 @@ final class SyncKeyController {
                 let transient = status == 0 || status == 401 || status == 403 || status == 408
                     || status == 429 || status >= 500
                 return transient ? .heldTransient : .definitiveFailure
-            case .decode, .lastActiveDevice: return .definitiveFailure
+            case .decode, .lastActiveDevice, .notLastDevice, .deviceNotFound: return .definitiveFailure
             }
         case let error as ProfileKeyManagerError:
             switch error {
@@ -1056,7 +1272,7 @@ final class SyncKeyController {
             if status == 401 || status == 403 { return .signInExpired }
             if status >= 500 || status == 429 || status == 408 { return .serverError }
             return .other
-        case .decode, .lastActiveDevice: return .other
+        case .decode, .lastActiveDevice, .notLastDevice, .deviceNotFound: return .other
         }
     }
 
@@ -1434,7 +1650,7 @@ final class SyncKeyController {
         // good. `createLocalProfileAndAdopt` picks it up below.
         if reusablePendingProfile(forUuid: uuid) == nil,
            let twin = effective.isDefault == true ? defaultTwin : profileCreator.userAssignableProfileIds.first(where: {
-            !mappedIds.contains($0.profileId)
+            !mappedIds.contains($0.profileId) && !isExcludedFromRegistration($0.profileId)
             && !(defaultClosedToUnflagged && $0.profileId == LocalStore.defaultProfileId)
             && effective.mayPair(withLocalDefault: $0.profileId == LocalStore.defaultProfileId,
                                  authoritativeDefaultUuid: nil)

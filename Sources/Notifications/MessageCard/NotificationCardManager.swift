@@ -3,8 +3,10 @@
 // Use of this source code is governed by an Apache license that can be
 // found in the LICENSE file.
 
+import AppKit
 import Combine
 import Foundation
+import Kingfisher
 
 final class NotificationCardManager: ObservableObject {
     static let shared = NotificationCardManager()
@@ -93,6 +95,19 @@ final class NotificationCardManager: ObservableObject {
         let correlationId: String?
         var timer: DispatchSourceTimer?
         var driverPrincipalId: String? = nil
+        var kind: Kind = .action
+
+        /// What the card presents. The sender picks it with the payload's
+        /// `kind` field; an absent or unknown value is an action card.
+        enum Kind: String {
+            /// A suggestion with one primary button.
+            case action
+            /// The agent is working on `title`; `message` is its current
+            /// activity. It has no button, and the sender updates it by
+            /// resending the same `task_id` and ends it with a revoke or with
+            /// an action card for the same `task_id`.
+            case working
+        }
         
         enum Decision: String {
             case accept, reject, timeout, ignore
@@ -179,6 +194,13 @@ final class NotificationCardManager: ObservableObject {
         guard let data = context.payload.data(using: .utf8),
               let payloadDict = try? JSONDecoder().decode([String: AnyCodable].self, from: data)
         else { return }
+
+        if payloadDict["action"]?.stringValue == "notification.card.revoke" {
+            let messageId = payloadDict["messageId"]?.stringValue ?? ""
+            let revoked = revoke(messageId: messageId)
+            messenger.sendResponse(revoked ? messageId : "", requestId: context.requestId)
+            return
+        }
         
         let result = enqueueCard(envelope: payloadDict, correlationId: context.requestId)
         messenger.sendResponse(result ?? "", requestId: context.requestId)
@@ -235,8 +257,15 @@ final class NotificationCardManager: ObservableObject {
         let timestamp = payload["timestamp"]?.int64Value ?? 0
         let title = payload["title"]?.stringValue ?? ""
         let message = payload["description"]?.stringValue ?? ""
+        let kind = payload["kind"]?.stringValue.flatMap(Card.Kind.init(rawValue:)) ?? .action
         let rawButtonTitle = payload["button_title"]?.stringValue
-        let buttonTitle = rawButtonTitle?.isEmpty == false ? rawButtonTitle : "Run"
+        let buttonTitle: String?
+        switch kind {
+        case .action:
+            buttonTitle = rawButtonTitle?.isEmpty == false ? rawButtonTitle : "Run"
+        case .working:
+            buttonTitle = nil
+        }
         let nowMs = now()
         if expiresAt > 0, expiresAt <= nowMs {
             let card = Card(
@@ -250,7 +279,8 @@ final class NotificationCardManager: ObservableObject {
                 expiresAt: expiresAt,
                 correlationId: correlationId,
                 timer: nil,
-                driverPrincipalId: driverPrincipalId
+                driverPrincipalId: driverPrincipalId,
+                kind: kind
             )
             queue.sync {
                 if let existing = cards.removeValue(forKey: taskId) {
@@ -265,15 +295,22 @@ final class NotificationCardManager: ObservableObject {
 
         return queue.sync {
             defer { publishLatestLocked() }
-            if let existing = cards[taskId] {
-                existing.timer?.cancel()
-                order.removeAll { $0 == taskId }
-            }
-            if order.count >= maxQueueSize, let evicted = order.popLast() {
-                if let evictedCard = cards.removeValue(forKey: evicted) {
-                    evictedCard.timer?.cancel()
-                    sendTimeout(card: evictedCard)
+            let existing = cards[taskId]
+            existing?.timer?.cancel()
+            // A working card's progress updates replace it where it stands,
+            // so they neither jump the stack nor reopen a hidden one.
+            let updatesInPlace = existing?.kind == .working && kind == .working
+            if !updatesInPlace {
+                if existing != nil {
+                    order.removeAll { $0 == taskId }
                 }
+                if order.count >= maxQueueSize, let evicted = order.popLast() {
+                    if let evictedCard = cards.removeValue(forKey: evicted) {
+                        evictedCard.timer?.cancel()
+                        sendTimeout(card: evictedCard)
+                    }
+                }
+                order.insert(taskId, at: 0)
             }
             let card = Card(
                 taskId: taskId,
@@ -286,12 +323,41 @@ final class NotificationCardManager: ObservableObject {
                 expiresAt: expiresAt,
                 correlationId: correlationId,
                 timer: nil,
-                driverPrincipalId: driverPrincipalId
+                driverPrincipalId: driverPrincipalId,
+                kind: kind
             )
-            order.insert(taskId, at: 0)
             cards[taskId] = card
             scheduleExpiry(for: taskId)
             return taskId
+        }
+    }
+
+    /// The `task_type` of the Sidecar's conversation cards (task reports and
+    /// wake-rule results), whose `task_id` is the conversation to open.
+    static let conversationCardType = "task-report"
+
+    /// The primary button. A conversation card first tries
+    /// `showConversation` (the AI Chat panel of the window it was clicked
+    /// in), then sends `accept` with `opened_in: "sidebar"` when that showed
+    /// it, so the sender opens Phi Chat only when it did not. The card leaves
+    /// the queue at once either way. Every other card is accepted at once.
+    func accept(_ card: Card, showConversation: (@MainActor (String) async -> Bool)?) {
+        guard card.taskType == Self.conversationCardType, card.driverPrincipalId == nil,
+              let showConversation else {
+            decide(card: card, decision: .accept)
+            return
+        }
+        let taken: Card? = queue.sync {
+            guard let stored = cards.removeValue(forKey: card.taskId) else { return nil }
+            order.removeAll { $0 == card.taskId }
+            stored.timer?.cancel()
+            publishLatestLocked()
+            return stored
+        }
+        guard let taken else { return }
+        Task { @MainActor [weak self] in
+            let shown = await showConversation(taken.taskId)
+            self?.sendDecision(card: taken, decision: .accept, openedIn: shown ? "sidebar" : nil)
         }
     }
 
@@ -305,6 +371,23 @@ final class NotificationCardManager: ObservableObject {
         }
     }
     
+    /// Takes down the cards a sender showed under `messageId`, without a
+    /// decision: the sender withdrew them itself. Returns whether any was shown.
+    @discardableResult
+    func revoke(messageId: String) -> Bool {
+        guard !messageId.isEmpty else { return false }
+        return queue.sync {
+            let revokedIds = order.filter { cards[$0]?.messageId == messageId }
+            guard !revokedIds.isEmpty else { return false }
+            for taskId in revokedIds {
+                cards.removeValue(forKey: taskId)?.timer?.cancel()
+            }
+            order.removeAll { revokedIds.contains($0) }
+            publishLatestLocked()
+            return true
+        }
+    }
+
     /// Dismiss a card without sending a decision
     func dismiss(_ card: Card) {
         queue.sync {
@@ -365,7 +448,7 @@ final class NotificationCardManager: ObservableObject {
         sendDecision(card: card, decision: .timeout)
     }
 
-    private func sendDecision(card: Card, decision: Card.Decision) {
+    private func sendDecision(card: Card, decision: Card.Decision, openedIn: String? = nil) {
         if let principalId = card.driverPrincipalId {
             let response = ["notificationId": card.taskId, "decision": decision.rawValue]
             guard let data = try? JSONEncoder().encode(response),
@@ -374,13 +457,16 @@ final class NotificationCardManager: ObservableObject {
                 type: "notification.response", payload: json, principalId: principalId)
             return
         }
-        let payload: [String: AnyCodable] = [
+        var payload: [String: AnyCodable] = [
             "decision": .string(decision.rawValue),
             "task_id": .string(card.taskId),
             "title": .string(card.title),
             "timestamp": .string("\(Date.now.timeIntervalSince1970)"),
             "task_type": .string(card.taskType ?? "")
         ]
+        if let openedIn {
+            payload["opened_in"] = .string(openedIn)
+        }
         
         let response: [String: AnyCodable] = [
             "action": .string("notification.card.response"),
@@ -422,4 +508,98 @@ final class NotificationCardManager: ObservableObject {
 
 extension NotificationCardManager.Card: Identifiable {
     var id: String { taskId }
+}
+
+// MARK: - Agent Avatar
+
+/// The agent avatar notification cards show, kept per account so a card has it
+/// on its first frame: from memory, or after a relaunch from Kingfisher's disk
+/// cache, while `refresh()` fetches the current one from phi-agent behind it.
+///
+/// Entries are keyed by user ID and only served to that signed-in account;
+/// sign-out removes the account's entry (`AccountController.clearCachedAccount`).
+@MainActor
+enum AgentAvatarStore {
+    private static var memory: (userID: String, image: NSImage?)?
+    private static var refreshes: [String: Task<NSImage?, Never>] = [:]
+
+    private static var signedInUserID: String? {
+        guard ApplicationState.shared.isAuthenticated else { return nil }
+        return AccountController.shared.account?.userID
+    }
+
+    private static func diskKey(userID: String) -> String {
+        "phi-agent-avatar:\(userID)"
+    }
+
+    /// The last known avatar of the signed-in account, or nil. Reads the disk
+    /// cache at most once per account per launch.
+    static func cachedImage() -> NSImage? {
+        guard let userID = signedInUserID else { return nil }
+        if let memory, memory.userID == userID {
+            return memory.image
+        }
+        let data = try? KingfisherManager.shared.cache.diskStorage.value(forKey: diskKey(userID: userID))
+        let image = data.flatMap(NSImage.init(data:))
+        memory = (userID, image)
+        return image
+    }
+
+    /// Fetches the signed-in account's avatar and remembers it. Concurrent
+    /// callers share one fetch. Returns nil when the fetch fails or the account
+    /// changed meanwhile, leaving the cached avatar in place.
+    static func refresh() async -> NSImage? {
+        guard let userID = signedInUserID else { return nil }
+        if let running = refreshes[userID] {
+            return await running.value
+        }
+        let task = Task<NSImage?, Never> { @MainActor in
+            defer { refreshes[userID] = nil }
+            guard let loaded = await loadImage(loadData: {
+                try await APIClient.shared.getAgentAvatarImageData().data
+            }), signedInUserID == userID else { return nil }
+            memory = (userID, loaded.image)
+            // The callback-queue overload writes in the background rather
+            // than holding this fetch until the file is on disk.
+            KingfisherManager.shared.cache.storeToDisk(
+                loaded.data, forKey: diskKey(userID: userID), callbackQueue: .untouch)
+            return loaded.image
+        }
+        refreshes[userID] = task
+        return await task.value
+    }
+
+    /// Fetches avatar bytes and decodes them, or nil when the fetch fails or
+    /// the bytes are not an image; cards then show their fallback.
+    static func loadImage(loadData: () async throws -> Data) async -> (image: NSImage, data: Data)? {
+        do {
+            let data = try await loadData()
+            guard let image = NSImage(data: data), image.isValid else {
+                AppLogWarn("[AgentAvatarStore] Agent avatar image could not be decoded; using fallback")
+                return nil
+            }
+            return (image, data)
+        } catch is CancellationError {
+            return nil
+        } catch {
+            if let error = error as? URLError {
+                if error.code != .cancelled {
+                    AppLogWarn("[AgentAvatarStore] Agent avatar request failed (URL error \(error.code.rawValue)); using fallback")
+                }
+            } else if case APIError.httpError(let status) = error {
+                AppLogWarn("[AgentAvatarStore] Agent avatar request failed (HTTP \(status)); using fallback")
+            } else {
+                AppLogWarn("[AgentAvatarStore] Agent avatar unavailable; using fallback")
+            }
+            return nil
+        }
+    }
+
+    /// Drops the account's avatar from memory and disk.
+    static func forget(userID: String) {
+        if memory?.userID == userID {
+            memory = nil
+        }
+        KingfisherManager.shared.cache.removeImage(forKey: diskKey(userID: userID))
+    }
 }

@@ -77,11 +77,13 @@ import PostHog
     private static let postLoginKioskPresentationTimeout: TimeInterval = 10
     private var coldOpenURLForwardWorkItem: DispatchWorkItem?
     private var coldOpenURLForwardAttempts = 0
-    private var pendingColdOpenForwardURLs: [URL] = []
+    private var pendingColdOpenForwardURLs: [ExternalOpenURL] = []
     private var pendingColdOpenRequiresSpaceReadiness = false
     private var pendingColdOpenRequiresVisibleRegularWindow = false
+    private var pendingColdOpenRequiresActiveApp = false
     private var requestedRegularWindowForPendingKioskOpen = false
-    private var pendingOpenURLsAwaitingBrowserAccess: [URL] = []
+    private var pendingOpenURLsAwaitingBrowserAccess: [ExternalOpenURL] = []
+    private var pendingKioskReturns = KioskReturnQueue()
     private var pendingBrowserAccessOpenRequiresRegularWindow = false
     private var pendingHotKioskPresentationInFlight = false
     private var pendingHotKioskPresentationWorkItem: DispatchWorkItem?
@@ -171,6 +173,7 @@ import PostHog
         #endif
         
         MemoryUsageMonitor.shared.start()
+        ThemeEditorPaletteRenderer.prewarmFields()
 
         DefaultExtensionManifestWriter.start()
         FeedbackOutboxUploader.shared.start()
@@ -210,6 +213,10 @@ import PostHog
         NotificationCenter.default.addObserver(self,
                                                selector: #selector(mainAccountChanged(_:)),
                                                name: .mainAccountChanged,
+                                               object: nil)
+        NotificationCenter.default.addObserver(self,
+                                               selector: #selector(forwardPendingOpenURLsOnActivation(_:)),
+                                               name: NSApplication.didBecomeActiveNotification,
                                                object: nil)
         NotificationCenter.default.addObserver(self,
                                                selector: #selector(refreshSpacesMenuVisibility),
@@ -467,7 +474,41 @@ import PostHog
     }
     
     func application(_ application: NSApplication, open urls: [URL]) {
-        if PhiBuildCapabilities.supportsAuthentication {
+        // First statement: the sender lives in the Apple event AppKit is
+        // dispatching right now and is gone once this call returns.
+        let sender = ExternalOpenSender.captureCurrent()
+        handleExternalOpen(application, urls: urls,
+                           sourceAppBundleId: sender.bundleId,
+                           source: .system,
+                           returnApplication: sender.returnApplication())
+    }
+
+    /// Links the Phi Chat app opened, handed over by Chromium
+    /// (`PhiChromiumCoordinator.openPhiChatLinks`). External links like those
+    /// from other applications, but from none of them, so no App rule applies.
+    @MainActor
+    func openPhiChatLinks(_ urls: [URL]) {
+        handleExternalOpen(NSApp, urls: urls, sourceAppBundleId: nil,
+                           source: .phiChat)
+    }
+
+    @MainActor
+    private func handleExternalOpen(_ application: NSApplication,
+                                    urls: [URL],
+                                    sourceAppBundleId: String?,
+                                    source: ExternalOpenSource,
+                                    returnApplication: NSRunningApplication? = nil) {
+        let steps = source.steps
+        // Before the login gate, as macOS does for another application's
+        // link unless that link was opened in the background
+        // (`ExternalOpenSource.Steps.activatesPhi`). Only the legacy call
+        // brings Phi forward from inactive.
+        if steps.activatesPhi, !NSApp.isActive {
+            AppLogDebug("[coldopen] activating Phi for a Phi Chat open")
+            NSApp.activate(ignoringOtherApps: true)
+        }
+        if PhiBuildCapabilities.supportsAuthentication,
+           steps.resumesBrowserAuthentication {
             for url in urls where AuthManager.shared.resumeExternalBrowserAuthentication(with: url) {
                 return
             }
@@ -493,8 +534,12 @@ import PostHog
             && (!opensInKiosk
                 || ApplicationState.shared.canOpenExternalLinksInKiosk)
 
+        let requests = urls.map {
+            ExternalOpenURL(url: $0, sourceAppBundleId: sourceAppBundleId,
+                            source: source, returnApplication: returnApplication)
+        }
         if !canOpenBrowser {
-            pendingOpenURLsAwaitingBrowserAccess.append(contentsOf: urls)
+            pendingOpenURLsAwaitingBrowserAccess.append(contentsOf: requests)
             pendingBrowserAccessOpenRequiresRegularWindow =
                 pendingBrowserAccessOpenRequiresRegularWindow
                     || requiresRegularWindowBeforeKiosk
@@ -503,14 +548,16 @@ import PostHog
                 LoginController.shared.showLoginWindow()
             }
         } else {
-            if let url = urls.first, DeeplinkHandler.handle(url) {
+            if steps.handlesDeeplinks, let url = urls.first,
+               DeeplinkHandler.handle(url) {
                 return
             }
             scheduleForwardOpenURLsToChromium(
                 application: application,
-                urls: urls,
+                requests: requests,
                 requiresRegularWindowBeforeKiosk:
-                    requiresRegularWindowBeforeKiosk
+                    requiresRegularWindowBeforeKiosk,
+                arrivedWithBrowserAccess: true
             )
         }
     }
@@ -524,11 +571,23 @@ import PostHog
     /// window). Cold launch retries in `coldOpenURLForwardDelay` steps up to
     /// `coldOpenURLForwardMaxAttempts`. Standard opens then forward as a
     /// last-resort; a cold Kiosk open asks Chromium to surface a regular window
-    /// and keeps waiting so the Kiosk activates last.
+    /// and keeps waiting so the Kiosk activates last. Every open also waits
+    /// out a windowless session restore in flight (`mayForwardExternalOpenNow`).
+    ///
+    /// One open skips the registered-window half: one that arrived with
+    /// browser access while the app is windowless with no window on its way
+    /// (`SpaceManager.mayForwardExternalOpenWithoutWindow`, which also rules
+    /// out a restore in flight). Its own forward creates the window.
+    ///
+    /// `arrivedWithBrowserAccess` is false for URLs held while browser access
+    /// was unavailable. They are flushed from several access-change paths,
+    /// some right before or after a post-login Chromium reopen that
+    /// SpaceManager does not track, so held URLs always take the ordinary wait.
     private func scheduleForwardOpenURLsToChromium(
         application: NSApplication,
-        urls: [URL],
-        requiresRegularWindowBeforeKiosk: Bool
+        requests: [ExternalOpenURL],
+        requiresRegularWindowBeforeKiosk: Bool,
+        arrivedWithBrowserAccess: Bool
     ) {
         let opensInKiosk =
             PhiPreferences.GeneralSettings.openExternalLinksInKiosk.loadValue()
@@ -540,39 +599,33 @@ import PostHog
         // the link lands in the restored active window. A Kiosk cold open
         // waits for Chromium's ordinary launch window instead; starting a
         // second restore here could create an extra regular window.
-        if !opensInKiosk {
+        if !opensInKiosk,
+           requests.contains(where: { $0.source.steps.restoresWhenWindowless }) {
             SpaceManager.shared.beginSessionRestoreForExternalOpenIfEligible()
         }
 
+        let requiresActiveApp =
+            requests.contains { $0.source.steps.activatesPhi }
         let isCurrentRequestReady = isReadyToForwardOpenURLs(
             requiresSpaceReadiness: requiresSpaceReadiness,
-            requiresVisibleRegularWindow: requiresRegularWindowBeforeKiosk
+            requiresVisibleRegularWindow: requiresRegularWindowBeforeKiosk,
+            requiresActiveApp: requiresActiveApp
         )
 
         if !pendingColdOpenForwardURLs.isEmpty {
-            pendingColdOpenForwardURLs.append(contentsOf: urls)
+            pendingColdOpenForwardURLs.append(contentsOf: requests)
             pendingColdOpenRequiresSpaceReadiness =
                 pendingColdOpenRequiresSpaceReadiness || requiresSpaceReadiness
             pendingColdOpenRequiresVisibleRegularWindow =
                 pendingColdOpenRequiresVisibleRegularWindow
                     || requiresRegularWindowBeforeKiosk
-            if isReadyToForwardOpenURLs(
-                requiresSpaceReadiness:
-                    pendingColdOpenRequiresSpaceReadiness,
-                requiresVisibleRegularWindow:
-                    pendingColdOpenRequiresVisibleRegularWindow
-            ) {
+            pendingColdOpenRequiresActiveApp =
+                pendingColdOpenRequiresActiveApp || requiresActiveApp
+            if isPendingColdOpenBatchReady {
                 coldOpenURLForwardWorkItem?.cancel()
                 coldOpenURLForwardWorkItem = nil
-                let urlsToForward = pendingColdOpenForwardURLs
-                pendingColdOpenForwardURLs.removeAll()
-                coldOpenURLForwardAttempts = 0
-                pendingColdOpenRequiresSpaceReadiness = false
-                pendingColdOpenRequiresVisibleRegularWindow = false
-                requestedRegularWindowForPendingKioskOpen = false
-                forwardOpenURLsToChromium(
+                forwardPendingOpenURLsToChromium(
                     application: application,
-                    urls: urlsToForward,
                     label: "coalesced"
                 )
             } else {
@@ -584,37 +637,117 @@ import PostHog
         if isCurrentRequestReady {
             forwardOpenURLsToChromium(
                 application: application,
-                urls: urls,
+                requests: requests,
                 label: "immediate"
             )
             return
         }
 
-        pendingColdOpenForwardURLs.append(contentsOf: urls)
+        // No window is coming for this open to wait for (nothing to restore,
+        // nothing spawning, not quitting, no Guest transition): forwarding it
+        // is what creates one, and waiting would only run the retries out.
+        // Order-dependent: it must stay below the restore begun above, which
+        // has already marked itself in flight, and below the queue, whose URLs
+        // (a login flush among them) keep their place. It does not wait for
+        // Phi to become active either: no window is there to become main, and
+        // the one this forward creates activates Phi when it shows.
+        let rulesLoaded = SpaceManager.shared.hasLoadedURLRules
+        let noWindowComing = SpaceManager.shared.mayForwardExternalOpenWithoutWindow
+        if arrivedWithBrowserAccess, rulesLoaded, noWindowComing {
+            forwardOpenURLsToChromium(
+                application: application,
+                requests: requests,
+                label: "windowless"
+            )
+            return
+        }
+        AppLogDebug(
+            "[coldopen] urls wait for a window: "
+                + "arrivedWithBrowserAccess=\(arrivedWithBrowserAccess) "
+                + "rulesLoaded=\(rulesLoaded) "
+                + "windowlessWithNothingComing=\(noWindowComing) "
+                + "appActive=\(NSApp.isActive) "
+                + "requiresActiveApp=\(requiresActiveApp)"
+        )
+
+        pendingColdOpenForwardURLs.append(contentsOf: requests)
         pendingColdOpenRequiresSpaceReadiness =
             pendingColdOpenRequiresSpaceReadiness || requiresSpaceReadiness
         pendingColdOpenRequiresVisibleRegularWindow =
             pendingColdOpenRequiresVisibleRegularWindow
                 || requiresRegularWindowBeforeKiosk
+        pendingColdOpenRequiresActiveApp =
+            pendingColdOpenRequiresActiveApp || requiresActiveApp
         scheduleColdOpenForwardRetry(application: application)
+    }
+
+    /// Whether the queued batch (`pendingColdOpenForwardURLs`) may go out, by
+    /// the requirements gathered from every open it holds. Coalescing, the
+    /// retry and the activation flush all ask this one check.
+    private var isPendingColdOpenBatchReady: Bool {
+        isReadyToForwardOpenURLs(
+            requiresSpaceReadiness: pendingColdOpenRequiresSpaceReadiness,
+            requiresVisibleRegularWindow:
+                pendingColdOpenRequiresVisibleRegularWindow,
+            requiresActiveApp: pendingColdOpenRequiresActiveApp
+        )
     }
 
     private func isReadyToForwardOpenURLs(
         requiresSpaceReadiness: Bool,
-        requiresVisibleRegularWindow: Bool
+        requiresVisibleRegularWindow: Bool,
+        requiresActiveApp: Bool
     ) -> Bool {
-        let opensInKiosk =
-            PhiPreferences.GeneralSettings.openExternalLinksInKiosk.loadValue()
+        let windows = SpaceSessionControllersManager.shared
+        return Self.mayForwardExternalOpenNow(
+            hasLoadedURLRules: SpaceManager.shared.hasLoadedURLRules,
+            opensInKiosk:
+                PhiPreferences.GeneralSettings.openExternalLinksInKiosk.loadValue(),
+            hasWindow: windows.getFirstAvailableWindowId() != nil,
+            requiresSpaceReadiness: requiresSpaceReadiness,
+            requiresVisibleRegularWindow: requiresVisibleRegularWindow,
+            hasVisibleRegularBrowserWindow:
+                windows.hasVisibleRegularBrowserWindow,
+            isSessionRestoreInFlight:
+                SpaceManager.shared.isSessionRestoreInFlight,
+            requiresActiveApp: requiresActiveApp,
+            isAppActive: NSApp.isActive
+        )
+    }
+
+    /// The rule behind `isReadyToForwardOpenURLs`. Pure and static so it is
+    /// pinned by table (`ExternalOpenForwardReadinessTests`).
+    ///
+    /// A windowless session restore in flight holds every open, not only a
+    /// cold Kiosk one, even once a restored window exists. Forwarded
+    /// mid-restore, the link's Show is dropped by
+    /// `SpaceManager.presentHostedWindow`, so Phi is not brought to the front,
+    /// and Chromium picks the window by its last-used profile at the moment of
+    /// the forward, before the restored windows have settled.
+    ///
+    /// `requiresActiveApp`: the batch holds a source that activates Phi
+    /// itself (`ExternalOpenSource.Steps.activatesPhi`). Activation lands
+    /// asynchronously, and only once it has does a window become main and
+    /// Chromium's last-used profile follow it.
+    static func mayForwardExternalOpenNow(
+        hasLoadedURLRules: Bool,
+        opensInKiosk: Bool,
+        hasWindow: Bool,
+        requiresSpaceReadiness: Bool,
+        requiresVisibleRegularWindow: Bool,
+        hasVisibleRegularBrowserWindow: Bool,
+        isSessionRestoreInFlight: Bool,
+        requiresActiveApp: Bool,
+        isAppActive: Bool
+    ) -> Bool {
         let spaceReady = !requiresSpaceReadiness
-            || (SpaceManager.shared.hasLoadedURLRules
-                && (opensInKiosk
-                    || SpaceSessionControllersManager.shared
-                        .getFirstAvailableWindowId() != nil))
+            || (hasLoadedURLRules && (opensInKiosk || hasWindow))
         let regularWindowReady = !requiresVisibleRegularWindow
-            || SpaceSessionControllersManager.shared.hasVisibleRegularBrowserWindow
-        let restoreSettled = !requiresVisibleRegularWindow
-            || !SpaceManager.shared.isSessionRestoreInFlight
+            || hasVisibleRegularBrowserWindow
+        let restoreSettled = !isSessionRestoreInFlight
+        let activeAppReady = !requiresActiveApp || isAppActive
         return spaceReady && regularWindowReady && restoreSettled
+            && activeAppReady
     }
 
     private func scheduleColdOpenForwardRetry(application: NSApplication) {
@@ -627,12 +760,7 @@ import PostHog
             guard let self else { return }
             self.coldOpenURLForwardWorkItem = nil
             self.coldOpenURLForwardAttempts += 1
-            let isReady = self.isReadyToForwardOpenURLs(
-                requiresSpaceReadiness:
-                    self.pendingColdOpenRequiresSpaceReadiness,
-                requiresVisibleRegularWindow:
-                    self.pendingColdOpenRequiresVisibleRegularWindow
-            )
+            let isReady = self.isPendingColdOpenBatchReady
             if !isReady,
                self.pendingColdOpenRequiresVisibleRegularWindow {
                 if !SpaceSessionControllersManager.shared
@@ -659,29 +787,62 @@ import PostHog
                 return
             }
             let label = isReady ? "deferred" : "deferred-timeout"
-            let urlsToForward = self.pendingColdOpenForwardURLs
-            self.pendingColdOpenForwardURLs.removeAll()
-            self.coldOpenURLForwardAttempts = 0
-            self.pendingColdOpenRequiresSpaceReadiness = false
-            self.pendingColdOpenRequiresVisibleRegularWindow = false
-            self.requestedRegularWindowForPendingKioskOpen = false
-            self.forwardOpenURLsToChromium(application: application, urls: urlsToForward, label: label)
+            self.forwardPendingOpenURLsToChromium(application: application, label: label)
         }
         coldOpenURLForwardWorkItem = work
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.coldOpenURLForwardDelay, execute: work)
         AppLogDebug("[coldopen] urls call bridge scheduled in \(Self.coldOpenURLForwardDelay)s (attempt \(coldOpenURLForwardAttempts + 1)/\(Self.coldOpenURLForwardMaxAttempts))")
     }
 
-    private func forwardOpenURLsToChromium(application: NSApplication, urls: [URL], label: String) {
+    /// Forwards the queued batch as soon as Phi becomes active, instead of on
+    /// the next retry, unless something else still holds it. A batch waiting
+    /// for activation (a Phi Chat link) is what this is for. AppKit posts
+    /// this after the window that became main, so Chromium's last-used
+    /// profile already follows it.
+    @objc private func forwardPendingOpenURLsOnActivation(_ notification: Notification) {
+        guard !pendingColdOpenForwardURLs.isEmpty,
+              isPendingColdOpenBatchReady else { return }
+        coldOpenURLForwardWorkItem?.cancel()
+        coldOpenURLForwardWorkItem = nil
+        forwardPendingOpenURLsToChromium(application: NSApp, label: "activated")
+    }
+
+    /// Forwards the queued batch and clears the queue with every flag it
+    /// gathered. The caller cancels a scheduled retry first.
+    private func forwardPendingOpenURLsToChromium(application: NSApplication,
+                                                  label: String) {
+        let urlsToForward = pendingColdOpenForwardURLs
+        pendingColdOpenForwardURLs.removeAll()
+        coldOpenURLForwardAttempts = 0
+        pendingColdOpenRequiresSpaceReadiness = false
+        pendingColdOpenRequiresVisibleRegularWindow = false
+        pendingColdOpenRequiresActiveApp = false
+        requestedRegularWindowForPendingKioskOpen = false
+        forwardOpenURLsToChromium(application: application,
+                                  requests: urlsToForward, label: label)
+    }
+
+    private func forwardOpenURLsToChromium(application: NSApplication,
+                                           requests: [ExternalOpenURL],
+                                           label: String) {
         AppLogDebug("[coldopen] urls call bridge (\(label))")
         let opensInKiosk =
             PhiPreferences.GeneralSettings.openExternalLinksInKiosk.loadValue()
         let hasLoadedURLRules = SpaceManager.shared.hasLoadedURLRules
         AppLogDebug(
-            "[ExternalKioskRouting] forward label=\(label) count=\(urls.count) "
+            "[ExternalKioskRouting] forward label=\(label) count=\(requests.count) "
                 + "kioskPreference=\(opensInKiosk) "
                 + "rulesLoaded=\(hasLoadedURLRules)"
         )
+        // An App rule wins over every host/URL rule and over the Kiosk
+        // preference for an external open. Matched URLs are opened here,
+        // exempt from Chromium's host routing; the rest continue below.
+        let unclaimedRequests = hasLoadedURLRules
+            ? MainActor.assumeIsolated {
+                routeExternalOpensBySourceAppRules(requests)
+            }
+            : requests
+        guard !unclaimedRequests.isEmpty else { return }
         guard opensInKiosk,
               hasLoadedURLRules else {
             AppLogDebug(
@@ -690,20 +851,21 @@ import PostHog
             )
             forwardOpenURLsDirectlyToChromium(
                 application: application,
-                urls: urls
+                requests: unclaimedRequests
             )
             return
         }
 
-        let urlsForChromium = MainActor.assumeIsolated {
+        let requestsForChromium = MainActor.assumeIsolated {
             let rules = SpaceManager.shared.allRules
             AppLogDebug(
-                "[ExternalKioskRouting] evaluating \(urls.count) URL(s) "
+                "[ExternalKioskRouting] evaluating \(unclaimedRequests.count) URL(s) "
                     + "against \(rules.count) rule(s)"
             )
-            var urlsForChromium: [URL] = []
+            var requestsForChromium: [ExternalOpenURL] = []
             var urlsByTargetSpaceId: [String: [String]] = [:]
-            for url in urls {
+            for request in unclaimedRequests {
+                let url = request.url
                 let urlSummary = "\(url.scheme ?? "unknown")://"
                     + "\(url.host ?? "no-host")"
                 let matchingRule = URLRouter.matchingRule(
@@ -733,16 +895,18 @@ import PostHog
                 )
                 switch decision {
                 case .useKiosk:
-                    urlsForChromium.append(url)
+                    requestsForChromium.append(request)
                 case let .useKioskWithSpaceIdentity(targetSpaceId):
                     openExternalURLInKiosk(
                         url,
-                        usingIdentityFromSpaceId: targetSpaceId
+                        usingIdentityFromSpaceId: targetSpaceId,
+                        returnApplication: request.returnApplication
                     )
                 case let .ask(defaultSpaceId):
                     askForExternalURLRuleDestination(
                         url,
-                        defaultSpaceId: defaultSpaceId
+                        defaultSpaceId: defaultSpaceId,
+                        returnApplication: request.returnApplication
                     )
                 case let .openInSpace(targetSpaceId):
                     urlsByTargetSpaceId[targetSpaceId, default: []]
@@ -755,20 +919,86 @@ import PostHog
                     inURLRuleTargetSpaceId: targetSpaceId
                 )
             }
-            return urlsForChromium
+            return requestsForChromium
         }
-        if !urlsForChromium.isEmpty {
+        if !requestsForChromium.isEmpty {
             forwardOpenURLsDirectlyToChromium(
                 application: application,
-                urls: urlsForChromium
+                requests: requestsForChromium
             )
         }
+    }
+
+    /// Opens every request whose sender matches an App rule and returns the
+    /// requests no App rule claimed, in order, for the ordinary external-open
+    /// path. A rule whose target is not live is ignored, exactly as
+    /// `SpaceManager.pushRoutingTableToChromium` leaves it out of Chromium's
+    /// table. See docs/url-rules.md.
+    @MainActor
+    private func routeExternalOpensBySourceAppRules(
+        _ requests: [ExternalOpenURL]
+    ) -> [ExternalOpenURL] {
+        let manager = SpaceManager.shared
+        let appRules = manager.allRules.filter {
+            $0.sourceAppBundleId != nil && manager.isLiveURLRuleTarget($0.spaceId)
+        }
+        guard !appRules.isEmpty else { return requests }
+
+        var unmatched: [ExternalOpenURL] = []
+        var urlsByTargetSpaceId: [String: [String]] = [:]
+        for request in requests {
+            guard let bundleId = request.sourceAppBundleId,
+                  let rule = URLRouter.matchingSourceAppRule(bundleId: bundleId,
+                                                             rules: appRules) else {
+                unmatched.append(request)
+                continue
+            }
+            let urlSummary = "\(request.url.scheme ?? "unknown")://"
+                + "\(request.url.host ?? "no-host")"
+            switch ExternalKioskURLRuleResolver.sourceAppRuleDecision(for: rule) {
+            case let .ask(defaultSpaceId):
+                AppLogInfo(
+                    "[ExternalLinks] App rule sender=\(bundleId) url=\(urlSummary) "
+                        + "decision=ask:\(defaultSpaceId)"
+                )
+                askForExternalURLRuleDestination(request.url,
+                                                  defaultSpaceId: defaultSpaceId,
+                                                  returnApplication: request.returnApplication)
+            case .useKiosk, .useKioskWithSpaceIdentity:
+                AppLogInfo(
+                    "[ExternalLinks] App rule sender=\(bundleId) url=\(urlSummary) "
+                        + "decision=kiosk"
+                )
+                if !openNewKioskWindow(url: request.url.absoluteString,
+                                       bringToFront: false,
+                                       returnApplication: request.returnApplication) {
+                    AppLogWarn(
+                        "[ExternalLinks] App rule Kiosk open failed; "
+                            + "using the ordinary external-open path"
+                    )
+                    unmatched.append(request)
+                }
+            case let .openInSpace(targetSpaceId):
+                AppLogInfo(
+                    "[ExternalLinks] App rule sender=\(bundleId) url=\(urlSummary) "
+                        + "decision=openInSpace:\(targetSpaceId)"
+                )
+                urlsByTargetSpaceId[targetSpaceId, default: []]
+                    .append(request.url.absoluteString)
+            }
+        }
+        for (targetSpaceId, urlStrings) in urlsByTargetSpaceId {
+            manager.openExternalURLs(urlStrings,
+                                     inURLRuleTargetSpaceId: targetSpaceId)
+        }
+        return unmatched
     }
 
     @MainActor
     private func openExternalURLInKiosk(
         _ url: URL,
-        usingIdentityFromSpaceId targetSpaceId: String
+        usingIdentityFromSpaceId targetSpaceId: String,
+        returnApplication: NSRunningApplication?
     ) {
         let manager = SpaceManager.shared
         let profileId = manager.profileId(
@@ -820,7 +1050,8 @@ import PostHog
                         url,
                         targetSpaceId: targetSpaceId,
                         profileId: profileId,
-                        profileLoadSucceeded: success
+                        profileLoadSucceeded: success,
+                        returnApplication: returnApplication
                     )
                 }
             }
@@ -832,7 +1063,8 @@ import PostHog
         _ url: URL,
         targetSpaceId: String,
         profileId: String,
-        profileLoadSucceeded: Bool
+        profileLoadSucceeded: Bool,
+        returnApplication: NSRunningApplication?
     ) {
         let manager = SpaceManager.shared
         guard profileLoadSucceeded else {
@@ -850,7 +1082,8 @@ import PostHog
             url: url.absoluteString,
             bringToFront: false,
             profileId: profileId,
-            preferredSpaceId: targetSpaceId
+            preferredSpaceId: targetSpaceId,
+            returnApplication: returnApplication
         ) else {
             AppLogWarn(
                 "[ExternalKioskRouting] Failed to open Kiosk with URL Rule profile "
@@ -868,11 +1101,31 @@ import PostHog
         )
     }
 
+    /// While windowless this restores the session before it looks for a
+    /// window, so that a restored window hosts the chooser. The path with the
+    /// Kiosk preference off already runs in that order (chromium ADR 0020).
     private func askForExternalURLRuleDestination(
         _ url: URL,
-        defaultSpaceId: String
+        defaultSpaceId: String,
+        returnApplication: NSRunningApplication?
     ) {
         assert(Thread.isMainThread)
+        SpaceManager.shared.runAfterWindowlessRestore(
+            entry: "external link's Ask rule"
+        ) { [weak self] in
+            self?.askForExternalURLRuleDestinationPastRestoreGate(
+                url,
+                defaultSpaceId: defaultSpaceId,
+                returnApplication: returnApplication
+            )
+        }
+    }
+
+    private func askForExternalURLRuleDestinationPastRestoreGate(
+        _ url: URL,
+        defaultSpaceId: String,
+        returnApplication: NSRunningApplication?
+    ) {
         let controllers = SpaceSessionControllersManager.shared
             .getAllWindows()
         // A hosted shell is visible for every session of its slot; only the
@@ -883,14 +1136,35 @@ import PostHog
             $0.isPresentedOrLegacy && $0.window?.isVisible == true
         }) ?? controllers.first
         guard let sourceController else {
-            // There is no window to host the chooser. Preserve the rule's
-            // non-Kiosk precedence by using its default Space destination.
+            // There is no window to host the chooser. Use the rule's default
+            // destination: a Kiosk default opens a Kiosk (the Space opener
+            // rejects the Kiosk id), any other default opens that Space.
             AppLogWarn(
                 "[ExternalLinks] Ask rule has no source window; "
-                    + "opening in default Space \(defaultSpaceId)"
+                    + "opening in default destination \(defaultSpaceId)"
             )
             MainActor.assumeIsolated {
-                SpaceManager.shared.openExternalURLs(
+                if defaultSpaceId == SpaceManager.kioskRuleTargetId {
+                    if !openNewKioskWindow(url: url.absoluteString,
+                                           bringToFront: false,
+                                           returnApplication: returnApplication) {
+                        AppLogWarn(
+                            "[ExternalLinks] Ask rule Kiosk default failed; "
+                                + "using the ordinary external-open path"
+                        )
+                        forwardOpenURLsDirectlyToChromium(
+                            application: NSApp,
+                            requests: [ExternalOpenURL(
+                                url: url, sourceAppBundleId: nil, source: .system,
+                                returnApplication: returnApplication
+                            )]
+                        )
+                    }
+                    return
+                }
+                // Past the gate: this ask already passed it, and a second
+                // pass after the watchdog would restore again.
+                SpaceManager.shared.openExternalURLsPastRestoreGate(
                     [url.absoluteString],
                     inURLRuleTargetSpaceId: defaultSpaceId
                 )
@@ -907,12 +1181,23 @@ import PostHog
 
     private func forwardOpenURLsDirectlyToChromium(
         application: NSApplication,
-        urls: [URL]
+        requests: [ExternalOpenURL]
     ) {
+        if PhiPreferences.GeneralSettings.openExternalLinksInKiosk.loadValue() {
+            for request in requests {
+                guard let returnApplication = request.returnApplication else { continue }
+                pendingKioskReturns.add(request.url, returningTo: returnApplication)
+            }
+        }
         ChromiumLauncher.sharedInstance().bridge?.application(
             application,
-            open: urls
+            open: requests.map(\.url)
         )
+    }
+
+    @MainActor
+    func claimKioskReturnApplication(forTabURL url: String) -> NSRunningApplication? {
+        pendingKioskReturns.claim(forTabURL: url)
     }
     
     func application(_ application: NSApplication, willContinueUserActivityWithType userActivityType: String) -> Bool {
@@ -923,7 +1208,9 @@ import PostHog
         if PhiPreferences.GeneralSettings.openExternalLinksInKiosk.loadValue(),
            userActivity.activityType == NSUserActivityTypeBrowsingWeb,
            let url = userActivity.webpageURL {
-            self.application(application, open: [url])
+            // Handoff is not an Apple event open, so it has no sender.
+            handleExternalOpen(application, urls: [url], sourceAppBundleId: nil,
+                               source: .system)
             restorationHandler([])
             return true
         }
@@ -1123,22 +1410,28 @@ import PostHog
             return
         }
 
-        let urls = pendingOpenURLsAwaitingBrowserAccess
+        var requests = pendingOpenURLsAwaitingBrowserAccess
         pendingOpenURLsAwaitingBrowserAccess.removeAll()
         let requiresRegularWindowBeforeKiosk =
             pendingBrowserAccessOpenRequiresRegularWindow
         pendingBrowserAccessOpenRequiresRegularWindow = false
-        if let url = urls.first, DeeplinkHandler.handle(url) {
-            return
+        // Only an open from macOS may be a deeplink. One that is takes the
+        // other macOS opens held with it, as before; Phi Chat links held
+        // beside them still open.
+        if let first = requests.first(where: { $0.source.steps.handlesDeeplinks }),
+           DeeplinkHandler.handle(first.url) {
+            requests.removeAll { $0.source.steps.handlesDeeplinks }
+            guard !requests.isEmpty else { return }
         }
         if opensInKiosk && !requiresRegularWindowBeforeKiosk {
             claimPostLoginPresentationForHotKioskOpen()
         }
         scheduleForwardOpenURLsToChromium(
             application: NSApp,
-            urls: urls,
+            requests: requests,
             requiresRegularWindowBeforeKiosk:
-                requiresRegularWindowBeforeKiosk
+                requiresRegularWindowBeforeKiosk,
+            arrivedWithBrowserAccess: false
         )
     }
 

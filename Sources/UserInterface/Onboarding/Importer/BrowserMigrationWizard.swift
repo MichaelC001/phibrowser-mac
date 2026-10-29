@@ -227,7 +227,8 @@ enum BrowserMigrationPreview {
                 ?? BrowserMigrationPlanner.resolvedDisplayName(
                     of: source.profiles.first { $0.key == key }?.displayName, key: key)
             let plannedSpaces = Dictionary(
-                uniqueKeysWithValues: (planned?.spaces ?? []).map { ($0.sourceSpaceID, $0) })
+                (planned?.spaces ?? []).map { ($0.sourceSpaceID, $0) },
+                uniquingKeysWith: { first, _ in first })
             let spaces = source.spaces(ofProfile: key).map { space in
                 let plannedSpace = plannedSpaces[space.id]
                 return BrowserMigrationPreviewSpaceRow(

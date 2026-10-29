@@ -334,7 +334,11 @@ class BookmarkManager: ObservableObject {
         store.createDefaultRootDir(profileId: scope.profileId, spaceId: scope.spaceId)
         Task { @MainActor [weak self, weak store] in
             guard let self, let store, self.localStore != nil else { return }
-            store.bookmarksPublisher(profileId: scope.profileId, spaceId: scope.spaceId)
+            store.bookmarksPublisher(profileId: scope.profileId, spaceId: scope.spaceId,
+                                     onLastSeenChange: { [weak self] rows in
+                    guard let self, self.localStore != nil else { return }
+                    self.applyLastSeenUpdates(from: rows)
+                })
                 .sink { [weak self] bookmarkModels in
                     guard let self, self.localStore != nil else { return }
                     let bookmarks = self.mappedModels(from: bookmarkModels)
@@ -420,6 +424,14 @@ class BookmarkManager: ObservableObject {
         }
 
         return true
+    }
+
+    /// Keep Search Tabs recency current without mapping or comparing the sidebar tree.
+    private func applyLastSeenUpdates(from rows: [TabDataModel]) {
+        for row in rows {
+            guard let bookmark = bookmarkIndex[row.guid], !bookmark.isFolder else { continue }
+            if bookmark.lastSeen != row.lastSeen { bookmark.lastSeen = row.lastSeen }
+        }
     }
 
     private func applyNonLayoutUpdates(from bookmarks: [Bookmark]) {
